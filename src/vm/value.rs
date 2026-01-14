@@ -1,11 +1,11 @@
-// Memory representation. We will use a enum to implement ownership, 
+// Memory representation. We will use a enum to implement ownership,
 // and we track wheter a value is "Owned" or a "reference" in the low-level representation
 use std::collections::HashMap;
 
-pub type NativeFn = fn(Vec<JsValue>) -> JsValue;
+pub type NativeFn = fn(&mut crate::vm::VM, Vec<JsValue>) -> JsValue;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum JsValue{
+pub enum JsValue {
     Number(f64),
     String(String),
     Boolean(bool),
@@ -14,7 +14,7 @@ pub enum JsValue{
     Function(usize),
     NativeFunction(usize),
     Null,
-    Undefined    
+    Undefined,
 }
 
 #[derive(Debug, Clone)]

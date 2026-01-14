@@ -3,9 +3,7 @@ mod vm;
 
 use crate::compiler::Codegen;
 use crate::compiler::borrow_ck::BorrowChecker;
-use crate::vm::value::*;
-use crate::vm::{VM, native_log};
-use std::collections::HashMap;
+use crate::vm::VM;
 use swc_common::{FileName, SourceMap, sync::Lrc};
 use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 
@@ -16,11 +14,13 @@ fn main() {
     let cm: Lrc<SourceMap> = Default::default();
 
     // TEST CASE: Using 'a' twice should fail the Borrow Checker
-    let code = "function addThree(a,b,c) {
-        return a + b + c;
-    }
-    let result = addThree(1,2,3);
-    console.log('the result is:', result);";
+    let code = "console.log('First');
+
+setTimeout(() => {
+    console.log('Third (Async)');
+}, 0);
+
+console.log('Second');";
 
     let fm = cm.new_source_file(FileName::Custom("input.js".into()).into(), code);
     let lexer = Lexer::new(
@@ -55,21 +55,8 @@ fn main() {
 
     // 3. Execution (VM)
     let mut my_vm = VM::new();
-    my_vm.native_functions.push(native_log);
 
-    let console_ptr = my_vm.heap.len();
-    let mut console_props = HashMap::new();
-    // The index 0 corresponds to the native_log we just pushed
-    console_props.insert("log".to_string(), JsValue::NativeFunction(0));
-
-    my_vm.heap.push(HeapObject {
-        data: HeapData::Object(console_props),
-    });
-
-    // 3. Inject 'console' into the Global Frame (Frame 0)
-    my_vm.call_stack[0]
-        .locals
-        .insert("console".to_string(), JsValue::Object(console_ptr));
     println!("\nStarting VM Execution:");
-    my_vm.run(bytecode);
+    my_vm.load_program(bytecode);
+    my_vm.run_event_loop();
 }

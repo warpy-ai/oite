@@ -63,7 +63,8 @@ fn test_vm_math_execution() {
         OpCode::Halt,
     ];
 
-    vm.run(program);
+    vm.load_program(program);
+    vm.run_event_loop();
 
     // The result should be 30 on top of the stack
     // (Note: To run this, ensure your VM stack is accessible or add a getter)
@@ -108,7 +109,8 @@ fn test_function_execution() {
     let bytecode = cg.generate(&ast);
 
     // 3. Execute bytecode
-    vm.run(bytecode);
+    vm.load_program(bytecode);
+    vm.run_event_loop();
 
     // 4. Verify result - the function should return 15
     // Since the function returns 15 and we're not in a function context,
@@ -139,7 +141,8 @@ fn test_function_execution_with_args() {
     let bytecode = cg.generate(&ast);
 
     // 3. Execute bytecode
-    vm.run(bytecode);
+    vm.load_program(bytecode);
+    vm.run_event_loop();
 
     // 4. Verify result - the function should return 15
     // Since the function returns 15 and we're not in a function context,
@@ -167,7 +170,8 @@ fn test_object_creation() {
     let bytecode = cg.generate(&ast);
 
     // 3. Execute bytecode
-    vm.run(bytecode);
+    vm.load_program(bytecode);
+    vm.run_event_loop();
 
     // 4. Verify result - the function should return 15
     // Since the function returns 15 and we're not in a function context,
@@ -199,7 +203,8 @@ fn test_function_execution_with_object_args() {
     let bytecode = cg.generate(&ast);
 
     // 3. Execute bytecode
-    vm.run(bytecode);
+    vm.load_program(bytecode);
+    vm.run_event_loop();
 
     // 4. Verify result - the function should return 15
     // Since the function returns 15 and we're not in a function context,
@@ -213,4 +218,103 @@ fn test_throw_error_borrow_check() {
     let _code = "let user = { a: 1 };
 let admin = user;  // 'user' moves to 'admin'
 let x = user.a;    // THIS SHOULD THROW AN ERROR";
+}
+
+#[test]
+fn test_event_loop_runs_set_timeout_callback() {
+    let mut vm = VM::new();
+    let code = r#"
+        function cb() { x = 42; }
+        let x = 0;
+        setTimeout(cb, 0);
+    "#;
+
+    let ast = parse_js(code);
+
+    // Borrow checker should accept it (numbers are Copy; assignment is fine).
+    let mut bc = BorrowChecker::new();
+    for item in &ast.body {
+        if let Some(stmt) = item.as_stmt() {
+            assert!(bc.analyze_stmt(stmt).is_ok());
+        }
+    }
+
+    let mut cg = Codegen::new();
+    let bytecode = cg.generate(&ast);
+
+    vm.load_program(bytecode);
+    vm.run_event_loop();
+
+    // Global `x` should have been updated by the callback.
+    let global_x = vm
+        .call_stack
+        .first()
+        .and_then(|f| f.locals.get("x"))
+        .cloned()
+        .unwrap_or(JsValue::Undefined);
+    assert_eq!(global_x, JsValue::Number(42.0));
+}
+
+#[test]
+fn test_set_timeout_with_function_expression_callback() {
+    let mut vm = VM::new();
+    let code = r#"
+        let x = 0;
+        setTimeout(function () { x = 7; }, 0);
+    "#;
+
+    let ast = parse_js(code);
+
+    let mut bc = BorrowChecker::new();
+    for item in &ast.body {
+        if let Some(stmt) = item.as_stmt() {
+            assert!(bc.analyze_stmt(stmt).is_ok());
+        }
+    }
+
+    let mut cg = Codegen::new();
+    let bytecode = cg.generate(&ast);
+
+    vm.load_program(bytecode);
+    vm.run_event_loop();
+
+    let global_x = vm
+        .call_stack
+        .first()
+        .and_then(|f| f.locals.get("x"))
+        .cloned()
+        .unwrap_or(JsValue::Undefined);
+    assert_eq!(global_x, JsValue::Number(7.0));
+}
+
+#[test]
+fn test_set_timeout_with_arrow_function_callback() {
+    let mut vm = VM::new();
+    let code = r#"
+        let x = 0;
+        setTimeout(() => { x = 9; }, 0);
+    "#;
+
+    let ast = parse_js(code);
+
+    let mut bc = BorrowChecker::new();
+    for item in &ast.body {
+        if let Some(stmt) = item.as_stmt() {
+            assert!(bc.analyze_stmt(stmt).is_ok());
+        }
+    }
+
+    let mut cg = Codegen::new();
+    let bytecode = cg.generate(&ast);
+
+    vm.load_program(bytecode);
+    vm.run_event_loop();
+
+    let global_x = vm
+        .call_stack
+        .first()
+        .and_then(|f| f.locals.get("x"))
+        .cloned()
+        .unwrap_or(JsValue::Undefined);
+    assert_eq!(global_x, JsValue::Number(9.0));
 }

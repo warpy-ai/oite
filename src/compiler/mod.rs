@@ -143,6 +143,106 @@ impl Codegen {
 
     fn gen_expr(&mut self, expr: &Expr) {
         match expr {
+            Expr::Fn(fn_expr) => {
+                // Function expression: `function(a, b) { ... }`
+                //
+                // We compile it similarly to a function declaration, but instead of storing it
+                // in a variable, we leave the function pointer on the stack as the expression value.
+                //
+                // Layout:
+                //   Push(Function(start_ip))
+                //   Jump(after_body)
+                // start_ip:
+                //   Store params...
+                //   ...body...
+                //   Return
+                // after_body:
+                //   (execution continues, function value remains on stack)
+
+                let start_ip = self.instructions.len() + 2; // Push + Jump
+                self.instructions
+                    .push(OpCode::Push(JsValue::Function(start_ip)));
+
+                let jump_idx = self.instructions.len();
+                self.instructions.push(OpCode::Jump(0)); // patched after body
+
+                let prev_in_function = self.in_function;
+                self.in_function = true;
+
+                // Pop args into locals (reverse order)
+                for param in fn_expr.function.params.iter().rev() {
+                    if let Pat::Ident(id) = &param.pat {
+                        let param_name = id.id.sym.to_string();
+                        self.instructions.push(OpCode::Store(param_name));
+                    }
+                }
+
+                if let Some(body) = &fn_expr.function.body {
+                    for s in &body.stmts {
+                        self.gen_stmt(s);
+                    }
+                } else {
+                    self.instructions.push(OpCode::Push(JsValue::Undefined));
+                }
+
+                self.instructions.push(OpCode::Return);
+                self.in_function = prev_in_function;
+
+                let after_body = self.instructions.len();
+                if let OpCode::Jump(ref mut target) = self.instructions[jump_idx] {
+                    *target = after_body;
+                }
+            }
+            Expr::Arrow(arrow) => {
+                // Arrow function: `(a, b) => expr` or `(a, b) => { ... }`
+                // Compiled as a normal function value (like Expr::Fn), leaving the function
+                // pointer on the stack.
+
+                // (We ignore async/captures for now.)
+                let start_ip = self.instructions.len() + 2; // Push + Jump
+                self.instructions
+                    .push(OpCode::Push(JsValue::Function(start_ip)));
+
+                let jump_idx = self.instructions.len();
+                self.instructions.push(OpCode::Jump(0)); // patched after body
+
+                let prev_in_function = self.in_function;
+                self.in_function = true;
+
+                // Pop args into locals (reverse order)
+                for param in arrow.params.iter().rev() {
+                    if let Pat::Ident(id) = param {
+                        let param_name = id.id.sym.to_string();
+                        self.instructions.push(OpCode::Store(param_name));
+                    } else {
+                        println!("Warning: Non-identifier arrow params not supported yet.");
+                    }
+                }
+
+                match &*arrow.body {
+                    BlockStmtOrExpr::Expr(e) => {
+                        // Expression-bodied arrows implicitly return the expression.
+                        self.gen_expr(e);
+                        self.instructions.push(OpCode::Return);
+                    }
+                    BlockStmtOrExpr::BlockStmt(block) => {
+                        for s in &block.stmts {
+                            self.gen_stmt(s);
+                        }
+                        if block.stmts.is_empty() {
+                            self.instructions.push(OpCode::Push(JsValue::Undefined));
+                        }
+                        self.instructions.push(OpCode::Return);
+                    }
+                }
+
+                self.in_function = prev_in_function;
+
+                let after_body = self.instructions.len();
+                if let OpCode::Jump(ref mut target) = self.instructions[jump_idx] {
+                    *target = after_body;
+                }
+            }
             Expr::Lit(Lit::Num(num)) => {
                 self.instructions
                     .push(OpCode::Push(JsValue::Number(num.value)));
