@@ -9,8 +9,8 @@ pub enum VarKind {
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum VarState {
-    Owned,          // Currently valid and owned by this variable
-    Moved,          // Data has been transferred; variable is now a "tombstone"
+    Owned,           // Currently valid and owned by this variable
+    Moved,           // Data has been transferred; variable is now a "tombstone"
     CapturedByAsync, // Moved into an async closure (setTimeout callback, etc.)
 }
 
