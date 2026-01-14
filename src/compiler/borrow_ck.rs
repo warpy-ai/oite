@@ -9,8 +9,8 @@ pub enum VarKind {
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum VarState {
-    Owned,     // Currently valid and owned by this variable
-    Moved,     // Data has been transferred; variable is now a "tombstone"
+    Owned, // Currently valid and owned by this variable
+    Moved, // Data has been transferred; variable is now a "tombstone"
 }
 
 #[derive(Clone, Debug)]
@@ -46,7 +46,7 @@ impl BorrowChecker {
                         VarKind::Primitive
                     };
 
-                    // 2. If initializing from another variable (e.g., let a = b), 
+                    // 2. If initializing from another variable (e.g., let a = b),
                     // we must analyze the right-hand side first.
                     if let Some(init) = &decl.init {
                         self.analyze_expr(init)?;
@@ -152,10 +152,10 @@ impl BorrowChecker {
             // Context: Object Literal
             Expr::Object(obj) => {
                 for prop in &obj.props {
-                    if let PropOrSpread::Prop(p) = prop {
-                        if let Prop::KeyValue(kv) = p.as_ref() {
-                            self.analyze_expr(&kv.value)?;
-                        }
+                    if let PropOrSpread::Prop(p) = prop
+                        && let Prop::KeyValue(kv) = p.as_ref()
+                    {
+                        self.analyze_expr(&kv.value)?;
                     }
                 }
             }
@@ -184,7 +184,10 @@ impl BorrowChecker {
             // 3. Perform Move if it's a Heap type
             if info.kind == VarKind::Heap {
                 info.state = VarState::Moved;
-                println!("DEBUG: Heap Object '{}' MOVED (Ownership transferred)", name);
+                println!(
+                    "DEBUG: Heap Object '{}' MOVED (Ownership transferred)",
+                    name
+                );
             } else {
                 println!("DEBUG: Primitive '{}' COPIED", name);
             }
@@ -195,7 +198,10 @@ impl BorrowChecker {
     fn process_implicit_borrow(&mut self, name: &str) -> Result<(), String> {
         if let Some(info) = self.symbols.get_mut(name) {
             if info.state == VarState::Moved {
-                return Err(format!("BORROW ERROR: Cannot access moved variable '{}'", name));
+                return Err(format!(
+                    "BORROW ERROR: Cannot access moved variable '{}'",
+                    name
+                ));
             }
             // For now, implicit borrows (like obj.prop) increment borrow count
             // but we'll assume they are returned after the statement ends.
@@ -207,10 +213,16 @@ impl BorrowChecker {
     fn process_explicit_borrow(&mut self, name: &str) -> Result<(), String> {
         if let Some(info) = self.symbols.get_mut(name) {
             if info.state == VarState::Moved {
-                return Err(format!("BORROW ERROR: Cannot borrow moved variable '{}'", name));
+                return Err(format!(
+                    "BORROW ERROR: Cannot borrow moved variable '{}'",
+                    name
+                ));
             }
             info.active_borrows += 1;
-            println!("DEBUG: '{}' EXPLICITLY BORROWED. Active loans: {}", name, info.active_borrows);
+            println!(
+                "DEBUG: '{}' EXPLICITLY BORROWED. Active loans: {}",
+                name, info.active_borrows
+            );
         }
         Ok(())
     }

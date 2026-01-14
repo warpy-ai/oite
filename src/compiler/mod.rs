@@ -1,5 +1,5 @@
-use swc_ecma_ast::*;
 use crate::vm::opcodes::OpCode;
+use swc_ecma_ast::*;
 pub mod borrow_ck;
 use crate::vm::value::JsValue;
 pub struct Codegen {
@@ -10,9 +10,9 @@ pub struct Codegen {
 
 impl Codegen {
     pub fn new() -> Self {
-        Self { 
+        Self {
             instructions: Vec::new(),
-            scope_stack: vec![Vec::new()], 
+            scope_stack: vec![Vec::new()],
             in_function: false,
         }
     }
@@ -56,22 +56,22 @@ impl Codegen {
                         let name = decl.name.as_ident().unwrap().sym.to_string();
                         self.gen_expr(init);
                         self.instructions.push(OpCode::Store(name));
-                     
                     }
                 }
             }
             Stmt::Decl(Decl::Fn(fn_decl)) => {
                 let name = fn_decl.ident.sym.to_string();
-                
+
                 // 1. Push function address and store it
                 let start_ip = self.instructions.len() + 3; // +3 to skip Push, Store, and Jump
-                self.instructions.push(OpCode::Push(JsValue::Function(start_ip)));
+                self.instructions
+                    .push(OpCode::Push(JsValue::Function(start_ip)));
                 self.instructions.push(OpCode::Store(name));
-                
+
                 // 2. Add jump to skip over function body
                 let jump_target = self.instructions.len() + 1; // Will be updated after compiling body
                 self.instructions.push(OpCode::Jump(jump_target));
-                
+
                 // 3. Compile function body
                 self.in_function = true;
                 // NEW: Inside the function body, we must pop arguments into locals
@@ -86,7 +86,7 @@ impl Codegen {
                 let stmts = &fn_decl.function.body.as_ref().unwrap().stmts;
                 for (i, s) in stmts.iter().enumerate() {
                     self.gen_stmt(s);
-                    
+
                     // If this is the last statement and it's an expression (like a + b),
                     // we DON'T push Undefined. It will act as the implicit return value.
                 }
@@ -97,7 +97,7 @@ impl Codegen {
                     self.instructions.push(OpCode::Push(JsValue::Undefined));
                 }
                 self.instructions.push(OpCode::Return);
-                
+
                 // 4. Update jump target to point after the function body
                 let current_len = self.instructions.len();
                 if let OpCode::Jump(ref mut target) = self.instructions[start_ip - 1] {
@@ -142,7 +142,8 @@ impl Codegen {
     fn gen_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Lit(Lit::Num(num)) => {
-                self.instructions.push(OpCode::Push(JsValue::Number(num.value)));
+                self.instructions
+                    .push(OpCode::Push(JsValue::Number(num.value)));
             }
             Expr::Ident(id) => {
                 self.instructions.push(OpCode::Load(id.sym.to_string()));
@@ -170,7 +171,8 @@ impl Codegen {
                         // 2. Push the Value
                         self.gen_expr(&expr_or_spread.expr);
                         // 3. Push the Index
-                        self.instructions.push(OpCode::Push(JsValue::Number(i as f64)));
+                        self.instructions
+                            .push(OpCode::Push(JsValue::Number(i as f64)));
                         // 4. Store it
                         self.instructions.push(OpCode::StoreElement);
                     }
@@ -183,8 +185,8 @@ impl Codegen {
                 // Load the function
                 match &call_expr.callee {
                     Callee::Expr(expr) => self.gen_expr(expr),
-                    Callee::Super(_) => {}, // Handle super calls if needed
-                    Callee::Import(_) => {}, // Handle import calls if needed
+                    Callee::Super(_) => {}  // Handle super calls if needed
+                    Callee::Import(_) => {} // Handle import calls if needed
                 }
                 // Call it
                 self.instructions.push(OpCode::Call);
@@ -199,6 +201,10 @@ impl Codegen {
                     AssignTarget::Simple(simple) => {
                         if let SimpleAssignTarget::Ident(binding_ident) = simple {
                             let name = binding_ident.id.sym.to_string();
+                            // JS assignment expressions evaluate to the assigned value.
+                            // Our `Store` opcode consumes the value, so `Dup` ensures one copy
+                            // remains on the stack for expression context (e.g. `a = 1;`).
+                            self.instructions.push(OpCode::Dup);
                             self.instructions.push(OpCode::Store(name));
                         }
                     }
@@ -209,22 +215,24 @@ impl Codegen {
                 self.instructions.push(OpCode::NewObject);
 
                 for prop in &obj_lit.props {
-                    if let PropOrSpread::Prop(prop_ptr) = prop {
-                        if let Prop::KeyValue(kv) = prop_ptr.as_ref() {
-                            let key = match &kv.key {
-                                PropName::Ident(id) => id.sym.to_string(),
-                                PropName::Str(s) => s.value.as_str().expect("Invalid string key").to_string(),
-                                _ => continue,
-                            };
+                    if let PropOrSpread::Prop(prop_ptr) = prop
+                        && let Prop::KeyValue(kv) = prop_ptr.as_ref()
+                    {
+                        let key = match &kv.key {
+                            PropName::Ident(id) => id.sym.to_string(),
+                            PropName::Str(s) => {
+                                s.value.as_str().expect("Invalid string key").to_string()
+                            }
+                            _ => continue,
+                        };
 
-                            self.instructions.push(OpCode::Dup); // Duplicate Ptr
-                            self.gen_expr(&kv.value);           // Push Value
-                            self.instructions.push(OpCode::SetProp(key)); // Consumes Value + 1 Ptr
-                        }
+                        self.instructions.push(OpCode::Dup); // Duplicate Ptr
+                        self.gen_expr(&kv.value); // Push Value
+                        self.instructions.push(OpCode::SetProp(key)); // Consumes Value + 1 Ptr
                     }
                 }
             }
-           Expr::Member(member) => {
+            Expr::Member(member) => {
                 // 1. Load the Object/Array
                 self.gen_expr(&member.obj);
 
