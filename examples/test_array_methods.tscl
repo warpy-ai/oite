@@ -1,0 +1,48 @@
+// Test array methods
+console.log("Testing array methods...");
+
+let arr = [1, 2, 3];
+console.log("Initial array length:", arr.length);
+
+// Test push
+let newLength = arr.push(4, 5);
+console.log("After push(4, 5), length:", newLength);
+console.log("Array[3]:", arr[3]);
+console.log("Array[4]:", arr[4]);
+
+// Test pop
+let popped = arr.pop();
+console.log("Popped value:", popped);
+console.log("New length:", arr.length);
+
+// Test shift
+let shifted = arr.shift();
+console.log("Shifted value:", shifted);
+console.log("Array after shift:", arr[0], arr[1], arr[2]);
+
+// Test unshift
+let unshiftLength = arr.unshift(0);
+console.log("After unshift(0), length:", unshiftLength);
+console.log("First element:", arr[0]);
+
+// Test splice
+let arr2 = [1, 2, 3, 4, 5];
+let deleted = arr2.splice(1, 2, 10, 11);
+console.log("Spliced array length:", arr2.length);
+console.log("Deleted elements length:", deleted.length);
+console.log("arr2[1]:", arr2[1]);
+console.log("arr2[2]:", arr2[2]);
+
+// Test indexOf
+let arr3 = [10, 20, 30, 20];
+console.log("indexOf(20):", arr3.indexOf(20));
+console.log("indexOf(99):", arr3.indexOf(99));
+
+// Test includes
+console.log("includes(20):", arr3.includes(20));
+console.log("includes(99):", arr3.includes(99));
+
+// Test join
+let arr4 = [1, 2, 3];
+console.log("join():", arr4.join());
+console.log("join('-'):", arr4.join("-"));

@@ -26,3 +26,15 @@ if(code >= 48 && code <= 57) {
 } else {
     console.log("It is not a digit");
 }
+
+
+let source = "let x = 10;";
+let tokens = [];
+let start = 0; 
+let current = 0;
+
+while (current < 3) { current = current + 1;}
+
+let word = source.slice(start,current);
+tokens.push(word);
+console.log("Found token:", tokens[0]);

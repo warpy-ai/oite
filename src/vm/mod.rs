@@ -274,10 +274,9 @@ impl VM {
                                         props.get(&name).cloned().unwrap_or(JsValue::Undefined);
                                     self.stack.push(val);
                                 }
-                                HeapData::Array(_) => {
+                                HeapData::Array(arr) => {
                                     if name == "length" {
-                                        // TODO: array.length
-                                        self.stack.push(JsValue::Undefined);
+                                        self.stack.push(JsValue::Number(arr.len() as f64));
                                     } else {
                                         self.stack.push(JsValue::Undefined);
                                     }
@@ -739,6 +738,7 @@ impl VM {
                 let reciever = self.stack.pop().expect("Missing reciever");
 
                 match reciever {
+                    // -- String methods --
                     JsValue::String(s) => match name.as_str() {
                         "charCodeAt" => {
                             let idx_val = self.stack.pop().unwrap_or(JsValue::Number(0.0));
@@ -763,6 +763,67 @@ impl VM {
                             self.ip += 1;
                             return ExecResult::Continue;
                         }
+                        "slice" => {
+                            // slice(start, end?) - end is optional, defaults to string length
+                            // Arguments are on stack in reverse order (last arg on top)
+                            let end = if arg_count > 1 {
+                                self.stack
+                                    .pop()
+                                    .and_then(|v| match v {
+                                        JsValue::Number(n) => {
+                                            // Handle negative indices: count from end
+                                            let char_count = s.chars().count();
+                                            if n < 0.0 {
+                                                Some((char_count as f64 + n) as usize)
+                                            } else {
+                                                Some(n as usize)
+                                            }
+                                        }
+                                        _ => None,
+                                    })
+                                    .unwrap_or(s.chars().count())
+                            } else {
+                                s.chars().count()
+                            };
+                            let start = self
+                                .stack
+                                .pop()
+                                .and_then(|v| match v {
+                                    JsValue::Number(n) => {
+                                        // Handle negative indices: count from end
+                                        let char_count = s.chars().count();
+                                        if n < 0.0 {
+                                            Some((char_count as f64 + n) as usize)
+                                        } else {
+                                            Some(n as usize)
+                                        }
+                                    }
+                                    _ => None,
+                                })
+                                .unwrap_or(0);
+
+                            // Clamp indices to valid range
+                            let char_count = s.chars().count();
+                            let start = start.min(char_count);
+                            let end = end.min(char_count).max(start);
+
+                            // Extract substring by character position
+                            let result: String = s
+                                .chars()
+                                .enumerate()
+                                .filter_map(|(i, ch)| {
+                                    if i >= start && i < end {
+                                        Some(ch)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+
+                            self.stack.push(JsValue::String(result));
+                            self.ip += 1;
+                            return ExecResult::Continue;
+                        }
                         _ => {
                             self.stack.push(JsValue::Undefined);
                             self.ip += 1;
@@ -770,7 +831,193 @@ impl VM {
                         }
                     },
                     JsValue::Object(ptr) => {
-                        // Lookup the method in the object
+                        // Check if this is an array and handle array methods
+                        if let Some(HeapObject {
+                            data: HeapData::Array(arr),
+                        }) = self.heap.get_mut(ptr)
+                        {
+                            match name.as_str() {
+                                // Mutable methods
+                                "push" => {
+                                    // Collect all arguments
+                                    let mut args = Vec::with_capacity(arg_count);
+                                    for _ in 0..arg_count {
+                                        args.push(self.stack.pop().expect("Missing argument"));
+                                    }
+                                    args.reverse();
+                                    // Push all arguments to the array
+                                    for arg in args {
+                                        arr.push(arg);
+                                    }
+                                    // Return the new length
+                                    self.stack.push(JsValue::Number(arr.len() as f64));
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                "pop" => {
+                                    let result = arr.pop().unwrap_or(JsValue::Undefined);
+                                    self.stack.push(result);
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                "shift" => {
+                                    let result = if arr.is_empty() {
+                                        JsValue::Undefined
+                                    } else {
+                                        arr.remove(0)
+                                    };
+                                    self.stack.push(result);
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                "unshift" => {
+                                    // Collect all arguments
+                                    let mut args = Vec::with_capacity(arg_count);
+                                    for _ in 0..arg_count {
+                                        args.push(self.stack.pop().expect("Missing argument"));
+                                    }
+                                    args.reverse();
+                                    // Insert at the beginning (reverse order to maintain argument order)
+                                    for arg in args.into_iter().rev() {
+                                        arr.insert(0, arg);
+                                    }
+                                    // Return the new length
+                                    self.stack.push(JsValue::Number(arr.len() as f64));
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                "splice" => {
+                                    // splice(start, deleteCount, ...items)
+                                    // Collect arguments
+                                    let mut args = Vec::with_capacity(arg_count);
+                                    for _ in 0..arg_count {
+                                        args.push(self.stack.pop().expect("Missing argument"));
+                                    }
+                                    args.reverse();
+
+                                    let start = args
+                                        .first()
+                                        .and_then(|v| match v {
+                                            JsValue::Number(n) => Some(*n as usize),
+                                            _ => None,
+                                        })
+                                        .unwrap_or(0);
+                                    let delete_count = args
+                                        .get(1)
+                                        .and_then(|v| match v {
+                                            JsValue::Number(n) => Some(*n as usize),
+                                            _ => None,
+                                        })
+                                        .unwrap_or(0);
+                                    let items_to_insert: Vec<JsValue> =
+                                        args.into_iter().skip(2).collect();
+
+                                    // Create result array with deleted elements
+                                    let deleted: Vec<JsValue> = if start < arr.len() {
+                                        let end = (start + delete_count).min(arr.len());
+                                        arr.drain(start..end).collect()
+                                    } else {
+                                        Vec::new()
+                                    };
+
+                                    // Insert new items at start position
+                                    for (i, item) in items_to_insert.into_iter().enumerate() {
+                                        arr.insert(start + i, item);
+                                    }
+
+                                    // Return array of deleted elements
+                                    let deleted_ptr = self.heap.len();
+                                    self.heap.push(HeapObject {
+                                        data: HeapData::Array(deleted),
+                                    });
+                                    self.stack.push(JsValue::Object(deleted_ptr));
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                // Read-only methods
+                                "length" => {
+                                    self.stack.push(JsValue::Number(arr.len() as f64));
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                "indexOf" => {
+                                    // indexOf takes 1-2 arguments: (searchElement, fromIndex?)
+                                    // Arguments are on stack in reverse order (last arg on top)
+                                    let from_index = if arg_count > 1 {
+                                        self.stack
+                                            .pop()
+                                            .and_then(|v| match v {
+                                                JsValue::Number(n) => Some(n as usize),
+                                                _ => None,
+                                            })
+                                            .unwrap_or(0)
+                                    } else {
+                                        0
+                                    };
+                                    let search_value =
+                                        self.stack.pop().expect("Missing argument for indexOf");
+
+                                    let result = arr
+                                        .iter()
+                                        .enumerate()
+                                        .skip(from_index)
+                                        .find(|(_, val)| **val == search_value)
+                                        .map(|(i, _)| i as f64)
+                                        .unwrap_or(-1.0);
+
+                                    self.stack.push(JsValue::Number(result));
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                "includes" => {
+                                    // includes takes 1 argument: searchElement
+                                    let search_value =
+                                        self.stack.pop().expect("Missing argument for includes");
+                                    let found = arr.contains(&search_value);
+                                    self.stack.push(JsValue::Boolean(found));
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                "join" => {
+                                    // join takes 0-1 arguments: (separator?)
+                                    // If no argument, separator defaults to ","
+                                    let separator = if arg_count > 0 {
+                                        self.stack
+                                            .pop()
+                                            .map(|v| match v {
+                                                JsValue::String(s) => s,
+                                                JsValue::Undefined => ",".to_string(),
+                                                _ => ",".to_string(),
+                                            })
+                                            .unwrap_or_else(|| ",".to_string())
+                                    } else {
+                                        ",".to_string()
+                                    };
+
+                                    let result = arr
+                                        .iter()
+                                        .map(|v| match v {
+                                            JsValue::String(s) => s.clone(),
+                                            JsValue::Number(n) => n.to_string(),
+                                            JsValue::Boolean(b) => b.to_string(),
+                                            JsValue::Null => "null".to_string(),
+                                            JsValue::Undefined => "undefined".to_string(),
+                                            _ => "".to_string(),
+                                        })
+                                        .collect::<Vec<String>>()
+                                        .join(&separator);
+
+                                    self.stack.push(JsValue::String(result));
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                _ => {
+                                    // Not an array method, fall through to object method lookup
+                                }
+                            }
+                        }
+
+                        // Lookup the method in the object (for non-array methods or if not an array)
                         let method = if let Some(HeapObject {
                             data: HeapData::Object(props),
                         }) = self.heap.get(ptr)
