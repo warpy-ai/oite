@@ -163,6 +163,11 @@ impl VM {
                     let v = self.stack.pop().unwrap_or(JsValue::Undefined);
                     println!("➜ {:?}", v);
                 }
+                OpCode::Pop => {
+                    // Discard the top-of-stack value (expression statement semantics).
+                    // Safe if empty to avoid panics from imperfect codegen.
+                    let _ = self.stack.pop();
+                }
                 OpCode::Jump(address) => {
                     self.ip = *address;
                     continue;
@@ -227,7 +232,7 @@ impl VM {
                     // Pre-allocate with Undefined to mimic JS behavior
                     let elements = vec![JsValue::Undefined; *size];
                     self.heap.push(HeapObject {
-                        data: HeapData::Object(HashMap::new()),
+                        data: HeapData::Array(elements),
                     });
                     self.stack.push(JsValue::Object(ptr));
                 }

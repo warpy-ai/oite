@@ -84,7 +84,7 @@ impl Codegen {
                     }
                 }
                 let stmts = &fn_decl.function.body.as_ref().unwrap().stmts;
-                for (i, s) in stmts.iter().enumerate() {
+                for s in stmts {
                     self.gen_stmt(s);
 
                     // If this is the last statement and it's an expression (like a + b),
@@ -106,9 +106,11 @@ impl Codegen {
             }
             Stmt::Expr(expr_stmt) => {
                 self.gen_expr(&expr_stmt.expr);
-                // Only print if we're not inside a function (return value should stay on stack)
+                // Expression statements (e.g. `foo();`) should discard their result in JS.
+                // Keep values on the stack only when inside a function, since the last
+                // expression can become the implicit return value in our VM.
                 if !self.in_function {
-                    self.instructions.push(OpCode::Print);
+                    self.instructions.push(OpCode::Pop);
                 }
             }
             // Inside gen_stmt match block

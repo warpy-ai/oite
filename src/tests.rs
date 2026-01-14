@@ -24,8 +24,9 @@ fn parse_js(code: &str) -> swc_ecma_ast::Module {
 fn test_borrow_checker_prevents_double_use() {
     let mut bc = BorrowChecker::new();
 
-    // JS: let a = 10; a; a;
-    let ast = parse_js("let a = 10; a; a;");
+    // Primitives are Copy in this borrow checker; use a heap value to validate move semantics.
+    // JS: let a = { x: 10 }; a; a;
+    let ast = parse_js("let a = { x: 10 }; a; a;");
 
     let mut results = Vec::new();
     for item in &ast.body {
@@ -42,7 +43,7 @@ fn test_borrow_checker_prevents_double_use() {
     assert!(results[2].is_err());
     assert_eq!(
         results[2].clone().unwrap_err(),
-        "Ownership Error: Variable 'a' was moved or is undefined"
+        "BORROW ERROR: Use of moved variable 'a'"
     );
 }
 
@@ -208,8 +209,8 @@ fn test_function_execution_with_object_args() {
 
 #[test]
 fn test_throw_error_borrow_check() {
-    let mut vm = VM::new();
-    let code = "let user = { a: 1 };
+    let _vm = VM::new();
+    let _code = "let user = { a: 1 };
 let admin = user;  // 'user' moves to 'admin'
 let x = user.a;    // THIS SHOULD THROW AN ERROR";
 }
