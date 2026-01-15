@@ -620,6 +620,9 @@ impl Codegen {
                 self.instructions
                     .push(OpCode::Push(JsValue::Boolean(b.value)));
             }
+            Expr::Lit(Lit::Null(_)) => {
+                self.instructions.push(OpCode::Push(JsValue::Null));
+            }
             Expr::Ident(id) => {
                 self.instructions.push(OpCode::Load(id.sym.to_string()));
             }
@@ -643,6 +646,14 @@ impl Codegen {
                     BinaryOp::LogicalAnd => self.instructions.push(OpCode::And),
                     BinaryOp::LogicalOr => self.instructions.push(OpCode::Or),
                     _ => println!("Warning: Operator {:?} not supported", bin.op),
+                }
+            }
+            Expr::Unary(unary) => {
+                self.gen_expr(&unary.arg);
+                match unary.op {
+                    UnaryOp::Bang => self.instructions.push(OpCode::Not),
+                    UnaryOp::Minus => self.instructions.push(OpCode::Neg),
+                    _ => println!("Warning: Unary operator {:?} not supported", unary.op),
                 }
             }
             Expr::Array(arr_lit) => {

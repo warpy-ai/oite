@@ -1,0 +1,850 @@
+// ============================================================================
+// Bootstrap Compiler - Main Entry Point
+// Combines lexer + parser for testing
+// ============================================================================
+
+const fs = require("fs");
+
+// ============================================================================
+// Inline Lexer (copy from lexer.tscl for now - later we'll have imports)
+// ============================================================================
+
+let keywords = ["let", "const", "function", "if", "else", "while", "return", "true", "false", "null", "new", "this", "break", "continue"];
+let twoCharOps = ["==", "!=", "<=", ">=", "&&", "||", "=>"];
+let singleCharOps = ["+", "-", "*", "/", "%", "=", "<", ">", "!"];
+let delimiters = ["(", ")", "{", "}", "[", "]", ";", ",", ":", "."];
+
+function isAlpha(code) {
+    if (code >= 97 && code <= 122) { return true; }
+    if (code >= 65 && code <= 90) { return true; }
+    if (code == 95) { return true; }
+    return false;
+}
+
+function isDigit(code) {
+    return code >= 48 && code <= 57;
+}
+
+function isAlphaNumeric(code) {
+    return isAlpha(code) || isDigit(code);
+}
+
+function isWhitespace(code) {
+    return code == 32 || code == 9 || code == 10 || code == 13;
+}
+
+function createLexer(source) {
+    return { source: source, pos: 0, line: 1, col: 1, tokens: [] };
+}
+
+function lexerPeek(lexer) {
+    if (lexer.pos >= lexer.source.length) { return -1; }
+    return lexer.source.charCodeAt(lexer.pos);
+}
+
+function lexerPeekNext(lexer) {
+    if (lexer.pos + 1 >= lexer.source.length) { return -1; }
+    return lexer.source.charCodeAt(lexer.pos + 1);
+}
+
+function lexerAdvance(lexer) {
+    let code = lexerPeek(lexer);
+    lexer.pos = lexer.pos + 1;
+    if (code == 10) {
+        lexer.line = lexer.line + 1;
+        lexer.col = 1;
+    } else {
+        lexer.col = lexer.col + 1;
+    }
+    return code;
+}
+
+function makeToken(type, value, line, col) {
+    return { type: type, value: value, line: line, col: col };
+}
+
+function skipWhitespace(lexer) {
+    while (lexer.pos < lexer.source.length) {
+        let code = lexerPeek(lexer);
+        if (isWhitespace(code)) {
+            lexerAdvance(lexer);
+            continue;
+        }
+        if (code == 47) {
+            let nextCode = lexerPeekNext(lexer);
+            if (nextCode == 47) {
+                lexerAdvance(lexer);
+                lexerAdvance(lexer);
+                while (lexer.pos < lexer.source.length) {
+                    if (lexerPeek(lexer) == 10) {
+                        lexerAdvance(lexer);
+                        break;
+                    }
+                    lexerAdvance(lexer);
+                }
+                continue;
+            }
+        }
+        return;
+    }
+}
+
+function scanIdentifier(lexer) {
+    let startLine = lexer.line;
+    let startCol = lexer.col;
+    let start = lexer.pos;
+    while (lexer.pos < lexer.source.length && isAlphaNumeric(lexerPeek(lexer))) {
+        lexerAdvance(lexer);
+    }
+    let value = lexer.source.slice(start, lexer.pos);
+    let type = "identifier";
+    let i = 0;
+    while (i < keywords.length) {
+        if (keywords[i] == value) { type = "keyword"; }
+        i = i + 1;
+    }
+    return makeToken(type, value, startLine, startCol);
+}
+
+function scanNumber(lexer) {
+    let startLine = lexer.line;
+    let startCol = lexer.col;
+    let start = lexer.pos;
+    while (lexer.pos < lexer.source.length && isDigit(lexerPeek(lexer))) {
+        lexerAdvance(lexer);
+    }
+    if (lexerPeek(lexer) == 46 && isDigit(lexerPeekNext(lexer))) {
+        lexerAdvance(lexer);
+        while (lexer.pos < lexer.source.length && isDigit(lexerPeek(lexer))) {
+            lexerAdvance(lexer);
+        }
+    }
+    let value = lexer.source.slice(start, lexer.pos);
+    return makeToken("number", value, startLine, startCol);
+}
+
+function scanString(lexer) {
+    let startLine = lexer.line;
+    let startCol = lexer.col;
+    let quote = lexerPeek(lexer);
+    lexerAdvance(lexer);
+    let value = "";
+    while (lexer.pos < lexer.source.length) {
+        let code = lexerPeek(lexer);
+        if (code == quote) {
+            lexerAdvance(lexer);
+            return makeToken("string", value, startLine, startCol);
+        }
+        if (code == 92) {
+            lexerAdvance(lexer);
+            let nextCode = lexerPeek(lexer);
+            if (nextCode == 110) { value = value + "\n"; }
+            else if (nextCode == 116) { value = value + "\t"; }
+            else if (nextCode == 34) { value = value + "\""; }
+            else if (nextCode == 39) { value = value + "'"; }
+            else if (nextCode == 92) { value = value + "\\"; }
+            else if (nextCode != -1) { value = value + lexer.source.slice(lexer.pos, lexer.pos + 1); }
+            lexerAdvance(lexer);
+        } else if (code == 10) {
+            return makeToken("error", "Unterminated string", startLine, startCol);
+        } else {
+            value = value + lexer.source.slice(lexer.pos, lexer.pos + 1);
+            lexerAdvance(lexer);
+        }
+    }
+    return makeToken("error", "Unterminated string", startLine, startCol);
+}
+
+function arrayIncludes(arr, item) {
+    let i = 0;
+    while (i < arr.length) {
+        if (arr[i] == item) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function scanOperatorOrDelimiter(lexer) {
+    let startLine = lexer.line;
+    let startCol = lexer.col;
+    if (lexer.pos >= lexer.source.length) {
+        return makeToken("error", "Unexpected end", startLine, startCol);
+    }
+    let char = lexer.source.slice(lexer.pos, lexer.pos + 1);
+    if (lexer.pos + 1 < lexer.source.length) {
+        let twoChar = lexer.source.slice(lexer.pos, lexer.pos + 2);
+        if (arrayIncludes(twoCharOps, twoChar)) {
+            lexerAdvance(lexer);
+            lexerAdvance(lexer);
+            return makeToken("operator", twoChar, startLine, startCol);
+        }
+    }
+    if (arrayIncludes(singleCharOps, char)) {
+        lexerAdvance(lexer);
+        return makeToken("operator", char, startLine, startCol);
+    }
+    if (arrayIncludes(delimiters, char)) {
+        lexerAdvance(lexer);
+        return makeToken("delimiter", char, startLine, startCol);
+    }
+    lexerAdvance(lexer);
+    return makeToken("error", "Unknown: " + char, startLine, startCol);
+}
+
+function tokenize(source) {
+    let lexer = createLexer(source);
+    while (lexer.pos < lexer.source.length) {
+        skipWhitespace(lexer);
+        if (lexer.pos >= lexer.source.length) { break; }
+        let code = lexerPeek(lexer);
+        if (code == -1) { break; }
+        let token = null;
+        if (isAlpha(code)) {
+            token = scanIdentifier(lexer);
+        } else if (isDigit(code)) {
+            token = scanNumber(lexer);
+        } else if (code == 34 || code == 39) {
+            token = scanString(lexer);
+        } else {
+            token = scanOperatorOrDelimiter(lexer);
+        }
+        lexer.tokens.push(token);
+    }
+    lexer.tokens.push(makeToken("eof", "", lexer.line, lexer.col));
+    return lexer.tokens;
+}
+
+// ============================================================================
+// Inline Parser (copy from parser.tscl)
+// ============================================================================
+
+function Program(body) { this.type = "Program"; this.body = body; }
+function VariableDeclaration(kind, name, init) { this.type = "VariableDeclaration"; this.kind = kind; this.name = name; this.init = init; }
+function FunctionDeclaration(name, params, body) { this.type = "FunctionDeclaration"; this.name = name; this.params = params; this.body = body; }
+function ReturnStatement(argument) { this.type = "ReturnStatement"; this.argument = argument; }
+function IfStatement(test, consequent, alternate) { this.type = "IfStatement"; this.test = test; this.consequent = consequent; this.alternate = alternate; }
+function WhileStatement(test, body) { this.type = "WhileStatement"; this.test = test; this.body = body; }
+function BlockStatement(body) { this.type = "BlockStatement"; this.body = body; }
+function ExpressionStatement(expression) { this.type = "ExpressionStatement"; this.expression = expression; }
+function BinaryExpression(operator, left, right) { this.type = "BinaryExpression"; this.operator = operator; this.left = left; this.right = right; }
+function UnaryExpression(operator, argument) { this.type = "UnaryExpression"; this.operator = operator; this.argument = argument; }
+function AssignmentExpression(operator, left, right) { this.type = "AssignmentExpression"; this.operator = operator; this.left = left; this.right = right; }
+function CallExpression(callee, arguments) { this.type = "CallExpression"; this.callee = callee; this.arguments = arguments; }
+function MemberExpression(object, property, computed) { this.type = "MemberExpression"; this.object = object; this.property = property; this.computed = computed; }
+function Identifier(name) { this.type = "Identifier"; this.name = name; }
+function Literal(value, raw) { this.type = "Literal"; this.value = value; this.raw = raw; }
+function ArrayExpression(elements) { this.type = "ArrayExpression"; this.elements = elements; }
+function ObjectExpression(properties) { this.type = "ObjectExpression"; this.properties = properties; }
+function Property(key, value) { this.type = "Property"; this.key = key; this.value = value; }
+function NewExpression(callee, arguments) { this.type = "NewExpression"; this.callee = callee; this.arguments = arguments; }
+function ThisExpression() { this.type = "ThisExpression"; }
+function ArrowFunctionExpression(params, body) { this.type = "ArrowFunctionExpression"; this.params = params; this.body = body; }
+function BreakStatement() { this.type = "BreakStatement"; }
+function ContinueStatement() { this.type = "ContinueStatement"; }
+
+function createParser(tokens) { return { tokens: tokens, pos: 0 }; }
+
+function parserPeek(parser) {
+    if (parser.pos >= parser.tokens.length) { return null; }
+    return parser.tokens[parser.pos];
+}
+
+function peekType(parser) {
+    let tok = parserPeek(parser);
+    if (tok == null) { return "eof"; }
+    return tok.type;
+}
+
+function peekValue(parser) {
+    let tok = parserPeek(parser);
+    if (tok == null) { return ""; }
+    return tok.value;
+}
+
+function parserAdvance(parser) {
+    let tok = parserPeek(parser);
+    parser.pos = parser.pos + 1;
+    return tok;
+}
+
+function check(parser, type, value) {
+    let tok = parserPeek(parser);
+    if (tok == null) {
+        console.log("check: tok is null");
+        return false;
+    }
+    console.log("check: tok.type=", tok.type, "type=", type, "typeEq=", tok.type == type);
+    if (tok.type != type) {
+        console.log("check: type mismatch");
+        return false;
+    }
+    if (value != "") {
+        console.log("check: tok.value=", tok.value, "value=", value, "valueEq=", tok.value == value);
+        if (tok.value != value) {
+            console.log("check: value mismatch");
+            return false;
+        }
+    }
+    console.log("check: returning true");
+    return true;
+}
+
+function match(parser, type, value) {
+    if (check(parser, type, value)) {
+        parserAdvance(parser);
+        return true;
+    }
+    return false;
+}
+
+function expect(parser, type, value) {
+    if (check(parser, type, value)) { return parserAdvance(parser); }
+    let tok = parserPeek(parser);
+    let tokVal = "";
+    let tokType = "eof";
+    if (tok != null) { tokVal = tok.value; tokType = tok.type; }
+    console.log("Parse error: expected", type, value, "but got", tokType, tokVal);
+    return null;
+}
+
+function isAtEnd(parser) { return peekType(parser) == "eof"; }
+
+function parseProgram(parser) {
+    let body = [];
+    while (!isAtEnd(parser)) {
+        let stmt = parseStatement(parser);
+        if (stmt != null) { body.push(stmt); }
+    }
+    return new Program(body);
+}
+
+function parseStatement(parser) {
+    // Use nested ifs instead of || since VM doesn't short-circuit
+    let tok = parserPeek(parser);
+    console.log("parseStatement: tok=", tok.type, tok.value);
+    let isLet = check(parser, "keyword", "let");
+    console.log("parseStatement: isLet=", isLet);
+    if (isLet) {
+        return parseVariableDeclaration(parser);
+    }
+    if (check(parser, "keyword", "const")) {
+        return parseVariableDeclaration(parser);
+    }
+    if (check(parser, "keyword", "function")) { return parseFunctionDeclaration(parser); }
+    if (check(parser, "keyword", "return")) { return parseReturnStatement(parser); }
+    if (check(parser, "keyword", "if")) { return parseIfStatement(parser); }
+    if (check(parser, "keyword", "while")) { return parseWhileStatement(parser); }
+    if (check(parser, "keyword", "break")) {
+        parserAdvance(parser);
+        match(parser, "delimiter", ";");
+        return new BreakStatement();
+    }
+    if (check(parser, "keyword", "continue")) {
+        parserAdvance(parser);
+        match(parser, "delimiter", ";");
+        return new ContinueStatement();
+    }
+    if (check(parser, "delimiter", "{")) { return parseBlockStatement(parser); }
+    return parseExpressionStatement(parser);
+}
+
+function parseVariableDeclaration(parser) {
+    let kindTok = parserAdvance(parser);
+    let kind = kindTok.value;
+    let nameTok = expect(parser, "identifier", "");
+    if (nameTok == null) { return null; }
+    let name = nameTok.value;
+    let init = null;
+    if (match(parser, "operator", "=")) { init = parseExpression(parser); }
+    match(parser, "delimiter", ";");
+    return new VariableDeclaration(kind, name, init);
+}
+
+function parseFunctionDeclaration(parser) {
+    expect(parser, "keyword", "function");
+    let nameTok = expect(parser, "identifier", "");
+    if (nameTok == null) { return null; }
+    let name = nameTok.value;
+    expect(parser, "delimiter", "(");
+    let params = parseParameterList(parser);
+    expect(parser, "delimiter", ")");
+    let body = parseBlockStatement(parser);
+    return new FunctionDeclaration(name, params, body);
+}
+
+function parseParameterList(parser) {
+    let params = [];
+    if (!check(parser, "delimiter", ")")) {
+        let firstParam = expect(parser, "identifier", "");
+        if (firstParam != null) { params.push(firstParam.value); }
+        while (match(parser, "delimiter", ",")) {
+            let param = expect(parser, "identifier", "");
+            if (param != null) { params.push(param.value); }
+        }
+    }
+    return params;
+}
+
+function parseReturnStatement(parser) {
+    expect(parser, "keyword", "return");
+    let argument = null;
+    if (!check(parser, "delimiter", ";") && !check(parser, "delimiter", "}")) {
+        argument = parseExpression(parser);
+    }
+    match(parser, "delimiter", ";");
+    return new ReturnStatement(argument);
+}
+
+function parseIfStatement(parser) {
+    expect(parser, "keyword", "if");
+    expect(parser, "delimiter", "(");
+    let test = parseExpression(parser);
+    expect(parser, "delimiter", ")");
+    let consequent = parseStatement(parser);
+    let alternate = null;
+    if (match(parser, "keyword", "else")) { alternate = parseStatement(parser); }
+    return new IfStatement(test, consequent, alternate);
+}
+
+function parseWhileStatement(parser) {
+    expect(parser, "keyword", "while");
+    expect(parser, "delimiter", "(");
+    let test = parseExpression(parser);
+    expect(parser, "delimiter", ")");
+    let body = parseStatement(parser);
+    return new WhileStatement(test, body);
+}
+
+function parseBlockStatement(parser) {
+    expect(parser, "delimiter", "{");
+    let body = [];
+    while (!check(parser, "delimiter", "}") && !isAtEnd(parser)) {
+        let stmt = parseStatement(parser);
+        if (stmt != null) { body.push(stmt); }
+    }
+    expect(parser, "delimiter", "}");
+    return new BlockStatement(body);
+}
+
+function parseExpressionStatement(parser) {
+    let expr = parseExpression(parser);
+    match(parser, "delimiter", ";");
+    return new ExpressionStatement(expr);
+}
+
+function parseExpression(parser) { return parseAssignment(parser); }
+
+function parseAssignment(parser) {
+    let left = parseLogicalOr(parser);
+    if (check(parser, "operator", "=")) {
+        parserAdvance(parser);
+        let right = parseAssignment(parser);
+        return new AssignmentExpression("=", left, right);
+    }
+    return left;
+}
+
+function parseLogicalOr(parser) {
+    let left = parseLogicalAnd(parser);
+    while (check(parser, "operator", "||")) {
+        let op = parserAdvance(parser).value;
+        let right = parseLogicalAnd(parser);
+        left = new BinaryExpression(op, left, right);
+    }
+    return left;
+}
+
+function parseLogicalAnd(parser) {
+    let left = parseEquality(parser);
+    while (check(parser, "operator", "&&")) {
+        let op = parserAdvance(parser).value;
+        let right = parseEquality(parser);
+        left = new BinaryExpression(op, left, right);
+    }
+    return left;
+}
+
+function parseEquality(parser) {
+    let left = parseComparison(parser);
+    while (check(parser, "operator", "==") || check(parser, "operator", "!=")) {
+        let op = parserAdvance(parser).value;
+        let right = parseComparison(parser);
+        left = new BinaryExpression(op, left, right);
+    }
+    return left;
+}
+
+function parseComparison(parser) {
+    let left = parseAdditive(parser);
+    while (check(parser, "operator", "<") || check(parser, "operator", ">") ||
+           check(parser, "operator", "<=") || check(parser, "operator", ">=")) {
+        let op = parserAdvance(parser).value;
+        let right = parseAdditive(parser);
+        left = new BinaryExpression(op, left, right);
+    }
+    return left;
+}
+
+function parseAdditive(parser) {
+    let left = parseMultiplicative(parser);
+    while (check(parser, "operator", "+") || check(parser, "operator", "-")) {
+        let op = parserAdvance(parser).value;
+        let right = parseMultiplicative(parser);
+        left = new BinaryExpression(op, left, right);
+    }
+    return left;
+}
+
+function parseMultiplicative(parser) {
+    let left = parseUnary(parser);
+    while (check(parser, "operator", "*") || check(parser, "operator", "/") ||
+           check(parser, "operator", "%")) {
+        let op = parserAdvance(parser).value;
+        let right = parseUnary(parser);
+        left = new BinaryExpression(op, left, right);
+    }
+    return left;
+}
+
+function parseUnary(parser) {
+    if (check(parser, "operator", "!") || check(parser, "operator", "-")) {
+        let op = parserAdvance(parser).value;
+        let argument = parseUnary(parser);
+        return new UnaryExpression(op, argument);
+    }
+    return parseCallMember(parser);
+}
+
+function parseCallMember(parser) {
+    let expr = parsePrimary(parser);
+    while (true) {
+        if (check(parser, "delimiter", "(")) {
+            parserAdvance(parser);
+            let args = parseArgumentList(parser);
+            expect(parser, "delimiter", ")");
+            expr = new CallExpression(expr, args);
+        } else if (check(parser, "delimiter", ".")) {
+            parserAdvance(parser);
+            let propTok = expect(parser, "identifier", "");
+            if (propTok != null) {
+                let prop = new Identifier(propTok.value);
+                expr = new MemberExpression(expr, prop, false);
+            }
+        } else if (check(parser, "delimiter", "[")) {
+            parserAdvance(parser);
+            let prop = parseExpression(parser);
+            expect(parser, "delimiter", "]");
+            expr = new MemberExpression(expr, prop, true);
+        } else {
+            break;
+        }
+    }
+    return expr;
+}
+
+function parseArgumentList(parser) {
+    let args = [];
+    if (!check(parser, "delimiter", ")")) {
+        args.push(parseExpression(parser));
+        while (match(parser, "delimiter", ",")) {
+            args.push(parseExpression(parser));
+        }
+    }
+    return args;
+}
+
+function parsePrimary(parser) {
+    if (check(parser, "keyword", "new")) { return parseNewExpression(parser); }
+    if (check(parser, "keyword", "this")) { parserAdvance(parser); return new ThisExpression(); }
+    if (check(parser, "keyword", "true")) { parserAdvance(parser); return new Literal(true, "true"); }
+    if (check(parser, "keyword", "false")) { parserAdvance(parser); return new Literal(false, "false"); }
+    if (check(parser, "keyword", "null")) { parserAdvance(parser); return new Literal(null, "null"); }
+
+    if (check(parser, "number", "")) {
+        let tok = parserAdvance(parser);
+        let numVal = parseFloat(tok.value);
+        return new Literal(numVal, tok.value);
+    }
+
+    if (check(parser, "string", "")) {
+        let tok = parserAdvance(parser);
+        return new Literal(tok.value, tok.value);
+    }
+
+    if (check(parser, "identifier", "")) {
+        let tok = parserAdvance(parser);
+        if (check(parser, "operator", "=>")) {
+            parserAdvance(parser);
+            let body = parseArrowBody(parser);
+            return new ArrowFunctionExpression([tok.value], body);
+        }
+        return new Identifier(tok.value);
+    }
+
+    if (check(parser, "delimiter", "(")) {
+        parserAdvance(parser);
+        if (check(parser, "delimiter", ")")) {
+            parserAdvance(parser);
+            if (check(parser, "operator", "=>")) {
+                parserAdvance(parser);
+                let body = parseArrowBody(parser);
+                return new ArrowFunctionExpression([], body);
+            }
+            console.log("Parse error: unexpected ()");
+            return null;
+        }
+        let first = parseExpression(parser);
+        if (check(parser, "delimiter", ",")) {
+            let params = [];
+            if (first.type == "Identifier") { params.push(first.name); }
+            while (match(parser, "delimiter", ",")) {
+                let paramTok = expect(parser, "identifier", "");
+                if (paramTok != null) { params.push(paramTok.value); }
+            }
+            expect(parser, "delimiter", ")");
+            expect(parser, "operator", "=>");
+            let body = parseArrowBody(parser);
+            return new ArrowFunctionExpression(params, body);
+        }
+        expect(parser, "delimiter", ")");
+        if (check(parser, "operator", "=>")) {
+            parserAdvance(parser);
+            let params = [];
+            if (first.type == "Identifier") { params.push(first.name); }
+            let body = parseArrowBody(parser);
+            return new ArrowFunctionExpression(params, body);
+        }
+        return first;
+    }
+
+    if (check(parser, "delimiter", "[")) { return parseArrayLiteral(parser); }
+    if (check(parser, "delimiter", "{")) { return parseObjectLiteral(parser); }
+    if (check(parser, "keyword", "function")) { return parseFunctionExpression(parser); }
+
+    console.log("Parse error: unexpected token", peekType(parser), peekValue(parser));
+    parserAdvance(parser);
+    return null;
+}
+
+function parseArrowBody(parser) {
+    if (check(parser, "delimiter", "{")) { return parseBlockStatement(parser); }
+    return parseExpression(parser);
+}
+
+function parseNewExpression(parser) {
+    expect(parser, "keyword", "new");
+    let callee = parsePrimary(parser);
+    while (check(parser, "delimiter", ".")) {
+        parserAdvance(parser);
+        let propTok = expect(parser, "identifier", "");
+        if (propTok != null) {
+            let prop = new Identifier(propTok.value);
+            callee = new MemberExpression(callee, prop, false);
+        }
+    }
+    let args = [];
+    if (check(parser, "delimiter", "(")) {
+        parserAdvance(parser);
+        args = parseArgumentList(parser);
+        expect(parser, "delimiter", ")");
+    }
+    return new NewExpression(callee, args);
+}
+
+function parseArrayLiteral(parser) {
+    expect(parser, "delimiter", "[");
+    let elements = [];
+    if (!check(parser, "delimiter", "]")) {
+        elements.push(parseExpression(parser));
+        while (match(parser, "delimiter", ",")) {
+            if (check(parser, "delimiter", "]")) { break; }
+            elements.push(parseExpression(parser));
+        }
+    }
+    expect(parser, "delimiter", "]");
+    return new ArrayExpression(elements);
+}
+
+function parseObjectLiteral(parser) {
+    expect(parser, "delimiter", "{");
+    let properties = [];
+    if (!check(parser, "delimiter", "}")) {
+        properties.push(parseProperty(parser));
+        while (match(parser, "delimiter", ",")) {
+            if (check(parser, "delimiter", "}")) { break; }
+            properties.push(parseProperty(parser));
+        }
+    }
+    expect(parser, "delimiter", "}");
+    return new ObjectExpression(properties);
+}
+
+function parseProperty(parser) {
+    let key = null;
+    if (check(parser, "identifier", "")) {
+        let tok = parserAdvance(parser);
+        key = new Identifier(tok.value);
+    } else if (check(parser, "string", "")) {
+        let tok = parserAdvance(parser);
+        key = new Literal(tok.value, tok.value);
+    } else {
+        console.log("Parse error: expected property key");
+        return null;
+    }
+    expect(parser, "delimiter", ":");
+    let value = parseExpression(parser);
+    return new Property(key, value);
+}
+
+function parseFunctionExpression(parser) {
+    expect(parser, "keyword", "function");
+    let name = null;
+    if (check(parser, "identifier", "")) { name = parserAdvance(parser).value; }
+    expect(parser, "delimiter", "(");
+    let params = parseParameterList(parser);
+    expect(parser, "delimiter", ")");
+    let body = parseBlockStatement(parser);
+    let fn = new FunctionDeclaration(name, params, body);
+    fn.type = "FunctionExpression";
+    return fn;
+}
+
+function parseFloat(str) {
+    let result = 0;
+    let decimal = false;
+    let decimalPlace = 0.1;
+    let negative = false;
+    let i = 0;
+    if (str.length > 0 && str.charCodeAt(0) == 45) {
+        negative = true;
+        i = 1;
+    }
+    while (i < str.length) {
+        let code = str.charCodeAt(i);
+        if (code == 46) {
+            decimal = true;
+        } else if (code >= 48 && code <= 57) {
+            let digit = code - 48;
+            if (decimal) {
+                result = result + digit * decimalPlace;
+                decimalPlace = decimalPlace * 0.1;
+            } else {
+                result = result * 10 + digit;
+            }
+        }
+        i = i + 1;
+    }
+    if (negative) { result = 0 - result; }
+    return result;
+}
+
+function parse(tokens) {
+    let parser = createParser(tokens);
+    return parseProgram(parser);
+}
+
+// ============================================================================
+// AST Printer
+// ============================================================================
+
+function printAST(node, indent) {
+    if (node == null) {
+        console.log(indent + "null");
+        return;
+    }
+    let next = indent + "  ";
+
+    if (node.type == "Program") {
+        console.log(indent + "Program");
+        let i = 0;
+        while (i < node.body.length) { printAST(node.body[i], next); i = i + 1; }
+    } else if (node.type == "VariableDeclaration") {
+        console.log(indent + "VarDecl", node.kind, node.name);
+        if (node.init != null) { printAST(node.init, next); }
+    } else if (node.type == "FunctionDeclaration" || node.type == "FunctionExpression") {
+        console.log(indent + node.type, node.name);
+        printAST(node.body, next);
+    } else if (node.type == "ReturnStatement") {
+        console.log(indent + "Return");
+        printAST(node.argument, next);
+    } else if (node.type == "IfStatement") {
+        console.log(indent + "If");
+        printAST(node.test, next);
+        printAST(node.consequent, next);
+        if (node.alternate != null) { printAST(node.alternate, next); }
+    } else if (node.type == "WhileStatement") {
+        console.log(indent + "While");
+        printAST(node.test, next);
+        printAST(node.body, next);
+    } else if (node.type == "BlockStatement") {
+        console.log(indent + "Block");
+        let i = 0;
+        while (i < node.body.length) { printAST(node.body[i], next); i = i + 1; }
+    } else if (node.type == "ExpressionStatement") {
+        console.log(indent + "ExprStmt");
+        printAST(node.expression, next);
+    } else if (node.type == "BinaryExpression") {
+        console.log(indent + "Binary", node.operator);
+        printAST(node.left, next);
+        printAST(node.right, next);
+    } else if (node.type == "UnaryExpression") {
+        console.log(indent + "Unary", node.operator);
+        printAST(node.argument, next);
+    } else if (node.type == "AssignmentExpression") {
+        console.log(indent + "Assign", node.operator);
+        printAST(node.left, next);
+        printAST(node.right, next);
+    } else if (node.type == "CallExpression") {
+        console.log(indent + "Call");
+        printAST(node.callee, next);
+        let i = 0;
+        while (i < node.arguments.length) { printAST(node.arguments[i], next); i = i + 1; }
+    } else if (node.type == "MemberExpression") {
+        console.log(indent + "Member", node.computed);
+        printAST(node.object, next);
+        printAST(node.property, next);
+    } else if (node.type == "Identifier") {
+        console.log(indent + "Ident", node.name);
+    } else if (node.type == "Literal") {
+        console.log(indent + "Literal", node.value);
+    } else if (node.type == "ArrayExpression") {
+        console.log(indent + "Array", node.elements.length);
+        let i = 0;
+        while (i < node.elements.length) { printAST(node.elements[i], next); i = i + 1; }
+    } else if (node.type == "ObjectExpression") {
+        console.log(indent + "Object", node.properties.length);
+    } else if (node.type == "NewExpression") {
+        console.log(indent + "New");
+        printAST(node.callee, next);
+    } else if (node.type == "ThisExpression") {
+        console.log(indent + "This");
+    } else if (node.type == "ArrowFunctionExpression") {
+        console.log(indent + "Arrow", node.params.length, "params");
+        printAST(node.body, next);
+    } else if (node.type == "BreakStatement") {
+        console.log(indent + "Break");
+    } else if (node.type == "ContinueStatement") {
+        console.log(indent + "Continue");
+    } else {
+        console.log(indent + "Unknown:", node.type);
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+console.log("=== Test 1: Variable Declaration ===");
+let test1 = "let x = 42;";
+let tokens1 = tokenize(test1);
+console.log("Tokens:");
+let ti = 0;
+while (ti < tokens1.length) {
+    let t = tokens1[ti];
+    console.log(ti, t.type, t.value);
+    ti = ti + 1;
+}
+console.log("Parsing...");
+let ast1 = parse(tokens1);
+console.log("Done parsing");
+printAST(ast1, "");

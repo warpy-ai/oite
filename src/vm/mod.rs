@@ -478,6 +478,26 @@ impl VM {
                 self.stack.push(JsValue::Boolean(a_truthy || b_truthy));
             }
 
+            OpCode::Not => {
+                let val = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let is_falsy = match val {
+                    JsValue::Boolean(b) => !b,
+                    JsValue::Number(n) => n == 0.0 || n.is_nan(),
+                    JsValue::Null | JsValue::Undefined => true,
+                    JsValue::String(ref s) => s.is_empty(),
+                    _ => false,
+                };
+                self.stack.push(JsValue::Boolean(is_falsy));
+            }
+
+            OpCode::Neg => {
+                let val = self.stack.pop().unwrap_or(JsValue::Undefined);
+                match val {
+                    JsValue::Number(n) => self.stack.push(JsValue::Number(-n)),
+                    _ => self.stack.push(JsValue::Number(f64::NAN)),
+                }
+            }
+
             OpCode::Sub => {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
                     (self.stack.pop(), self.stack.pop())
@@ -598,34 +618,32 @@ impl VM {
                 // If strictly equal, return false
                 if a == b {
                     self.stack.push(JsValue::Boolean(false));
-                    return ExecResult::Continue;
+                } else {
+                    // Otherwise, try type coercion
+                    let result = match (&a, &b) {
+                        // Number and String: convert string to number
+                        (JsValue::Number(n), JsValue::String(s))
+                        | (JsValue::String(s), JsValue::Number(n)) => s
+                            .parse::<f64>()
+                            .map(|parsed| (*n - parsed).abs() >= f64::EPSILON)
+                            .unwrap_or(true),
+                        // Boolean and Number coercion
+                        (JsValue::Boolean(true), JsValue::Number(n))
+                        | (JsValue::Number(n), JsValue::Boolean(true)) => {
+                            (*n - 1.0).abs() >= f64::EPSILON
+                        }
+                        (JsValue::Boolean(false), JsValue::Number(n))
+                        | (JsValue::Number(n), JsValue::Boolean(false)) => {
+                            (*n - 0.0).abs() >= f64::EPSILON
+                        }
+                        // Null and Undefined are equal to each other
+                        (JsValue::Null, JsValue::Undefined)
+                        | (JsValue::Undefined, JsValue::Null) => false,
+                        // Everything else: not equal
+                        _ => true,
+                    };
+                    self.stack.push(JsValue::Boolean(result));
                 }
-
-                // Otherwise, try type coercion
-                let result = match (&a, &b) {
-                    // Number and String: convert string to number
-                    (JsValue::Number(n), JsValue::String(s))
-                    | (JsValue::String(s), JsValue::Number(n)) => s
-                        .parse::<f64>()
-                        .map(|parsed| (*n - parsed).abs() >= f64::EPSILON)
-                        .unwrap_or(true),
-                    // Boolean and Number coercion
-                    (JsValue::Boolean(true), JsValue::Number(n))
-                    | (JsValue::Number(n), JsValue::Boolean(true)) => {
-                        (*n - 1.0).abs() >= f64::EPSILON
-                    }
-                    (JsValue::Boolean(false), JsValue::Number(n))
-                    | (JsValue::Number(n), JsValue::Boolean(false)) => {
-                        (*n - 0.0).abs() >= f64::EPSILON
-                    }
-                    // Null and Undefined are equal to each other
-                    (JsValue::Null, JsValue::Undefined) | (JsValue::Undefined, JsValue::Null) => {
-                        false
-                    }
-                    // Everything else: not equal
-                    _ => true,
-                };
-                self.stack.push(JsValue::Boolean(result));
             }
 
             OpCode::Lt => {

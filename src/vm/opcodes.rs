@@ -30,6 +30,8 @@ pub enum OpCode {
     Mod,  // %
     And,
     Or,              // ||
+    Not,             // ! (logical not)
+    Neg,             // - (unary negation)
     NewArray(usize), // Creates array of size N
     StoreElement,    // Pops index, value, and array_ptr -> arr[idx] = val
     LoadElement,     // Pops index and array_ptr -> pushes arr[idx]
