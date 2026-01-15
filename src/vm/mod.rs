@@ -524,37 +524,35 @@ impl VM {
                 let b = self.stack.pop().unwrap();
                 let a = self.stack.pop().unwrap();
 
-                // If strictly equal, return true
+                // If strictly equal, push true
                 if a == b {
                     self.stack.push(JsValue::Boolean(true));
-                    return ExecResult::Continue;
+                } else {
+                    // Otherwise, try type coercion
+                    let result = match (&a, &b) {
+                        // Number and String: convert string to number
+                        (JsValue::Number(n), JsValue::String(s))
+                        | (JsValue::String(s), JsValue::Number(n)) => s
+                            .parse::<f64>()
+                            .map(|parsed| (*n - parsed).abs() < f64::EPSILON)
+                            .unwrap_or(false),
+                        // Boolean and Number coercion
+                        (JsValue::Boolean(true), JsValue::Number(n))
+                        | (JsValue::Number(n), JsValue::Boolean(true)) => {
+                            (*n - 1.0).abs() < f64::EPSILON
+                        }
+                        (JsValue::Boolean(false), JsValue::Number(n))
+                        | (JsValue::Number(n), JsValue::Boolean(false)) => {
+                            (*n - 0.0).abs() < f64::EPSILON
+                        }
+                        // Null and Undefined are equal to each other
+                        (JsValue::Null, JsValue::Undefined)
+                        | (JsValue::Undefined, JsValue::Null) => true,
+                        // Everything else: not equal
+                        _ => false,
+                    };
+                    self.stack.push(JsValue::Boolean(result));
                 }
-
-                // Otherwise, try type coercion
-                let result = match (&a, &b) {
-                    // Number and String: convert string to number
-                    (JsValue::Number(n), JsValue::String(s))
-                    | (JsValue::String(s), JsValue::Number(n)) => s
-                        .parse::<f64>()
-                        .map(|parsed| (*n - parsed).abs() < f64::EPSILON)
-                        .unwrap_or(false),
-                    // Boolean and Number coercion
-                    (JsValue::Boolean(true), JsValue::Number(n))
-                    | (JsValue::Number(n), JsValue::Boolean(true)) => {
-                        (*n - 1.0).abs() < f64::EPSILON
-                    }
-                    (JsValue::Boolean(false), JsValue::Number(n))
-                    | (JsValue::Number(n), JsValue::Boolean(false)) => {
-                        (*n - 0.0).abs() < f64::EPSILON
-                    }
-                    // Null and Undefined are equal to each other
-                    (JsValue::Null, JsValue::Undefined) | (JsValue::Undefined, JsValue::Null) => {
-                        true
-                    }
-                    // Everything else: not equal
-                    _ => false,
-                };
-                self.stack.push(JsValue::Boolean(result));
             }
 
             OpCode::Ne => {
@@ -727,6 +725,53 @@ impl VM {
                     );
                 } else {
                     panic!("MakeClosure expects an Object pointer on stack");
+                }
+            }
+
+            OpCode::Construct(arg_count) => {
+                // Stack layout: [..., this_obj, this_obj_copy, arg1, arg2, ..., constructor]
+                let constructor = self.stack.pop().expect("Missing constructor");
+
+                // Pop arguments
+                let mut args = Vec::with_capacity(arg_count);
+                for _ in 0..arg_count {
+                    args.push(self.stack.pop().expect("Missing argument"));
+                }
+                args.reverse();
+
+                // Pop the `this` object (the duplicate copy we made)
+                let this_obj = self.stack.pop().expect("Missing this object");
+                // Note: The original object copy remains on stack for return value
+
+                match constructor {
+                    JsValue::Function { address, env } => {
+                        // Push args back for function prologue
+                        for arg in &args {
+                            self.stack.push(arg.clone());
+                        }
+
+                        // Create frame with `this` bound to the new object
+                        let mut frame = Frame {
+                            return_address: self.ip + 1,
+                            locals: HashMap::new(),
+                            this_context: this_obj,
+                        };
+
+                        // Load captured environment if present
+                        if let Some(HeapObject {
+                            data: HeapData::Object(props),
+                        }) = env.and_then(|ptr| self.heap.get(ptr))
+                        {
+                            for (name, value) in props {
+                                frame.locals.insert(name.clone(), value.clone());
+                            }
+                        }
+
+                        self.call_stack.push(frame);
+                        self.ip = address;
+                        return ExecResult::ContinueNoIpInc;
+                    }
+                    _ => panic!("Constructor is not a function"),
                 }
             }
 
@@ -1084,11 +1129,11 @@ impl VM {
                                 self.stack.push(arg.clone());
                             }
 
-                            // Create new frame
+                            // Create new frame with `this` bound to the receiver object
                             let mut frame = Frame {
                                 return_address: self.ip + 1,
                                 locals: HashMap::new(),
-                                this_context: JsValue::Undefined,
+                                this_context: JsValue::Object(ptr),
                             };
 
                             // Load captured variables from environment

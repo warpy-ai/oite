@@ -1,0 +1,5 @@
+function debugAST(node) {
+    constole.log("Node Type::", node.type);
+    if(node.left) debugAST(node.left);
+    if(node.right) debugAST(node.right);
+}

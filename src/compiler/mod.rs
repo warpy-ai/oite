@@ -343,13 +343,44 @@ impl Codegen {
                 }
             }
             Stmt::If(if_stmt) => {
+                // Compile the condition
                 self.gen_expr(&if_stmt.test);
-                let exit_jump_idx = self.instructions.len();
+
+                // Jump to else branch (or end) if condition is false
+                let else_jump_idx = self.instructions.len();
                 self.instructions.push(OpCode::JumpIfFalse(0)); // Placeholder
+
+                // Compile the if body
                 self.gen_stmt(&if_stmt.cons);
-                let if_end = self.instructions.len();
-                if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
-                    *addr = if_end;
+
+                // If there's an else branch, we need to jump over it after the if body
+                let has_else = if_stmt.alt.is_some();
+                let end_jump_idx = if has_else {
+                    Some(self.instructions.len())
+                } else {
+                    None
+                };
+                if has_else {
+                    self.instructions.push(OpCode::Jump(0)); // Placeholder - jump to end
+                }
+
+                // Backpatch the jump to else branch (or end if no else)
+                let else_start = self.instructions.len();
+                if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[else_jump_idx] {
+                    *addr = else_start;
+                }
+
+                // Compile the else branch if it exists
+                if let Some(alt) = &if_stmt.alt {
+                    self.gen_stmt(alt);
+                }
+
+                // Backpatch the jump over else branch (if it exists)
+                if let Some(end_idx) = end_jump_idx {
+                    let end_addr = self.instructions.len();
+                    if let OpCode::Jump(ref mut addr) = self.instructions[end_idx] {
+                        *addr = end_addr;
+                    }
                 }
             }
             _ => {}
@@ -636,13 +667,12 @@ impl Codegen {
             }
             // Inside gen_expr in compiler/mod.rs
             Expr::Assign(assign_expr) => {
-                // 1. Evaluate the right-hand side first
-                self.gen_expr(&assign_expr.right);
-
-                // 2. Extract the name from the left-hand side
+                // Handle different assignment targets
                 match &assign_expr.left {
-                    AssignTarget::Simple(simple) => {
-                        if let SimpleAssignTarget::Ident(binding_ident) = simple {
+                    AssignTarget::Simple(simple) => match simple {
+                        SimpleAssignTarget::Ident(binding_ident) => {
+                            // Simple variable assignment: x = value
+                            self.gen_expr(&assign_expr.right);
                             let name = binding_ident.id.sym.to_string();
                             // JS assignment expressions evaluate to the assigned value.
                             // Our `Store` opcode consumes the value, so `Dup` ensures one copy
@@ -650,7 +680,28 @@ impl Codegen {
                             self.instructions.push(OpCode::Dup);
                             self.instructions.push(OpCode::Store(name));
                         }
-                    }
+                        SimpleAssignTarget::Member(member_expr) => {
+                            // Member assignment: obj.prop = value or this.prop = value
+                            // Stack order for SetProp: [object, value] -> pops both, sets prop
+                            self.gen_expr(&member_expr.obj); // Push the object
+                            self.gen_expr(&assign_expr.right); // Push the value
+
+                            match &member_expr.prop {
+                                MemberProp::Ident(id) => {
+                                    // obj.prop = value
+                                    self.instructions.push(OpCode::SetProp(id.sym.to_string()));
+                                }
+                                MemberProp::Computed(computed) => {
+                                    // obj[key] = value - need StoreElement
+                                    // Stack: [obj, value, index]
+                                    self.gen_expr(&computed.expr); // Push the index
+                                    self.instructions.push(OpCode::StoreElement);
+                                }
+                                _ => println!("Warning: Private field assignment not supported."),
+                            }
+                        }
+                        _ => println!("Warning: Complex assignment target not supported."),
+                    },
                     _ => println!("Warning: Complex assignment targets not supported yet."),
                 }
             }
@@ -694,6 +745,33 @@ impl Codegen {
                         println!("Warning: Private class fields (#) are not yet supported.");
                     }
                 }
+            }
+            Expr::This(_) => {
+                self.instructions.push(OpCode::LoadThis);
+            }
+            Expr::New(new_expr) => {
+                // new Foo(arg1, arg2) compiles to:
+                // 1. Create new empty object that will be `this`
+                self.instructions.push(OpCode::NewObject);
+                self.instructions.push(OpCode::Dup); // Keep a copy for return value
+
+                // 2. Push arguments
+                let arg_count = new_expr.args.as_ref().map(|a| a.len()).unwrap_or(0);
+                if let Some(args) = &new_expr.args {
+                    for arg in args {
+                        self.gen_expr(&arg.expr);
+                    }
+                }
+
+                // 3. Push the constructor function
+                self.gen_expr(&new_expr.callee);
+
+                // 4. Call with construct semantics
+                self.instructions.push(OpCode::Construct(arg_count));
+            }
+            Expr::Paren(paren_expr) => {
+                // Parenthesized expression: just evaluate the inner expression
+                self.gen_expr(&paren_expr.expr);
             }
             _ => {}
         }

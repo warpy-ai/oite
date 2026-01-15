@@ -1,0 +1,396 @@
+// ============================================================================
+// Bootstrap Lexer for tscl
+// Self-hosting lexer implementation written in tscl
+// ============================================================================
+
+const fs = require("fs");
+
+// ============================================================================
+// Token Types and Keywords
+// ============================================================================
+
+let keywords = ["let", "const", "function", "if", "else", "while", "return", "true", "false", "null", "new", "this"];
+
+// Two-character operators (must check before single-char)
+let twoCharOps = ["==", "!=", "<=", ">=", "&&", "||", "=>"];
+
+// Single-character operators
+let singleCharOps = ["+", "-", "*", "/", "%", "=", "<", ">", "!"];
+
+// Delimiters
+let delimiters = ["(", ")", "{", "}", "[", "]", ";", ",", ":", "."];
+
+// ============================================================================
+// Character Classification Helpers
+// ============================================================================
+
+function isAlpha(code) {
+    // a-z: 97-122, A-Z: 65-90, _: 95
+    if (code >= 97 && code <= 122) {
+        return true;
+    }
+    if (code >= 65 && code <= 90) {
+        return true;
+    }
+    if (code == 95) {
+        return true;
+    }
+    return false;
+}
+
+function isDigit(code) {
+    // 0-9: 48-57
+    return code >= 48 && code <= 57;
+}
+
+function isAlphaNumeric(code) {
+    return isAlpha(code) || isDigit(code);
+}
+
+function isWhitespace(code) {
+    // space: 32, tab: 9, newline: 10, carriage return: 13
+    return code == 32 || code == 9 || code == 10 || code == 13;
+}
+
+// ============================================================================
+// Lexer State
+// ============================================================================
+
+function createLexer(source) {
+    return {
+        source: source,
+        pos: 0,
+        line: 1,
+        col: 1,
+        tokens: []
+    };
+}
+
+// ============================================================================
+// Core Scanning Functions
+// ============================================================================
+
+function peek(lexer) {
+    if (lexer.pos >= lexer.source.length) {
+        return -1;
+    }
+    return lexer.source.charCodeAt(lexer.pos);
+}
+
+function peekNext(lexer) {
+    if (lexer.pos + 1 >= lexer.source.length) {
+        return -1;
+    }
+    return lexer.source.charCodeAt(lexer.pos + 1);
+}
+
+function advance(lexer) {
+    let code = peek(lexer);
+    lexer.pos = lexer.pos + 1;
+    if (code == 10) {
+        // newline
+        lexer.line = lexer.line + 1;
+        lexer.col = 1;
+    } else {
+        lexer.col = lexer.col + 1;
+    }
+    return code;
+}
+
+function makeToken(type, value, line, col) {
+    return {
+        type: type,
+        value: value,
+        line: line,
+        col: col
+    };
+}
+
+// ============================================================================
+// Whitespace and Comments
+// ============================================================================
+
+function skipWhitespace(lexer) {
+    while (lexer.pos < lexer.source.length) {
+        let code = peek(lexer);
+        
+        let isWS = isWhitespace(code);
+        let isComment = code == 47 && peekNext(lexer) == 47;
+        
+        if (isWS) {
+            let oldPos = lexer.pos;
+            advance(lexer);
+        } else if (isComment) {
+            // Single-line comment: //
+            advance(lexer); // consume first /
+            advance(lexer); // consume second /
+            while (lexer.pos < lexer.source.length) {
+                if (peek(lexer) == 10) {
+                    break; // Found newline, exit inner loop
+                }
+                advance(lexer);
+            }
+        } else {
+            return;
+        }
+    }
+}
+
+// ============================================================================
+// Token Scanners
+// ============================================================================
+
+function scanIdentifier(lexer) {
+    let startLine = lexer.line;
+    let startCol = lexer.col;
+    let start = lexer.pos;
+
+    while (lexer.pos < lexer.source.length && isAlphaNumeric(peek(lexer))) {
+        advance(lexer);
+    }
+
+    let value = lexer.source.slice(start, lexer.pos);
+
+    // Check if it's a keyword
+    let type = "identifier";
+    let i = 0;
+    while (i < keywords.length) {
+        if (keywords[i] == value) {
+            type = "keyword";
+        }
+        i = i + 1;
+    }
+
+    return makeToken(type, value, startLine, startCol);
+}
+
+function scanNumber(lexer) {
+    let startLine = lexer.line;
+    let startCol = lexer.col;
+    let start = lexer.pos;
+
+    // Scan integer part
+    while (lexer.pos < lexer.source.length && isDigit(peek(lexer))) {
+        advance(lexer);
+    }
+
+    // Check for decimal point
+    if (peek(lexer) == 46 && isDigit(peekNext(lexer))) {
+        // 46 = '.'
+        advance(lexer); // consume '.'
+        while (lexer.pos < lexer.source.length && isDigit(peek(lexer))) {
+            advance(lexer);
+        }
+    }
+
+    let value = lexer.source.slice(start, lexer.pos);
+    return makeToken("number", value, startLine, startCol);
+}
+
+function scanString(lexer) {
+    let startLine = lexer.line;
+    let startCol = lexer.col;
+    let quote = peek(lexer); // 34 = " or 39 = '
+    advance(lexer); // consume opening quote
+
+    let value = "";
+
+    while (lexer.pos < lexer.source.length) {
+        let code = peek(lexer);
+
+        if (code == quote) {
+            // closing quote
+            advance(lexer);
+            return makeToken("string", value, startLine, startCol);
+        }
+
+        if (code == 92) {
+            // backslash - escape sequence
+            advance(lexer);
+            let nextCode = peek(lexer);
+            if (nextCode == 110) {
+                // \n
+                value = value + "\n";
+            } else if (nextCode == 116) {
+                // \t
+                value = value + "\t";
+            } else if (nextCode == 34) {
+                // \"
+                value = value + "\"";
+            } else if (nextCode == 39) {
+                // \'
+                value = value + "'";
+            } else if (nextCode == 92) {
+                // \\
+                value = value + "\\";
+            } else {
+                value = value + lexer.source.charAt(lexer.pos);
+            }
+            advance(lexer);
+        } else if (code == 10) {
+            // newline - unterminated string
+            return makeToken("error", "Unterminated string", startLine, startCol);
+        } else {
+            value = value + lexer.source.charAt(lexer.pos);
+            advance(lexer);
+        }
+    }
+
+    return makeToken("error", "Unterminated string", startLine, startCol);
+}
+
+function arrayIncludes(arr, item) {
+    let i = 0;
+    while (i < arr.length) {
+        if (arr[i] == item) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function scanOperatorOrDelimiter(lexer) {
+    let startLine = lexer.line;
+    let startCol = lexer.col;
+    let char = lexer.source.charAt(lexer.pos);
+
+    // Check for two-character operators first
+    if (lexer.pos + 1 < lexer.source.length) {
+        let twoChar = lexer.source.slice(lexer.pos, lexer.pos + 2);
+        if (arrayIncludes(twoCharOps, twoChar)) {
+            advance(lexer);
+            advance(lexer);
+            return makeToken("operator", twoChar, startLine, startCol);
+        }
+    }
+
+    // Check single-character operators
+    if (arrayIncludes(singleCharOps, char)) {
+        advance(lexer);
+        return makeToken("operator", char, startLine, startCol);
+    }
+
+    // Check delimiters
+    if (arrayIncludes(delimiters, char)) {
+        advance(lexer);
+        return makeToken("delimiter", char, startLine, startCol);
+    }
+
+    // Unknown character
+    advance(lexer);
+    return makeToken("error", "Unknown character: " + char, startLine, startCol);
+}
+
+// ============================================================================
+// Main Tokenize Function
+// ============================================================================
+
+function tokenize(source) {
+    console.log("DEBUG: tokenize called with source length:", source.length)
+    let lexer = createLexer(source);
+    console.log("DEBUG: lexer created, initial pos:", lexer.pos);
+
+
+    while (lexer.pos < lexer.source.length) {
+        console.log("DEBUG: entering while loop, pos:", lexer.pos, "source.length:", lexer.source.length);
+
+        skipWhitespace(lexer);
+
+        if (lexer.pos >= lexer.source.length) {
+            // Reached end after whitespace
+            break;
+        }
+
+        let code = peek(lexer);
+        let token = null;
+
+        if (isAlpha(code)) {
+            token = scanIdentifier(lexer);
+        } else if (isDigit(code)) {
+            console.log("DEBUG: scanning number");
+            token = scanNumber(lexer);
+        } else if (code == 34 || code == 39) {
+            // double or single quote
+            console.log("DEBUG: scanning string");
+            token = scanString(lexer);
+        } else {
+            token = scanOperatorOrDelimiter(lexer);
+        }
+
+        lexer.tokens.push(token);
+    }
+
+    // Add EOF token
+    console.log("DEBUG: adding EOF token");
+    lexer.tokens.push(makeToken("eof", "", lexer.line, lexer.col));
+    console.log("DEBUG: tokenize returning, total tokens:", lexer.tokens.length);
+
+    return lexer.tokens;
+}
+
+// ============================================================================
+// Debug Helper
+// ============================================================================
+
+function printTokens(tokens) {
+    let i = 0;
+    while (i < tokens.length) {
+        let tok = tokens[i];
+        console.log(tok.type, tok.value, "at line", tok.line, "col", tok.col);
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Test / Main
+// ============================================================================
+
+// Test 1: Simple expression
+console.log("=== Test 1: Simple expression ===");
+let test1 = "let x = 42;";
+let tokens1 = tokenize(test1);
+printTokens(tokens1);
+
+// Test 2: Function definition
+console.log("=== Test 2: Function definition ===");
+let test2 = "function add(a, b) { return a + b; }";
+let tokens2 = tokenize(test2);
+printTokens(tokens2);
+
+// Test 3: Operators
+console.log("=== Test 3: Operators ===");
+let test3 = "x == y && a != b || c <= d";
+let tokens3 = tokenize(test3);
+printTokens(tokens3);
+
+// Test 4: Strings
+console.log("=== Test 4: Strings ===");
+let test4 = "let msg = \"hello\\nworld\";";
+let tokens4 = tokenize(test4);
+printTokens(tokens4);
+
+// Test 5: Numbers
+console.log("=== Test 5: Numbers ===");
+let test5 = "3.14 42 0";
+let tokens5 = tokenize(test5);
+printTokens(tokens5);
+
+// Test 6: New and this
+console.log("=== Test 6: new and this ===");
+let test6 = "let p = new Point(this.x, this.y);";
+let tokens6 = tokenize(test6);
+printTokens(tokens6);
+
+// Test 7: Comments
+console.log("=== Test 7: Comments ===");
+let test7 = "let x = 1; // this is a comment\nlet y = 2;";
+let tokens7 = tokenize(test7);
+printTokens(tokens7);
+
+// Test 8: Read and tokenize a real file
+console.log("=== Test 8: Tokenize file_reader.tscl ===");
+let fileContent = fs.readFileSync("./examples/file_reader.tscl");
+let fileTokens = tokenize(fileContent);
+console.log("Total tokens:", fileTokens.length);
+printTokens(fileTokens);
