@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 pub struct Frame {
     pub return_address: usize,
     pub locals: HashMap<String, JsValue>,
+    pub indexed_locals: Vec<JsValue>,
     pub this_context: JsValue,
 }
 
@@ -55,6 +56,7 @@ impl VM {
             call_stack: vec![Frame {
                 return_address: 0,
                 locals: HashMap::new(),
+                indexed_locals: Vec::new(),
                 this_context: JsValue::Undefined,
             }],
             heap: Vec::new(),
@@ -300,6 +302,7 @@ impl VM {
                 let mut frame = Frame {
                     return_address: usize::MAX, // sentinel: stop when returning
                     locals: HashMap::new(),
+                    indexed_locals: Vec::new(),
                     this_context: JsValue::Undefined,
                 };
 
@@ -492,6 +495,7 @@ impl VM {
                         let mut frame = Frame {
                             return_address: self.ip + 1,
                             locals: HashMap::new(),
+                            indexed_locals: Vec::new(),
                             this_context: JsValue::Undefined,
                         };
 
@@ -941,6 +945,7 @@ impl VM {
                         let mut frame = Frame {
                             return_address: self.ip + 1,
                             locals: HashMap::new(),
+                            indexed_locals: Vec::new(),
                             this_context: this_obj,
                         };
 
@@ -1328,6 +1333,7 @@ impl VM {
                             let mut frame = Frame {
                                 return_address: self.ip + 1,
                                 locals: HashMap::new(),
+                                indexed_locals: Vec::new(),
                                 this_context: JsValue::Object(ptr),
                             };
 
@@ -1353,6 +1359,26 @@ impl VM {
                         return ExecResult::Continue;
                     }
                 }
+            }
+
+            OpCode::StoreLocal(idx) => {
+                let val = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let frame = self.call_stack.last_mut().unwrap();
+                let idx = idx as usize;
+                while frame.indexed_locals.len() <= idx {
+                    frame.indexed_locals.push(JsValue::Undefined);
+                }
+                frame.indexed_locals[idx] = val;
+            }
+
+            OpCode::LoadLocal(idx) => {
+                let frame = self.call_stack.last().unwrap();
+                let val = frame
+                    .indexed_locals
+                    .get(idx as usize)
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined);
+                self.stack.push(val);
             }
         }
 

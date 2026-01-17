@@ -16,7 +16,9 @@ function createEmitter() {
         // Pending jump patches (for forward jumps)
         patches: [],
         // Break/continue stack for loops
-        loopStack: []
+        loopStack: [],
+        // Current compilation scope (null = global)
+        scope: null
     };
 }
 
@@ -72,6 +74,53 @@ function currentLoop(emitter) {
         return null;
     }
     return emitter.loopStack[emitter.loopStack.length - 1];
+}
+
+// ============================================================================
+// Scope Management for Local Variables
+// ============================================================================
+
+function createScope(parent) {
+    return {
+        parent: parent,
+        locals: [],        // Array of {name, slot} pairs
+        nextSlot: 0
+    };
+}
+
+function scopeDefine(scope, name) {
+    let slot = scope.nextSlot;
+    // Store as array entry to work around VM object property issues
+    scope.locals.push({ name: name, slot: slot });
+    scope.nextSlot = scope.nextSlot + 1;
+    return slot;
+}
+
+function scopeResolve(scope, name) {
+    // Search through array of locals
+    let i = 0;
+    while (i < scope.locals.length) {
+        let entry = scope.locals[i];
+        if (entry.name == name) {
+            return entry.slot;
+        }
+        i = i + 1;
+    }
+    return -1;  // Not a local
+}
+
+// ============================================================================
+// Local Variable Emission Helpers
+// ============================================================================
+
+function emitStoreLocal(emitter, slot) {
+    emitU8(emitter, OP.STORE_LOCAL);
+    emitU32(emitter, slot);
+}
+
+function emitLoadLocal(emitter, slot) {
+    emitU8(emitter, OP.LOAD_LOCAL);
+    emitU32(emitter, slot);
 }
 
 // ============================================================================
@@ -169,9 +218,16 @@ function emitVariableDeclaration(emitter, node) {
         emitU8(emitter, OP.PUSH);
         emitU8(emitter, TYPE.UNDEFINED);
     }
-    // Store in variable
-    emitU8(emitter, OP.STORE);
-    emitString(emitter, node.name);
+    // Store in variable (local or global)
+    if (emitter.scope != null) {
+        // Inside function - define and store as indexed local
+        let slot = scopeDefine(emitter.scope, node.name);
+        emitStoreLocal(emitter, slot);
+    } else {
+        // Global scope - use string-based store
+        emitU8(emitter, OP.STORE);
+        emitString(emitter, node.name);
+    }
 }
 
 function emitFunctionDeclaration(emitter, node) {
@@ -183,8 +239,31 @@ function emitFunctionDeclaration(emitter, node) {
     // Record function start address
     let funcAddr = currentOffset(emitter);
 
-    // Emit function body
+    // Create new scope for function
+    let outerScope = emitter.scope;
+    emitter.scope = createScope(null);
+
+    // Register parameters as locals 0, 1, 2, ...
+    let i = 0;
+    while (i < node.params.length) {
+        scopeDefine(emitter.scope, node.params[i]);
+        i = i + 1;
+    }
+
+    // Emit prologue: pop args into local slots (reverse order)
+    // Args are on stack in order: arg0, arg1, arg2, ...
+    // We pop them in reverse order into their slots
+    i = node.params.length - 1;
+    while (i >= 0) {
+        emitStoreLocal(emitter, i);
+        i = i - 1;
+    }
+
+    // Emit function body (with scope active)
     emit(emitter, node.body);
+
+    // Restore outer scope
+    emitter.scope = outerScope;
 
     // Ensure function returns (implicit return undefined)
     emitU8(emitter, OP.PUSH);
@@ -194,12 +273,15 @@ function emitFunctionDeclaration(emitter, node) {
     // Patch the jump
     patchU32(emitter, jumpPatch, currentOffset(emitter));
 
+    // Push empty environment object for closure (required by VM)
+    emitU8(emitter, OP.NEW_OBJECT);
+
     // Create closure and store
     emitU8(emitter, OP.MAKE_CLOSURE);
     emitU32(emitter, funcAddr);
     emitU8(emitter, node.params.length);
     // Emit parameter names
-    let i = 0;
+    i = 0;
     while (i < node.params.length) {
         emitString(emitter, node.params[i]);
         i = i + 1;
@@ -355,8 +437,25 @@ function emitAssignmentExpression(emitter, node) {
     if (node.left.type == "Identifier") {
         // Simple variable assignment
         emitU8(emitter, OP.DUP); // Keep value on stack for expression result
-        emitU8(emitter, OP.STORE);
-        emitString(emitter, node.left.name);
+
+        // Check if variable is a local in current scope
+        let isLocal = false;
+        let slot = -1;
+        if (emitter.scope != null) {
+            slot = scopeResolve(emitter.scope, node.left.name);
+            if (slot != -1) {
+                isLocal = true;
+            }
+        }
+
+        if (isLocal) {
+            // Local variable - use indexed store
+            emitStoreLocal(emitter, slot);
+        } else {
+            // Global or not found locally - use string-based store
+            emitU8(emitter, OP.STORE);
+            emitString(emitter, node.left.name);
+        }
     } else if (node.left.type == "MemberExpression") {
         // Property assignment: obj.prop = value or obj[key] = value
         // Stack: value
@@ -381,14 +480,14 @@ function emitAssignmentExpression(emitter, node) {
 function emitCallExpression(emitter, node) {
     if (node.callee.type == "MemberExpression") {
         // Method call: obj.method(args)
-        // Emit object
-        emit(emitter, node.callee.object);
-        // Emit arguments
+        // Emit arguments FIRST (they go on stack before receiver)
         let i = 0;
         while (i < node.arguments.length) {
             emit(emitter, node.arguments[i]);
             i = i + 1;
         }
+        // Emit object/receiver LAST (CallMethod pops receiver first)
+        emit(emitter, node.callee.object);
         // Call method
         emitU8(emitter, OP.CALL_METHOD);
         if (node.callee.computed) {
@@ -430,8 +529,25 @@ function emitMemberExpression(emitter, node) {
 }
 
 function emitIdentifier(emitter, node) {
-    emitU8(emitter, OP.LOAD);
-    emitString(emitter, node.name);
+    // Check if variable is a local in current scope
+    let isLocal = false;
+    let slot = -1;
+
+    if (emitter.scope != null) {
+        slot = scopeResolve(emitter.scope, node.name);
+        if (slot != -1) {
+            isLocal = true;
+        }
+    }
+
+    if (isLocal) {
+        // Local variable - use indexed access
+        emitLoadLocal(emitter, slot);
+    } else {
+        // Global or not found locally - use string-based load
+        emitU8(emitter, OP.LOAD);
+        emitString(emitter, node.name);
+    }
 }
 
 function emitLiteral(emitter, node) {
@@ -536,7 +652,25 @@ function emitFunctionExpression(emitter, node) {
     // Record function start address
     let funcAddr = currentOffset(emitter);
 
-    // Emit function body
+    // Create new scope for function
+    let outerScope = emitter.scope;
+    emitter.scope = createScope(null);
+
+    // Register parameters as locals 0, 1, 2, ...
+    let i = 0;
+    while (i < node.params.length) {
+        scopeDefine(emitter.scope, node.params[i]);
+        i = i + 1;
+    }
+
+    // Emit prologue: pop args into local slots (reverse order)
+    i = node.params.length - 1;
+    while (i >= 0) {
+        emitStoreLocal(emitter, i);
+        i = i - 1;
+    }
+
+    // Emit function body (with scope active)
     if (node.body.type == "BlockStatement") {
         emit(emitter, node.body);
     } else {
@@ -544,6 +678,9 @@ function emitFunctionExpression(emitter, node) {
         emit(emitter, node.body);
         emitU8(emitter, OP.RETURN);
     }
+
+    // Restore outer scope
+    emitter.scope = outerScope;
 
     // Ensure function returns (implicit return undefined)
     emitU8(emitter, OP.PUSH);
@@ -553,12 +690,15 @@ function emitFunctionExpression(emitter, node) {
     // Patch the jump
     patchU32(emitter, jumpPatch, currentOffset(emitter));
 
+    // Push empty environment object for closure (required by VM)
+    emitU8(emitter, OP.NEW_OBJECT);
+
     // Create closure
     emitU8(emitter, OP.MAKE_CLOSURE);
     emitU32(emitter, funcAddr);
     emitU8(emitter, node.params.length);
     // Emit parameter names
-    let i = 0;
+    i = 0;
     while (i < node.params.length) {
         emitString(emitter, node.params[i]);
         i = i + 1;
@@ -579,6 +719,16 @@ function compile(source) {
 
     // Create emitter
     let emitter = createEmitter();
+
+    // Emit header: "TSCL" (4 bytes) + version (1 byte) + reserved (3 bytes)
+    emitU8(emitter, 0x54); // 'T'
+    emitU8(emitter, 0x53); // 'S'
+    emitU8(emitter, 0x43); // 'C'
+    emitU8(emitter, 0x4C); // 'L'
+    emitU8(emitter, 0x01); // Version 1
+    emitU8(emitter, 0x00); // Reserved
+    emitU8(emitter, 0x00); // Reserved
+    emitU8(emitter, 0x00); // Reserved
 
     // Emit bytecode
     emit(emitter, ast);

@@ -48,7 +48,9 @@ let OP = {
     CALL_METHOD: 36,
     REQUIRE: 37,
     MAKE_CLOSURE: 38,
-    CONSTRUCT: 39
+    CONSTRUCT: 39,
+    STORE_LOCAL: 40,
+    LOAD_LOCAL: 41
 };
 
 // ============================================================================

@@ -51,4 +51,8 @@ pub enum OpCode {
     /// Construct a new object: pops constructor, args, and `this` object from stack.
     /// Binds `this` to the new object, calls the constructor, returns the object.
     Construct(usize), // arg_count
+    /// Store top of stack into indexed local variable slot
+    StoreLocal(u32),
+    /// Load indexed local variable slot onto stack
+    LoadLocal(u32),
 }
