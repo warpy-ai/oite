@@ -1,0 +1,568 @@
+//! Runtime stubs callable from native-compiled code
+//!
+//! These extern "C" functions provide the interface between JIT/AOT compiled
+//! code and the Rust runtime. They handle:
+//! - Object allocation
+//! - Property access
+//! - Dynamic dispatch (for `any` typed operations)
+//! - String operations
+//!
+//! The calling convention is:
+//! - All values passed as u64 (NaN-boxed TsclValue)
+//! - Return values are also u64
+//! - Pointers to arrays use *const u64
+
+use super::abi::TsclValue;
+use super::heap::{heap, NativeArray, NativeObject, NativeString, ObjectHeader, ObjectKind};
+use std::collections::HashMap;
+
+// =========================================================================
+// Allocation Stubs
+// =========================================================================
+
+/// Allocate a new empty object.
+///
+/// Returns a TsclValue containing the object pointer, or undefined on failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_alloc_object() -> u64 {
+    match heap().alloc_object() {
+        Some(ptr) => TsclValue::pointer(ptr).to_bits(),
+        None => TsclValue::undefined().to_bits(),
+    }
+}
+
+/// Allocate a new array with the given capacity.
+///
+/// Returns a TsclValue containing the array pointer, or undefined on failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_alloc_array(capacity: usize) -> u64 {
+    match heap().alloc_array(capacity) {
+        Some(ptr) => TsclValue::pointer(ptr).to_bits(),
+        None => TsclValue::undefined().to_bits(),
+    }
+}
+
+/// Allocate a new string from UTF-8 bytes.
+///
+/// Returns a TsclValue containing the string pointer, or undefined on failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_alloc_string(data: *const u8, len: usize) -> u64 {
+    if data.is_null() {
+        return TsclValue::undefined().to_bits();
+    }
+
+    let s = unsafe {
+        let slice = std::slice::from_raw_parts(data, len);
+        match std::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(_) => return TsclValue::undefined().to_bits(),
+        }
+    };
+
+    match heap().alloc_string(s) {
+        Some(ptr) => TsclValue::pointer(ptr).to_bits(),
+        None => TsclValue::undefined().to_bits(),
+    }
+}
+
+// =========================================================================
+// Property Access Stubs
+// =========================================================================
+
+/// Get a property from an object.
+///
+/// # Parameters
+/// - `obj`: TsclValue containing an object pointer
+/// - `key`: Pointer to UTF-8 key string
+/// - `key_len`: Length of key string
+///
+/// # Returns
+/// The property value, or undefined if not found.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_get_prop(obj: u64, key: *const u8, key_len: usize) -> u64 {
+    let val = TsclValue::from_bits(obj);
+
+    let ptr = match val.as_pointer() {
+        Some(p) => p,
+        None => return TsclValue::undefined().to_bits(),
+    };
+
+    let key_str = unsafe {
+        let slice = std::slice::from_raw_parts(key, key_len);
+        match std::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(_) => return TsclValue::undefined().to_bits(),
+        }
+    };
+
+    unsafe {
+        let header = ptr.as_ref::<ObjectHeader>();
+
+        match header.kind {
+            ObjectKind::Object => {
+                let obj = ptr.as_ref::<NativeObject>();
+                if obj.properties.is_null() {
+                    return TsclValue::undefined().to_bits();
+                }
+                match (*obj.properties).get(key_str) {
+                    Some(&bits) => bits,
+                    None => TsclValue::undefined().to_bits(),
+                }
+            }
+            ObjectKind::Array => {
+                let arr = ptr.as_ref::<NativeArray>();
+                // Handle "length" property
+                if key_str == "length" {
+                    return TsclValue::number(arr.len as f64).to_bits();
+                }
+                // Try to parse as index
+                if let Ok(idx) = key_str.parse::<usize>() {
+                    if idx < arr.len as usize {
+                        return *arr.elements.add(idx);
+                    }
+                }
+                TsclValue::undefined().to_bits()
+            }
+            ObjectKind::String => {
+                let s = ptr.as_ref::<NativeString>();
+                // Handle "length" property
+                if key_str == "length" {
+                    return TsclValue::number(s.len as f64).to_bits();
+                }
+                // Try to parse as index (for charAt)
+                if let Ok(idx) = key_str.parse::<usize>() {
+                    let str_data = s.as_str();
+                    if let Some(ch) = str_data.chars().nth(idx) {
+                        // Allocate a single-char string
+                        let mut buf = [0u8; 4];
+                        let ch_str = ch.encode_utf8(&mut buf);
+                        match heap().alloc_string(ch_str) {
+                            Some(ptr) => return TsclValue::pointer(ptr).to_bits(),
+                            None => return TsclValue::undefined().to_bits(),
+                        }
+                    }
+                }
+                TsclValue::undefined().to_bits()
+            }
+            _ => TsclValue::undefined().to_bits(),
+        }
+    }
+}
+
+/// Set a property on an object.
+///
+/// # Parameters
+/// - `obj`: TsclValue containing an object pointer
+/// - `key`: Pointer to UTF-8 key string
+/// - `key_len`: Length of key string
+/// - `value`: TsclValue to set
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_set_prop(obj: u64, key: *const u8, key_len: usize, value: u64) {
+    let val = TsclValue::from_bits(obj);
+
+    let ptr = match val.as_pointer() {
+        Some(p) => p,
+        None => return,
+    };
+
+    let key_str = unsafe {
+        let slice = std::slice::from_raw_parts(key, key_len);
+        match std::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(_) => return,
+        }
+    };
+
+    unsafe {
+        let header = ptr.as_ref::<ObjectHeader>();
+
+        match header.kind {
+            ObjectKind::Object => {
+                let obj = ptr.as_mut::<NativeObject>();
+                if obj.properties.is_null() {
+                    obj.properties = Box::into_raw(Box::new(HashMap::new()));
+                }
+                (*obj.properties).insert(key_str.to_string(), value);
+            }
+            ObjectKind::Array => {
+                let arr = ptr.as_mut::<NativeArray>();
+                // Try to parse as index
+                if let Ok(idx) = key_str.parse::<usize>() {
+                    if idx < arr.capacity as usize {
+                        *arr.elements.add(idx) = value;
+                        if idx >= arr.len as usize {
+                            arr.len = (idx + 1) as u32;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+// =========================================================================
+// Array Access Stubs
+// =========================================================================
+
+/// Get an element from an array by index.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_get_element(arr: u64, index: usize) -> u64 {
+    let val = TsclValue::from_bits(arr);
+
+    let ptr = match val.as_pointer() {
+        Some(p) => p,
+        None => return TsclValue::undefined().to_bits(),
+    };
+
+    unsafe {
+        let header = ptr.as_ref::<ObjectHeader>();
+        if header.kind != ObjectKind::Array {
+            return TsclValue::undefined().to_bits();
+        }
+
+        let arr = ptr.as_ref::<NativeArray>();
+        if index < arr.len as usize {
+            *arr.elements.add(index)
+        } else {
+            TsclValue::undefined().to_bits()
+        }
+    }
+}
+
+/// Set an element in an array by index.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_set_element(arr: u64, index: usize, value: u64) {
+    let val = TsclValue::from_bits(arr);
+
+    let ptr = match val.as_pointer() {
+        Some(p) => p,
+        None => return,
+    };
+
+    unsafe {
+        let header = ptr.as_ref::<ObjectHeader>();
+        if header.kind != ObjectKind::Array {
+            return;
+        }
+
+        let arr = ptr.as_mut::<NativeArray>();
+        if index < arr.capacity as usize {
+            *arr.elements.add(index) = value;
+            if index >= arr.len as usize {
+                arr.len = (index + 1) as u32;
+            }
+        }
+    }
+}
+
+// =========================================================================
+// Dynamic Dispatch Stubs (for 'any' typed operations)
+// =========================================================================
+
+/// Dynamic addition (handles number + number, string + string, etc.)
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_add_any(a: u64, b: u64) -> u64 {
+    let va = TsclValue::from_bits(a);
+    let vb = TsclValue::from_bits(b);
+
+    // Number + Number
+    if va.is_number() && vb.is_number() {
+        return TsclValue::number(va.as_number_unchecked() + vb.as_number_unchecked()).to_bits();
+    }
+
+    // String + anything (concatenation)
+    if let Some(ptr_a) = va.as_pointer() {
+        unsafe {
+            let header_a = ptr_a.as_ref::<ObjectHeader>();
+            if header_a.kind == ObjectKind::String {
+                let str_a = ptr_a.as_ref::<NativeString>().as_str();
+
+                // Convert b to string
+                let str_b = value_to_string(vb);
+
+                // Concatenate
+                let result = format!("{}{}", str_a, str_b);
+                return match heap().alloc_string(&result) {
+                    Some(ptr) => TsclValue::pointer(ptr).to_bits(),
+                    None => TsclValue::undefined().to_bits(),
+                };
+            }
+        }
+    }
+
+    // Fallback to NaN
+    TsclValue::number(f64::NAN).to_bits()
+}
+
+/// Dynamic subtraction.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_sub_any(a: u64, b: u64) -> u64 {
+    let va = TsclValue::from_bits(a);
+    let vb = TsclValue::from_bits(b);
+
+    if va.is_number() && vb.is_number() {
+        TsclValue::number(va.as_number_unchecked() - vb.as_number_unchecked()).to_bits()
+    } else {
+        TsclValue::number(f64::NAN).to_bits()
+    }
+}
+
+/// Dynamic multiplication.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_mul_any(a: u64, b: u64) -> u64 {
+    let va = TsclValue::from_bits(a);
+    let vb = TsclValue::from_bits(b);
+
+    if va.is_number() && vb.is_number() {
+        TsclValue::number(va.as_number_unchecked() * vb.as_number_unchecked()).to_bits()
+    } else {
+        TsclValue::number(f64::NAN).to_bits()
+    }
+}
+
+/// Dynamic division.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_div_any(a: u64, b: u64) -> u64 {
+    let va = TsclValue::from_bits(a);
+    let vb = TsclValue::from_bits(b);
+
+    if va.is_number() && vb.is_number() {
+        TsclValue::number(va.as_number_unchecked() / vb.as_number_unchecked()).to_bits()
+    } else {
+        TsclValue::number(f64::NAN).to_bits()
+    }
+}
+
+/// Dynamic modulo.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_mod_any(a: u64, b: u64) -> u64 {
+    let va = TsclValue::from_bits(a);
+    let vb = TsclValue::from_bits(b);
+
+    if va.is_number() && vb.is_number() {
+        TsclValue::number(va.as_number_unchecked() % vb.as_number_unchecked()).to_bits()
+    } else {
+        TsclValue::number(f64::NAN).to_bits()
+    }
+}
+
+/// Dynamic strict equality (===).
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_eq_strict(a: u64, b: u64) -> u64 {
+    TsclValue::from_bits(a).strict_eq(TsclValue::from_bits(b)).to_bits()
+}
+
+/// Dynamic less-than comparison.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_lt(a: u64, b: u64) -> u64 {
+    TsclValue::from_bits(a).lt(TsclValue::from_bits(b)).to_bits()
+}
+
+/// Dynamic greater-than comparison.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_gt(a: u64, b: u64) -> u64 {
+    TsclValue::from_bits(a).gt(TsclValue::from_bits(b)).to_bits()
+}
+
+/// Logical NOT.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_not(a: u64) -> u64 {
+    TsclValue::boolean(TsclValue::from_bits(a).is_falsy()).to_bits()
+}
+
+/// Unary negation.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_neg(a: u64) -> u64 {
+    let va = TsclValue::from_bits(a);
+    if va.is_number() {
+        TsclValue::number(-va.as_number_unchecked()).to_bits()
+    } else {
+        TsclValue::number(f64::NAN).to_bits()
+    }
+}
+
+// =========================================================================
+// Type Conversion Stubs
+// =========================================================================
+
+/// Convert a TsclValue to a boolean.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_to_boolean(a: u64) -> u64 {
+    TsclValue::boolean(!TsclValue::from_bits(a).is_falsy()).to_bits()
+}
+
+/// Convert a TsclValue to a number.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_to_number(a: u64) -> u64 {
+    let va = TsclValue::from_bits(a);
+
+    if va.is_number() {
+        return a;
+    }
+
+    if va.is_boolean() {
+        return TsclValue::number(if va.as_boolean_unchecked() { 1.0 } else { 0.0 }).to_bits();
+    }
+
+    if va.is_null() {
+        return TsclValue::number(0.0).to_bits();
+    }
+
+    if va.is_undefined() {
+        return TsclValue::number(f64::NAN).to_bits();
+    }
+
+    // String to number - attempt parse
+    if let Some(ptr) = va.as_pointer() {
+        unsafe {
+            let header = ptr.as_ref::<ObjectHeader>();
+            if header.kind == ObjectKind::String {
+                let s = ptr.as_ref::<NativeString>().as_str();
+                if let Ok(n) = s.trim().parse::<f64>() {
+                    return TsclValue::number(n).to_bits();
+                }
+            }
+        }
+    }
+
+    TsclValue::number(f64::NAN).to_bits()
+}
+
+// =========================================================================
+// Function Call Stubs
+// =========================================================================
+
+/// Call a function with arguments.
+///
+/// # Parameters
+/// - `func`: TsclValue containing a function pointer
+/// - `argc`: Number of arguments
+/// - `argv`: Pointer to array of TsclValue arguments
+///
+/// # Returns
+/// The return value of the function, or undefined on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_call(_func: u64, _argc: usize, _argv: *const u64) -> u64 {
+    // This is a placeholder - actual implementation requires:
+    // 1. Looking up the function by address
+    // 2. Setting up a new call frame
+    // 3. Executing the function code
+    //
+    // For JIT-compiled functions, this will be a direct call.
+    // For interpreted functions, this falls back to the VM.
+
+    TsclValue::undefined().to_bits()
+}
+
+// =========================================================================
+// Console/IO Stubs
+// =========================================================================
+
+/// Print a value to the console.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_console_log(value: u64) {
+    let va = TsclValue::from_bits(value);
+    let s = value_to_string(va);
+    println!("{}", s);
+}
+
+// =========================================================================
+// Helper Functions
+// =========================================================================
+
+/// Convert a TsclValue to a string representation.
+fn value_to_string(val: TsclValue) -> String {
+    if val.is_number() {
+        let n = val.as_number_unchecked();
+        if n.is_nan() {
+            return "NaN".to_string();
+        }
+        if n.is_infinite() {
+            return if n.is_sign_positive() { "Infinity" } else { "-Infinity" }.to_string();
+        }
+        return format!("{}", n);
+    }
+
+    if val.is_boolean() {
+        return if val.as_boolean_unchecked() { "true" } else { "false" }.to_string();
+    }
+
+    if val.is_null() {
+        return "null".to_string();
+    }
+
+    if val.is_undefined() {
+        return "undefined".to_string();
+    }
+
+    if let Some(ptr) = val.as_pointer() {
+        unsafe {
+            let header = ptr.as_ref::<ObjectHeader>();
+            match header.kind {
+                ObjectKind::String => {
+                    return ptr.as_ref::<NativeString>().as_str().to_string();
+                }
+                ObjectKind::Array => {
+                    let arr = ptr.as_ref::<NativeArray>();
+                    let mut parts = Vec::new();
+                    for i in 0..arr.len as usize {
+                        let elem = TsclValue::from_bits(*arr.elements.add(i));
+                        parts.push(value_to_string(elem));
+                    }
+                    return format!("[{}]", parts.join(","));
+                }
+                ObjectKind::Object => {
+                    return "[object Object]".to_string();
+                }
+                ObjectKind::Function => {
+                    return "[function]".to_string();
+                }
+                ObjectKind::ByteStream => {
+                    return "[ByteStream]".to_string();
+                }
+            }
+        }
+    }
+
+    "undefined".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_console_log() {
+        tscl_console_log(TsclValue::number(42.0).to_bits());
+        tscl_console_log(TsclValue::boolean(true).to_bits());
+        tscl_console_log(TsclValue::null().to_bits());
+    }
+
+    #[test]
+    fn test_arithmetic_stubs() {
+        let a = TsclValue::number(10.0).to_bits();
+        let b = TsclValue::number(3.0).to_bits();
+
+        assert_eq!(TsclValue::from_bits(tscl_add_any(a, b)).as_number(), Some(13.0));
+        assert_eq!(TsclValue::from_bits(tscl_sub_any(a, b)).as_number(), Some(7.0));
+        assert_eq!(TsclValue::from_bits(tscl_mul_any(a, b)).as_number(), Some(30.0));
+
+        let div = TsclValue::from_bits(tscl_div_any(a, b)).as_number().unwrap();
+        assert!((div - 3.333333).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_object_property() {
+        let obj_bits = tscl_alloc_object();
+        assert!(!TsclValue::from_bits(obj_bits).is_undefined());
+
+        let key = "foo";
+        let value = TsclValue::number(42.0).to_bits();
+
+        tscl_set_prop(obj_bits, key.as_ptr(), key.len(), value);
+        let retrieved = tscl_get_prop(obj_bits, key.as_ptr(), key.len());
+
+        assert_eq!(TsclValue::from_bits(retrieved).as_number(), Some(42.0));
+    }
+}
