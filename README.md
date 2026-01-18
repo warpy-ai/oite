@@ -1,6 +1,23 @@
-# tscl
+<div align="center">
+  <h1>Script</h1>
+  <p>A custom JavaScript-like scripting language with a stack-based VM implemented in <strong>Rust</strong></p>
+  <p>Featuring a self-hosting bootstrap compiler written in the language itself</p>
+</div>
 
-A custom JavaScript-like scripting language with a stack-based VM implemented in **Rust**. Features a self-hosting bootstrap compiler written in the language itself.
+This is the main source code repository for **Script**. It contains the compiler,
+virtual machine, standard library, and bootstrap compiler modules.
+
+For detailed development progress and implementation details, see [PROGRESS.md](PROGRESS.md).
+
+## Why Script?
+
+- **Self-Hosting:** The bootstrap compiler (lexer, parser, emitter) is written entirely in Script itself, demonstrating the language's capabilities.
+
+- **Performance:** Stack-based VM architecture optimized for efficient execution with heap allocation for complex data structures.
+
+- **Memory Safety:** Ownership model with scoped lifetimes ensures variables are automatically freed when their scope ends, preventing memory leaks.
+
+- **JavaScript-like Syntax:** Familiar syntax for developers coming from JavaScript/TypeScript, with support for functions, objects, arrays, closures, and more.
 
 ## Architecture
 
@@ -14,33 +31,38 @@ A custom JavaScript-like scripting language with a stack-based VM implemented in
         │         Bootstrap Compiler              │
         │    ┌─────────────────────────┐         │
         └───▶│  Lexer → Parser → Emitter │◀───────┘
-             │     (Written in tscl)     │
+             │     (Written in Script)     │
              └─────────────────────────┘
 ```
 
 | Stage                  | Description                                                                 |
 | ---------------------- | --------------------------------------------------------------------------- |
 | **Rust Compiler**      | SWC-based parser with borrow checking and bytecode generation              |
-| **Bootstrap Compiler** | Self-hosting compiler written in tscl (lexer, parser, emitter)             |
+| **Bootstrap Compiler** | Self-hosting compiler written in Script (lexer, parser, emitter)             |
 | **VM**                 | Stack-based VM with heap allocation, closures, and event loop              |
+
+## Quick Start
+
+```bash
+# Build the project
+cargo build --release
+
+# Run a script
+cargo run -- path/to/script.tscl
+
+# Run bootstrap compiler tests
+cargo run -- bootstrap/test_emitter.tscl
+```
 
 ## Features
 
 ### Self-Hosting Bootstrap Compiler
 
-The project includes a bootstrap compiler written entirely in tscl:
+The project includes a bootstrap compiler written entirely in Script:
 
 - **Lexer** (`bootstrap/lexer.tscl`) - Tokenizes source code into tokens
 - **Parser** (`bootstrap/parser.tscl`) - Recursive descent parser producing AST
 - **Emitter** (`bootstrap/emitter.tscl`) - Generates bytecode from AST
-
-### Two-Stage Loading Architecture
-
-Scripts are loaded in stages to support modularity:
-
-1. **Prelude** (`std/prelude.tscl`) - Core constants (OpCodes, Types, Tokens) and utility functions
-2. **Bootstrap Modules** - Lexer, parser, and emitter (when running bootstrap tests)
-3. **Main Script** - User code that can use all loaded globals
 
 ### Memory Management
 
@@ -143,19 +165,6 @@ let bytecode = compile("1 + 2 * 3");
 compileToFile("let x = 42;", "output.bc");
 ```
 
-## Getting Started
-
-```bash
-# Build the project
-cargo build --release
-
-# Run a script
-cargo run -- path/to/script.tscl
-
-# Run bootstrap compiler tests
-cargo run -- bootstrap/test_emitter.tscl
-```
-
 ## Project Structure
 
 ```
@@ -177,6 +186,16 @@ script/
     └── test_emitter.tscl # Emitter test suite
 ```
 
+## Development Progress
+
+For detailed information about completed features, recent fixes, and upcoming work, see [PROGRESS.md](PROGRESS.md).
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
 ## License
 
-See [LICENSE](./LICENSE) for details.
+Script is distributed under the terms of the Apache License (Version 2.0).
+
+See [LICENSE](LICENSE) for details.
