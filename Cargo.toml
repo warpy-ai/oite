@@ -15,3 +15,10 @@ cranelift-jit = "0.113"
 cranelift-native = "0.113"
 cranelift-codegen = "0.113"
 target-lexicon = "0.12"
+
+# LLVM AOT backend
+# NOTE: Requires LLVM 18 to be installed on the system.
+# Install via: brew install llvm@18
+# Then set: export LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)
+# Or use llvmenv: cargo install llvmenv && llvmenv build-entry --version 18
+llvm-sys = "180"

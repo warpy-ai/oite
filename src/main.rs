@@ -106,6 +106,7 @@ fn main() {
         eprintln!("  ir <filename>        Dump SSA IR for a .tscl file");
         eprintln!("  jit <filename>       Run a .tscl file with JIT compilation");
         eprintln!("  bench <filename>     Benchmark VM vs JIT for a .tscl file");
+        eprintln!("  build [options] <filename>  Build a .tscl file to native binary");
         eprintln!("  <filename>           Run a .tscl file (VM interpreter)");
         eprintln!("  --run-binary <file>  Run a bytecode file (.bc)");
         return;
@@ -154,6 +155,12 @@ fn main() {
         }
         let filename = &args[2];
         run_benchmark(filename);
+        return;
+    }
+
+    // Handle "build" command for AOT compilation
+    if command == "build" {
+        build_file(&args[2..]);
         return;
     }
 
@@ -603,5 +610,163 @@ fn run_benchmark(filename: &str) {
     let break_even = compile_duration.as_nanos() as f64 / (vm_per_iter - jit_per_iter).max(1.0);
     if speedup > 1.0 {
         println!("Break-even point: {:.0} iterations", break_even);
+    }
+}
+
+/// Build a file to native binary using LLVM AOT compilation
+fn build_file(args: &[String]) {
+    use crate::backend::{
+        BackendConfig, BackendKind, OptLevel,
+        aot::{AotCompiler, AotOptions, OutputFormat},
+    };
+
+    let mut filename = None;
+    let mut output = None;
+    let mut backend = BackendKind::LlvmAot;
+    let mut opt_level = OptLevel::SpeedAndSize;
+    let mut format = OutputFormat::Executable;
+
+    // Parse arguments
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--backend" | "-b" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --backend requires a value");
+                    std::process::exit(1);
+                }
+                backend = match args[i].as_str() {
+                    "llvm" => BackendKind::LlvmAot,
+                    "cranelift" => BackendKind::CraneliftAot,
+                    _ => {
+                        eprintln!("Error: Unknown backend: {}", args[i]);
+                        std::process::exit(1);
+                    }
+                };
+            }
+            "--output" | "-o" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --output requires a value");
+                    std::process::exit(1);
+                }
+                output = Some(args[i].clone());
+            }
+            "--release" => {
+                opt_level = OptLevel::SpeedAndSize;
+            }
+            "--debug" => {
+                opt_level = OptLevel::None;
+            }
+            "--format" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --format requires a value");
+                    std::process::exit(1);
+                }
+                format = match args[i].as_str() {
+                    "exe" | "executable" => OutputFormat::Executable,
+                    "lib" | "static" => OutputFormat::StaticLib,
+                    "dylib" | "shared" => OutputFormat::SharedLib,
+                    "obj" | "object" => OutputFormat::Object,
+                    _ => {
+                        eprintln!("Error: Unknown format: {}", args[i]);
+                        std::process::exit(1);
+                    }
+                };
+            }
+            _ => {
+                if filename.is_none() && !args[i].starts_with('-') {
+                    filename = Some(args[i].clone());
+                } else {
+                    eprintln!("Error: Unknown option: {}", args[i]);
+                    std::process::exit(1);
+                }
+            }
+        }
+        i += 1;
+    }
+
+    let filename = filename.unwrap_or_else(|| {
+        eprintln!("Error: No input file specified");
+        eprintln!(
+            "Usage: {} build [--backend llvm] [--output <file>] [--release] <filename>",
+            env::args().next().unwrap()
+        );
+        std::process::exit(1);
+    });
+
+    let output_path = output.unwrap_or_else(|| {
+        Path::new(&filename)
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_string()
+    });
+
+    // Read source file
+    let source = match fs::read_to_string(&filename) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to read {}: {}", filename, e);
+            std::process::exit(1);
+        }
+    };
+
+    // Determine syntax
+    let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
+        Some(Syntax::Typescript(Default::default()))
+    } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
+        Some(Syntax::Es(Default::default()))
+    } else {
+        Some(Syntax::Typescript(Default::default()))
+    };
+
+    // Compile to bytecode
+    let mut compiler = Compiler::new();
+    let bytecode = match compiler.compile_with_syntax(&source, syntax) {
+        Ok(bc) => bc,
+        Err(e) => {
+            eprintln!("Compilation failed: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Lower to SSA IR
+    let mut module = match ir::lower::lower_module(&bytecode) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("IR lowering failed: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Run type inference and optimizations
+    ir::typecheck::typecheck_module(&mut module);
+    ir::opt::optimize_module(&mut module);
+
+    // AOT compile
+    println!("Compiling {} to native binary...", filename);
+    let config = BackendConfig {
+        kind: backend,
+        opt_level,
+        debug_info: opt_level == OptLevel::None,
+        bounds_check: true,
+    };
+
+    let mut aot = AotCompiler::new(&config);
+    let mut options = AotOptions::default();
+    options.format = format;
+    aot = aot.with_options(options);
+
+    match aot.compile_to_file(&module, Path::new(&output_path)) {
+        Ok(()) => {
+            println!("Successfully compiled to: {}", output_path);
+        }
+        Err(e) => {
+            eprintln!("AOT compilation failed: {}", e);
+            std::process::exit(1);
+        }
     }
 }

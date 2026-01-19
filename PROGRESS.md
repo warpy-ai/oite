@@ -546,9 +546,57 @@ All tests cover:
 - [x] Performance benchmarks vs VM (JIT is ~6x faster)
 
 ### Phase 2B-Gamma: AOT & Optimization
-- [ ] LLVM backend for AOT compilation
+- [x] LLVM backend for AOT compilation
 - [ ] Link-time optimization (LTO)
 - [ ] Standalone binary generation
+
+#### LLVM Backend Implementation ✅
+
+**Prerequisites:**
+```bash
+# Install LLVM 18
+brew install llvm@18
+
+# Install zstd (required for linking)
+brew install zstd
+
+# Set environment variable (add to ~/.zshrc for persistence)
+export LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)
+```
+
+**Files Created:**
+| File | Purpose |
+|------|---------|
+| `src/backend/llvm/mod.rs` | Module root, orchestrates compilation |
+| `src/backend/llvm/types.rs` | Type lowering (IR types → LLVM types) |
+| `src/backend/llvm/codegen.rs` | IR translation (IrOp → LLVM IR) |
+| `src/backend/llvm/abi.rs` | Runtime stub declarations |
+| `src/backend/llvm/optimizer.rs` | Optimization pass pipeline |
+| `src/backend/llvm/object.rs` | Object file emission |
+| `src/backend/llvm/linker.rs` | Static linking with runtime library |
+
+**Architecture:**
+- **Type Lowering:** Maps `tscl` IR types (`Number`, `Boolean`, `Object`, etc.) to LLVM types (`double`, `i1`, `i64`, struct types)
+- **Function Translation:** Converts SSA IR functions to LLVM functions with proper parameter handling and basic blocks
+- **Operation Translation:** Maps IR operations to LLVM instructions (arithmetic, comparisons, control flow, memory operations)
+- **Runtime Integration:** Declares all `tscl` runtime stubs as external functions for calls from compiled code
+- **Optimization:** Uses LLVM's optimization pipeline (simplified for LLVM 18 API compatibility)
+- **Object Emission:** Generates platform-specific object files (`.o`)
+- **Static Linking:** Links object files with runtime library using external linker (clang/ld)
+
+**Usage:**
+```bash
+# Build to native binary
+./target/release/script build myprogram.tscl --backend llvm --output myprogram
+
+# Build with optimizations
+./target/release/script build myprogram.tscl --backend llvm --output myprogram --release
+```
+
+**Known Limitations:**
+- Optimization pipeline is simplified (LLVM 18 uses new pass manager API)
+- Requires LLVM 18 to be installed and `LLVM_SYS_180_PREFIX` environment variable set
+- Requires zstd library for linking (configured via `.cargo/config.toml`)
 
 ### Phase 3: Type Annotations
 - [ ] Optional type syntax: `let x: number = 42`

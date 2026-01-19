@@ -9,9 +9,9 @@
 //! - Platform-specific binary output
 //! - Link-time optimization (LTO)
 
-use super::{BackendConfig, BackendError};
+use super::{BackendConfig, BackendError, BackendKind};
 use crate::ir::IrModule;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// AOT compilation target format
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,34 +80,114 @@ impl AotCompiler {
     /// Compile an IR module to a file
     pub fn compile_to_file(
         &mut self,
-        _module: &IrModule,
-        _output: &Path,
+        module: &IrModule,
+        output: &Path,
     ) -> Result<(), BackendError> {
-        // TODO: Implement AOT compilation
-        //
-        // Steps:
-        // 1. Create Cranelift ObjectModule instead of JITModule
-        // 2. Compile all functions
-        // 3. Generate object file
-        // 4. Link with runtime library
-        // 5. Write output file
+        match self.config.kind {
+            BackendKind::LlvmAot => {
+                // Use LLVM backend
+                let obj_file = output.with_extension("o");
+                super::llvm::compile_to_object_file(module, &self.config, &obj_file)?;
 
-        Err(BackendError::AotError(
-            "AOT compilation not yet implemented. Use JIT mode for now.".into(),
-        ))
+                // Link if output format is executable or shared library
+                match self.options.format {
+                    OutputFormat::Executable | OutputFormat::SharedLib => {
+                        // Try to find runtime library
+                        let runtime_lib = find_runtime_library();
+                        if runtime_lib.is_none() {
+                            eprintln!("Warning: Runtime library not found. Linking may fail.");
+                            eprintln!("  Expected locations:");
+                            eprintln!("    - target/release/libruntime.a");
+                            eprintln!("    - target/debug/libruntime.a");
+                            eprintln!("    - libruntime.a");
+                            eprintln!("  Build the runtime library first or provide the path.");
+                        }
+                        super::llvm::linker::link_object_files(
+                            &[obj_file.clone()],
+                            output,
+                            self.options.format,
+                            runtime_lib.as_deref(),
+                        )?;
+                    }
+                    OutputFormat::Object => {
+                        // Just copy object file to output
+                        std::fs::copy(&obj_file, output).map_err(|e| {
+                            BackendError::AotError(format!("Failed to copy object file: {}", e))
+                        })?;
+                    }
+                    OutputFormat::StaticLib => {
+                        super::llvm::linker::create_static_library(&[obj_file], output)?;
+                    }
+                }
+
+                Ok(())
+            }
+            BackendKind::CraneliftAot => {
+                Err(BackendError::AotError(
+                    "Cranelift AOT compilation not yet implemented".into(),
+                ))
+            }
+            _ => {
+                Err(BackendError::AotError(
+                    "AOT compilation requires LlvmAot or CraneliftAot backend".into(),
+                ))
+            }
+        }
     }
 
     /// Compile an IR module to bytes (object file in memory)
-    pub fn compile_to_bytes(&mut self, _module: &IrModule) -> Result<Vec<u8>, BackendError> {
-        Err(BackendError::AotError(
-            "AOT compilation not yet implemented".into(),
-        ))
+    pub fn compile_to_bytes(&mut self, module: &IrModule) -> Result<Vec<u8>, BackendError> {
+        match self.config.kind {
+            BackendKind::LlvmAot => {
+                // Use LLVM backend
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos();
+                let temp_file = std::env::temp_dir().join(format!("tscl_{}.o", timestamp));
+                super::llvm::compile_to_object_file(module, &self.config, &temp_file)?;
+
+                // Read object file bytes
+                let bytes = std::fs::read(&temp_file).map_err(|e| {
+                    BackendError::AotError(format!("Failed to read object file: {}", e))
+                })?;
+
+                // Clean up temp file
+                let _ = std::fs::remove_file(&temp_file);
+
+                Ok(bytes)
+            }
+            _ => {
+                Err(BackendError::AotError(
+                    "AOT compilation to bytes requires LlvmAot backend".into(),
+                ))
+            }
+        }
     }
 }
 
 /// Get the default target triple for the current platform
 pub fn default_target() -> String {
     target_lexicon::Triple::host().to_string()
+}
+
+/// Try to find the runtime library
+fn find_runtime_library() -> Option<PathBuf> {
+    // Try common locations
+    let candidates = &[
+        PathBuf::from("target/release/libruntime.a"),
+        PathBuf::from("target/debug/libruntime.a"),
+        PathBuf::from("libruntime.a"),
+    ];
+
+    for candidate in candidates {
+        if candidate.exists() {
+            return Some(candidate.clone());
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]

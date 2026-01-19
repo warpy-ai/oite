@@ -61,6 +61,25 @@ console.log(fib(35));  // Compiled to native code!
 
 ## Quick Start
 
+### Prerequisites
+
+**Required for LLVM AOT backend:**
+
+```bash
+# Install LLVM 18 (required for AOT compilation)
+brew install llvm@18
+
+# Install zstd (required for linking)
+brew install zstd
+
+# Set LLVM environment variable (add to ~/.zshrc or ~/.bashrc for persistence)
+export LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)
+```
+
+**Note:** The Cranelift JIT backend works without LLVM. LLVM is only required if you want to use the AOT compilation backend.
+
+### Building
+
 ```bash
 # Build
 cargo build --release
@@ -73,6 +92,9 @@ cargo build --release
 
 # Run with VM (debug mode)
 ./target/release/script --run-binary output.tscl.bc
+
+# Build to native binary (requires LLVM)
+./target/release/script build myprogram.tscl --backend llvm --output myprogram
 ```
 
 ## Language Features
