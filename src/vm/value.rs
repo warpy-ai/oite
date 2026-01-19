@@ -22,6 +22,9 @@ pub enum JsValue {
     NativeFunction(usize),
     Null,
     Undefined,
+    /// Accessor descriptor for getters/setters
+    /// First element is getter function, second is setter function
+    Accessor(Option<Box<JsValue>>, Option<Box<JsValue>>),
 }
 
 #[derive(Debug, Clone)]

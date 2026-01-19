@@ -761,21 +761,78 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
             ctx.values.insert(*dst, result);
         }
         IrOp::EqStrict(dst, a, b) => {
+            // For strict equality, compare the NaN-boxed i64 values directly
+            // This works because identical values have identical bit patterns
             let va = get_value(ctx, *a)?;
             let vb = get_value(ctx, *b)?;
-            let result = call_stub(ctx, "tscl_eq_strict", &[va, vb])?;
+            let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
+            let fa = llvm_sys::core::LLVMBuildBitCast(
+                ctx.builder,
+                va,
+                double_ty,
+                b"bitcast\0".as_ptr() as *const i8,
+            );
+            let fb = llvm_sys::core::LLVMBuildBitCast(
+                ctx.builder,
+                vb,
+                double_ty,
+                b"bitcast\0".as_ptr() as *const i8,
+            );
+            let cmp = llvm_sys::core::LLVMBuildFCmp(
+                ctx.builder,
+                llvm_sys::LLVMRealPredicate::LLVMRealOEQ,
+                fa,
+                fb,
+                b"cmp\0".as_ptr() as *const i8,
+            );
+            let result = bool_to_tscl_value(ctx, cmp)?;
             ctx.values.insert(*dst, result);
         }
         IrOp::NeStrict(dst, a, b) => {
+            // For strict inequality, compare the NaN-boxed i64 values directly
             let va = get_value(ctx, *a)?;
             let vb = get_value(ctx, *b)?;
-            let eq_result = call_stub(ctx, "tscl_eq_strict", &[va, vb])?;
-            let result = call_stub(ctx, "tscl_not", &[eq_result])?;
+            let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
+            let fa = llvm_sys::core::LLVMBuildBitCast(
+                ctx.builder,
+                va,
+                double_ty,
+                b"bitcast\0".as_ptr() as *const i8,
+            );
+            let fb = llvm_sys::core::LLVMBuildBitCast(
+                ctx.builder,
+                vb,
+                double_ty,
+                b"bitcast\0".as_ptr() as *const i8,
+            );
+            let cmp = llvm_sys::core::LLVMBuildFCmp(
+                ctx.builder,
+                llvm_sys::LLVMRealPredicate::LLVMRealONE,
+                fa,
+                fb,
+                b"cmp\0".as_ptr() as *const i8,
+            );
+            let result = bool_to_tscl_value(ctx, cmp)?;
             ctx.values.insert(*dst, result);
         }
         IrOp::Not(dst, a) => {
+            // Extract the boolean value and negate it
             let va = get_value(ctx, *a)?;
-            let result = call_stub(ctx, "tscl_not", &[va])?;
+            let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
+            let i1_ty = llvm_sys::core::LLVMInt1TypeInContext(ctx.context);
+            let one = llvm_sys::core::LLVMConstInt(i64_ty, 1, 0);
+            // Extract low bit (the boolean value)
+            let masked =
+                llvm_sys::core::LLVMBuildAnd(ctx.builder, va, one, b"mask\0".as_ptr() as *const i8);
+            // Check if it's zero (falsy)
+            let is_falsy = llvm_sys::core::LLVMBuildICmp(
+                ctx.builder,
+                llvm_sys::LLVMIntPredicate::LLVMIntEQ,
+                masked,
+                llvm_sys::core::LLVMConstInt(i64_ty, 0, 0),
+                b"is_falsy\0".as_ptr() as *const i8,
+            );
+            let result = bool_to_tscl_value(ctx, is_falsy)?;
             ctx.values.insert(*dst, result);
         }
         IrOp::Copy(dst, src)

@@ -332,6 +332,12 @@ impl Codegen {
                     *target = current_len;
                 }
             }
+            Stmt::Decl(Decl::Class(class_decl)) => {
+                let class_name = class_decl.ident.sym.to_string();
+                self.gen_class(&class_decl.class);
+                self.instructions.push(OpCode::Let(class_name.clone()));
+                self.outer_scope_vars.insert(class_name);
+            }
             Stmt::Expr(expr_stmt) => {
                 self.gen_expr(&expr_stmt.expr);
                 // Expression statements (e.g. `foo();`) should discard their result in JS.
@@ -471,11 +477,6 @@ impl Codegen {
                 let has_captures = !captured_vars.is_empty();
 
                 if has_captures {
-                    println!(
-                        "DEBUG: Function expression captures variables: {:?}",
-                        captured_vars.iter().collect::<Vec<_>>()
-                    );
-
                     // Create Environment Object
                     self.instructions.push(OpCode::NewObject);
 
@@ -552,11 +553,6 @@ impl Codegen {
                 let has_captures = !captured_vars.is_empty();
 
                 if has_captures {
-                    println!(
-                        "DEBUG: Arrow captures variables: {:?}",
-                        captured_vars.iter().collect::<Vec<_>>()
-                    );
-
                     // 3. Create Environment Object on the Heap
                     self.instructions.push(OpCode::NewObject);
 
@@ -842,5 +838,219 @@ impl Codegen {
             }
             _ => {}
         }
+    }
+
+    fn gen_class(&mut self, class: &Class) {
+        // Collect constructor params and body
+        let mut constructor_params: Vec<String> = Vec::new();
+        let mut constructor_body: Option<&BlockStmt> = None;
+
+        for member in &class.body {
+            if let ClassMember::Constructor(ctor) = member {
+                for param in &ctor.params {
+                    match param {
+                        ParamOrTsParamProp::Param(p) => {
+                            if let Pat::Ident(id) = &p.pat {
+                                constructor_params.push(id.id.sym.to_string());
+                            }
+                        }
+                        ParamOrTsParamProp::TsParamProp(ts_prop) => {
+                            if let TsParamPropParam::Ident(id) = &ts_prop.param {
+                                constructor_params.push(id.id.sym.to_string());
+                            }
+                        }
+                    }
+                }
+                constructor_body = ctor.body.as_ref();
+            }
+        }
+
+        // Create constructor function
+        let constructor_start = self.instructions.len() + 2;
+        self.instructions.push(OpCode::Push(JsValue::Function {
+            address: constructor_start,
+            env: None,
+        }));
+
+        // Jump over constructor body
+        let jump_idx = self.instructions.len();
+        self.instructions.push(OpCode::Jump(0));
+
+        // Constructor body
+        let saved_in_function = self.in_function;
+        self.in_function = true;
+
+        for param in constructor_params.iter().rev() {
+            self.instructions.push(OpCode::Let(param.clone()));
+        }
+
+        if let Some(body) = constructor_body {
+            for stmt in &body.stmts {
+                self.gen_stmt(stmt);
+            }
+        }
+
+        self.instructions.push(OpCode::LoadThis);
+        self.instructions.push(OpCode::Return);
+        self.in_function = saved_in_function;
+
+        // Backpatch jump
+        let after_constructor = self.instructions.len();
+        if let OpCode::Jump(ref mut addr) = self.instructions[jump_idx] {
+            *addr = after_constructor;
+        }
+
+        // Stack: [constructor]
+
+        // Save constructor to temp
+        self.instructions.push(OpCode::Let("__ctor__".to_string()));
+        // Stack: []
+
+        // Create prototype object
+        self.instructions.push(OpCode::NewObject);
+        // Stack: [prototype]
+
+        // Save prototype to temp
+        self.instructions.push(OpCode::Let("__proto__".to_string()));
+        // Stack: []
+
+        // Set prototype.constructor = wrapper (not the constructor function!)
+        // In JavaScript, Foo.prototype.constructor === Foo
+        // So the constructor property on the prototype should point to the class (wrapper)
+        // Stack for SetProp: [value, object] with value on top
+        // We want prototype.constructor = wrapper
+        // So value = wrapper, object = prototype
+        // Stack should be: [prototype, wrapper] with wrapper on top
+        self.instructions
+            .push(OpCode::Load("__proto__".to_string()));
+        // Stack: [prototype]
+        // We'll load wrapper later after it's created
+
+        // Create wrapper object for the class
+        self.instructions.push(OpCode::NewObject);
+        // Stack: [prototype, wrapper]
+        // Store wrapper in temp for later retrieval (methods will consume the stack)
+        self.instructions
+            .push(OpCode::Let("__wrapper__".to_string()));
+        // Stack: []
+
+        // Now set prototype.constructor = wrapper
+        self.instructions
+            .push(OpCode::Load("__proto__".to_string()));
+        // Stack: [prototype]
+        self.instructions
+            .push(OpCode::Load("__wrapper__".to_string()));
+        // Stack: [prototype, wrapper]
+        self.instructions
+            .push(OpCode::SetProp("constructor".to_string()));
+        // Stack: []
+
+        // Set wrapper.constructor = constructor
+        // Stack for SetProp: [value, object] where value is on top
+        // We want wrapper.constructor = constructor
+        // So value = constructor, object = wrapper
+        // Stack should be: [wrapper, constructor] with constructor on top
+        self.instructions
+            .push(OpCode::Load("__wrapper__".to_string()));
+        // Stack: [wrapper]
+        self.instructions.push(OpCode::Load("__ctor__".to_string()));
+        // Stack: [wrapper, constructor]
+        self.instructions
+            .push(OpCode::SetProp("constructor".to_string()));
+        // Stack: []
+
+        // Set wrapper.prototype = prototype
+        // We want wrapper.prototype = prototype
+        // So value = prototype, object = wrapper
+        // Stack should be: [wrapper, prototype] with prototype on top
+        self.instructions
+            .push(OpCode::Load("__wrapper__".to_string()));
+        // Stack: [wrapper]
+        self.instructions
+            .push(OpCode::Load("__proto__".to_string()));
+        // Stack: [wrapper, prototype]
+        self.instructions
+            .push(OpCode::SetProp("prototype".to_string()));
+        // Stack: []
+        eprintln!("DEBUG gen_class: after SetProp prototype, stack has []");
+
+        // Add methods to prototype
+        for member in &class.body {
+            if let ClassMember::Method(method) = member {
+                if let PropName::Ident(method_name) = &method.key {
+                    let method_name_str = method_name.sym.to_string();
+                    let unique_name = format!("__method_{}", method_name_str);
+
+                    // Generate the method function
+                    let params: Vec<String> = method
+                        .function
+                        .params
+                        .iter()
+                        .filter_map(|p| {
+                            if let Pat::Ident(id) = &p.pat {
+                                Some(id.id.sym.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    // Push function placeholder
+                    let method_start = self.instructions.len() + 2;
+                    self.instructions.push(OpCode::Push(JsValue::Function {
+                        address: method_start,
+                        env: None,
+                    }));
+
+                    // Jump over method body
+                    let method_jump_idx = self.instructions.len();
+                    self.instructions.push(OpCode::Jump(0));
+
+                    // Compile method body
+                    let saved_in_function = self.in_function;
+                    self.in_function = true;
+
+                    for param in params.iter().rev() {
+                        self.instructions.push(OpCode::Let(param.clone()));
+                    }
+
+                    if let Some(body) = &method.function.body {
+                        for stmt in &body.stmts {
+                            self.gen_stmt(stmt);
+                        }
+                    }
+
+                    self.instructions.push(OpCode::LoadThis);
+                    self.instructions.push(OpCode::Return);
+                    self.in_function = saved_in_function;
+
+                    // Backpatch method jump
+                    let after_method = self.instructions.len();
+                    if let OpCode::Jump(ref mut addr) = self.instructions[method_jump_idx] {
+                        *addr = after_method;
+                    }
+
+                    // Store method in a temp
+                    self.instructions.push(OpCode::Let(unique_name.clone()));
+
+                    // Set prototype.method = method_function
+                    // We need: prototype.method = method
+                    // Stack for SetProp: [value, object] with value on top
+                    // So we need [prototype, method] with method on top
+                    self.instructions
+                        .push(OpCode::Load("__proto__".to_string()));
+                    // Stack: [prototype]
+                    self.instructions.push(OpCode::Load(unique_name.clone()));
+                    // Stack: [prototype, method]
+                    self.instructions.push(OpCode::SetProp(method_name_str));
+                    // Stack: []
+                }
+            }
+        }
+
+        // Restore wrapper to stack for return
+        self.instructions
+            .push(OpCode::Load("__wrapper__".to_string()));
+        // Stack: [wrapper]
     }
 }

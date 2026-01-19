@@ -349,24 +349,15 @@ mod vm_interop {
                 | JsValue::Function {
                     address: _,
                     env: Some(idx),
-                } => {
-                    // Convert heap index to pointer
-                    // In a real implementation, we'd compute the actual pointer from the heap base
-                    Self::pointer(HeapPtr::from_usize(*idx))
-                }
+                } => Self::pointer(HeapPtr::from_usize(*idx)),
                 JsValue::Function { address, env: None } => {
-                    // Function without closure - store address as pointer
                     Self::pointer(HeapPtr::from_usize(*address))
                 }
-                JsValue::String(_s) => {
-                    // Strings need to be heap-allocated in native representation
-                    // For now, return undefined as placeholder
-                    Self::undefined()
-                }
+                JsValue::String(_s) => Self::undefined(),
                 JsValue::NativeFunction(idx) => {
-                    // Native functions are looked up by index
                     Self::pointer(HeapPtr::from_usize(*idx | 0x8000_0000_0000))
                 }
+                JsValue::Accessor(_, _) => Self::undefined(),
             }
         }
     }

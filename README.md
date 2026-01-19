@@ -6,7 +6,7 @@
   <br/>
   
   <img src="https://img.shields.io/badge/rust-1.70+-orange.svg" alt="Rust 1.70+"/>
-  <img src="https://img.shields.io/badge/tests-59%20passing-brightgreen.svg" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-60%20passing-brightgreen.svg" alt="Tests"/>
   <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"/>
 </div>
 
@@ -33,7 +33,9 @@ console.log(fib(35));  // Compiled to native code!
 - **Memory Safety** — Ownership model with compile-time borrow checking
 - **Self-Hosting** — Bootstrap compiler written in tscl itself
 - **Type Inference** — Flow-sensitive type analysis for optimization
-- **JavaScript Syntax** — Familiar syntax for easy adoption
+- **JavaScript Syntax** — Familiar syntax with ES6+ features
+- **Classes & Inheritance** — ES6 classes with extends and super()
+- **Error Handling** — try/catch/finally with exception propagation
 
 ## Architecture
 
@@ -145,11 +147,19 @@ if (condition) {
     // ...
 }
 
-while (condition) {
+for (let i = 0; i < 10; i++) {
     // ...
     if (done) break;
     if (skip) continue;
 }
+
+while (condition) {
+    // ...
+}
+
+do {
+    // ...
+} while (condition);
 ```
 
 ### Objects & Arrays
@@ -164,15 +174,48 @@ arr.push(4);
 let first = arr[0];
 ```
 
-### Constructors
+### Classes & Inheritance
 
 ```javascript
-function Point(x, y) {
-    this.x = x;
-    this.y = y;
+class Animal {
+    name: string;
+    
+    constructor(name: string) {
+        this.name = name;
+    }
+    
+    speak() {
+        console.log(this.name + " makes a sound");
+    }
 }
 
-let p = new Point(10, 20);
+class Dog extends Animal {
+    breed: string;
+    
+    constructor(name: string, breed: string) {
+        super(name);
+        this.breed = breed;
+    }
+    
+    speak() {
+        console.log(this.name + " barks!");
+    }
+}
+
+let dog = new Dog("Buddy", "Golden Retriever");
+dog.speak();  // "Buddy barks!"
+```
+
+### Error Handling
+
+```javascript
+try {
+    riskyOperation();
+} catch (e) {
+    console.log("Error: " + e);
+} finally {
+    cleanup();
+}
 ```
 
 ## Memory Model
