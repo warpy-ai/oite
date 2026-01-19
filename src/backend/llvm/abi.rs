@@ -3,8 +3,8 @@
 //! Defines runtime stubs as LLVM IR functions that are self-contained
 //! and don't require external Rust runtime linking.
 
-use llvm_sys::prelude::*;
 use llvm_sys::core::*;
+use llvm_sys::prelude::*;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::ptr;
@@ -19,14 +19,14 @@ pub unsafe fn declare_runtime_stubs(
 ) -> Result<(), BackendError> {
     // Declare libc functions we'll use
     declare_libc_functions(module, context)?;
-    
+
     // Define runtime stubs with LLVM IR bodies
     define_tscl_call(module, context, stubs)?;
     define_tscl_console_log(module, context, stubs)?;
-    
+
     // Simple stubs that just return undefined or passthrough
     define_simple_stubs(module, context, stubs)?;
-    
+
     Ok(())
 }
 
@@ -37,7 +37,7 @@ unsafe fn declare_libc_functions(
 ) -> Result<(), BackendError> {
     let i32_ty = LLVMInt32TypeInContext(context);
     let i8_ptr_ty = LLVMPointerType(LLVMInt8TypeInContext(context), 0);
-    
+
     // int printf(const char* format, ...)
     let printf_name = CString::new("printf").unwrap();
     if LLVMGetNamedFunction(module, printf_name.as_ptr()).is_null() {
@@ -45,12 +45,12 @@ unsafe fn declare_libc_functions(
         let printf_ty = LLVMFunctionType(i32_ty, param_types.as_mut_ptr(), 1, 1); // vararg
         LLVMAddFunction(module, printf_name.as_ptr(), printf_ty);
     }
-    
+
     Ok(())
 }
 
 /// Define tscl_call: calls a function pointer with arguments
-/// 
+///
 /// In our implementation, func_ptr is actually a function address that we can call directly.
 /// For simple cases (like calling known functions), we bitcast and call.
 unsafe fn define_tscl_call(
@@ -60,59 +60,71 @@ unsafe fn define_tscl_call(
 ) -> Result<(), BackendError> {
     let i64_ty = LLVMInt64TypeInContext(context);
     let i8_ptr_ty = LLVMPointerType(LLVMInt8TypeInContext(context), 0);
-    
+
     // tscl_call(func: i64, argc: i64, argv: i8*) -> i64
     let mut param_types = vec![i64_ty, i64_ty, i8_ptr_ty];
     let func_ty = LLVMFunctionType(i64_ty, param_types.as_mut_ptr(), 3, 0);
-    
+
     let func_name = CString::new("tscl_call").unwrap();
     let func = LLVMAddFunction(module, func_name.as_ptr(), func_ty);
-    
+
     if func.is_null() {
         return Err(BackendError::Llvm("Failed to create tscl_call".into()));
     }
-    
+
     // Create entry basic block
     let entry_name = CString::new("entry").unwrap();
     let entry_bb = LLVMAppendBasicBlockInContext(context, func, entry_name.as_ptr());
     let builder = LLVMCreateBuilderInContext(context);
     LLVMPositionBuilderAtEnd(builder, entry_bb);
-    
+
     // Get parameters
     let func_ptr_param = LLVMGetParam(func, 0);
     let argc_param = LLVMGetParam(func, 1);
     let _argv_param = LLVMGetParam(func, 2);
-    
+
     // Check if we have 0 or 1 arg (common cases for fib)
     let zero = LLVMConstInt(i64_ty, 0, 0);
     let one = LLVMConstInt(i64_ty, 1, 0);
-    
+
     // Create blocks for different arg counts
     let call0_name = CString::new("call0").unwrap();
     let call1_name = CString::new("call1").unwrap();
     let default_name = CString::new("default").unwrap();
-    
+
     let call0_bb = LLVMAppendBasicBlockInContext(context, func, call0_name.as_ptr());
     let call1_bb = LLVMAppendBasicBlockInContext(context, func, call1_name.as_ptr());
     let default_bb = LLVMAppendBasicBlockInContext(context, func, default_name.as_ptr());
-    
+
     // Create switch on argc
     let switch = LLVMBuildSwitch(builder, argc_param, default_bb, 2);
     LLVMAddCase(switch, zero, call0_bb);
     LLVMAddCase(switch, one, call1_bb);
-    
+
     // Block for 0 args: call func()
     LLVMPositionBuilderAtEnd(builder, call0_bb);
     {
         // Cast func_ptr to function type: () -> i64
         let callee_ty = LLVMFunctionType(i64_ty, ptr::null_mut(), 0, 0);
         let callee_ptr_ty = LLVMPointerType(callee_ty, 0);
-        let callee = LLVMBuildIntToPtr(builder, func_ptr_param, callee_ptr_ty, b"callee\0".as_ptr() as *const i8);
+        let callee = LLVMBuildIntToPtr(
+            builder,
+            func_ptr_param,
+            callee_ptr_ty,
+            b"callee\0".as_ptr() as *const i8,
+        );
         let call_name = CString::new("result0").unwrap();
-        let result = LLVMBuildCall2(builder, callee_ty, callee, ptr::null_mut(), 0, call_name.as_ptr());
+        let result = LLVMBuildCall2(
+            builder,
+            callee_ty,
+            callee,
+            ptr::null_mut(),
+            0,
+            call_name.as_ptr(),
+        );
         LLVMBuildRet(builder, result);
     }
-    
+
     // Block for 1 arg: call func(arg0)
     LLVMPositionBuilderAtEnd(builder, call1_bb);
     {
@@ -120,24 +132,24 @@ unsafe fn define_tscl_call(
         // For now, we'll get it from the argv pointer
         // Actually, argv is null in our current impl, we need to change call_indirect
         // For simplicity, load arg0 from argv if not null, else return undefined
-        
+
         // For fibonacci specifically, we need to handle this properly
         // The args are passed in argv as an array of i64
         // But our current impl passes null... we need to fix that
-        
+
         // For now, return undefined for 1-arg calls through tscl_call
         // The real fix is in how we generate Call ops
         let undefined = LLVMConstInt(i64_ty, 0x7FF8000000000001u64, 0); // NaN undefined
         LLVMBuildRet(builder, undefined);
     }
-    
+
     // Default block: return undefined
     LLVMPositionBuilderAtEnd(builder, default_bb);
     {
         let undefined = LLVMConstInt(i64_ty, 0x7FF8000000000001u64, 0);
         LLVMBuildRet(builder, undefined);
     }
-    
+
     LLVMDisposeBuilder(builder);
     stubs.insert("tscl_call".to_string(), func);
     Ok(())
@@ -154,50 +166,68 @@ unsafe fn define_tscl_console_log(
     let double_ty = LLVMDoubleTypeInContext(context);
     let i8_ty = LLVMInt8TypeInContext(context);
     let i8_ptr_ty = LLVMPointerType(i8_ty, 0);
-    
+
     // tscl_console_log(value: i64) -> i64
     let mut param_types = vec![i64_ty];
     let func_ty = LLVMFunctionType(i64_ty, param_types.as_mut_ptr(), 1, 0);
-    
+
     let func_name = CString::new("tscl_console_log").unwrap();
     let func = LLVMAddFunction(module, func_name.as_ptr(), func_ty);
-    
+
     if func.is_null() {
-        return Err(BackendError::Llvm("Failed to create tscl_console_log".into()));
+        return Err(BackendError::Llvm(
+            "Failed to create tscl_console_log".into(),
+        ));
     }
-    
+
     // Create entry basic block
     let entry_name = CString::new("entry").unwrap();
     let entry_bb = LLVMAppendBasicBlockInContext(context, func, entry_name.as_ptr());
     let builder = LLVMCreateBuilderInContext(context);
     LLVMPositionBuilderAtEnd(builder, entry_bb);
-    
+
     // Get value parameter
     let value_param = LLVMGetParam(func, 0);
-    
+
     // NaN-boxing check: if high bits are 0x7FF8 or higher, it's a special value
     // For simplicity, treat all values as numbers (NaN-boxed doubles)
-    
+
     // Bitcast i64 to double
-    let double_val = LLVMBuildBitCast(builder, value_param, double_ty, b"dval\0".as_ptr() as *const i8);
-    
+    let double_val = LLVMBuildBitCast(
+        builder,
+        value_param,
+        double_ty,
+        b"dval\0".as_ptr() as *const i8,
+    );
+
     // Create format string "%g\n" as a global constant
     // Use LLVMBuildGlobalStringPtr for simpler string handling
-    let fmt_ptr = LLVMBuildGlobalStringPtr(builder, b"%g\n\0".as_ptr() as *const i8, b".fmt\0".as_ptr() as *const i8);
-    
+    let fmt_ptr = LLVMBuildGlobalStringPtr(
+        builder,
+        b"%g\n\0".as_ptr() as *const i8,
+        b".fmt\0".as_ptr() as *const i8,
+    );
+
     // Call printf
     let printf_name = CString::new("printf").unwrap();
     let printf_func = LLVMGetNamedFunction(module, printf_name.as_ptr());
     if !printf_func.is_null() {
         let printf_ty = LLVMFunctionType(i32_ty, [i8_ptr_ty].as_mut_ptr(), 1, 1);
         let mut printf_args = vec![fmt_ptr, double_val];
-        let _call_result = LLVMBuildCall2(builder, printf_ty, printf_func, printf_args.as_mut_ptr(), 2, b"printf_result\0".as_ptr() as *const i8);
+        let _call_result = LLVMBuildCall2(
+            builder,
+            printf_ty,
+            printf_func,
+            printf_args.as_mut_ptr(),
+            2,
+            b"printf_result\0".as_ptr() as *const i8,
+        );
     }
-    
+
     // Return undefined
     let undefined = LLVMConstInt(i64_ty, 0x7FF8000000000001u64, 0);
     LLVMBuildRet(builder, undefined);
-    
+
     LLVMDisposeBuilder(builder);
     stubs.insert("tscl_console_log".to_string(), func);
     Ok(())
@@ -215,39 +245,44 @@ where
 {
     let i64_ty = LLVMInt64TypeInContext(context);
     let double_ty = LLVMDoubleTypeInContext(context);
-    
+
     let mut param_types = vec![i64_ty, i64_ty];
     let func_ty = LLVMFunctionType(i64_ty, param_types.as_mut_ptr(), 2, 0);
-    
+
     let func_name = CString::new(name).unwrap();
     let func = LLVMAddFunction(module, func_name.as_ptr(), func_ty);
-    
+
     if func.is_null() {
         return Err(BackendError::Llvm(format!("Failed to create {}", name)));
     }
-    
+
     let entry_name = CString::new("entry").unwrap();
     let entry_bb = LLVMAppendBasicBlockInContext(context, func, entry_name.as_ptr());
     let builder = LLVMCreateBuilderInContext(context);
     LLVMPositionBuilderAtEnd(builder, entry_bb);
-    
+
     // Get parameters
     let a_i64 = LLVMGetParam(func, 0);
     let b_i64 = LLVMGetParam(func, 1);
-    
+
     // Bitcast i64 to double
     let a_fp = LLVMBuildBitCast(builder, a_i64, double_ty, b"a_fp\0".as_ptr() as *const i8);
     let b_fp = LLVMBuildBitCast(builder, b_i64, double_ty, b"b_fp\0".as_ptr() as *const i8);
-    
+
     // Perform operation
     let result_fp = op(builder, a_fp, b_fp, context);
-    
+
     // Bitcast result back to i64
-    let result_i64 = LLVMBuildBitCast(builder, result_fp, i64_ty, b"result\0".as_ptr() as *const i8);
-    
+    let result_i64 = LLVMBuildBitCast(
+        builder,
+        result_fp,
+        i64_ty,
+        b"result\0".as_ptr() as *const i8,
+    );
+
     LLVMBuildRet(builder, result_i64);
     LLVMDisposeBuilder(builder);
-    
+
     Ok(func)
 }
 
@@ -263,37 +298,42 @@ where
 {
     let i64_ty = LLVMInt64TypeInContext(context);
     let double_ty = LLVMDoubleTypeInContext(context);
-    
+
     let mut param_types = vec![i64_ty];
     let func_ty = LLVMFunctionType(i64_ty, param_types.as_mut_ptr(), 1, 0);
-    
+
     let func_name = CString::new(name).unwrap();
     let func = LLVMAddFunction(module, func_name.as_ptr(), func_ty);
-    
+
     if func.is_null() {
         return Err(BackendError::Llvm(format!("Failed to create {}", name)));
     }
-    
+
     let entry_name = CString::new("entry").unwrap();
     let entry_bb = LLVMAppendBasicBlockInContext(context, func, entry_name.as_ptr());
     let builder = LLVMCreateBuilderInContext(context);
     LLVMPositionBuilderAtEnd(builder, entry_bb);
-    
+
     // Get parameter
     let a_i64 = LLVMGetParam(func, 0);
-    
+
     // Bitcast i64 to double
     let a_fp = LLVMBuildBitCast(builder, a_i64, double_ty, b"a_fp\0".as_ptr() as *const i8);
-    
+
     // Perform operation
     let result_fp = op(builder, a_fp, context);
-    
+
     // Bitcast result back to i64
-    let result_i64 = LLVMBuildBitCast(builder, result_fp, i64_ty, b"result\0".as_ptr() as *const i8);
-    
+    let result_i64 = LLVMBuildBitCast(
+        builder,
+        result_fp,
+        i64_ty,
+        b"result\0".as_ptr() as *const i8,
+    );
+
     LLVMBuildRet(builder, result_i64);
     LLVMDisposeBuilder(builder);
-    
+
     Ok(func)
 }
 
@@ -307,108 +347,180 @@ unsafe fn define_simple_stubs(
     let i8_ty = LLVMInt8TypeInContext(context);
     let i8_ptr_ty = LLVMPointerType(i8_ty, 0);
     let void_ty = LLVMVoidTypeInContext(context);
-    
+
     // Helper to create a stub that returns undefined
-    let create_returning_undefined = |name: &str, param_types: &mut [LLVMTypeRef]| -> Result<LLVMValueRef, BackendError> {
-        let func_ty = LLVMFunctionType(i64_ty, param_types.as_mut_ptr(), param_types.len() as u32, 0);
-        let func_name = CString::new(name).unwrap();
-        let func = LLVMAddFunction(module, func_name.as_ptr(), func_ty);
-        
-        if func.is_null() {
-            return Err(BackendError::Llvm(format!("Failed to create {}", name)));
-        }
-        
-        let entry_name = CString::new("entry").unwrap();
-        let entry_bb = LLVMAppendBasicBlockInContext(context, func, entry_name.as_ptr());
-        let builder = LLVMCreateBuilderInContext(context);
-        LLVMPositionBuilderAtEnd(builder, entry_bb);
-        
-        let undefined = LLVMConstInt(i64_ty, 0x7FF8000000000001u64, 0);
-        LLVMBuildRet(builder, undefined);
-        
-        LLVMDisposeBuilder(builder);
-        Ok(func)
-    };
-    
+    let create_returning_undefined =
+        |name: &str, param_types: &mut [LLVMTypeRef]| -> Result<LLVMValueRef, BackendError> {
+            let func_ty = LLVMFunctionType(
+                i64_ty,
+                param_types.as_mut_ptr(),
+                param_types.len() as u32,
+                0,
+            );
+            let func_name = CString::new(name).unwrap();
+            let func = LLVMAddFunction(module, func_name.as_ptr(), func_ty);
+
+            if func.is_null() {
+                return Err(BackendError::Llvm(format!("Failed to create {}", name)));
+            }
+
+            let entry_name = CString::new("entry").unwrap();
+            let entry_bb = LLVMAppendBasicBlockInContext(context, func, entry_name.as_ptr());
+            let builder = LLVMCreateBuilderInContext(context);
+            LLVMPositionBuilderAtEnd(builder, entry_bb);
+
+            let undefined = LLVMConstInt(i64_ty, 0x7FF8000000000001u64, 0);
+            LLVMBuildRet(builder, undefined);
+
+            LLVMDisposeBuilder(builder);
+            Ok(func)
+        };
+
     // Helper to create a void stub
-    let create_void_stub = |name: &str, param_types: &mut [LLVMTypeRef]| -> Result<LLVMValueRef, BackendError> {
-        let func_ty = LLVMFunctionType(void_ty, param_types.as_mut_ptr(), param_types.len() as u32, 0);
-        let func_name = CString::new(name).unwrap();
-        let func = LLVMAddFunction(module, func_name.as_ptr(), func_ty);
-        
-        if func.is_null() {
-            return Err(BackendError::Llvm(format!("Failed to create {}", name)));
-        }
-        
-        let entry_name = CString::new("entry").unwrap();
-        let entry_bb = LLVMAppendBasicBlockInContext(context, func, entry_name.as_ptr());
-        let builder = LLVMCreateBuilderInContext(context);
-        LLVMPositionBuilderAtEnd(builder, entry_bb);
-        LLVMBuildRetVoid(builder);
-        
-        LLVMDisposeBuilder(builder);
-        Ok(func)
-    };
-    
+    let create_void_stub =
+        |name: &str, param_types: &mut [LLVMTypeRef]| -> Result<LLVMValueRef, BackendError> {
+            let func_ty = LLVMFunctionType(
+                void_ty,
+                param_types.as_mut_ptr(),
+                param_types.len() as u32,
+                0,
+            );
+            let func_name = CString::new(name).unwrap();
+            let func = LLVMAddFunction(module, func_name.as_ptr(), func_ty);
+
+            if func.is_null() {
+                return Err(BackendError::Llvm(format!("Failed to create {}", name)));
+            }
+
+            let entry_name = CString::new("entry").unwrap();
+            let entry_bb = LLVMAppendBasicBlockInContext(context, func, entry_name.as_ptr());
+            let builder = LLVMCreateBuilderInContext(context);
+            LLVMPositionBuilderAtEnd(builder, entry_bb);
+            LLVMBuildRetVoid(builder);
+
+            LLVMDisposeBuilder(builder);
+            Ok(func)
+        };
+
     // Allocation stubs - return undefined for now
-    stubs.insert("tscl_alloc_object".to_string(), create_returning_undefined("tscl_alloc_object", &mut [])?);
-    stubs.insert("tscl_alloc_array".to_string(), create_returning_undefined("tscl_alloc_array", &mut [i64_ty])?);
-    stubs.insert("tscl_alloc_string".to_string(), create_returning_undefined("tscl_alloc_string", &mut [i8_ptr_ty, i64_ty])?);
-    
+    stubs.insert(
+        "tscl_alloc_object".to_string(),
+        create_returning_undefined("tscl_alloc_object", &mut [])?,
+    );
+    stubs.insert(
+        "tscl_alloc_array".to_string(),
+        create_returning_undefined("tscl_alloc_array", &mut [i64_ty])?,
+    );
+    stubs.insert(
+        "tscl_alloc_string".to_string(),
+        create_returning_undefined("tscl_alloc_string", &mut [i8_ptr_ty, i64_ty])?,
+    );
+
     // Property access stubs
-    stubs.insert("tscl_get_prop".to_string(), create_returning_undefined("tscl_get_prop", &mut [i64_ty, i8_ptr_ty, i64_ty])?);
-    stubs.insert("tscl_set_prop".to_string(), create_void_stub("tscl_set_prop", &mut [i64_ty, i8_ptr_ty, i64_ty, i64_ty])?);
-    stubs.insert("tscl_get_element".to_string(), create_returning_undefined("tscl_get_element", &mut [i64_ty, i64_ty])?);
-    stubs.insert("tscl_set_element".to_string(), create_void_stub("tscl_set_element", &mut [i64_ty, i64_ty, i64_ty])?);
-    
+    stubs.insert(
+        "tscl_get_prop".to_string(),
+        create_returning_undefined("tscl_get_prop", &mut [i64_ty, i8_ptr_ty, i64_ty])?,
+    );
+    stubs.insert(
+        "tscl_set_prop".to_string(),
+        create_void_stub("tscl_set_prop", &mut [i64_ty, i8_ptr_ty, i64_ty, i64_ty])?,
+    );
+    stubs.insert(
+        "tscl_get_element".to_string(),
+        create_returning_undefined("tscl_get_element", &mut [i64_ty, i64_ty])?,
+    );
+    stubs.insert(
+        "tscl_set_element".to_string(),
+        create_void_stub("tscl_set_element", &mut [i64_ty, i64_ty, i64_ty])?,
+    );
+
     // Dynamic arithmetic stubs - perform actual operations
     // These treat values as NaN-boxed doubles: bitcast to double, operate, bitcast back
-    
+
     // Add
-    stubs.insert("tscl_add_any".to_string(), create_binary_fp_op(module, context, "tscl_add_any", |builder, a, b, _ctx| {
-        LLVMBuildFAdd(builder, a, b, b"add\0".as_ptr() as *const i8)
-    })?);
-    
+    stubs.insert(
+        "tscl_add_any".to_string(),
+        create_binary_fp_op(module, context, "tscl_add_any", |builder, a, b, _ctx| {
+            LLVMBuildFAdd(builder, a, b, b"add\0".as_ptr() as *const i8)
+        })?,
+    );
+
     // Sub
-    stubs.insert("tscl_sub_any".to_string(), create_binary_fp_op(module, context, "tscl_sub_any", |builder, a, b, _ctx| {
-        LLVMBuildFSub(builder, a, b, b"sub\0".as_ptr() as *const i8)
-    })?);
-    
+    stubs.insert(
+        "tscl_sub_any".to_string(),
+        create_binary_fp_op(module, context, "tscl_sub_any", |builder, a, b, _ctx| {
+            LLVMBuildFSub(builder, a, b, b"sub\0".as_ptr() as *const i8)
+        })?,
+    );
+
     // Mul
-    stubs.insert("tscl_mul_any".to_string(), create_binary_fp_op(module, context, "tscl_mul_any", |builder, a, b, _ctx| {
-        LLVMBuildFMul(builder, a, b, b"mul\0".as_ptr() as *const i8)
-    })?);
-    
+    stubs.insert(
+        "tscl_mul_any".to_string(),
+        create_binary_fp_op(module, context, "tscl_mul_any", |builder, a, b, _ctx| {
+            LLVMBuildFMul(builder, a, b, b"mul\0".as_ptr() as *const i8)
+        })?,
+    );
+
     // Div
-    stubs.insert("tscl_div_any".to_string(), create_binary_fp_op(module, context, "tscl_div_any", |builder, a, b, _ctx| {
-        LLVMBuildFDiv(builder, a, b, b"div\0".as_ptr() as *const i8)
-    })?);
-    
+    stubs.insert(
+        "tscl_div_any".to_string(),
+        create_binary_fp_op(module, context, "tscl_div_any", |builder, a, b, _ctx| {
+            LLVMBuildFDiv(builder, a, b, b"div\0".as_ptr() as *const i8)
+        })?,
+    );
+
     // Mod (fmod)
-    stubs.insert("tscl_mod_any".to_string(), create_binary_fp_op(module, context, "tscl_mod_any", |builder, a, b, _ctx| {
-        LLVMBuildFRem(builder, a, b, b"mod\0".as_ptr() as *const i8)
-    })?);
-    
+    stubs.insert(
+        "tscl_mod_any".to_string(),
+        create_binary_fp_op(module, context, "tscl_mod_any", |builder, a, b, _ctx| {
+            LLVMBuildFRem(builder, a, b, b"mod\0".as_ptr() as *const i8)
+        })?,
+    );
+
     // Unary operations
-    stubs.insert("tscl_neg".to_string(), create_unary_fp_op(module, context, "tscl_neg", |builder, a, ctx| {
-        let double_ty = LLVMDoubleTypeInContext(ctx);
-        let zero = LLVMConstReal(double_ty, 0.0);
-        LLVMBuildFSub(builder, zero, a, b"neg\0".as_ptr() as *const i8)
-    })?);
-    
-    stubs.insert("tscl_not".to_string(), create_returning_undefined("tscl_not", &mut [i64_ty])?);
-    
+    stubs.insert(
+        "tscl_neg".to_string(),
+        create_unary_fp_op(module, context, "tscl_neg", |builder, a, ctx| {
+            let double_ty = LLVMDoubleTypeInContext(ctx);
+            let zero = LLVMConstReal(double_ty, 0.0);
+            LLVMBuildFSub(builder, zero, a, b"neg\0".as_ptr() as *const i8)
+        })?,
+    );
+
+    stubs.insert(
+        "tscl_not".to_string(),
+        create_returning_undefined("tscl_not", &mut [i64_ty])?,
+    );
+
     // Comparison stubs
-    stubs.insert("tscl_eq_strict".to_string(), create_returning_undefined("tscl_eq_strict", &mut [i64_ty, i64_ty])?);
-    stubs.insert("tscl_lt".to_string(), create_returning_undefined("tscl_lt", &mut [i64_ty, i64_ty])?);
-    stubs.insert("tscl_gt".to_string(), create_returning_undefined("tscl_gt", &mut [i64_ty, i64_ty])?);
-    
+    stubs.insert(
+        "tscl_eq_strict".to_string(),
+        create_returning_undefined("tscl_eq_strict", &mut [i64_ty, i64_ty])?,
+    );
+    stubs.insert(
+        "tscl_lt".to_string(),
+        create_returning_undefined("tscl_lt", &mut [i64_ty, i64_ty])?,
+    );
+    stubs.insert(
+        "tscl_gt".to_string(),
+        create_returning_undefined("tscl_gt", &mut [i64_ty, i64_ty])?,
+    );
+
     // Type conversion stubs
-    stubs.insert("tscl_to_boolean".to_string(), create_returning_undefined("tscl_to_boolean", &mut [i64_ty])?);
-    stubs.insert("tscl_to_number".to_string(), create_returning_undefined("tscl_to_number", &mut [i64_ty])?);
-    
+    stubs.insert(
+        "tscl_to_boolean".to_string(),
+        create_returning_undefined("tscl_to_boolean", &mut [i64_ty])?,
+    );
+    stubs.insert(
+        "tscl_to_number".to_string(),
+        create_returning_undefined("tscl_to_number", &mut [i64_ty])?,
+    );
+
     // Closure stubs
-    stubs.insert("tscl_make_closure".to_string(), create_returning_undefined("tscl_make_closure", &mut [i64_ty, i64_ty])?);
-    
+    stubs.insert(
+        "tscl_make_closure".to_string(),
+        create_returning_undefined("tscl_make_closure", &mut [i64_ty, i64_ty])?,
+    );
+
     Ok(())
 }

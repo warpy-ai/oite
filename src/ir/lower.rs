@@ -740,6 +740,17 @@ pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
     // Step 1: Extract all function definitions from bytecode
     let extracted_funcs = extract_functions(instructions);
 
+    // Step 1.5: Build a map of variable name -> function address
+    // This is used to pre-initialize function references in extracted functions
+    let mut func_var_addrs: HashMap<String, usize> = HashMap::new();
+    for i in 0..instructions.len().saturating_sub(1) {
+        if let OpCode::Push(JsValue::Function { address, .. }) = &instructions[i] {
+            if let OpCode::Let(name) | OpCode::Store(name) = &instructions[i + 1] {
+                func_var_addrs.insert(name.clone(), *address);
+            }
+        }
+    }
+
     // Step 2: Lower each extracted function
     for func_info in &extracted_funcs {
         let func_bytecode = &instructions[func_info.address..=func_info.end_address];
@@ -752,6 +763,7 @@ pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
             &func_info.param_names,
             func_info.address,
             func_info.self_reference_var.as_ref(),
+            &func_var_addrs,
         ) {
             Ok(ir_func) => {
                 module.add_function(ir_func);
@@ -773,6 +785,19 @@ pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
         module.function_addrs.insert(func_info.address, i);
     }
 
+    // Step 4: Detect user-defined main() function
+    // Look for pattern: Push(Function { address: X, ... }) followed by Let("main")
+    for i in 0..instructions.len().saturating_sub(1) {
+        if let OpCode::Push(JsValue::Function { address, .. }) = &instructions[i] {
+            if let OpCode::Let(name) = &instructions[i + 1] {
+                if name == "main" {
+                    module.user_main_addr = Some(*address);
+                    break;
+                }
+            }
+        }
+    }
+
     Ok(module)
 }
 
@@ -783,6 +808,7 @@ fn lower_extracted_function(
     param_names: &[String],
     base_addr: usize,
     self_ref_var: Option<&String>,
+    func_var_addrs: &HashMap<String, usize>,
 ) -> Result<IrFunction, LowerError> {
     // Rebase jump targets to be relative to the function start
     let rebased = rebase_jump_targets(instructions, base_addr);
@@ -800,6 +826,35 @@ fn lower_extracted_function(
         lowerer.emit(IrOp::Const(funct_addr_val, Literal::Number(addr_num)));
         lowerer.emit(IrOp::StoreLocal(slot, funct_addr_val));
         lowerer.local_values.insert(slot, funct_addr_val);
+    }
+
+    // Pre-initialize any referenced function variables from outer scope
+    // Scan the bytecode for Load instructions that reference known functions
+    let mut initialized_vars: HashSet<String> = HashSet::new();
+    if let Some(var_name) = self_ref_var {
+        initialized_vars.insert(var_name.clone());
+    }
+    for param_name in param_names {
+        initialized_vars.insert(param_name.clone());
+    }
+
+    for op in &rebased {
+        if let OpCode::Load(var_name) = op {
+            if !initialized_vars.contains(var_name) {
+                if let Some(&func_addr) = func_var_addrs.get(var_name) {
+                    // This variable references an outer function - pre-initialize it
+                    let slot = lowerer.get_or_create_local(var_name);
+                    let func_addr_val = lowerer.alloc_value(IrType::Function);
+                    lowerer.emit(IrOp::Const(
+                        func_addr_val,
+                        Literal::Number(func_addr as f64),
+                    ));
+                    lowerer.emit(IrOp::StoreLocal(slot, func_addr_val));
+                    lowerer.local_values.insert(slot, func_addr_val);
+                    initialized_vars.insert(var_name.clone());
+                }
+            }
+        }
     }
 
     lowerer.lower(&rebased)

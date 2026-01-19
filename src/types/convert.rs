@@ -3,14 +3,14 @@
 //! Converts SWC's TypeScript type AST (TsType) to tscl's Type representation.
 
 use swc_ecma_ast::{
-    TsArrayType, TsFnOrConstructorType, TsFnParam, TsFnType, TsKeywordType, TsKeywordTypeKind,
-    TsType, TsTypeAnn, TsTypeParamDecl, TsTypeParamInstantiation, TsTypeRef,
-    TsTypeLit, TsPropertySignature, Expr, Ident,
+    Expr, Ident, TsArrayType, TsFnOrConstructorType, TsFnParam, TsFnType, TsKeywordType,
+    TsKeywordTypeKind, TsPropertySignature, TsType, TsTypeAnn, TsTypeLit, TsTypeParamDecl,
+    TsTypeParamInstantiation, TsTypeRef,
 };
 
 use super::error::{Span, TypeError};
 use super::registry::TypeRegistry;
-use super::{fresh_type_var_id, FunctionType, ObjectType, Type, TypeVarId};
+use super::{FunctionType, ObjectType, Type, TypeVarId, fresh_type_var_id};
 use std::collections::HashMap;
 
 /// Type converter context.
@@ -67,8 +67,8 @@ impl<'a> TypeConverter<'a> {
             TsKeywordTypeKind::TsNeverKeyword => Ok(Type::Never),
             TsKeywordTypeKind::TsAnyKeyword => Ok(Type::Any),
             TsKeywordTypeKind::TsUndefinedKeyword => Ok(Type::Void), // Treat undefined as void
-            TsKeywordTypeKind::TsNullKeyword => Ok(Type::Void), // Treat null as void for now
-            TsKeywordTypeKind::TsUnknownKeyword => Ok(Type::Any), // Treat unknown as any
+            TsKeywordTypeKind::TsNullKeyword => Ok(Type::Void),      // Treat null as void for now
+            TsKeywordTypeKind::TsUnknownKeyword => Ok(Type::Any),    // Treat unknown as any
             TsKeywordTypeKind::TsObjectKeyword => Ok(Type::Object(ObjectType::default())),
             _ => Err(TypeError::UnsupportedType {
                 description: format!("keyword type {:?}", kw.kind),
@@ -185,12 +185,10 @@ impl<'a> TypeConverter<'a> {
                     is_method: false,
                 })))
             }
-            TsFnOrConstructorType::TsConstructorType(_) => {
-                Err(TypeError::UnsupportedType {
-                    description: "constructor types".to_string(),
-                    span: Span::default(),
-                })
-            }
+            TsFnOrConstructorType::TsConstructorType(_) => Err(TypeError::UnsupportedType {
+                description: "constructor types".to_string(),
+                span: Span::default(),
+            }),
         }
     }
 
@@ -262,7 +260,10 @@ impl<'a> TypeConverter<'a> {
             }
         }
 
-        Ok(Type::Object(ObjectType { fields, exact: false }))
+        Ok(Type::Object(ObjectType {
+            fields,
+            exact: false,
+        }))
     }
 }
 

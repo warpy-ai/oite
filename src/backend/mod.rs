@@ -150,9 +150,9 @@ pub fn compile(module: &IrModule, config: &BackendConfig) -> Result<CompiledModu
                 functions: runtime.get_all_funcs(),
             })
         }
-        BackendKind::CraneliftAot => {
-            Err(BackendError::AotError("AOT compilation not yet implemented".into()))
-        }
+        BackendKind::CraneliftAot => Err(BackendError::AotError(
+            "AOT compilation not yet implemented".into(),
+        )),
         BackendKind::LlvmAot => {
             // For AOT, use AotCompiler
             let mut aot = aot::AotCompiler::new(config);

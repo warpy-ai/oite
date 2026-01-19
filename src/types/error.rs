@@ -17,11 +17,21 @@ pub struct Span {
 
 impl Span {
     pub fn new(start: u32, end: u32, line: u32, col: u32) -> Self {
-        Self { start, end, line, col }
+        Self {
+            start,
+            end,
+            line,
+            col,
+        }
     }
 
     pub fn from_range(start: u32, end: u32) -> Self {
-        Self { start, end, line: 0, col: 0 }
+        Self {
+            start,
+            end,
+            line: 0,
+            col: 0,
+        }
     }
 }
 
@@ -58,22 +68,13 @@ pub enum TypeError {
     },
 
     /// Undefined variable.
-    UndefinedVariable {
-        name: String,
-        span: Span,
-    },
+    UndefinedVariable { name: String, span: Span },
 
     /// Undefined type.
-    UndefinedType {
-        name: String,
-        span: Span,
-    },
+    UndefinedType { name: String, span: Span },
 
     /// Trying to call a non-function.
-    NotCallable {
-        ty: Type,
-        span: Span,
-    },
+    NotCallable { ty: Type, span: Span },
 
     /// Wrong number of arguments.
     WrongArgCount {
@@ -83,9 +84,7 @@ pub enum TypeError {
     },
 
     /// Cannot infer type.
-    CannotInfer {
-        span: Span,
-    },
+    CannotInfer { span: Span },
 
     /// Using a value after it has been moved.
     UseAfterMove {
@@ -110,23 +109,13 @@ pub enum TypeError {
     },
 
     /// Assigning to immutable variable.
-    ImmutableAssignment {
-        var: String,
-        span: Span,
-    },
+    ImmutableAssignment { var: String, span: Span },
 
     /// Field not found on type.
-    FieldNotFound {
-        ty: Type,
-        field: String,
-        span: Span,
-    },
+    FieldNotFound { ty: Type, field: String, span: Span },
 
     /// Index operation on non-array.
-    NotIndexable {
-        ty: Type,
-        span: Span,
-    },
+    NotIndexable { ty: Type, span: Span },
 
     /// Binary operation not supported for types.
     InvalidBinaryOp {
@@ -137,16 +126,10 @@ pub enum TypeError {
     },
 
     /// Unary operation not supported for type.
-    InvalidUnaryOp {
-        op: String,
-        ty: Type,
-        span: Span,
-    },
+    InvalidUnaryOp { op: String, ty: Type, span: Span },
 
     /// Cannot assign to expression.
-    NotAssignable {
-        span: Span,
-    },
+    NotAssignable { span: Span },
 
     /// Type parameter count mismatch.
     TypeArgCountMismatch {
@@ -156,16 +139,10 @@ pub enum TypeError {
     },
 
     /// Recursive type without indirection.
-    RecursiveType {
-        name: String,
-        span: Span,
-    },
+    RecursiveType { name: String, span: Span },
 
     /// Generic inference failure.
-    CannotInferTypeArg {
-        param_name: String,
-        span: Span,
-    },
+    CannotInferTypeArg { param_name: String, span: Span },
 
     /// Return type mismatch.
     ReturnTypeMismatch {
@@ -175,40 +152,34 @@ pub enum TypeError {
     },
 
     /// Missing return statement.
-    MissingReturn {
-        expected: Type,
-        span: Span,
-    },
+    MissingReturn { expected: Type, span: Span },
 
     /// Unreachable code.
-    UnreachableCode {
-        span: Span,
-    },
+    UnreachableCode { span: Span },
 
     /// Duplicate field.
-    DuplicateField {
-        name: String,
-        span: Span,
-    },
+    DuplicateField { name: String, span: Span },
 
     /// Duplicate type parameter.
-    DuplicateTypeParam {
-        name: String,
-        span: Span,
-    },
+    DuplicateTypeParam { name: String, span: Span },
 
     /// Unsupported type syntax.
-    UnsupportedType {
-        description: String,
-        span: Span,
-    },
+    UnsupportedType { description: String, span: Span },
 }
 
 impl fmt::Display for TypeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TypeError::Mismatch { expected, got, span } => {
-                write!(f, "type mismatch at {}: expected {}, got {}", span, expected, got)
+            TypeError::Mismatch {
+                expected,
+                got,
+                span,
+            } => {
+                write!(
+                    f,
+                    "type mismatch at {}: expected {}, got {}",
+                    span, expected, got
+                )
             }
             TypeError::UndefinedVariable { name, span } => {
                 write!(f, "undefined variable '{}' at {}", name, span)
@@ -219,53 +190,131 @@ impl fmt::Display for TypeError {
             TypeError::NotCallable { ty, span } => {
                 write!(f, "type '{}' is not callable at {}", ty, span)
             }
-            TypeError::WrongArgCount { expected, got, span } => {
-                write!(f, "wrong number of arguments at {}: expected {}, got {}", span, expected, got)
+            TypeError::WrongArgCount {
+                expected,
+                got,
+                span,
+            } => {
+                write!(
+                    f,
+                    "wrong number of arguments at {}: expected {}, got {}",
+                    span, expected, got
+                )
             }
             TypeError::CannotInfer { span } => {
                 write!(f, "cannot infer type at {}", span)
             }
-            TypeError::UseAfterMove { var, moved_at, used_at } => {
-                write!(f, "use of moved value '{}' at {} (moved at {})", var, used_at, moved_at)
+            TypeError::UseAfterMove {
+                var,
+                moved_at,
+                used_at,
+            } => {
+                write!(
+                    f,
+                    "use of moved value '{}' at {} (moved at {})",
+                    var, used_at, moved_at
+                )
             }
-            TypeError::BorrowConflict { var, existing, new, span } => {
-                write!(f, "cannot borrow '{}' as {} at {}: already borrowed as {}", var, new, span, existing)
+            TypeError::BorrowConflict {
+                var,
+                existing,
+                new,
+                span,
+            } => {
+                write!(
+                    f,
+                    "cannot borrow '{}' as {} at {}: already borrowed as {}",
+                    var, new, span, existing
+                )
             }
-            TypeError::BorrowOutlives { var, borrow_span, end_span } => {
-                write!(f, "borrow of '{}' at {} outlives its scope ending at {}", var, borrow_span, end_span)
+            TypeError::BorrowOutlives {
+                var,
+                borrow_span,
+                end_span,
+            } => {
+                write!(
+                    f,
+                    "borrow of '{}' at {} outlives its scope ending at {}",
+                    var, borrow_span, end_span
+                )
             }
             TypeError::ImmutableAssignment { var, span } => {
-                write!(f, "cannot assign to immutable variable '{}' at {}", var, span)
+                write!(
+                    f,
+                    "cannot assign to immutable variable '{}' at {}",
+                    var, span
+                )
             }
             TypeError::FieldNotFound { ty, field, span } => {
-                write!(f, "field '{}' not found on type '{}' at {}", field, ty, span)
+                write!(
+                    f,
+                    "field '{}' not found on type '{}' at {}",
+                    field, ty, span
+                )
             }
             TypeError::NotIndexable { ty, span } => {
                 write!(f, "type '{}' is not indexable at {}", ty, span)
             }
-            TypeError::InvalidBinaryOp { op, left, right, span } => {
-                write!(f, "invalid binary operation '{}' between '{}' and '{}' at {}", op, left, right, span)
+            TypeError::InvalidBinaryOp {
+                op,
+                left,
+                right,
+                span,
+            } => {
+                write!(
+                    f,
+                    "invalid binary operation '{}' between '{}' and '{}' at {}",
+                    op, left, right, span
+                )
             }
             TypeError::InvalidUnaryOp { op, ty, span } => {
-                write!(f, "invalid unary operation '{}' on '{}' at {}", op, ty, span)
+                write!(
+                    f,
+                    "invalid unary operation '{}' on '{}' at {}",
+                    op, ty, span
+                )
             }
             TypeError::NotAssignable { span } => {
                 write!(f, "expression is not assignable at {}", span)
             }
-            TypeError::TypeArgCountMismatch { expected, got, span } => {
-                write!(f, "type argument count mismatch at {}: expected {}, got {}", span, expected, got)
+            TypeError::TypeArgCountMismatch {
+                expected,
+                got,
+                span,
+            } => {
+                write!(
+                    f,
+                    "type argument count mismatch at {}: expected {}, got {}",
+                    span, expected, got
+                )
             }
             TypeError::RecursiveType { name, span } => {
-                write!(f, "recursive type '{}' without indirection at {}", name, span)
+                write!(
+                    f,
+                    "recursive type '{}' without indirection at {}",
+                    name, span
+                )
             }
             TypeError::CannotInferTypeArg { param_name, span } => {
                 write!(f, "cannot infer type argument '{}' at {}", param_name, span)
             }
-            TypeError::ReturnTypeMismatch { expected, got, span } => {
-                write!(f, "return type mismatch at {}: expected {}, got {}", span, expected, got)
+            TypeError::ReturnTypeMismatch {
+                expected,
+                got,
+                span,
+            } => {
+                write!(
+                    f,
+                    "return type mismatch at {}: expected {}, got {}",
+                    span, expected, got
+                )
             }
             TypeError::MissingReturn { expected, span } => {
-                write!(f, "missing return statement for type '{}' at {}", expected, span)
+                write!(
+                    f,
+                    "missing return statement for type '{}' at {}",
+                    expected, span
+                )
             }
             TypeError::UnreachableCode { span } => {
                 write!(f, "unreachable code at {}", span)

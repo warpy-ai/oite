@@ -126,11 +126,9 @@ impl<'a> Verifier<'a> {
     fn verify_structure(&mut self) {
         for block in &self.func.blocks {
             // Check for terminator
-            if matches!(block.terminator, Terminator::Unreachable)
-                && !self.is_dead_block(block.id)
+            if matches!(block.terminator, Terminator::Unreachable) && !self.is_dead_block(block.id)
             {
-                self.errors
-                    .push(VerifyError::MissingTerminator(block.id));
+                self.errors.push(VerifyError::MissingTerminator(block.id));
             }
         }
     }
@@ -230,7 +228,9 @@ impl<'a> Verifier<'a> {
         }
 
         // A block is dead if it has no predecessors and isn't the entry
-        self.func.blocks[block_id.0 as usize].predecessors.is_empty()
+        self.func.blocks[block_id.0 as usize]
+            .predecessors
+            .is_empty()
     }
 
     /// Check if an operation performs a move.
@@ -344,8 +344,10 @@ mod tests {
         assert!(result.is_err());
 
         let errors = result.unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|e| matches!(e, VerifyError::MultipleDefinitions(_))));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, VerifyError::MultipleDefinitions(_)))
+        );
     }
 }

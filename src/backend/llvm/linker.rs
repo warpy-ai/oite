@@ -59,9 +59,16 @@ pub fn link_object_files_with_lto(
         obj_files_str,
         runtime_lib_str,
         format,
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
     );
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log") {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log")
+    {
         use std::io::Write;
         let _ = writeln!(f, "{}", log_msg);
     }
@@ -72,11 +79,7 @@ pub fn link_object_files_with_lto(
         // #region agent log
         // Check if object file exists and has main symbol
         if obj.exists() {
-            if let Ok(nm_output) = std::process::Command::new("nm")
-                .arg("-g")
-                .arg(obj)
-                .output()
-            {
+            if let Ok(nm_output) = std::process::Command::new("nm").arg("-g").arg(obj).output() {
                 let symbols = String::from_utf8_lossy(&nm_output.stdout);
                 let has_main = symbols.contains("main") || symbols.contains("_main");
                 let log_msg = format!(
@@ -84,9 +87,16 @@ pub fn link_object_files_with_lto(
                     obj.display(),
                     has_main,
                     symbols.lines().take(5).collect::<Vec<_>>().join(";"),
-                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
                 );
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log") {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log")
+                {
                     use std::io::Write;
                     let _ = writeln!(f, "{}", log_msg);
                 }
@@ -95,9 +105,16 @@ pub fn link_object_files_with_lto(
             let log_msg = format!(
                 r#"{{"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"llvm/linker.rs:75","message":"Object file missing","data":{{"obj_file":"{}"}},"timestamp":{}}}"#,
                 obj.display(),
-                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis()
             );
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log") {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log")
+            {
                 use std::io::Write;
                 let _ = writeln!(f, "{}", log_msg);
             }
@@ -123,7 +140,7 @@ pub fn link_object_files_with_lto(
             {
                 cmd.arg(lib);
             }
-            
+
             // Runtime uses Vec/String from std, which should be statically linked in libruntime.a
             // No additional libraries needed since we removed HashMap dependency
         }
@@ -156,18 +173,25 @@ pub fn link_object_files_with_lto(
     let log_msg = format!(
         r#"{{"sessionId":"debug-session","runId":"run1","hypothesisId":"F","location":"llvm/linker.rs:85","message":"Executing linker command","data":{{"command":"{}"}},"timestamp":{}}}"#,
         cmd_str,
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
     );
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log") {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log")
+    {
         use std::io::Write;
         let _ = writeln!(f, "{}", log_msg);
     }
     // #endregion
 
     // Execute linker
-    let status = cmd.status().map_err(|e| {
-        BackendError::Llvm(format!("Failed to execute linker {}: {}", linker, e))
-    })?;
+    let status = cmd
+        .status()
+        .map_err(|e| BackendError::Llvm(format!("Failed to execute linker {}: {}", linker, e)))?;
 
     if !status.success() {
         // #region agent log
@@ -175,9 +199,16 @@ pub fn link_object_files_with_lto(
         let log_msg = format!(
             r#"{{"sessionId":"debug-session","runId":"run1","hypothesisId":"G","location":"llvm/linker.rs:95","message":"Linker failed","data":{{"exit_code":{:?}}},"timestamp":{}}}"#,
             status.code(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
         );
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log") {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/Volumes/WD_2TB/warpy/script/.cursor/debug.log")
+        {
             use std::io::Write;
             let _ = writeln!(f, "{}", log_msg);
         }
@@ -201,9 +232,9 @@ pub fn create_static_library(objects: &[PathBuf], output: &Path) -> Result<(), B
         cmd.arg(obj);
     }
 
-    let status = cmd.status().map_err(|e| {
-        BackendError::Llvm(format!("Failed to execute ar: {}", e))
-    })?;
+    let status = cmd
+        .status()
+        .map_err(|e| BackendError::Llvm(format!("Failed to execute ar: {}", e)))?;
 
     if !status.success() {
         return Err(BackendError::Llvm(format!(
@@ -224,19 +255,19 @@ fn link_with_rustc(
     _lto_mode: LtoMode,
 ) -> Result<(), BackendError> {
     let mut cmd = Command::new("rustc");
-    
+
     // Add object files
     for obj in objects {
         cmd.arg(obj);
     }
-    
+
     // Add runtime library
     if let Some(lib) = runtime_lib {
         if lib.exists() {
             cmd.arg(lib);
         }
     }
-    
+
     // Set output
     match format {
         OutputFormat::Executable => {
@@ -254,18 +285,18 @@ fn link_with_rustc(
             ));
         }
     }
-    
-    let status = cmd.status().map_err(|e| {
-        BackendError::Llvm(format!("Failed to execute rustc linker: {}", e))
-    })?;
-    
+
+    let status = cmd
+        .status()
+        .map_err(|e| BackendError::Llvm(format!("Failed to execute rustc linker: {}", e)))?;
+
     if !status.success() {
         return Err(BackendError::Llvm(format!(
             "rustc linker failed with exit code: {:?}",
             status.code()
         )));
     }
-    
+
     Ok(())
 }
 
@@ -279,7 +310,7 @@ fn detect_linker() -> Result<String, BackendError> {
         // (This will be determined by the caller)
         // For now, we'll use rustc when available
     }
-    
+
     // Try clang first (works on all platforms)
     if Command::new("clang").arg("--version").output().is_ok() {
         return Ok("clang".to_string());

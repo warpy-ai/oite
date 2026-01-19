@@ -21,10 +21,10 @@ pub unsafe fn run_optimizations(
     // Note: In LLVM 18, most optimizations are handled by the target machine
     // optimization level. The pass manager API has changed significantly.
     // For now, we rely on the optimization level set in create_target_machine.
-    // 
+    //
     // TODO: Implement proper pass manager setup when LLVM 18 API is better
     // documented or when using a higher-level binding like inkwell.
-    
+
     // The optimizations will be applied during code generation based on
     // the optimization level set in the target machine.
     Ok(())

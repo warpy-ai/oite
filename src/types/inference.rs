@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use super::error::{Span, TypeError, TypeErrors};
 use super::registry::TypeRegistry;
-use super::{fresh_infer_id, FunctionType, InferId, ObjectType, Type, TypeContext, TypeVarId};
+use super::{FunctionType, InferId, ObjectType, Type, TypeContext, TypeVarId, fresh_infer_id};
 
 // ============================================================================
 // Constraints
@@ -97,12 +97,14 @@ impl<'a> InferenceEngine<'a> {
 
     /// Add a field constraint.
     pub fn constrain_has_field(&mut self, ty: Type, field: String, field_ty: Type, span: Span) {
-        self.constraints.push(Constraint::HasField(ty, field, field_ty, span));
+        self.constraints
+            .push(Constraint::HasField(ty, field, field_ty, span));
     }
 
     /// Add a callable constraint.
     pub fn constrain_callable(&mut self, ty: Type, args: Vec<Type>, ret: Type, span: Span) {
-        self.constraints.push(Constraint::Callable(ty, args, ret, span));
+        self.constraints
+            .push(Constraint::Callable(ty, args, ret, span));
     }
 
     /// Get the current context.
@@ -364,12 +366,8 @@ impl<'a> InferenceEngine<'a> {
         match &ty {
             Type::Infer(_) => {
                 // Defer constraint
-                self.constraints.push(Constraint::Callable(
-                    ty,
-                    args.to_vec(),
-                    ret.clone(),
-                    span,
-                ));
+                self.constraints
+                    .push(Constraint::Callable(ty, args.to_vec(), ret.clone(), span));
                 Ok(false)
             }
             Type::Function(func) => {
@@ -408,12 +406,8 @@ impl<'a> InferenceEngine<'a> {
         match &ty {
             Type::Infer(_) => {
                 // Defer constraint
-                self.constraints.push(Constraint::Indexable(
-                    ty,
-                    idx.clone(),
-                    elem.clone(),
-                    span,
-                ));
+                self.constraints
+                    .push(Constraint::Indexable(ty, idx.clone(), elem.clone(), span));
                 Ok(false)
             }
             Type::Array(arr_elem) => {
@@ -450,15 +444,9 @@ impl<'a> InferenceEngine<'a> {
                     ty.clone()
                 }
             }
-            Type::Array(inner) => {
-                Type::Array(Box::new(self.apply_substitutions(inner)))
-            }
-            Type::Ref(inner) => {
-                Type::Ref(Box::new(self.apply_substitutions(inner)))
-            }
-            Type::MutRef(inner) => {
-                Type::MutRef(Box::new(self.apply_substitutions(inner)))
-            }
+            Type::Array(inner) => Type::Array(Box::new(self.apply_substitutions(inner))),
+            Type::Ref(inner) => Type::Ref(Box::new(self.apply_substitutions(inner))),
+            Type::MutRef(inner) => Type::MutRef(Box::new(self.apply_substitutions(inner))),
             Type::Object(obj) => Type::Object(ObjectType {
                 fields: obj
                     .fields
@@ -477,9 +465,10 @@ impl<'a> InferenceEngine<'a> {
                 type_params: func.type_params.clone(),
                 is_method: func.is_method,
             })),
-            Type::Generic(id, args) => {
-                Type::Generic(*id, args.iter().map(|a| self.apply_substitutions(a)).collect())
-            }
+            Type::Generic(id, args) => Type::Generic(
+                *id,
+                args.iter().map(|a| self.apply_substitutions(a)).collect(),
+            ),
             _ => ty.clone(),
         }
     }
@@ -589,11 +578,23 @@ mod tests {
         let mut engine = InferenceEngine::new(&registry);
 
         // Same primitives unify
-        assert!(engine.unify(&Type::Number, &Type::Number, Span::default()).is_ok());
-        assert!(engine.unify(&Type::String, &Type::String, Span::default()).is_ok());
+        assert!(
+            engine
+                .unify(&Type::Number, &Type::Number, Span::default())
+                .is_ok()
+        );
+        assert!(
+            engine
+                .unify(&Type::String, &Type::String, Span::default())
+                .is_ok()
+        );
 
         // Different primitives don't unify
-        assert!(engine.unify(&Type::Number, &Type::String, Span::default()).is_err());
+        assert!(
+            engine
+                .unify(&Type::Number, &Type::String, Span::default())
+                .is_err()
+        );
     }
 
     #[test]
@@ -602,10 +603,10 @@ mod tests {
         let mut engine = InferenceEngine::new(&registry);
 
         let var = engine.fresh_var();
-        
+
         // Infer variable unifies with concrete type
         assert!(engine.unify(&var, &Type::Number, Span::default()).is_ok());
-        
+
         // After unification, variable resolves to the concrete type
         assert_eq!(engine.resolve(&var), Type::Number);
     }
@@ -629,13 +630,13 @@ mod tests {
         let mut engine = InferenceEngine::new(&registry);
 
         let var = engine.fresh_var();
-        
+
         // Add constraints
         engine.constrain_equal(var.clone(), Type::Number, Span::default());
-        
+
         // Solve
         assert!(engine.solve().is_ok());
-        
+
         // Variable should be resolved
         assert_eq!(engine.resolve(&var), Type::Number);
     }

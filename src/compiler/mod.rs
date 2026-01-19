@@ -22,25 +22,24 @@ impl Compiler {
         self.compile_with_syntax(source, None)
     }
 
-    pub fn compile_with_syntax(&mut self, source: &str, syntax_override: Option<Syntax>) -> Result<Vec<OpCode>, String> {
+    pub fn compile_with_syntax(
+        &mut self,
+        source: &str,
+        syntax_override: Option<Syntax>,
+    ) -> Result<Vec<OpCode>, String> {
         let cm: Lrc<SourceMap> = Default::default();
         let fm = cm.new_source_file(
             FileName::Custom("main.tscl".into()).into(),
             source.to_string(),
         );
-        
+
         // Determine syntax based on file extension or override
         let syntax = syntax_override.unwrap_or_else(|| {
             // Default to TypeScript syntax to support type annotations
             Syntax::Typescript(Default::default())
         });
-        
-        let lexer = Lexer::new(
-            syntax,
-            Default::default(),
-            StringInput::from(&*fm),
-            None,
-        );
+
+        let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
         let mut parser = Parser::new_from(lexer);
         let program = parser
             .parse_program()

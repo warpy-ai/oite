@@ -3,15 +3,15 @@
 //! This module provides AOT compilation using LLVM. It translates tscl SSA IR
 //! to LLVM IR and generates optimized native object files.
 
-pub mod types;
-pub mod codegen;
 pub mod abi;
-pub mod optimizer;
-pub mod object;
-pub mod linker;
 pub mod bitcode;
-pub mod lto;
 pub mod cache;
+pub mod codegen;
+pub mod linker;
+pub mod lto;
+pub mod object;
+pub mod optimizer;
+pub mod types;
 
 pub use codegen::LlvmCodegen;
 
@@ -28,29 +28,28 @@ pub fn compile_to_object_file(
 ) -> Result<(), BackendError> {
     // Get target triple
     let target_triple = object::get_default_target_triple()?;
-    
+
     // Create codegen
     let mut codegen = LlvmCodegen::new(target_triple.clone())?;
-    
+
     // Compile module
     codegen.compile_module(module)?;
-    
+
     // Get target machine
-    let target_machine = unsafe {
-        object::create_target_machine(&target_triple, config.opt_level)?
-    };
-    
+    let target_machine =
+        unsafe { object::create_target_machine(&target_triple, config.opt_level)? };
+
     // Run optimizations
     unsafe {
         optimizer::run_optimizations(codegen.module, config.opt_level)?;
     }
-    
+
     // Emit object file
     unsafe {
         object::emit_object_file(codegen.module, target_machine, output_path)?;
         llvm_sys::target_machine::LLVMDisposeTargetMachine(target_machine);
     }
-    
+
     Ok(())
 }
 
@@ -62,18 +61,17 @@ pub fn compile_to_bitcode_file(
 ) -> Result<(), BackendError> {
     // Get target triple
     let target_triple = object::get_default_target_triple()?;
-    
+
     // Create codegen
     let mut codegen = LlvmCodegen::new(target_triple.clone())?;
-    
+
     // Compile module
     codegen.compile_module(module)?;
-    
+
     // Get target machine (needed for data layout)
-    let target_machine = unsafe {
-        object::create_target_machine(&target_triple, config.opt_level)?
-    };
-    
+    let target_machine =
+        unsafe { object::create_target_machine(&target_triple, config.opt_level)? };
+
     // Set data layout on module (needed for LTO)
     unsafe {
         let data_layout = llvm_sys::target_machine::LLVMCreateTargetDataLayout(target_machine);
@@ -87,16 +85,16 @@ pub fn compile_to_bitcode_file(
         }
         llvm_sys::target_machine::LLVMDisposeTargetMachine(target_machine);
     }
-    
+
     // Run optimizations (lightweight for bitcode, full optimization happens during LTO)
     unsafe {
         optimizer::run_optimizations(codegen.module, config.opt_level)?;
     }
-    
+
     // Emit bitcode file
     unsafe {
         bitcode::emit_bitcode_file(codegen.module, output_path)?;
     }
-    
+
     Ok(())
 }

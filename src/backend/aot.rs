@@ -93,19 +93,13 @@ impl AotCompiler {
         }
 
         match self.config.kind {
-            BackendKind::LlvmAot => {
-                self.compile_modules_llvm(modules, output)
-            }
-            BackendKind::CraneliftAot => {
-                Err(BackendError::AotError(
-                    "Cranelift AOT compilation not yet implemented".into(),
-                ))
-            }
-            _ => {
-                Err(BackendError::AotError(
-                    "AOT compilation requires LlvmAot or CraneliftAot backend".into(),
-                ))
-            }
+            BackendKind::LlvmAot => self.compile_modules_llvm(modules, output),
+            BackendKind::CraneliftAot => Err(BackendError::AotError(
+                "Cranelift AOT compilation not yet implemented".into(),
+            )),
+            _ => Err(BackendError::AotError(
+                "AOT compilation requires LlvmAot or CraneliftAot backend".into(),
+            )),
         }
     }
 
@@ -152,16 +146,12 @@ impl AotCompiler {
 
                 Ok(())
             }
-            BackendKind::CraneliftAot => {
-                Err(BackendError::AotError(
-                    "Cranelift AOT compilation not yet implemented".into(),
-                ))
-            }
-            _ => {
-                Err(BackendError::AotError(
-                    "AOT compilation requires LlvmAot or CraneliftAot backend".into(),
-                ))
-            }
+            BackendKind::CraneliftAot => Err(BackendError::AotError(
+                "Cranelift AOT compilation not yet implemented".into(),
+            )),
+            _ => Err(BackendError::AotError(
+                "AOT compilation requires LlvmAot or CraneliftAot backend".into(),
+            )),
         }
     }
 
@@ -171,8 +161,8 @@ impl AotCompiler {
         modules: &[&IrModule],
         output: &Path,
     ) -> Result<(), BackendError> {
-        use std::path::PathBuf;
         use super::llvm::{cache, lto};
+        use std::path::PathBuf;
 
         let temp_dir = output
             .parent()
@@ -187,7 +177,7 @@ impl AotCompiler {
         // Compile each module to bitcode
         for (i, module) in modules.iter().enumerate() {
             let bc_file = temp_dir.join(format!("module_{}.bc", i));
-            
+
             // For now, skip cache (would need source paths tracked)
             // Compile to bitcode
             super::llvm::compile_to_bitcode_file(module, &self.config, &bc_file)?;
@@ -211,15 +201,10 @@ impl AotCompiler {
             for (i, bc_file) in bitcode_files.iter().enumerate() {
                 let obj_file = temp_dir.join(format!("module_{}.o", i));
                 // Use llc to generate object from bitcode
-                lto::generate_object_file(
-                    bc_file,
-                    &obj_file,
-                    self.config.opt_level,
-                    &tools_dir,
-                )?;
+                lto::generate_object_file(bc_file, &obj_file, self.config.opt_level, &tools_dir)?;
                 obj_files.push(obj_file);
             }
-            
+
             // Link objects
             let linked_obj = temp_dir.join("linked.o");
             super::llvm::linker::link_object_files(
@@ -284,11 +269,9 @@ impl AotCompiler {
 
                 Ok(bytes)
             }
-            _ => {
-                Err(BackendError::AotError(
-                    "AOT compilation to bytes requires LlvmAot backend".into(),
-                ))
-            }
+            _ => Err(BackendError::AotError(
+                "AOT compilation to bytes requires LlvmAot backend".into(),
+            )),
         }
     }
 }
@@ -299,14 +282,14 @@ pub fn default_target() -> String {
 }
 
 /// Find or build the runtime library
-/// 
+///
 /// NOTE: Runtime stubs are now implemented directly in LLVM IR in abi.rs,
 /// so this function is no longer needed for basic programs. It remains
 /// for future use when we want to link additional runtime features.
 fn find_runtime_library() -> Result<PathBuf, BackendError> {
     // Runtime stubs are now generated in LLVM IR, so no external library needed
     return Err(BackendError::AotError(
-        "Runtime library not needed - stubs are generated in LLVM IR".into()
+        "Runtime library not needed - stubs are generated in LLVM IR".into(),
     ));
 
     #[allow(unreachable_code)]
@@ -317,28 +300,39 @@ fn find_runtime_library() -> Result<PathBuf, BackendError> {
             // Fall back to current directory if not in cargo build
             std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
         });
-    
+
     // Determine profile based on whether we're in release mode
     // Default to release for AOT builds
-    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
-    let runtime_lib = manifest_dir.join("target").join(profile).join("libruntime.a");
-    
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let runtime_lib = manifest_dir
+        .join("target")
+        .join(profile)
+        .join("libruntime.a");
+
     // If library exists, return it
     if runtime_lib.exists() {
         return Ok(runtime_lib);
     }
-    
+
     // Library doesn't exist - try to build it on-demand
     // Note: This may fail due to Rust std linking issues, which is okay for simple programs
     println!("Building runtime library...");
-    if let Err(e) = build_runtime_library(&manifest_dir, &runtime_lib.parent().unwrap(), profile == "release") {
+    if let Err(e) = build_runtime_library(
+        &manifest_dir,
+        &runtime_lib.parent().unwrap(),
+        profile == "release",
+    ) {
         eprintln!("[WARN] Failed to build runtime library: {}", e);
         return Err(BackendError::AotError(format!(
             "Runtime library build failed: {}. Simple programs may work without it.",
             e
         )));
     }
-    
+
     if runtime_lib.exists() {
         Ok(runtime_lib)
     } else {
@@ -356,11 +350,10 @@ fn build_runtime_library(
     release: bool,
 ) -> Result<(), BackendError> {
     use std::process::Command;
-    
+
     // Create output directory if it doesn't exist
-    std::fs::create_dir_all(output_dir).map_err(|e| {
-        BackendError::AotError(format!("Failed to create output directory: {}", e))
-    })?;
+    std::fs::create_dir_all(output_dir)
+        .map_err(|e| BackendError::AotError(format!("Failed to create output directory: {}", e)))?;
 
     let cargo_toml = manifest_dir.join("Cargo.toml");
     if !cargo_toml.exists() {
@@ -383,7 +376,7 @@ fn build_runtime_library(
             }
         }
     }
-    
+
     // Use cargo build to build the library
     // This will handle dependencies correctly
     let mut cmd = Command::new("cargo");
@@ -395,15 +388,15 @@ fn build_runtime_library(
         .arg("--no-default-features")
         // Prevent build script from running (avoid recursion)
         .env("TSCL_BUILDING_RUNTIME", "1");
-    
+
     // Use release profile (LTO is disabled in Cargo.toml)
     if release {
         cmd.arg("--release");
     }
 
-    let output = cmd.output().map_err(|e| {
-        BackendError::AotError(format!("Failed to execute cargo rustc: {}", e))
-    })?;
+    let output = cmd
+        .output()
+        .map_err(|e| BackendError::AotError(format!("Failed to execute cargo rustc: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -417,10 +410,10 @@ fn build_runtime_library(
     // rlibs are actually ar archives and can be used for static linking
     let profile_dir = if release { "release" } else { "debug" };
     let deps_dir = manifest_dir.join("target").join(profile_dir).join("deps");
-    
+
     // Look for libscript*.rlib (cargo build produces rlib by default)
     let runtime_lib = output_dir.join("libruntime.a");
-    
+
     // Try to find the rlib file
     let mut found_lib = None;
     if let Ok(entries) = std::fs::read_dir(&deps_dir) {
@@ -435,7 +428,7 @@ fn build_runtime_library(
             }
         }
     }
-    
+
     if let Some(source_lib) = found_lib {
         // Copy rlib and rename to .a (rlibs are ar archives, compatible with static linking)
         std::fs::copy(&source_lib, &runtime_lib).map_err(|e| {

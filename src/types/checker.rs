@@ -6,16 +6,16 @@
 //! - Flow-sensitive analysis
 //! - Monomorphization of generics
 
-use swc_ecma_ast::*;
 use std::collections::BTreeMap;
+use swc_ecma_ast::*;
 
 use super::convert::TypeConverter;
 use super::error::{BorrowKind, Span, TypeError, TypeErrors};
 use super::inference::{Constraint, InferenceEngine, TypeNarrower};
 use super::registry::TypeRegistry;
 use super::{
-    fresh_infer_id, fresh_type_var_id, FunctionType, ObjectType, Ownership, Type, TypeContext,
-    TypeId, TypeVarId, VarType,
+    FunctionType, ObjectType, Ownership, Type, TypeContext, TypeId, TypeVarId, VarType,
+    fresh_infer_id, fresh_type_var_id,
 };
 
 // ============================================================================
@@ -137,12 +137,17 @@ impl<'a> TypeChecker<'a> {
                 let param_names: Vec<String> = alias
                     .type_params
                     .as_ref()
-                    .map(|p| p.params.iter().map(|param| param.name.sym.to_string()).collect())
+                    .map(|p| {
+                        p.params
+                            .iter()
+                            .map(|param| param.name.sym.to_string())
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 // Convert the aliased type
-                let converter = TypeConverter::new(self.registry)
-                    .with_type_params(&type_params, &param_names);
+                let converter =
+                    TypeConverter::new(self.registry).with_type_params(&type_params, &param_names);
 
                 if let Ok(ty) = converter.convert(&alias.type_ann) {
                     let type_alias = super::TypeAlias {
@@ -170,11 +175,16 @@ impl<'a> TypeChecker<'a> {
                 let param_names: Vec<String> = iface
                     .type_params
                     .as_ref()
-                    .map(|p| p.params.iter().map(|param| param.name.sym.to_string()).collect())
+                    .map(|p| {
+                        p.params
+                            .iter()
+                            .map(|param| param.name.sym.to_string())
+                            .collect()
+                    })
                     .unwrap_or_default();
 
-                let converter = TypeConverter::new(self.registry)
-                    .with_type_params(&type_params, &param_names);
+                let converter =
+                    TypeConverter::new(self.registry).with_type_params(&type_params, &param_names);
 
                 for member in &iface.body.body {
                     if let TsTypeElement::TsPropertySignature(prop) = member {
@@ -219,13 +229,7 @@ impl<'a> TypeChecker<'a> {
                                     .convert(&ann.type_ann)
                                     .ok()
                             })
-                            .unwrap_or_else(|| {
-                                if self.strict {
-                                    Type::Error
-                                } else {
-                                    Type::Any
-                                }
-                            }),
+                            .unwrap_or_else(|| if self.strict { Type::Error } else { Type::Any }),
                         _ => Type::Any,
                     };
                     (param_name, param_ty)
@@ -247,10 +251,9 @@ impl<'a> TypeChecker<'a> {
             let func_type = FunctionType::new(params.clone(), return_ty.clone());
 
             // Register in context
-            self.inference.context_mut().define(
-                name,
-                VarType::new(Type::Function(Box::new(func_type))),
-            );
+            self.inference
+                .context_mut()
+                .define(name, VarType::new(Type::Function(Box::new(func_type))));
         }
     }
 
@@ -305,32 +308,23 @@ impl<'a> TypeChecker<'a> {
 
         // Get declared type annotation
         let declared_ty = match &decl.name {
-            Pat::Ident(ident) => ident
-                .type_ann
-                .as_ref()
-                .and_then(|ann| {
-                    TypeConverter::new(self.registry)
-                        .convert(&ann.type_ann)
-                        .ok()
-                }),
+            Pat::Ident(ident) => ident.type_ann.as_ref().and_then(|ann| {
+                TypeConverter::new(self.registry)
+                    .convert(&ann.type_ann)
+                    .ok()
+            }),
             _ => None,
         };
 
         // Infer type from initializer
-        let init_ty = decl
-            .init
-            .as_ref()
-            .map(|init| self.check_expr(init));
+        let init_ty = decl.init.as_ref().map(|init| self.check_expr(init));
 
         // Determine final type
         let ty = match (declared_ty, init_ty) {
             (Some(decl_ty), Some(init)) => {
                 // Both: check compatibility
-                self.inference.constrain_equal(
-                    init.clone(),
-                    decl_ty.clone(),
-                    Span::default(),
-                );
+                self.inference
+                    .constrain_equal(init.clone(), decl_ty.clone(), Span::default());
                 decl_ty
             }
             (Some(decl), None) => decl,
@@ -357,11 +351,7 @@ impl<'a> TypeChecker<'a> {
     fn check_fn_decl(&mut self, fn_decl: &FnDecl) {
         // Get the registered function type
         let name = fn_decl.ident.sym.to_string();
-        let func_ty = self
-            .inference
-            .context()
-            .lookup(&name)
-            .map(|v| v.ty.clone());
+        let func_ty = self.inference.context().lookup(&name).map(|v| v.ty.clone());
 
         let return_ty = match &func_ty {
             Some(Type::Function(f)) => f.return_ty.clone(),
@@ -402,11 +392,8 @@ impl<'a> TypeChecker<'a> {
             .unwrap_or(Type::Void);
 
         if let Some(expected) = &self.current_return_type {
-            self.inference.constrain_equal(
-                return_ty,
-                expected.clone(),
-                Span::default(),
-            );
+            self.inference
+                .constrain_equal(return_ty, expected.clone(), Span::default());
         }
     }
 
@@ -414,7 +401,8 @@ impl<'a> TypeChecker<'a> {
         let cond_ty = self.check_expr(&if_stmt.test);
 
         // Condition should be boolean (or coercible)
-        self.inference.constrain_equal(cond_ty, Type::Boolean, Span::default());
+        self.inference
+            .constrain_equal(cond_ty, Type::Boolean, Span::default());
 
         // Check consequent
         self.narrower.enter_branch();
@@ -426,13 +414,15 @@ impl<'a> TypeChecker<'a> {
             self.narrower.enter_branch();
             self.check_stmt(alt);
             let else_narrowings = self.narrower.exit_branch();
-            self.narrower.merge_branches(vec![then_narrowings, else_narrowings]);
+            self.narrower
+                .merge_branches(vec![then_narrowings, else_narrowings]);
         }
     }
 
     fn check_while(&mut self, while_stmt: &WhileStmt) {
         let cond_ty = self.check_expr(&while_stmt.test);
-        self.inference.constrain_equal(cond_ty, Type::Boolean, Span::default());
+        self.inference
+            .constrain_equal(cond_ty, Type::Boolean, Span::default());
         self.check_stmt(&while_stmt.body);
     }
 
@@ -454,7 +444,8 @@ impl<'a> TypeChecker<'a> {
 
         if let Some(test) = &for_stmt.test {
             let cond_ty = self.check_expr(test);
-            self.inference.constrain_equal(cond_ty, Type::Boolean, Span::default());
+            self.inference
+                .constrain_equal(cond_ty, Type::Boolean, Span::default());
         }
 
         if let Some(update) = &for_stmt.update {
@@ -571,27 +562,38 @@ impl<'a> TypeChecker<'a> {
                 if matches!((&left_ty, &right_ty), (Type::String, _) | (_, Type::String)) {
                     return Type::String;
                 }
-                self.inference.constrain_equal(left_ty, Type::Number, Span::default());
-                self.inference.constrain_equal(right_ty, Type::Number, Span::default());
+                self.inference
+                    .constrain_equal(left_ty, Type::Number, Span::default());
+                self.inference
+                    .constrain_equal(right_ty, Type::Number, Span::default());
                 Type::Number
             }
             BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod | BinaryOp::Exp => {
-                self.inference.constrain_equal(left_ty, Type::Number, Span::default());
-                self.inference.constrain_equal(right_ty, Type::Number, Span::default());
+                self.inference
+                    .constrain_equal(left_ty, Type::Number, Span::default());
+                self.inference
+                    .constrain_equal(right_ty, Type::Number, Span::default());
                 Type::Number
             }
 
             // Bitwise: both must be numbers
-            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor
-            | BinaryOp::LShift | BinaryOp::RShift | BinaryOp::ZeroFillRShift => {
-                self.inference.constrain_equal(left_ty, Type::Number, Span::default());
-                self.inference.constrain_equal(right_ty, Type::Number, Span::default());
+            BinaryOp::BitAnd
+            | BinaryOp::BitOr
+            | BinaryOp::BitXor
+            | BinaryOp::LShift
+            | BinaryOp::RShift
+            | BinaryOp::ZeroFillRShift => {
+                self.inference
+                    .constrain_equal(left_ty, Type::Number, Span::default());
+                self.inference
+                    .constrain_equal(right_ty, Type::Number, Span::default());
                 Type::Number
             }
 
             // Comparison: same type, result is boolean
             BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq => {
-                self.inference.constrain_equal(left_ty.clone(), right_ty, Span::default());
+                self.inference
+                    .constrain_equal(left_ty.clone(), right_ty, Span::default());
                 Type::Boolean
             }
 
@@ -621,14 +623,14 @@ impl<'a> TypeChecker<'a> {
 
         match unary.op {
             UnaryOp::Minus | UnaryOp::Plus => {
-                self.inference.constrain_equal(arg_ty, Type::Number, Span::default());
+                self.inference
+                    .constrain_equal(arg_ty, Type::Number, Span::default());
                 Type::Number
             }
-            UnaryOp::Bang => {
-                Type::Boolean
-            }
+            UnaryOp::Bang => Type::Boolean,
             UnaryOp::Tilde => {
-                self.inference.constrain_equal(arg_ty, Type::Number, Span::default());
+                self.inference
+                    .constrain_equal(arg_ty, Type::Number, Span::default());
                 Type::Number
             }
             UnaryOp::TypeOf => Type::String,
@@ -653,12 +655,8 @@ impl<'a> TypeChecker<'a> {
         let return_ty = self.inference.fresh_var();
 
         // Add callable constraint
-        self.inference.constrain_callable(
-            callee_ty,
-            arg_types,
-            return_ty.clone(),
-            Span::default(),
-        );
+        self.inference
+            .constrain_callable(callee_ty, arg_types, return_ty.clone(), Span::default());
 
         return_ty
     }
@@ -674,7 +672,8 @@ impl<'a> TypeChecker<'a> {
 
                 // If it's an array, return element type
                 if let Type::Array(elem) = &obj_ty {
-                    self.inference.constrain_equal(index_ty, Type::Number, Span::default());
+                    self.inference
+                        .constrain_equal(index_ty, Type::Number, Span::default());
                     return (**elem).clone();
                 }
 
@@ -687,12 +686,8 @@ impl<'a> TypeChecker<'a> {
         let field_ty = self.inference.fresh_var();
 
         // Add field constraint
-        self.inference.constrain_has_field(
-            obj_ty,
-            field_name,
-            field_ty.clone(),
-            Span::default(),
-        );
+        self.inference
+            .constrain_has_field(obj_ty, field_name, field_ty.clone(), Span::default());
 
         field_ty
     }
@@ -708,7 +703,8 @@ impl<'a> TypeChecker<'a> {
         for elem in &arr.elems {
             if let Some(elem) = elem {
                 let ty = self.check_expr(&elem.expr);
-                self.inference.constrain_equal(ty, elem_ty.clone(), Span::default());
+                self.inference
+                    .constrain_equal(ty, elem_ty.clone(), Span::default());
             }
         }
 
@@ -725,7 +721,9 @@ impl<'a> TypeChecker<'a> {
                         Prop::KeyValue(kv) => {
                             let name = match &kv.key {
                                 PropName::Ident(ident) => Some(ident.sym.to_string()),
-                                PropName::Str(s) => Some(String::from_utf8_lossy(s.value.as_bytes()).into_owned()),
+                                PropName::Str(s) => {
+                                    Some(String::from_utf8_lossy(s.value.as_bytes()).into_owned())
+                                }
                                 _ => None,
                             };
                             if let Some(name) = name {
@@ -777,7 +775,10 @@ impl<'a> TypeChecker<'a> {
             }
         }
 
-        Type::Object(ObjectType { fields, exact: false })
+        Type::Object(ObjectType {
+            fields,
+            exact: false,
+        })
     }
 
     fn check_arrow(&mut self, arrow: &ArrowExpr) -> Type {
@@ -832,7 +833,8 @@ impl<'a> TypeChecker<'a> {
             BlockStmtOrExpr::Expr(expr) => {
                 let ty = self.check_expr(expr);
                 // Expression body: type is the return type
-                self.inference.constrain_equal(ty, return_ty.clone(), Span::default());
+                self.inference
+                    .constrain_equal(ty, return_ty.clone(), Span::default());
                 return_ty.clone()
             }
             BlockStmtOrExpr::BlockStmt(block) => {
@@ -918,26 +920,30 @@ impl<'a> TypeChecker<'a> {
         };
 
         // Type must match
-        self.inference.constrain_equal(right_ty.clone(), left_ty, Span::default());
+        self.inference
+            .constrain_equal(right_ty.clone(), left_ty, Span::default());
 
         right_ty
     }
 
     fn check_update(&mut self, update: &UpdateExpr) -> Type {
         let arg_ty = self.check_expr(&update.arg);
-        self.inference.constrain_equal(arg_ty, Type::Number, Span::default());
+        self.inference
+            .constrain_equal(arg_ty, Type::Number, Span::default());
         Type::Number
     }
 
     fn check_cond(&mut self, cond: &CondExpr) -> Type {
         let test_ty = self.check_expr(&cond.test);
-        self.inference.constrain_equal(test_ty, Type::Boolean, Span::default());
+        self.inference
+            .constrain_equal(test_ty, Type::Boolean, Span::default());
 
         let cons_ty = self.check_expr(&cond.cons);
         let alt_ty = self.check_expr(&cond.alt);
 
         // Both branches must have same type
-        self.inference.constrain_equal(cons_ty.clone(), alt_ty, Span::default());
+        self.inference
+            .constrain_equal(cons_ty.clone(), alt_ty, Span::default());
 
         cons_ty
     }

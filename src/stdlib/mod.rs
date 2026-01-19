@@ -259,7 +259,6 @@ pub fn native_byte_stream_write_f64(vm: &mut VM, args: Vec<JsValue>) -> JsValue 
     JsValue::Undefined
 }
 
-
 pub fn native_string_from_char_code(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     let mut result = String::new();
 

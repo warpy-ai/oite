@@ -3,8 +3,8 @@
 use llvm_sys::prelude::*;
 use std::collections::HashMap;
 
-use crate::ir::{IrStructDef, IrType};
 use crate::backend::BackendError;
+use crate::ir::{IrStructDef, IrType};
 
 /// Convert an IR type to an LLVM type
 pub fn ir_type_to_llvm_type(
@@ -18,7 +18,10 @@ pub fn ir_type_to_llvm_type(
             IrType::Boolean => Ok(llvm_sys::core::LLVMInt1TypeInContext(ctx)),
             IrType::String => {
                 // String is a pointer to heap-allocated string
-                Ok(llvm_sys::core::LLVMPointerType(llvm_sys::core::LLVMInt8TypeInContext(ctx), 0))
+                Ok(llvm_sys::core::LLVMPointerType(
+                    llvm_sys::core::LLVMInt8TypeInContext(ctx),
+                    0,
+                ))
             }
             IrType::Object | IrType::Array => {
                 // Objects and arrays are pointers (NaN-boxed in runtime)

@@ -59,7 +59,9 @@ impl TsclValue {
         let bits = n.to_bits();
         // If it's a NaN, canonicalize to a quiet NaN to avoid confusion
         if n.is_nan() {
-            Self { bits: f64::NAN.to_bits() }
+            Self {
+                bits: f64::NAN.to_bits(),
+            }
         } else {
             Self { bits }
         }
@@ -128,8 +130,7 @@ impl TsclValue {
     /// Check if this value is a pointer (object, array, function, or string).
     #[inline]
     pub fn is_pointer(self) -> bool {
-        (self.bits & (QNAN | TAG_MASK)) == (QNAN | TAG_POINTER)
-            && (self.bits & PAYLOAD_MASK) != 0
+        (self.bits & (QNAN | TAG_MASK)) == (QNAN | TAG_POINTER) && (self.bits & PAYLOAD_MASK) != 0
     }
 
     /// Check if this value is a boolean.
@@ -344,7 +345,11 @@ mod vm_interop {
                 JsValue::Boolean(b) => Self::boolean(*b),
                 JsValue::Null => Self::null(),
                 JsValue::Undefined => Self::undefined(),
-                JsValue::Object(idx) | JsValue::Function { address: _, env: Some(idx) } => {
+                JsValue::Object(idx)
+                | JsValue::Function {
+                    address: _,
+                    env: Some(idx),
+                } => {
                     // Convert heap index to pointer
                     // In a real implementation, we'd compute the actual pointer from the heap base
                     Self::pointer(HeapPtr::from_usize(*idx))
@@ -373,7 +378,16 @@ mod tests {
 
     #[test]
     fn test_number_roundtrip() {
-        let values = [0.0, 1.0, -1.0, 3.14159, f64::MAX, f64::MIN, f64::INFINITY, f64::NEG_INFINITY];
+        let values = [
+            0.0,
+            1.0,
+            -1.0,
+            3.14159,
+            f64::MAX,
+            f64::MIN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ];
         for n in values {
             let v = TsclValue::number(n);
             assert!(v.is_number(), "Expected number for {}", n);

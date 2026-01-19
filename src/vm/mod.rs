@@ -8,9 +8,8 @@ use crate::stdlib::{
     native_byte_stream_length, native_byte_stream_patch_u32, native_byte_stream_to_array,
     native_byte_stream_write_f64, native_byte_stream_write_string, native_byte_stream_write_u8,
     native_byte_stream_write_u32, native_byte_stream_write_varint, native_create_byte_stream,
-    native_log, native_read_file, native_require, native_set_timeout, native_write_binary_file,
-    native_write_file,
-    native_string_from_char_code,
+    native_log, native_read_file, native_require, native_set_timeout, native_string_from_char_code,
+    native_write_binary_file, native_write_file,
 };
 use crate::vm::opcodes::OpCode;
 use crate::vm::value::HeapData;
@@ -60,7 +59,7 @@ impl VM {
         vm.setup_stdlib();
         vm
     }
-    
+
     /// Create a new VM without stdlib (for benchmarking).
     pub fn new_bare() -> Self {
         Self {
@@ -82,17 +81,20 @@ impl VM {
             total_instructions: 0,
         }
     }
-    
+
     /// Record a function call for profiling/tiered compilation.
     pub fn record_function_call(&mut self, func_addr: usize) {
         *self.function_call_counts.entry(func_addr).or_insert(0) += 1;
     }
-    
+
     /// Get the call count for a function.
     pub fn get_call_count(&self, func_addr: usize) -> u64 {
-        self.function_call_counts.get(&func_addr).copied().unwrap_or(0)
+        self.function_call_counts
+            .get(&func_addr)
+            .copied()
+            .unwrap_or(0)
     }
-    
+
     /// Get all function call counts (for identifying hot functions).
     pub fn get_hot_functions(&self, threshold: u64) -> Vec<(usize, u64)> {
         self.function_call_counts
@@ -101,7 +103,7 @@ impl VM {
             .map(|(&addr, &count)| (addr, count))
             .collect()
     }
-    
+
     /// Reset profiling counters.
     pub fn reset_counters(&mut self) {
         self.function_call_counts.clear();
@@ -127,7 +129,7 @@ impl VM {
         let stream_length_idx = self.register_native(native_byte_stream_length);
         let to_array_idx = self.register_native(native_byte_stream_to_array);
         let write_binary_file_idx = self.register_native(native_write_binary_file);
-        
+
         // ASCII String Native Functions
         let string_from_char_code_idx = self.register_native(native_string_from_char_code);
 
@@ -216,11 +218,16 @@ impl VM {
 
         let string_ptr = self.heap.len();
         let mut string_props = HashMap::new();
-        string_props.insert("fromCharCode".to_string(), JsValue::NativeFunction(string_from_char_code_idx));
+        string_props.insert(
+            "fromCharCode".to_string(),
+            JsValue::NativeFunction(string_from_char_code_idx),
+        );
         self.heap.push(HeapObject {
             data: HeapData::Object(string_props),
         });
-        self.call_stack[0].locals.insert("String".into(), JsValue::Object(string_ptr));
+        self.call_stack[0]
+            .locals
+            .insert("String".into(), JsValue::Object(string_ptr));
     }
 
     pub fn register_native(&mut self, func: NativeFn) -> usize {
@@ -526,7 +533,7 @@ impl VM {
                     JsValue::Function { address, env } => {
                         // Record function call for tiered compilation
                         self.record_function_call(address);
-                        
+
                         args.reverse();
                         for arg in &args {
                             self.stack.push(arg.clone());

@@ -2,10 +2,10 @@
 //!
 //! Handles target machine creation and object file emission.
 
+use llvm_sys::analysis::*;
 use llvm_sys::prelude::*;
 use llvm_sys::target::*;
 use llvm_sys::target_machine::*;
-use llvm_sys::analysis::*;
 use std::ffi::{CStr, CString};
 use std::path::Path;
 use std::ptr;
@@ -100,22 +100,28 @@ pub unsafe fn emit_object_file(
     // Set data layout on module
     let data_layout = llvm_sys::target_machine::LLVMCreateTargetDataLayout(target_machine);
     if data_layout.is_null() {
-        return Err(BackendError::Llvm("Failed to create target data layout".into()));
+        return Err(BackendError::Llvm(
+            "Failed to create target data layout".into(),
+        ));
     }
-    
+
     let data_layout_str = llvm_sys::target::LLVMCopyStringRepOfTargetData(data_layout);
     if data_layout_str.is_null() {
         llvm_sys::target::LLVMDisposeTargetData(data_layout);
-        return Err(BackendError::Llvm("Failed to copy target data layout string".into()));
+        return Err(BackendError::Llvm(
+            "Failed to copy target data layout string".into(),
+        ));
     }
-    
+
     llvm_sys::core::LLVMSetDataLayout(module, data_layout_str);
     llvm_sys::core::LLVMDisposeMessage(data_layout_str);
     llvm_sys::target::LLVMDisposeTargetData(data_layout);
-    
+
     // Verify module is still valid
     if module.is_null() {
-        return Err(BackendError::Llvm("Module is null before emitting object file".into()));
+        return Err(BackendError::Llvm(
+            "Module is null before emitting object file".into(),
+        ));
     }
 
     // Verify module before emitting (optional but helps catch issues)

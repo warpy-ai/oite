@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 
-use crate::backend::{BackendConfig, BackendError};
 use crate::backend::jit::JitRuntime;
+use crate::backend::{BackendConfig, BackendError};
 use crate::ir::IrModule;
 use crate::runtime::abi::TsclValue;
 use crate::vm::opcodes::OpCode;
@@ -114,16 +114,17 @@ impl TierManager {
         }
 
         // Update stats
-        let stats = self.function_stats
+        let stats = self
+            .function_stats
             .entry(func_addr)
             .or_insert_with(|| FunctionStats::new(func_addr));
-        
+
         stats.call_count += 1;
 
         // Check if we should trigger compilation
-        if stats.tier == CompileTier::Interpreted 
-            && stats.call_count >= self.config.baseline_threshold 
-            && !stats.compiling 
+        if stats.tier == CompileTier::Interpreted
+            && stats.call_count >= self.config.baseline_threshold
+            && !stats.compiling
         {
             stats.compiling = true;
             // Note: In a real implementation, this would trigger async compilation
@@ -149,7 +150,7 @@ impl TierManager {
         }
 
         let jit = self.jit_runtime.as_mut().unwrap();
-        
+
         // Compile the module
         jit.compile(module)?;
 
@@ -157,13 +158,13 @@ impl TierManager {
         let func_name = format!("func_{}", func_addr);
         if let Some(ptr) = jit.get_func(&func_name) {
             self.compiled_functions.insert(func_addr, ptr);
-            
+
             // Update stats
             if let Some(stats) = self.function_stats.get_mut(&func_addr) {
                 stats.tier = CompileTier::BaselineJit;
                 stats.compiling = false;
             }
-            
+
             Ok(ptr)
         } else {
             Err(BackendError::JitError(format!(
@@ -205,13 +206,9 @@ impl TierManager {
     /// # Safety
     /// The caller must ensure the function pointer is valid and the
     /// argument count matches the function signature.
-    pub unsafe fn call_compiled(
-        &self,
-        func_addr: usize,
-        args: &[TsclValue],
-    ) -> Option<TsclValue> {
+    pub unsafe fn call_compiled(&self, func_addr: usize, args: &[TsclValue]) -> Option<TsclValue> {
         let ptr = self.compiled_functions.get(&func_addr)?;
-        
+
         // Cast and call based on argument count
         let result = match args.len() {
             0 => {
@@ -266,12 +263,12 @@ mod tests {
     #[test]
     fn test_call_counting() {
         let mut manager = TierManager::with_defaults();
-        
+
         // Call function 50 times (below threshold)
         for _ in 0..50 {
             assert!(manager.on_function_call(100).is_none());
         }
-        
+
         let stats = manager.get_stats(100).unwrap();
         assert_eq!(stats.call_count, 50);
         assert_eq!(stats.tier, CompileTier::Interpreted);
@@ -285,13 +282,13 @@ mod tests {
             enabled: true,
         };
         let mut manager = TierManager::new(config);
-        
+
         // Call 9 times - should not trigger
         for _ in 0..9 {
             manager.on_function_call(100);
         }
         assert!(!manager.should_compile(100));
-        
+
         // 10th call - should trigger
         manager.on_function_call(100);
         // Note: compiling flag is set, so should_compile returns false

@@ -309,14 +309,14 @@ impl<'a> BytecodeDecoder<'a> {
             17 => Ok(OpCode::Dup),
 
             // Comparison and equality ops
-            18 => Ok(OpCode::Eq),     // ===
-            19 => Ok(OpCode::EqEq),   // ==
-            20 => Ok(OpCode::Ne),     // !==
-            21 => Ok(OpCode::NeEq),   // !=
-            22 => Ok(OpCode::Lt),     // <
-            23 => Ok(OpCode::LtEq),   // <=
-            24 => Ok(OpCode::Gt),     // >
-            25 => Ok(OpCode::GtEq),   // >=
+            18 => Ok(OpCode::Eq),   // ===
+            19 => Ok(OpCode::EqEq), // ==
+            20 => Ok(OpCode::Ne),   // !==
+            21 => Ok(OpCode::NeEq), // !=
+            22 => Ok(OpCode::Lt),   // <
+            23 => Ok(OpCode::LtEq), // <=
+            24 => Ok(OpCode::Gt),   // >
+            25 => Ok(OpCode::GtEq), // >=
 
             // Mod
             26 => Ok(OpCode::Mod),

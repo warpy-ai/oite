@@ -89,8 +89,15 @@ pub enum IrType {
 impl IrType {
     /// Check if this type is a heap-allocated reference type.
     pub fn is_heap_type(&self) -> bool {
-        matches!(self, IrType::String | IrType::Object | IrType::Array | 
-                 IrType::TypedArray(_) | IrType::Function | IrType::Struct(_))
+        matches!(
+            self,
+            IrType::String
+                | IrType::Object
+                | IrType::Array
+                | IrType::TypedArray(_)
+                | IrType::Function
+                | IrType::Struct(_)
+        )
     }
 
     /// Alias for is_heap_type (legacy name).
@@ -966,9 +973,14 @@ impl IrStructDef {
             IrType::Void => 0,
             IrType::Never => 0,
             // Reference types are pointers
-            IrType::String | IrType::Object | IrType::Array | 
-            IrType::TypedArray(_) | IrType::Function | IrType::Struct(_) |
-            IrType::Ref(_) | IrType::MutRef(_) => 8,
+            IrType::String
+            | IrType::Object
+            | IrType::Array
+            | IrType::TypedArray(_)
+            | IrType::Function
+            | IrType::Struct(_)
+            | IrType::Ref(_)
+            | IrType::MutRef(_) => 8,
             IrType::Any => 16, // Tagged value: tag + payload
         }
     }
@@ -991,7 +1003,11 @@ impl IrStructDef {
 
 impl fmt::Display for IrStructDef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "struct {} {{ // size: {}, align: {}", self.name, self.size, self.alignment)?;
+        writeln!(
+            f,
+            "struct {} {{ // size: {}, align: {}",
+            self.name, self.size, self.alignment
+        )?;
         for (name, ty, offset) in &self.fields {
             writeln!(f, "    {}: {} // offset: {}", name, ty, offset)?;
         }
@@ -1016,6 +1032,8 @@ pub struct IrModule {
     next_mono_id: u32,
     /// Mapping from bytecode address to function index (for extracted functions).
     pub function_addrs: HashMap<usize, usize>,
+    /// Bytecode address of user-defined main() function, if any.
+    pub user_main_addr: Option<usize>,
 }
 
 impl IrModule {
@@ -1028,14 +1046,17 @@ impl IrModule {
             mono_cache: HashMap::new(),
             next_mono_id: 0,
             function_addrs: HashMap::new(),
+            user_main_addr: None,
         }
     }
-    
+
     /// Get a function by its bytecode address.
     pub fn get_function_by_addr(&self, addr: usize) -> Option<&IrFunction> {
-        self.function_addrs.get(&addr).and_then(|&idx| self.functions.get(idx))
+        self.function_addrs
+            .get(&addr)
+            .and_then(|&idx| self.functions.get(idx))
     }
-    
+
     /// Get the function index for a bytecode address.
     pub fn get_function_idx_by_addr(&self, addr: usize) -> Option<usize> {
         self.function_addrs.get(&addr).copied()
@@ -1132,7 +1153,14 @@ impl fmt::Display for IrOp {
             }
             IrOp::CallMethod(d, obj, method, args) => {
                 let args_str: Vec<_> = args.iter().map(|a| format!("{}", a)).collect();
-                write!(f, "{} = call.method {}.{}({})", d, obj, method, args_str.join(", "))
+                write!(
+                    f,
+                    "{} = call.method {}.{}({})",
+                    d,
+                    obj,
+                    method,
+                    args_str.join(", ")
+                )
             }
             IrOp::MakeClosure(d, func_id, env) => {
                 write!(f, "{} = make.closure func#{}, {}", d, func_id, env)
@@ -1158,10 +1186,18 @@ impl fmt::Display for IrOp {
             IrOp::EndBorrow(v) => write!(f, "end.borrow {}", v),
             // Struct operations
             IrOp::StructNew(d, id) => write!(f, "{} = struct.new {}", d, id),
-            IrOp::StructGetField(d, src, field) => write!(f, "{} = struct.get {}, {}", d, src, field),
-            IrOp::StructSetField(dst, field, val) => write!(f, "struct.set {}, {}, {}", dst, field, val),
-            IrOp::StructGetFieldNamed(d, src, name) => write!(f, "{} = struct.get {}, .{}", d, src, name),
-            IrOp::StructSetFieldNamed(dst, name, val) => write!(f, "struct.set {}, .{}, {}", dst, name, val),
+            IrOp::StructGetField(d, src, field) => {
+                write!(f, "{} = struct.get {}, {}", d, src, field)
+            }
+            IrOp::StructSetField(dst, field, val) => {
+                write!(f, "struct.set {}, {}, {}", dst, field, val)
+            }
+            IrOp::StructGetFieldNamed(d, src, name) => {
+                write!(f, "{} = struct.get {}, .{}", d, src, name)
+            }
+            IrOp::StructSetFieldNamed(dst, name, val) => {
+                write!(f, "struct.set {}, .{}, {}", dst, name, val)
+            }
             // Monomorphized calls
             IrOp::CallMono(d, mono_id, args) => {
                 let args_str: Vec<_> = args.iter().map(|a| format!("{}", a)).collect();

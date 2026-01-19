@@ -7,7 +7,9 @@
 //!   Before: v3 = add.any v1, v2  (where v1: num, v2: num)
 //!   After:  v3 = add.num v1, v2
 
-use crate::ir::{BasicBlock, BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId};
+use crate::ir::{
+    BasicBlock, BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId,
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Type inference context for a function.
@@ -27,12 +29,12 @@ impl<'a> TypeChecker<'a> {
     /// Create a new type checker for a function.
     pub fn new(func: &'a mut IrFunction) -> Self {
         let mut types = HashMap::new();
-        
+
         // Initialize types from function's value_types
         for (&val, ty) in &func.value_types {
             types.insert(val, ty.clone());
         }
-        
+
         Self {
             func,
             worklist: VecDeque::new(),
@@ -64,11 +66,11 @@ impl<'a> TypeChecker<'a> {
     /// Process a single block, inferring types for all operations.
     fn process_block(&mut self, block_id: BlockId) {
         let block = &self.func.blocks[block_id.0 as usize];
-        
+
         // Clone ops to avoid borrow issues
         let ops: Vec<IrOp> = block.ops.clone();
         let terminator = block.terminator.clone();
-        
+
         // Process each operation
         for op in &ops {
             self.infer_op(op);
@@ -125,7 +127,7 @@ impl<'a> TypeChecker<'a> {
             IrOp::AddAny(dst, a, b) => {
                 let ta = self.get_type(*a);
                 let tb = self.get_type(*b);
-                
+
                 // If both are numbers, result is number
                 // If either is string, result is string (concatenation)
                 // Otherwise, any
@@ -143,7 +145,7 @@ impl<'a> TypeChecker<'a> {
             | IrOp::ModAny(dst, a, b) => {
                 let ta = self.get_type(*a);
                 let tb = self.get_type(*b);
-                
+
                 // These ops always produce numbers (coercion)
                 let result_ty = if ta == IrType::Number && tb == IrType::Number {
                     IrType::Number
@@ -349,7 +351,10 @@ fn type_meet(a: IrType, b: IrType) -> IrType {
 pub fn specialize_ops(func: &mut IrFunction) {
     for block in &mut func.blocks {
         let ops = std::mem::take(&mut block.ops);
-        block.ops = ops.into_iter().map(|op| specialize_op(op, &func.value_types)).collect();
+        block.ops = ops
+            .into_iter()
+            .map(|op| specialize_op(op, &func.value_types))
+            .collect();
     }
 }
 

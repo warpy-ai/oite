@@ -1,4 +1,4 @@
 /target
 *._*
 .compile_temp
-*.*
+*.o

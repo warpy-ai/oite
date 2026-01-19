@@ -14,7 +14,7 @@ pub mod heap;
 pub mod stubs;
 
 pub use abi::TsclValue;
-pub use heap::{NativeHeap, HeapPtr};
+pub use heap::{HeapPtr, NativeHeap};
 
 // Provide rust_eh_personality for panic handling when linking standalone
 #[cfg(not(feature = "vm_interop"))]

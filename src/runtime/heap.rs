@@ -39,7 +39,9 @@ impl HeapPtr {
     /// Create a HeapPtr from a usize (for NaN-boxing interop).
     #[inline]
     pub fn from_usize(addr: usize) -> Self {
-        Self { ptr: addr as *mut u8 }
+        Self {
+            ptr: addr as *mut u8,
+        }
     }
 
     /// Get the raw pointer.
@@ -57,7 +59,9 @@ impl HeapPtr {
     /// Create a null pointer.
     #[inline]
     pub const fn null() -> Self {
-        Self { ptr: std::ptr::null_mut() }
+        Self {
+            ptr: std::ptr::null_mut(),
+        }
     }
 
     /// Check if null.
@@ -215,7 +219,7 @@ pub struct HeapConfig {
 impl Default for HeapConfig {
     fn default() -> Self {
         Self {
-            young_size: 1024 * 1024, // 1 MB
+            young_size: 1024 * 1024,  // 1 MB
             gc_threshold: 768 * 1024, // 75% of young_size
         }
     }
@@ -287,7 +291,8 @@ impl NativeHeap {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => {
-                    self.total_allocated.fetch_add(aligned_size, Ordering::Relaxed);
+                    self.total_allocated
+                        .fetch_add(aligned_size, Ordering::Relaxed);
                     return Some(HeapPtr::from_usize(current));
                 }
                 Err(_) => continue, // Retry
@@ -370,7 +375,8 @@ impl NativeHeap {
 
     /// Reset the heap (for testing).
     pub fn reset(&self) {
-        self.young_ptr.store(self.young_start as usize, Ordering::SeqCst);
+        self.young_ptr
+            .store(self.young_start as usize, Ordering::SeqCst);
         self.total_allocated.store(0, Ordering::SeqCst);
     }
 }
