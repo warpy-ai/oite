@@ -10,6 +10,7 @@ mod vm;
 
 use swc_ecma_parser::Syntax;
 
+use crate::ir::IrModule;
 use crate::loader::BytecodeDecoder;
 use crate::vm::VM;
 use std::env;
@@ -616,15 +617,16 @@ fn run_benchmark(filename: &str) {
 /// Build a file to native binary using LLVM AOT compilation
 fn build_file(args: &[String]) {
     use crate::backend::{
-        BackendConfig, BackendKind, OptLevel,
+        BackendConfig, BackendKind, LtoMode, OptLevel,
         aot::{AotCompiler, AotOptions, OutputFormat},
     };
 
-    let mut filename = None;
+    let mut filenames = Vec::new();
     let mut output = None;
     let mut backend = BackendKind::LlvmAot;
-    let mut opt_level = OptLevel::SpeedAndSize;
+    let mut opt_level = OptLevel::None; // Default to dev mode
     let mut format = OutputFormat::Executable;
+    let mut lto_mode = LtoMode::None;
 
     // Parse arguments
     let mut i = 0;
@@ -655,9 +657,15 @@ fn build_file(args: &[String]) {
             }
             "--release" => {
                 opt_level = OptLevel::SpeedAndSize;
+                lto_mode = LtoMode::Thin; // Release uses ThinLTO
+            }
+            "--dist" => {
+                opt_level = OptLevel::SpeedAndSize;
+                lto_mode = LtoMode::Full; // Dist uses Full LTO
             }
             "--debug" => {
                 opt_level = OptLevel::None;
+                lto_mode = LtoMode::None;
             }
             "--format" => {
                 i += 1;
@@ -677,8 +685,8 @@ fn build_file(args: &[String]) {
                 };
             }
             _ => {
-                if filename.is_none() && !args[i].starts_with('-') {
-                    filename = Some(args[i].clone());
+                if !args[i].starts_with('-') {
+                    filenames.push(args[i].clone());
                 } else {
                     eprintln!("Error: Unknown option: {}", args[i]);
                     std::process::exit(1);
@@ -688,79 +696,96 @@ fn build_file(args: &[String]) {
         i += 1;
     }
 
-    let filename = filename.unwrap_or_else(|| {
+    if filenames.is_empty() {
         eprintln!("Error: No input file specified");
         eprintln!(
-            "Usage: {} build [--backend llvm] [--output <file>] [--release] <filename>",
+            "Usage: {} build [--backend llvm] [--output <file>] [--release|--dist] <filename>...",
             env::args().next().unwrap()
         );
         std::process::exit(1);
-    });
+    }
 
     let output_path = output.unwrap_or_else(|| {
-        Path::new(&filename)
+        // Use first filename as default output name
+        Path::new(&filenames[0])
             .file_stem()
             .unwrap()
             .to_string_lossy()
             .to_string()
     });
 
-    // Read source file
-    let source = match fs::read_to_string(&filename) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Failed to read {}: {}", filename, e);
-            std::process::exit(1);
-        }
-    };
-
-    // Determine syntax
-    let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
-        Some(Syntax::Typescript(Default::default()))
-    } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
-        Some(Syntax::Es(Default::default()))
-    } else {
-        Some(Syntax::Typescript(Default::default()))
-    };
-
-    // Compile to bytecode
+    // Compile all source files to IR modules
+    let mut modules = Vec::new();
     let mut compiler = Compiler::new();
-    let bytecode = match compiler.compile_with_syntax(&source, syntax) {
-        Ok(bc) => bc,
-        Err(e) => {
-            eprintln!("Compilation failed: {}", e);
-            std::process::exit(1);
-        }
-    };
 
-    // Lower to SSA IR
-    let mut module = match ir::lower::lower_module(&bytecode) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("IR lowering failed: {}", e);
-            std::process::exit(1);
-        }
-    };
+    for filename in &filenames {
+        // Read source file
+        let source = match fs::read_to_string(filename) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to read {}: {}", filename, e);
+                std::process::exit(1);
+            }
+        };
 
-    // Run type inference and optimizations
-    ir::typecheck::typecheck_module(&mut module);
-    ir::opt::optimize_module(&mut module);
+        // Determine syntax
+        let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
+            Some(Syntax::Typescript(Default::default()))
+        } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
+            Some(Syntax::Es(Default::default()))
+        } else {
+            Some(Syntax::Typescript(Default::default()))
+        };
+
+        // Compile to bytecode
+        let bytecode = match compiler.compile_with_syntax(&source, syntax) {
+            Ok(bc) => bc,
+            Err(e) => {
+                eprintln!("Compilation failed for {}: {}", filename, e);
+                std::process::exit(1);
+            }
+        };
+
+        // Lower to SSA IR
+        let mut module = match ir::lower::lower_module(&bytecode) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("IR lowering failed for {}: {}", filename, e);
+                std::process::exit(1);
+            }
+        };
+
+        // Run type inference and optimizations
+        ir::typecheck::typecheck_module(&mut module);
+        ir::opt::optimize_module(&mut module);
+
+        modules.push(module);
+    }
 
     // AOT compile
-    println!("Compiling {} to native binary...", filename);
+    if filenames.len() == 1 {
+        println!("Compiling {} to native binary...", filenames[0]);
+    } else {
+        println!("Compiling {} files to native binary...", filenames.len());
+    }
+
     let config = BackendConfig {
         kind: backend,
         opt_level,
         debug_info: opt_level == OptLevel::None,
         bounds_check: true,
+        lto_mode,
     };
 
     let mut aot = AotCompiler::new(&config);
     let mut options = AotOptions::default();
     options.format = format;
+    options.lto_mode = lto_mode;
     aot = aot.with_options(options);
 
-    match aot.compile_to_file(&module, Path::new(&output_path)) {
+    // Compile all modules (with LTO support if enabled)
+    let module_refs: Vec<&IrModule> = modules.iter().collect();
+    match aot.compile_modules_to_file(&module_refs, Path::new(&output_path)) {
         Ok(()) => {
             println!("Successfully compiled to: {}", output_path);
         }

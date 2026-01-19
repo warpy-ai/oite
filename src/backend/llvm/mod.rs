@@ -9,6 +9,9 @@ pub mod abi;
 pub mod optimizer;
 pub mod object;
 pub mod linker;
+pub mod bitcode;
+pub mod lto;
+pub mod cache;
 
 pub use codegen::LlvmCodegen;
 
@@ -46,6 +49,53 @@ pub fn compile_to_object_file(
     unsafe {
         object::emit_object_file(codegen.module, target_machine, output_path)?;
         llvm_sys::target_machine::LLVMDisposeTargetMachine(target_machine);
+    }
+    
+    Ok(())
+}
+
+/// Compile an IR module and emit a bitcode file
+pub fn compile_to_bitcode_file(
+    module: &IrModule,
+    config: &BackendConfig,
+    output_path: &Path,
+) -> Result<(), BackendError> {
+    // Get target triple
+    let target_triple = object::get_default_target_triple()?;
+    
+    // Create codegen
+    let mut codegen = LlvmCodegen::new(target_triple.clone())?;
+    
+    // Compile module
+    codegen.compile_module(module)?;
+    
+    // Get target machine (needed for data layout)
+    let target_machine = unsafe {
+        object::create_target_machine(&target_triple, config.opt_level)?
+    };
+    
+    // Set data layout on module (needed for LTO)
+    unsafe {
+        let data_layout = llvm_sys::target_machine::LLVMCreateTargetDataLayout(target_machine);
+        if !data_layout.is_null() {
+            let data_layout_str = llvm_sys::target::LLVMCopyStringRepOfTargetData(data_layout);
+            if !data_layout_str.is_null() {
+                llvm_sys::core::LLVMSetDataLayout(codegen.module, data_layout_str);
+                llvm_sys::core::LLVMDisposeMessage(data_layout_str);
+            }
+            llvm_sys::target::LLVMDisposeTargetData(data_layout);
+        }
+        llvm_sys::target_machine::LLVMDisposeTargetMachine(target_machine);
+    }
+    
+    // Run optimizations (lightweight for bitcode, full optimization happens during LTO)
+    unsafe {
+        optimizer::run_optimizations(codegen.module, config.opt_level)?;
+    }
+    
+    // Emit bitcode file
+    unsafe {
+        bitcode::emit_bitcode_file(codegen.module, output_path)?;
     }
     
     Ok(())

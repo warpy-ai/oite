@@ -13,8 +13,9 @@
 //! - Pointers to arrays use *const u64
 
 use super::abi::TsclValue;
-use super::heap::{NativeArray, NativeObject, NativeString, ObjectHeader, ObjectKind, heap};
-use std::collections::HashMap;
+use super::heap::{
+    NativeArray, NativeObject, NativeString, ObjectHeader, ObjectKind, PropertyMap, heap,
+};
 
 // =========================================================================
 // Allocation Stubs
@@ -104,8 +105,9 @@ pub extern "C" fn tscl_get_prop(obj: u64, key: *const u8, key_len: usize) -> u64
                 if obj.properties.is_null() {
                     return TsclValue::undefined().to_bits();
                 }
-                match (*obj.properties).get(key_str) {
-                    Some(&bits) => bits,
+                // Vec-based lookup
+                match (*obj.properties).iter().find(|(k, _)| k == key_str) {
+                    Some((_, bits)) => *bits,
                     None => TsclValue::undefined().to_bits(),
                 }
             }
@@ -180,9 +182,15 @@ pub extern "C" fn tscl_set_prop(obj: u64, key: *const u8, key_len: usize, value:
             ObjectKind::Object => {
                 let obj = ptr.as_mut::<NativeObject>();
                 if obj.properties.is_null() {
-                    obj.properties = Box::into_raw(Box::new(HashMap::new()));
+                    obj.properties = Box::into_raw(Box::new(PropertyMap::new()));
                 }
-                (*obj.properties).insert(key_str.to_string(), value);
+                // Vec-based insert: find existing or append
+                let props = &mut *obj.properties;
+                if let Some(entry) = props.iter_mut().find(|(k, _)| k == key_str) {
+                    entry.1 = value;
+                } else {
+                    props.push((key_str.to_string(), value));
+                }
             }
             ObjectKind::Array => {
                 let arr = ptr.as_mut::<NativeArray>();

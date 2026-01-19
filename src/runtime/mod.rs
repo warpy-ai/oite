@@ -15,3 +15,18 @@ pub mod stubs;
 
 pub use abi::TsclValue;
 pub use heap::{NativeHeap, HeapPtr};
+
+// Provide rust_eh_personality for panic handling when linking standalone
+#[cfg(not(feature = "vm_interop"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_eh_personality(
+    _version: u32,
+    _actions: u32,
+    _exception_class: u64,
+    _exception_object: *mut std::ffi::c_void,
+    _context: *mut std::ffi::c_void,
+) -> u32 {
+    // Minimal panic personality function for standalone builds
+    // Returns 0 to indicate we can't handle the exception (abort on panic)
+    0
+}

@@ -55,6 +55,23 @@ impl Default for OptLevel {
     }
 }
 
+/// Link-time optimization mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LtoMode {
+    /// No LTO (dev mode - fastest compilation)
+    None,
+    /// ThinLTO (release mode - parallel, fast builds, near-full performance)
+    Thin,
+    /// Full LTO (dist mode - maximum performance, slower builds)
+    Full,
+}
+
+impl Default for LtoMode {
+    fn default() -> Self {
+        LtoMode::None
+    }
+}
+
 /// Configuration for the native backend
 #[derive(Debug, Clone)]
 pub struct BackendConfig {
@@ -66,6 +83,8 @@ pub struct BackendConfig {
     pub debug_info: bool,
     /// Enable bounds checking (safety vs speed tradeoff)
     pub bounds_check: bool,
+    /// Link-time optimization mode
+    pub lto_mode: LtoMode,
 }
 
 impl Default for BackendConfig {
@@ -75,6 +94,7 @@ impl Default for BackendConfig {
             opt_level: OptLevel::Speed,
             debug_info: false,
             bounds_check: true,
+            lto_mode: LtoMode::None,
         }
     }
 }

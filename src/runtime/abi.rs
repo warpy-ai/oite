@@ -326,37 +326,42 @@ impl Default for TsclValue {
 
 // =========================================================================
 // Conversion from/to JsValue (for VM interop)
+// Only included when vm module is available (not in standalone staticlib builds)
 // =========================================================================
 
-use crate::vm::value::JsValue;
+#[cfg(feature = "vm_interop")]
+mod vm_interop {
+    use super::*;
+    use crate::vm::value::JsValue;
 
-impl TsclValue {
-    /// Convert from the VM's JsValue to TsclValue.
-    ///
-    /// This is used when transitioning from interpreted to native code.
-    pub fn from_js_value(val: &JsValue, _heap_base: *mut u8) -> Self {
-        match val {
-            JsValue::Number(n) => Self::number(*n),
-            JsValue::Boolean(b) => Self::boolean(*b),
-            JsValue::Null => Self::null(),
-            JsValue::Undefined => Self::undefined(),
-            JsValue::Object(idx) | JsValue::Function { address: _, env: Some(idx) } => {
-                // Convert heap index to pointer
-                // In a real implementation, we'd compute the actual pointer from the heap base
-                Self::pointer(HeapPtr::from_usize(*idx))
-            }
-            JsValue::Function { address, env: None } => {
-                // Function without closure - store address as pointer
-                Self::pointer(HeapPtr::from_usize(*address))
-            }
-            JsValue::String(_s) => {
-                // Strings need to be heap-allocated in native representation
-                // For now, return undefined as placeholder
-                Self::undefined()
-            }
-            JsValue::NativeFunction(idx) => {
-                // Native functions are looked up by index
-                Self::pointer(HeapPtr::from_usize(*idx | 0x8000_0000_0000))
+    impl TsclValue {
+        /// Convert from the VM's JsValue to TsclValue.
+        ///
+        /// This is used when transitioning from interpreted to native code.
+        pub fn from_js_value(val: &JsValue, _heap_base: *mut u8) -> Self {
+            match val {
+                JsValue::Number(n) => Self::number(*n),
+                JsValue::Boolean(b) => Self::boolean(*b),
+                JsValue::Null => Self::null(),
+                JsValue::Undefined => Self::undefined(),
+                JsValue::Object(idx) | JsValue::Function { address: _, env: Some(idx) } => {
+                    // Convert heap index to pointer
+                    // In a real implementation, we'd compute the actual pointer from the heap base
+                    Self::pointer(HeapPtr::from_usize(*idx))
+                }
+                JsValue::Function { address, env: None } => {
+                    // Function without closure - store address as pointer
+                    Self::pointer(HeapPtr::from_usize(*address))
+                }
+                JsValue::String(_s) => {
+                    // Strings need to be heap-allocated in native representation
+                    // For now, return undefined as placeholder
+                    Self::undefined()
+                }
+                JsValue::NativeFunction(idx) => {
+                    // Native functions are looked up by index
+                    Self::pointer(HeapPtr::from_usize(*idx | 0x8000_0000_0000))
+                }
             }
         }
     }

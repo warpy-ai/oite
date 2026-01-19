@@ -2,6 +2,18 @@
 name = "script"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
+
+[profile.release]
+# Disable LTO in release profile to avoid embed-bitcode conflicts
+# when building runtime as staticlib
+lto = false
+panic = "abort"  # Use abort on panic to avoid unwinding dependencies
+
+[features]
+default = ["vm_interop"]
+vm_interop = []
+
 
 [dependencies]
 swc_common = "18.0.1"

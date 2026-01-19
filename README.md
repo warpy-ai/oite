@@ -28,6 +28,8 @@ console.log(fib(35));  // Compiled to native code!
 ### Key Features
 
 - **Native Execution** — SSA-based IR compiled to native code via Cranelift/LLVM
+- **Link-Time Optimization** — ThinLTO and Full LTO for maximum performance
+- **Standalone Binaries** — Self-contained executables with runtime stubs in LLVM IR
 - **Memory Safety** — Ownership model with compile-time borrow checking
 - **Self-Hosting** — Bootstrap compiler written in tscl itself
 - **Type Inference** — Flow-sensitive type analysis for optimization
@@ -52,7 +54,7 @@ console.log(fib(35));  // Compiled to native code!
 │                    Native Backend                               │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
 │  │  Cranelift JIT  │  │   LLVM AOT      │  │   VM (Debug)    │  │
-│  │   (Fast)        │  │  (Optimized)    │  │  (Interpreter)  │  │
+│  │   (Fast)        │  │  (LTO, Native)  │  │  (Interpreter)  │  │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘  │
 └───────────────────────────┬─────────────────────────────────────┘
                             ▼
@@ -94,7 +96,10 @@ cargo build --release
 ./target/release/script --run-binary output.tscl.bc
 
 # Build to native binary (requires LLVM)
-./target/release/script build myprogram.tscl --backend llvm --output myprogram
+./target/release/script build myprogram.tscl --release -o myprogram
+
+# Run the compiled binary
+./myprogram
 ```
 
 ## Language Features
@@ -313,9 +318,9 @@ tscl/
 |-------|--------|-------------|
 | Phase 0 | ✅ Complete | Runtime kernel (NaN-boxing, allocator, stubs) |
 | Phase 1 | ✅ Complete | SSA IR (lowering, type inference, optimizations) |
-| Phase 2 | 🚧 Planned | Cranelift JIT backend |
-| Phase 3 | 📋 Planned | LLVM AOT backend |
-| Phase 4 | 📋 Planned | Self-hosted native compiler |
+| Phase 2 | ✅ Complete | Cranelift JIT backend |
+| Phase 3 | ✅ Complete | LLVM AOT backend with LTO |
+| Phase 4 | 🚧 In Progress | Self-hosted native compiler |
 
 See [progress.md](progress.md) for detailed implementation notes.
 

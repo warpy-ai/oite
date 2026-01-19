@@ -11,8 +11,11 @@
 //! will go through NativeHeap.
 
 use std::alloc::{self, Layout};
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Simple property storage using a Vec instead of HashMap to avoid hashbrown dependency.
+/// This is a tradeoff: O(n) lookup but no external dependencies.
+pub type PropertyMap = Vec<(String, u64)>;
 
 /// A pointer to a heap-allocated object.
 ///
@@ -191,10 +194,10 @@ pub struct NativeArray {
 #[repr(C)]
 pub struct NativeObject {
     pub header: ObjectHeader,
-    /// Pointer to the property map.
+    /// Pointer to the property map (Vec of key-value pairs).
     /// We store this as a raw pointer to avoid Rust's ownership rules
-    /// in the native runtime.
-    pub properties: *mut HashMap<String, u64>,
+    /// in the native runtime. Uses Vec instead of HashMap to avoid hashbrown dep.
+    pub properties: *mut PropertyMap,
 }
 
 // =========================================================================
@@ -322,8 +325,8 @@ impl NativeHeap {
             *header = ObjectHeader::new(ObjectKind::Object, data_size as u32);
 
             let obj = ptr.as_mut::<NativeObject>();
-            // Allocate the HashMap separately (it lives outside the bump allocator)
-            obj.properties = Box::into_raw(Box::new(HashMap::new()));
+            // Allocate the PropertyMap separately (it lives outside the bump allocator)
+            obj.properties = Box::into_raw(Box::new(PropertyMap::new()));
         }
 
         Some(ptr)

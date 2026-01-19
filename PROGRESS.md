@@ -1,6 +1,12 @@
 # tscl: Development Progress
 
-A high-performance JavaScript-like scripting language pivoting from VM-based interpretation to native code execution.
+A high-performance systems programming language with JavaScript syntax, compiling to native code via Cranelift (JIT) and LLVM (AOT).
+
+**Goal:** Faster than Bun, Actix-level server performance, JS syntax, native binaries.
+
+**Architecture:** Native-first compilation with optional VM for development/debugging.
+
+**Latest Achievement:** ✅ Standalone binary generation with LLVM AOT + LTO working! Runtime stubs implemented in LLVM IR, no external Rust runtime needed. Fibonacci example compiles and runs successfully.
 
 ## Architecture Evolution
 
@@ -532,23 +538,55 @@ All tests cover:
 
 ---
 
-## Next Steps
+## Implementation Status
 
-### Phase 2B-Beta: Complete Native Backend ✅
-- [x] Integrate Cranelift as JIT backend
-- [x] Implement basic codegen (constants, arithmetic, locals)
-- [x] Implement function calls (direct calls with constant propagation)
-- [x] Implement recursive function calls (self-referencing functions work correctly)
-- [x] Implement phi node handling (block parameters)
-- [x] Implement console.log (method calls to runtime stubs)
-- [x] Add constant propagation through local slots (enables recursive calls)
-- [x] Add tiered compilation infrastructure
-- [x] Performance benchmarks vs VM (JIT is ~6x faster)
+### Completed Phases
 
-### Phase 2B-Gamma: AOT & Optimization
+**Phase 0:** Runtime Kernel Foundation ✅
+- NaN-boxed value representation
+- Runtime stubs (20+ functions)
+- Heap allocator
+
+**Phase 1:** SSA IR System ✅
+- Bytecode → SSA lowering
+- Type inference and specialization
+- Optimization passes (DCE, CSE, constant folding)
+- IR verification
+
+**Phase 2B:** Native Backend ✅
+- Cranelift JIT compilation
+- LLVM AOT compilation
+- LTO (ThinLTO + Full LTO)
+- Multi-module compilation
+- Performance: JIT is ~6x faster than VM
+
+**Phase 3:** Type System ✅
+- TypeScript-style annotations
+- Rust-style ownership (`Ref<T>`, `MutRef<T>`)
+- Type inference (Hindley-Milner)
+- Generics with monomorphization
+- Borrow checker
+
+### Current Focus
+
+**Phase 3: Language Completion (JS Compatibility Layer)**
+
+Priority order:
+1. **For loops** - Essential control flow
+2. **Try/catch** - Error handling
+3. **Classes** - OOP support
+4. **Modules** - Code organization
+5. **Async/await** - Concurrency model
+
+### Phase 2B-Gamma: AOT & Optimization ✅
+
+**Goal:** Complete native AOT compilation with LLVM backend and LTO.
+
 - [x] LLVM backend for AOT compilation
-- [ ] Link-time optimization (LTO)
-- [ ] Standalone binary generation
+- [x] Link-time optimization (LTO)
+- [x] Multi-module compilation
+- [x] Standalone binary generation
+- [x] Runtime stubs implemented in LLVM IR (no external Rust runtime needed)
 
 #### LLVM Backend Implementation ✅
 
@@ -579,41 +617,388 @@ export LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)
 - **Type Lowering:** Maps `tscl` IR types (`Number`, `Boolean`, `Object`, etc.) to LLVM types (`double`, `i1`, `i64`, struct types)
 - **Function Translation:** Converts SSA IR functions to LLVM functions with proper parameter handling and basic blocks
 - **Operation Translation:** Maps IR operations to LLVM instructions (arithmetic, comparisons, control flow, memory operations)
-- **Runtime Integration:** Declares all `tscl` runtime stubs as external functions for calls from compiled code
+- **Runtime Integration:** Implements runtime stubs directly in LLVM IR (no external Rust runtime needed for basic operations)
 - **Optimization:** Uses LLVM's optimization pipeline (simplified for LLVM 18 API compatibility)
 - **Object Emission:** Generates platform-specific object files (`.o`)
-- **Static Linking:** Links object files with runtime library using external linker (clang/ld)
+- **Static Linking:** Links object files using external linker (clang/ld), with runtime stubs embedded in LLVM IR
+- **Bitcode Emission:** Emits per-module LLVM bitcode (`.bc`) for LTO
+- **LTO Pipeline:** ThinLTO (release) and Full LTO (dist) driven by external LLVM tools (`llvm-link`, `opt`, `llc`)
+- **Incremental Cache:** Optional `.cache/lto/` cache keyed by module + flags
 
 **Usage:**
 ```bash
-# Build to native binary
-./target/release/script build myprogram.tscl --backend llvm --output myprogram
+# Build to native binary (dev, no LTO)
+./target/release/script build app.tscl --release -o app
 
-# Build with optimizations
-./target/release/script build myprogram.tscl --backend llvm --output myprogram --release
+# Build with ThinLTO (release mode)
+./target/release/script build app.tscl --release -o app
+
+# Build with Full LTO (dist mode, maximum optimization)
+./target/release/script build app.tscl --dist -o app
+
+# Run the compiled binary
+./app
+```
+
+**Runtime Stubs in LLVM IR:**
+Runtime stubs are now implemented directly in LLVM IR (`src/backend/llvm/abi.rs`), eliminating the need for external Rust runtime linking:
+- `tscl_console_log` - Uses libc `printf` for output
+- `tscl_add_any`, `tscl_sub_any`, `tscl_mul_any`, `tscl_div_any`, `tscl_mod_any` - Floating-point arithmetic operations
+- `tscl_neg` - Unary negation
+- Function call handling via direct LLVM function calls
+- All stubs are self-contained and don't require Rust std library
+
+**Example:**
+```bash
+# Compile fibonacci example
+./target/release/script build ./examples/test_fib.tscl --release -o test_fib
+
+# Run the standalone binary
+./test_fib
+# Output: 55
 ```
 
 **Known Limitations:**
 - Optimization pipeline is simplified (LLVM 18 uses new pass manager API)
 - Requires LLVM 18 to be installed and `LLVM_SYS_180_PREFIX` environment variable set
-- Requires zstd library for linking (configured via `.cargo/config.toml`)
+- Some advanced runtime features (objects, strings) still need full runtime library
 
-### Phase 3: Type Annotations
-- [ ] Optional type syntax: `let x: number = 42`
-- [ ] Function signatures: `function add(a: number, b: number): number`
-- [ ] Array types: `let arr: string[] = ["a", "b"]`
-- [ ] Gradual typing with `--strict` mode
+---
 
-### Phase 4: Self-Hosting Migration
-- [ ] Emit SSA IR from bootstrap compiler
-- [ ] Compile bootstrap compiler natively
-- [ ] Full self-hosting: tscl compiles itself to native code
+## Type System Implementation ✅
 
-### Other
-- [ ] For loops
-- [ ] Try/catch
-- [ ] ES6 classes
-- [ ] Import/export modules
-- [ ] Async/await
-- [ ] Source maps
-- [ ] REPL
+**Goal:** Static type system with TypeScript syntax and Rust-style ownership.
+
+**Status:** Complete — Type system is fully implemented and integrated.
+
+**Note:** This was originally planned as "Phase 3: Type Annotations" but is now complete. The type system includes annotations, inference, ownership, and generics.
+
+### Implemented Features
+
+#### Type Annotations
+- ✅ Optional type syntax: `let x: number = 42`
+- ✅ Function signatures: `function add(a: number, b: number): number`
+- ✅ Array types: `let arr: string[] = ["a", "b"]`
+- ✅ Type inference (Hindley-Milner)
+- ✅ Type checking with flow-sensitive analysis
+
+#### Ownership & Borrowing
+- ✅ Rust-style ownership semantics
+- ✅ Immutable references: `Ref<T>` (parsed as `&T`)
+- ✅ Mutable references: `MutRef<T>` (parsed as `&mut T`)
+- ✅ Borrow checker integration
+- ✅ Move semantics for heap types
+- ✅ Copy semantics for primitives
+
+#### Generics
+- ✅ Generic type parameters
+- ✅ Monomorphization (specialization)
+- ✅ Type variable inference
+- ✅ Generic structs and functions
+
+#### Type System Architecture
+- ✅ Type registry for named types
+- ✅ Type conversion and coercion
+- ✅ Type inference engine
+- ✅ Type checker with error reporting
+- ✅ Integration with IR type system
+
+### Files
+| File | Purpose |
+|------|---------|
+| `src/types/mod.rs` | Core type representation |
+| `src/types/checker.rs` | Type checking logic |
+| `src/types/inference.rs` | Type inference engine |
+| `src/types/registry.rs` | Named type registry |
+| `src/types/convert.rs` | Type conversion |
+| `src/types/error.rs` | Type error reporting |
+| `src/compiler/borrow_ck.rs` | Borrow checker |
+
+---
+
+## Phase 3: Language Completion (JS Compatibility Layer)
+
+**Status:** In Progress — Basic features implemented, missing: for loops, try/catch, classes, modules, async/await.
+
+**Goal:** Make tscl a proper JavaScript superset language.
+
+**Current Status:** Basic language features implemented. Missing: for loops, try/catch, classes, modules, async/await.
+
+### 3.1 Control Flow
+
+**Implemented:**
+- ✅ `if`/`else` statements
+- ✅ `while` loops
+- ✅ `break` / `continue` statements
+- ✅ Labels (basic support)
+
+**Missing:**
+- [ ] `for` loops (`for (init; test; update)`)
+- [ ] `for..of` loops (`for (const x of arr)`)
+- [ ] `for..in` loops (`for (const key in obj)`)
+- [ ] `do..while` loops
+- [ ] Labeled break/continue
+
+### 3.2 Error Handling
+
+**Status:** Not implemented
+
+- [ ] `try` / `catch` / `finally` blocks
+- [ ] `throw` statement
+- [ ] Error type system integration (`Result<T, E>`)
+- [ ] Exception propagation
+- [ ] Stack unwinding
+
+### 3.3 Classes & OOP
+
+**Status:** Not implemented (only `new` expressions for constructors)
+
+- [ ] ES6 class syntax
+- [ ] Class constructors
+- [ ] Instance methods
+- [ ] Static methods
+- [ ] Private fields (`#field`)
+- [ ] Class inheritance (`extends`)
+- [ ] `super` keyword
+- [ ] Interfaces (`interface`)
+- [ ] `implements` keyword
+
+**Lowering Strategy:**
+Classes will be lowered to:
+```
+struct + impl + vtable
+```
+
+### 3.4 Modules
+
+**Status:** Not implemented (only `require` for runtime module loading)
+
+- [ ] `import` / `export` syntax
+- [ ] ES module format
+- [ ] Module graph construction
+- [ ] Tree shaking
+- [ ] Circular dependency handling
+- [ ] Side-effect analysis
+- [ ] Module resolution algorithm
+
+### 3.5 Async/Await
+
+**Status:** Not implemented (only async closure tracking in borrow checker)
+
+- [ ] `async` function syntax
+- [ ] `await` expression
+- [ ] Promise type
+- [ ] Event loop integration
+- [ ] Zero-cost futures
+
+**Lowering Strategy:**
+Async/await will be lowered to:
+```
+state machine + poll()
+```
+Similar to Rust's async model.
+
+### 3.6 Standard Library Surface
+
+**Implemented:**
+- ✅ `console.log`
+- ✅ `setTimeout`
+- ✅ `require` (basic)
+- ✅ `fs.readFileSync`
+- ✅ `fs.writeFileSync`
+- ✅ `fs.writeBinaryFile`
+- ✅ `ByteStream`
+
+**Missing:**
+- [ ] `fs` module (complete API)
+- [ ] `net` module
+- [ ] `http` module
+- [ ] `crypto` module
+- [ ] `process` module
+- [ ] `os` module
+
+---
+
+## Phase 4: Self-Hosting Compiler
+
+**Goal:** tscl compiles tscl → native → tscl
+
+**Status:** Bootstrap compiler exists (tscl → bytecode → VM). Need to migrate to native backend.
+
+### 4.1 Deterministic IR
+
+- [ ] Stable IR format
+- [ ] Canonical lowering (no non-deterministic passes)
+- [ ] No runtime-dependent passes
+- [ ] No VM-only instructions
+- [ ] Reproducible IR generation
+
+### 4.2 Bootstrap Compiler Migration
+
+**Current State:**
+```
+tscl(tscl) → bytecode → Rust VM
+```
+
+**Target State:**
+```
+tscl(tscl) → SSA → LLVM → native
+```
+
+**Tasks:**
+- [ ] Emit SSA IR from bootstrap compiler (instead of bytecode)
+- [ ] Replace VM backend with Cranelift/LLVM
+- [ ] Compile compiler as tscl program
+- [ ] Link native compiler binary
+- [ ] Remove VM dependency from compiler
+
+### 4.3 Self-Hosting Loop
+
+**Goal:** Prove compiler correctness through self-hosting
+
+```
+tscl₀ (Rust) compiles tscl₁
+tscl₁ compiles tscl₂
+tscl₂ must equal tscl₁ (bit-for-bit)
+```
+
+**Tasks:**
+- [ ] ABI freeze (stable runtime interface)
+- [ ] Reproducible builds
+- [ ] Bit-for-bit compiler output verification
+- [ ] Bootstrap test suite
+
+### 4.4 Compiler Performance
+
+- [ ] Parallel compilation
+- [ ] Incremental builds
+- [ ] Cached IR (per-module)
+- [ ] Module-level LTO
+- [ ] Fast compilation mode (dev)
+
+---
+
+## Phase 5: Runtime & Server
+
+**Goal:** Beat Bun and Actix performance.
+
+### 5.1 Async Runtime
+
+- [ ] `epoll` / `kqueue` integration
+- [ ] `io_uring` backend (Linux)
+- [ ] Work-stealing executor
+- [ ] Zero-copy buffers
+- [ ] Task scheduling
+- [ ] Timer management
+
+### 5.2 HTTP Stack
+
+**Target:** > 2M req/sec
+
+- [ ] HTTP/1 parser (SIMD-optimized)
+- [ ] HTTP/2 support
+- [ ] Routing engine
+- [ ] Middleware system
+- [ ] Streaming responses
+- [ ] TLS support
+- [ ] WebSocket support
+
+### 5.3 Database Drivers
+
+- [ ] PostgreSQL driver
+- [ ] Redis driver
+- [ ] SQLite driver
+- [ ] Connection pooling
+- [ ] Query builder
+
+---
+
+## Phase 6: Tooling
+
+### 6.1 Developer Tools
+
+- [ ] REPL (interactive shell)
+- [ ] Formatter (`tscl fmt`)
+- [ ] Linter (`tscl lint`)
+- [ ] Language Server (LSP)
+- [ ] Debugger integration
+- [ ] Profiler integration
+
+### 6.2 Build System
+
+- [ ] Package manager (`tscl install`)
+- [ ] Lockfiles (`tscl.lock`)
+- [ ] Dependency resolution
+- [ ] Cross-compilation
+- [ ] Build caching
+
+### 6.3 Profiling
+
+- [ ] Flamegraphs
+- [ ] Tracing support
+- [ ] `perf` integration
+- [ ] Memory profiler
+- [ ] CPU profiler
+
+---
+
+## Phase 7: Distribution
+
+- [ ] `tscl install` command
+- [ ] Official binaries (GitHub Releases)
+- [ ] Docker images
+- [ ] Homebrew formula
+- [ ] apt/rpm packages
+- [ ] Installation documentation
+
+---
+
+## Current Phase
+
+**You are here:**
+
+```
+Phase 2B-Gamma: COMPLETE ✅
+→ Native AOT compiler (LLVM)
+→ LTO (ThinLTO + Full LTO)
+→ Optimized runtime
+→ Monomorphization
+→ Ownership & Borrowing
+→ Type System
+```
+
+**Next Phase:**
+
+```
+Phase 3: Language Completion
+→ For loops
+→ Try/catch
+→ Classes
+→ Modules
+→ Async/await
+```
+
+---
+
+## Summary
+
+**What You Have:**
+- ✅ Native backends (Cranelift JIT + LLVM AOT)
+- ✅ Full type system (TypeScript syntax + Rust ownership)
+- ✅ SSA IR with optimizations
+- ✅ Borrow checker
+- ✅ LTO support
+- ✅ Multi-module compilation
+
+**What You're Building:**
+- A systems programming language with JS syntax
+- Native binaries (not a scripting VM)
+- Server-first runtime (targeting Actix-level performance)
+- Self-hosting compiler
+
+**Roadmap Structure:**
+- **Phase 3:** Language features (JS compatibility)
+- **Phase 4:** Self-hosting (compiler engineering)
+- **Phase 5:** Runtime & Server (performance)
+- **Phase 6:** Tooling (developer experience)
+- **Phase 7:** Distribution (packaging)

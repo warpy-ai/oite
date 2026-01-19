@@ -84,12 +84,76 @@ impl LlvmCodegen {
 
             // Compile each function
             for func in &ir_module.functions {
-                let func_name = if func.name.is_empty() {
-                    "anonymous".to_string()
-                } else {
-                    func.name.clone()
-                };
                 self.compile_function(func, ir_module, &struct_types)?;
+            }
+
+            // Create C-compatible main wrapper if tscl main exists
+            let tscl_main_name = std::ffi::CString::new("main").unwrap();
+            let tscl_main = llvm_sys::core::LLVMGetNamedFunction(self.module, tscl_main_name.as_ptr());
+            if !tscl_main.is_null() && llvm_sys::core::LLVMIsDeclaration(tscl_main) == 0 {
+                // Rename tscl main to tscl_main
+                let tscl_main_new_name = std::ffi::CString::new("tscl_main").unwrap();
+                llvm_sys::core::LLVMSetValueName(tscl_main, tscl_main_new_name.as_ptr());
+                
+                // Create C-compatible main: int main(int argc, char** argv)
+                let i32_ty = llvm_sys::core::LLVMInt32TypeInContext(self.context);
+                let i8_ty = llvm_sys::core::LLVMInt8TypeInContext(self.context);
+                let i8_ptr_ty = llvm_sys::core::LLVMPointerType(i8_ty, 0);
+                let i8_ptr_ptr_ty = llvm_sys::core::LLVMPointerType(i8_ptr_ty, 0);
+                let mut main_params = vec![i32_ty, i8_ptr_ptr_ty];
+                let main_ty = llvm_sys::core::LLVMFunctionType(i32_ty, main_params.as_mut_ptr(), main_params.len() as u32, 0);
+                
+                let main_name = std::ffi::CString::new("main").unwrap();
+                let c_main = llvm_sys::core::LLVMAddFunction(self.module, main_name.as_ptr(), main_ty);
+                
+                if !c_main.is_null() {
+                    // Set visibility and linkage to prevent LTO from eliminating it
+                    llvm_sys::core::LLVMSetVisibility(c_main, llvm_sys::LLVMVisibility::LLVMDefaultVisibility);
+                    llvm_sys::core::LLVMSetLinkage(c_main, llvm_sys::LLVMLinkage::LLVMExternalLinkage);
+                    
+                    // Mark as used to prevent LTO dead code elimination
+                    let i8_ty = llvm_sys::core::LLVMInt8TypeInContext(self.context);
+                    let i8_ptr_ty = llvm_sys::core::LLVMPointerType(i8_ty, 0);
+                    let used_array_ty = llvm_sys::core::LLVMArrayType(i8_ptr_ty, 1);
+                    let used_name = std::ffi::CString::new("llvm.used").unwrap();
+                    
+                    let existing_used = llvm_sys::core::LLVMGetNamedGlobal(self.module, used_name.as_ptr());
+                    let used_global = if !existing_used.is_null() {
+                        existing_used
+                    } else {
+                        llvm_sys::core::LLVMAddGlobal(self.module, used_array_ty, used_name.as_ptr())
+                    };
+                    
+                    if !used_global.is_null() {
+                        let main_as_i8 = llvm_sys::core::LLVMConstBitCast(c_main, i8_ptr_ty);
+                        let mut main_ptr = main_as_i8;
+                        let used_array = llvm_sys::core::LLVMConstArray(i8_ptr_ty, &mut main_ptr, 1);
+                        llvm_sys::core::LLVMSetInitializer(used_global, used_array);
+                        llvm_sys::core::LLVMSetLinkage(used_global, llvm_sys::LLVMLinkage::LLVMAppendingLinkage);
+                        llvm_sys::core::LLVMSetSection(used_global, b"llvm.metadata\0".as_ptr() as *const i8);
+                    }
+                    
+                    // Create entry block and call tscl_main
+                    let entry = llvm_sys::core::LLVMAppendBasicBlock(c_main, b"entry\0".as_ptr() as *const i8);
+                    let builder = llvm_sys::core::LLVMCreateBuilderInContext(self.context);
+                    llvm_sys::core::LLVMPositionBuilderAtEnd(builder, entry);
+                    
+                    let tscl_main_ty = llvm_sys::core::LLVMGlobalGetValueType(tscl_main);
+                    let _tscl_result = llvm_sys::core::LLVMBuildCall2(
+                        builder,
+                        tscl_main_ty,
+                        tscl_main,
+                        std::ptr::null_mut(),
+                        0,
+                        b"call\0".as_ptr() as *const i8
+                    );
+                    
+                    // Return 0 (success)
+                    let zero = llvm_sys::core::LLVMConstInt(i32_ty, 0, 0);
+                    llvm_sys::core::LLVMBuildRet(builder, zero);
+                    
+                    llvm_sys::core::LLVMDisposeBuilder(builder);
+                }
             }
 
             Ok(())
@@ -123,6 +187,16 @@ impl LlvmCodegen {
         
         if func_val.is_null() {
             return Err(BackendError::Llvm(format!("Failed to declare function: {}", name)));
+        }
+
+        // Set visibility: hidden for internal functions, default for main and runtime stubs
+        // This enables LTO to eliminate unused code
+        if name == "main" {
+            // Main must be visible for linking
+            llvm_sys::core::LLVMSetVisibility(func_val, llvm_sys::LLVMVisibility::LLVMDefaultVisibility);
+        } else {
+            // All other user functions are hidden (can be eliminated by LTO if unused)
+            llvm_sys::core::LLVMSetVisibility(func_val, llvm_sys::LLVMVisibility::LLVMHiddenVisibility);
         }
 
         self.functions.insert(name.to_string(), func_val);
@@ -162,6 +236,7 @@ impl LlvmCodegen {
             struct_types: struct_types.clone(),
             stubs: &self.stubs,
             functions: &self.functions,
+            function_addrs: &ir_module.function_addrs,
         };
 
         // Create blocks for all IR blocks
@@ -251,6 +326,8 @@ struct TranslationContext<'a> {
     stubs: &'a HashMap<String, LLVMValueRef>,
     /// Compiled functions
     functions: &'a HashMap<String, LLVMValueRef>,
+    /// Bytecode address to function name mapping
+    function_addrs: &'a HashMap<usize, usize>,
 }
 
 /// Translate a basic block
@@ -273,6 +350,26 @@ unsafe fn translate_block(
 unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), BackendError> {
     match op {
         IrOp::Const(dst, lit) => {
+            // Check if this is a function address constant
+            if let Literal::Number(n) = lit {
+                let addr = *n as usize;
+                // If this address maps to a known function, emit the function pointer
+                if ctx.function_addrs.contains_key(&addr) {
+                    let func_name = format!("func_{}", addr);
+                    if let Some(&func_ptr) = ctx.functions.get(&func_name) {
+                        // Convert function pointer to i64 (for NaN-boxing compatibility)
+                        let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
+                        let ptr_as_int = llvm_sys::core::LLVMBuildPtrToInt(
+                            ctx.builder,
+                            func_ptr,
+                            i64_ty,
+                            b"func_addr\0".as_ptr() as *const i8,
+                        );
+                        ctx.values.insert(*dst, ptr_as_int);
+                        return Ok(());
+                    }
+                }
+            }
             let val = translate_literal(ctx, lit)?;
             ctx.values.insert(*dst, val);
         }
@@ -630,23 +727,42 @@ unsafe fn call_stub(ctx: &TranslationContext, name: &str, args: &[LLVMValueRef])
     Ok(call)
 }
 
-/// Call a function indirectly
+/// Call a function indirectly (or directly if it's a known function)
+/// 
+/// This generates a direct LLVM call by:
+/// 1. Building the function type based on number of arguments
+/// 2. Casting the function pointer (i64) to the correct function pointer type
+/// 3. Calling the function directly with the provided arguments
 unsafe fn call_indirect(ctx: &TranslationContext, func_ptr: LLVMValueRef, args: &[LLVMValueRef]) -> Result<LLVMValueRef, BackendError> {
-    let argc = llvm_sys::core::LLVMConstInt(llvm_sys::core::LLVMInt64TypeInContext(ctx.context), args.len() as u64, 0);
-    let null_ptr = llvm_sys::core::LLVMConstNull(llvm_sys::core::LLVMPointerType(llvm_sys::core::LLVMInt8TypeInContext(ctx.context), 0));
+    let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
     
-    let stub = ctx.stubs.get("tscl_call")
-        .copied()
-        .ok_or_else(|| BackendError::Llvm("tscl_call stub not found".into()))?;
+    // Build function type: all args are i64 (NaN-boxed), returns i64
+    let mut param_types: Vec<LLVMTypeRef> = vec![i64_ty; args.len()];
+    let func_ty = llvm_sys::core::LLVMFunctionType(
+        i64_ty,
+        if param_types.is_empty() { std::ptr::null_mut() } else { param_types.as_mut_ptr() },
+        args.len() as u32,
+        0,
+    );
+    let func_ptr_ty = llvm_sys::core::LLVMPointerType(func_ty, 0);
     
-    let mut call_args = vec![func_ptr, argc, null_ptr];
-    let name_cstr = CString::new("call").unwrap();
+    // Cast i64 function address to function pointer
+    let callee = llvm_sys::core::LLVMBuildIntToPtr(
+        ctx.builder,
+        func_ptr,
+        func_ptr_ty,
+        b"callee\0".as_ptr() as *const i8,
+    );
+    
+    // Build the call with actual arguments
+    let mut args_mut: Vec<LLVMValueRef> = args.to_vec();
+    let name_cstr = CString::new("call_result").unwrap();
     let call = llvm_sys::core::LLVMBuildCall2(
         ctx.builder,
-        llvm_sys::core::LLVMGlobalGetValueType(stub),
-        stub,
-        call_args.as_mut_ptr(),
-        call_args.len() as u32,
+        func_ty,
+        callee,
+        if args_mut.is_empty() { std::ptr::null_mut() } else { args_mut.as_mut_ptr() },
+        args_mut.len() as u32,
         name_cstr.as_ptr(),
     );
     
