@@ -498,6 +498,42 @@ impl Lowerer {
                 self.push(dst);
             }
 
+            // InstanceOf operator
+            OpCode::InstanceOf => {
+                // For AOT compilation, use a stub call
+                // Pop constructor and object
+                let ctor = self.pop()?;
+                let obj = self.pop()?;
+                // Call runtime stub
+                let stub = self.alloc_value(IrType::Any);
+                self.emit(IrOp::LoadGlobal(stub, "tscl_instanceof".to_string()));
+                let result = self.alloc_value(IrType::Boolean);
+                self.emit(IrOp::Call(result, stub, vec![obj, ctor]));
+                self.push(result);
+            }
+
+            // NewTarget - for AOT, use a stub
+            OpCode::NewTarget => {
+                // Call runtime stub
+                let stub = self.alloc_value(IrType::Any);
+                self.emit(IrOp::LoadGlobal(stub, "tscl_new_target".to_string()));
+                let result = self.alloc_value(IrType::Any);
+                self.emit(IrOp::Call(result, stub, vec![]));
+                self.push(result);
+            }
+
+            // ApplyDecorator - for now, just call a runtime stub
+            OpCode::ApplyDecorator => {
+                let target = self.pop()?;
+                let decorator = self.pop()?;
+                // Call runtime stub for decorator application
+                let stub = self.alloc_value(IrType::Any);
+                self.emit(IrOp::LoadGlobal(stub, "tscl_apply_decorator".to_string()));
+                let result = self.alloc_value(IrType::Any);
+                self.emit(IrOp::Call(result, stub, vec![target.clone(), decorator]));
+                self.push(result);
+            }
+
             // Logical operations
             OpCode::Not => {
                 let a = self.pop()?;

@@ -24,6 +24,11 @@ pub struct Frame {
     pub locals: HashMap<String, JsValue>,
     pub indexed_locals: Vec<JsValue>,
     pub this_context: JsValue,
+    /// Stores the constructor that was called with new (for new.target)
+    pub new_target: Option<JsValue>,
+    /// Tracks whether super() has been called in a derived class constructor
+    /// JavaScript requires super() to be called before accessing `this`
+    pub super_called: bool,
 }
 
 pub struct Task {
@@ -86,6 +91,8 @@ impl VM {
                 locals: HashMap::new(),
                 indexed_locals: Vec::new(),
                 this_context: JsValue::Undefined,
+                new_target: None,
+                super_called: false,
             }],
             heap: Vec::new(),
             native_functions: Vec::new(),
@@ -397,6 +404,47 @@ impl VM {
         JsValue::Undefined
     }
 
+    fn find_setter_with_proto_chain(
+        &self,
+        obj_ptr: usize,
+        name: &str,
+    ) -> Option<(usize, Option<usize>)> {
+        let setter_name = format!("setter:{}", name);
+        let mut current_ptr = Some(obj_ptr);
+        let mut depth = 0;
+        const MAX_PROTO_DEPTH: usize = 100; // Prevent infinite loops
+
+        while let Some(ptr) = current_ptr {
+            if depth > MAX_PROTO_DEPTH {
+                break;
+            }
+            depth += 1;
+
+            if let Some(HeapObject {
+                data: HeapData::Object(props),
+            }) = self.heap.get(ptr)
+            {
+                // Check if setter exists on this object
+                if let Some(setter_val) = props.get(&setter_name) {
+                    if let JsValue::Function { address, env } = setter_val {
+                        return Some((*address, *env));
+                    }
+                }
+
+                // Walk up the prototype chain
+                if let Some(JsValue::Object(proto_ptr)) = props.get("__proto__") {
+                    current_ptr = Some(*proto_ptr);
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        None
+    }
+
     fn execute_task(&mut self, task: Task) {
         // Stack overflow protection
         if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
@@ -418,6 +466,8 @@ impl VM {
                     locals: HashMap::new(),
                     indexed_locals: Vec::new(),
                     this_context: JsValue::Undefined,
+                    new_target: None,
+                    super_called: false,
                 };
 
                 // CLOSURE MAGIC: If this function has captured variables (env),
@@ -512,26 +562,8 @@ impl VM {
             OpCode::SetProp(name) => {
                 let value = self.stack.pop().unwrap();
                 if let Some(JsValue::Object(ptr)) = self.stack.pop() {
-                    let setter_addr_and_env = {
-                        if let Some(heap_item) = self.heap.get_mut(ptr) {
-                            if let HeapData::Object(props) = &mut heap_item.data {
-                                let setter_name = format!("setter:{}", name);
-                                if let Some(setter_val) = props.get(&setter_name) {
-                                    if let JsValue::Function { address, env } = setter_val {
-                                        Some((*address, *env))
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    };
+                    // Check for setter in prototype chain
+                    let setter_addr_and_env = self.find_setter_with_proto_chain(ptr, &name);
 
                     if let Some((address, env)) = setter_addr_and_env {
                         self.stack.push(value.clone());
@@ -541,6 +573,8 @@ impl VM {
                             locals: HashMap::new(),
                             indexed_locals: Vec::new(),
                             this_context,
+                            new_target: None,
+                            super_called: false,
                         };
 
                         if let Some(HeapObject {
@@ -557,6 +591,7 @@ impl VM {
                         return ExecResult::ContinueNoIpInc;
                     }
 
+                    // No setter found, store the value directly
                     if let Some(heap_item) = self.heap.get_mut(ptr) {
                         if let HeapData::Object(props) = &mut heap_item.data {
                             eprintln!(
@@ -594,6 +629,8 @@ impl VM {
                                             locals: HashMap::new(),
                                             indexed_locals: Vec::new(),
                                             this_context,
+                                            new_target: None,
+                                            super_called: false,
                                         };
 
                                         if let Some(HeapObject {
@@ -691,6 +728,10 @@ impl VM {
             }
 
             OpCode::LoadThis => {
+                // Note: The super() check is disabled because it fires during constructor
+                // setup (private field initialization) before the constructor body.
+                // A proper implementation would need to track when we're in the
+                // constructor body vs setup phase.
                 let context = self.call_stack.last().unwrap().this_context.clone();
                 self.stack.push(context);
             }
@@ -705,6 +746,20 @@ impl VM {
                 }
 
                 let callee = self.stack.pop().expect("Missing callee");
+                eprintln!(
+                    "DEBUG Call: callee type = {:?}",
+                    match callee {
+                        JsValue::Function { .. } => "Function",
+                        JsValue::NativeFunction(_) => "NativeFunction",
+                        JsValue::Object(_) => "Object",
+                        JsValue::Number(_) => "Number",
+                        JsValue::String(_) => "String",
+                        JsValue::Boolean(_) => "Boolean",
+                        JsValue::Null => "Null",
+                        JsValue::Undefined => "Undefined",
+                        _ => "Other",
+                    }
+                );
                 let mut args = Vec::with_capacity(arg_count);
                 for _ in 0..arg_count {
                     args.push(self.stack.pop().expect("Missing argument"));
@@ -712,6 +767,7 @@ impl VM {
 
                 match callee {
                     JsValue::Function { address, env } => {
+                        eprintln!("DEBUG Call: calling function at address {:?}", address);
                         // Record function call for tiered compilation
                         self.record_function_call(address);
 
@@ -725,6 +781,8 @@ impl VM {
                             locals: HashMap::new(),
                             indexed_locals: Vec::new(),
                             this_context: JsValue::Undefined,
+                            new_target: None,
+                            super_called: false,
                         };
 
                         // CLOSURE CONTEXT SWITCH: Load captured variables from
@@ -1191,10 +1249,15 @@ impl VM {
                 args.reverse();
 
                 // Extract the actual constructor function and prototype
-                let (address, env, prototype) = match &constructor_val {
+                let (address, env, prototype, new_target_val) = match &constructor_val {
                     JsValue::Function { address, env } => {
-                        // For a plain function, prototype is undefined initially
-                        (*address, *env, None)
+                        // For a plain function, new.target is the function itself
+                        (
+                            *address,
+                            env.clone(),
+                            None::<JsValue>,
+                            constructor_val.clone(),
+                        )
                     }
                     JsValue::Object(ptr) => {
                         // Look for a "constructor" property and "prototype" property
@@ -1205,7 +1268,16 @@ impl VM {
                             let ctor = props.get("constructor").cloned();
                             let proto = props.get("prototype").cloned();
                             match ctor {
-                                Some(JsValue::Function { address, env }) => (address, env, proto),
+                                Some(JsValue::Function { address, env }) => {
+                                    // In ES6 JavaScript, new.target is the class itself (the constructor function)
+                                    // The class wrapper has a 'constructor' property pointing to the constructor
+                                    // So we need to use the wrapper as new.target, not the extracted constructor
+                                    (address, env.clone(), proto, constructor_val.clone())
+                                }
+                                Some(JsValue::Object(ptr)) => {
+                                    // Constructor might be wrapped in another object
+                                    (0usize, None, proto, constructor_val.clone())
+                                }
                                 Some(other) => {
                                     panic!("Constructor is not a Function, it's {:?}", other);
                                 }
@@ -1249,6 +1321,8 @@ impl VM {
                     locals: HashMap::new(),
                     indexed_locals: Vec::new(),
                     this_context: this_obj.clone(),
+                    new_target: Some(new_target_val),
+                    super_called: false,
                 };
 
                 // Load captured environment if present
@@ -1630,6 +1704,8 @@ impl VM {
                                 locals: HashMap::new(),
                                 indexed_locals: Vec::new(),
                                 this_context: JsValue::Object(ptr),
+                                new_target: None,
+                                super_called: false,
                             };
 
                             // Load captured variables from environment
@@ -1774,17 +1850,37 @@ impl VM {
             }
 
             OpCode::LoadSuper => {
-                // Load __super__ from current frame's locals
-                let super_val = self
-                    .call_stack
-                    .last()
-                    .and_then(|frame| frame.locals.get("__super__"))
-                    .cloned()
+                // Load __super__ from current frame's new_target (wrapper object)
+                // The wrapper object has __super__ property pointing to the parent class
+                let frame = self.call_stack.last();
+
+                let new_target = frame.and_then(|frame| frame.new_target.as_ref());
+
+                let super_val = new_target
+                    .and_then(|wrapper| {
+                        if let JsValue::Object(ptr) = wrapper {
+                            self.heap.get(*ptr).and_then(|obj| {
+                                if let HeapData::Object(props) = &obj.data {
+                                    props.get("__super__").cloned()
+                                } else {
+                                    None
+                                }
+                            })
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or(JsValue::Undefined);
                 self.stack.push(super_val);
             }
 
             OpCode::CallSuper(arg_count) => {
+                // Mark that super() has been called in the derived class constructor
+                // This is required by JavaScript: super() must be called before accessing `this`
+                if let Some(frame) = self.call_stack.last_mut() {
+                    frame.super_called = true;
+                }
+
                 // Call the super constructor with current this context
                 // Stack: [args..., super_constructor]
                 let super_ctor = self
@@ -1833,6 +1929,8 @@ impl VM {
                         locals: HashMap::new(),
                         indexed_locals: Vec::new(),
                         this_context,
+                        new_target: None,
+                        super_called: false,
                     };
 
                     // Load captured variables from closure environment
@@ -1855,32 +1953,61 @@ impl VM {
 
             OpCode::GetSuperProp(name) => {
                 // Get property from super's prototype
-                // Stack: [super_obj] -> [property_value]
-                let super_obj = self
-                    .stack
-                    .pop()
-                    .expect("GetSuperProp: missing super object");
+                // Stack: [] -> [property_value]
+                // For super.prop, we look up the property on the parent class's prototype
+                // We get the parent class from the current frame's context or prototype chain
 
-                // Get the prototype from super
-                let prop_val = match super_obj {
-                    JsValue::Object(ptr) => {
+                // Try to get __super__ from new_target first (for super() calls in constructors)
+                let super_obj = self
+                    .call_stack
+                    .last()
+                    .and_then(|frame| frame.new_target.as_ref())
+                    .and_then(|wrapper| {
+                        if let JsValue::Object(ptr) = wrapper {
+                            self.heap.get(*ptr).and_then(|obj| {
+                                if let HeapData::Object(props) = &obj.data {
+                                    props.get("__super__").cloned()
+                                } else {
+                                    None
+                                }
+                            })
+                        } else {
+                            None
+                        }
+                    });
+
+                // If new_target doesn't have __super__, try to get it from this_context's prototype chain
+                let prop_val = if let Some(JsValue::Object(super_ptr)) = super_obj {
+                    // Look for the property on the parent's prototype
+                    let proto = {
                         if let Some(HeapObject {
                             data: HeapData::Object(props),
-                        }) = self.heap.get(ptr)
+                        }) = self.heap.get(super_ptr)
                         {
-                            // Look for the property, or walk __proto__ chain
-                            self.get_prop_with_proto_chain(ptr, &name)
+                            props.get("prototype").cloned()
                         } else {
-                            JsValue::Undefined
+                            None
                         }
+                    };
+
+                    if let Some(JsValue::Object(proto_ptr)) = proto {
+                        self.get_prop_with_proto_chain(proto_ptr, &name)
+                    } else {
+                        self.get_prop_with_proto_chain(super_ptr, &name)
                     }
-                    JsValue::Function { address, .. } => {
-                        // For functions, look at the "prototype" property
-                        // This is for class inheritance where super.method() is called
+                } else {
+                    // Fallback: use this_context's prototype chain
+                    // This handles super.prop() calls in methods where new_target is not set
+                    let this_context = self.call_stack.last().map(|frame| &frame.this_context);
+
+                    if let Some(JsValue::Object(this_ptr)) = this_context {
+                        // Walk up the prototype chain to find the property
+                        self.get_prop_with_proto_chain(*this_ptr, &name)
+                    } else {
                         JsValue::Undefined
                     }
-                    _ => JsValue::Undefined,
                 };
+
                 self.stack.push(prop_val);
             }
 
@@ -1991,6 +2118,129 @@ impl VM {
                                 field_map.insert(key, value);
                             }
                         }
+                    }
+                }
+            }
+
+            OpCode::InstanceOf => {
+                // Stack: [constructor, object] -> pops both, pushes boolean
+                let constructor = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let obj = self.stack.pop().unwrap_or(JsValue::Undefined);
+
+                let result = match (obj, constructor) {
+                    // obj instanceof Function (special case: function is not an object)
+                    (_, JsValue::Function { .. }) => {
+                        // Functions always pass instanceof Function
+                        // For other checks, we'd need function.prototype
+                        true
+                    }
+                    (JsValue::Object(obj_ptr), JsValue::Object(ctor_ptr)) => {
+                        // Get constructor.prototype
+                        let proto = if let Some(HeapObject {
+                            data: HeapData::Object(props),
+                        }) = self.heap.get(ctor_ptr)
+                        {
+                            props.get("prototype").cloned()
+                        } else {
+                            None
+                        };
+
+                        // Walk the object's prototype chain looking for constructor.prototype
+                        if let Some(JsValue::Object(target_proto)) = proto {
+                            let mut current_ptr = Some(obj_ptr);
+                            let mut depth = 0;
+                            const MAX_PROTO_DEPTH: usize = 100;
+
+                            while let Some(ptr) = current_ptr {
+                                if depth > MAX_PROTO_DEPTH {
+                                    break;
+                                }
+                                depth += 1;
+
+                                if ptr == target_proto {
+                                    break;
+                                }
+
+                                if let Some(HeapObject {
+                                    data: HeapData::Object(props),
+                                }) = self.heap.get(ptr)
+                                {
+                                    if let Some(JsValue::Object(proto_ptr)) = props.get("__proto__")
+                                    {
+                                        current_ptr = Some(*proto_ptr);
+                                    } else {
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+
+                            // Check if we found the prototype
+                            current_ptr == Some(target_proto)
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                };
+
+                self.stack.push(JsValue::Boolean(result));
+            }
+
+            OpCode::NewTarget => {
+                // Push the new.target value from the current frame
+                let new_target = self
+                    .call_stack
+                    .last()
+                    .and_then(|frame| frame.new_target.clone())
+                    .unwrap_or(JsValue::Undefined);
+                self.stack.push(new_target);
+            }
+
+            OpCode::ApplyDecorator => {
+                // Apply a decorator to a target (class, method, or field)
+                // Stack: [decorator, target] -> [decorated]
+                // The decorator is called as: decorator(target)
+                let target = self.stack.pop().expect("ApplyDecorator: missing target");
+                let decorator = self.stack.pop().expect("ApplyDecorator: missing decorator");
+
+                match decorator {
+                    JsValue::Function { address, env } => {
+                        // Clone target for use in the frame
+                        let target_for_frame = target.clone();
+
+                        // Call the decorator function with the target
+                        self.stack.push(target.clone());
+                        self.stack.push(target);
+
+                        // Create a frame for the decorator call
+                        let mut frame = Frame {
+                            return_address: self.ip + 1,
+                            locals: HashMap::new(),
+                            indexed_locals: Vec::new(),
+                            this_context: target_for_frame.clone(),
+                            new_target: Some(target_for_frame),
+                            super_called: false,
+                        };
+
+                        // Load captured variables from environment
+                        if let Some(HeapObject {
+                            data: HeapData::Object(props),
+                        }) = env.and_then(|ptr| self.heap.get(ptr))
+                        {
+                            for (name, value) in props {
+                                frame.locals.insert(name.clone(), value.clone());
+                            }
+                        }
+
+                        self.call_stack.push(frame);
+                        self.ip = address;
+                        return ExecResult::ContinueNoIpInc;
+                    }
+                    _ => {
+                        // If decorator is not a function, return target unchanged
+                        self.stack.push(target);
                     }
                 }
             }

@@ -232,12 +232,75 @@ impl Codegen {
 
     pub fn generate(&mut self, module: &Module) -> Vec<OpCode> {
         for item in &module.body {
-            if let Some(stmt) = item.as_stmt() {
-                self.gen_stmt(stmt);
+            match item {
+                ModuleItem::Stmt(stmt) => {
+                    self.gen_stmt(stmt);
+                }
+                ModuleItem::ModuleDecl(decl) => {
+                    self.gen_module_decl(decl);
+                }
             }
         }
         self.instructions.push(OpCode::Halt);
         self.instructions.clone()
+    }
+
+    fn gen_module_decl(&mut self, decl: &ModuleDecl) {
+        match decl {
+            ModuleDecl::ExportDecl(export_decl) => {
+                self.gen_decl(&export_decl.decl);
+            }
+            ModuleDecl::ExportDefaultDecl(export_default) => match &export_default.decl {
+                DefaultDecl::Class(class_expr) => {
+                    self.gen_class(&class_expr.class);
+                }
+                DefaultDecl::Fn(fn_expr) => {
+                    let name = if let Some(id) = fn_expr.ident.clone() {
+                        Some(id.sym.to_string())
+                    } else {
+                        None
+                    };
+                    self.gen_fn_decl(name, &fn_expr.function);
+                }
+                _ => {}
+            },
+            ModuleDecl::ExportDefaultExpr(export_default) => match &*export_default.expr {
+                Expr::Fn(fn_expr) => {
+                    let name = if let Some(id) = fn_expr.ident.clone() {
+                        Some(id.sym.to_string())
+                    } else {
+                        None
+                    };
+                    self.gen_fn_decl(name, &fn_expr.function);
+                }
+                Expr::Class(class_expr) => {
+                    self.gen_class(&class_expr.class);
+                }
+                _ => {}
+            },
+            ModuleDecl::Import(_) => {}
+            ModuleDecl::ExportNamed(_) => {}
+            ModuleDecl::ExportAll(_) => {}
+            ModuleDecl::TsImportEquals(_) => {}
+            ModuleDecl::TsExportAssignment(_) => {}
+            ModuleDecl::TsNamespaceExport(_) => {}
+        }
+    }
+
+    fn gen_decl(&mut self, decl: &Decl) {
+        match decl {
+            Decl::Fn(fn_decl) => {
+                let name = fn_decl.ident.sym.to_string();
+                self.gen_fn_decl(Some(name), &fn_decl.function);
+            }
+            Decl::Class(class_decl) => {
+                self.gen_class(&class_decl.class);
+            }
+            Decl::Var(var_decl) => {
+                self.gen_var_decl(var_decl);
+            }
+            _ => {}
+        }
     }
 
     pub fn generate_script(&mut self, script: &Script) -> Vec<OpCode> {
@@ -246,6 +309,82 @@ impl Codegen {
         }
         self.instructions.push(OpCode::Halt);
         self.instructions.clone()
+    }
+
+    fn gen_fn_decl(&mut self, name: Option<String>, fn_decl: &Function) {
+        // For named function declarations, store them in the current scope
+        // Anonymous functions are not stored (they're just values)
+        let has_name = name.is_some();
+        let start_ip = if let Some(ref name) = name {
+            // 1. Push function address and store it
+            let ip = self.instructions.len() + 3; // +3 to skip Push, Let, and Jump
+            self.instructions.push(OpCode::Push(JsValue::Function {
+                address: ip,
+                env: None, // Named function declarations typically don't capture
+            }));
+            self.instructions.push(OpCode::Let(name.clone()));
+
+            // Track this function name in outer scope
+            self.outer_scope_vars.insert(name.clone());
+
+            // 2. Add jump to skip over function body
+            let jump_target = self.instructions.len() + 1; // Will be updated after compiling body
+            self.instructions.push(OpCode::Jump(jump_target));
+
+            ip
+        } else {
+            // For anonymous functions, just push the function value on the stack
+            // The actual function address will be set after the body
+            self.instructions.len()
+        };
+
+        // 3. Compile function body
+        self.in_function = true;
+        // NEW: Inside the function body, we must pop arguments into locals
+        // We process them in REVERSE order because of how they sit on the stack
+        for param in fn_decl.params.iter().rev() {
+            if let Pat::Ident(id) = &param.pat {
+                let param_name = id.id.sym.to_string();
+                // The value is already on the stack from the Caller
+                // Parameters are new bindings in the function scope
+                self.instructions.push(OpCode::Let(param_name));
+            }
+        }
+        let stmts = &fn_decl.body.as_ref().unwrap().stmts;
+        for s in stmts {
+            self.gen_stmt(s);
+
+            // If this is the last statement and it's an expression (like a + b),
+            // we DON'T push Undefined. It will act as the implicit return value.
+        }
+        self.in_function = false;
+        // At the very end of the function body, add an implicit return
+        // This handles functions that don't have a 'return' statement
+        if stmts.is_empty() {
+            self.instructions.push(OpCode::Push(JsValue::Undefined));
+        }
+        self.instructions.push(OpCode::Return);
+
+        // 4. Update jump target to point after the function body (for named functions)
+        if has_name {
+            let current_len = self.instructions.len();
+            if let OpCode::Jump(ref mut target) = self.instructions[start_ip - 1] {
+                *target = current_len;
+            }
+        }
+    }
+
+    fn gen_var_decl(&mut self, var_decl: &VarDecl) {
+        for decl in &var_decl.decls {
+            if let Some(init) = &decl.init {
+                let name = decl.name.as_ident().unwrap().sym.to_string();
+                self.gen_expr(init);
+                // Use Let to create a new binding in current scope (shadows outer vars)
+                self.instructions.push(OpCode::Let(name.clone()));
+                // Track this variable so inner functions can capture it
+                self.outer_scope_vars.insert(name);
+            }
+        }
     }
 
     fn gen_stmt(&mut self, stmt: &Stmt) {
@@ -272,71 +411,11 @@ impl Codegen {
                 }
             }
             Stmt::Decl(Decl::Var(var_decl)) => {
-                for decl in &var_decl.decls {
-                    if let Some(init) = &decl.init {
-                        let name = decl.name.as_ident().unwrap().sym.to_string();
-                        self.gen_expr(init);
-                        // Use Let to create a new binding in current scope (shadows outer vars)
-                        self.instructions.push(OpCode::Let(name.clone()));
-                        // Track this variable so inner functions can capture it
-                        self.outer_scope_vars.insert(name);
-                    }
-                }
+                self.gen_var_decl(var_decl);
             }
             Stmt::Decl(Decl::Fn(fn_decl)) => {
                 let name = fn_decl.ident.sym.to_string();
-
-                // Function declarations are hoisted and don't typically capture outer scope vars
-                // (they're defined at the top level or function level). We'll support captures
-                // for consistency but top-level functions usually won't have any.
-
-                // 1. Push function address and store it
-                let start_ip = self.instructions.len() + 3; // +3 to skip Push, Let, and Jump
-                self.instructions.push(OpCode::Push(JsValue::Function {
-                    address: start_ip,
-                    env: None, // Named function declarations typically don't capture
-                }));
-                self.instructions.push(OpCode::Let(name.clone()));
-
-                // Track this function name in outer scope
-                self.outer_scope_vars.insert(name);
-
-                // 2. Add jump to skip over function body
-                let jump_target = self.instructions.len() + 1; // Will be updated after compiling body
-                self.instructions.push(OpCode::Jump(jump_target));
-
-                // 3. Compile function body
-                self.in_function = true;
-                // NEW: Inside the function body, we must pop arguments into locals
-                // We process them in REVERSE order because of how they sit on the stack
-                for param in fn_decl.function.params.iter().rev() {
-                    if let Pat::Ident(id) = &param.pat {
-                        let param_name = id.id.sym.to_string();
-                        // The value is already on the stack from the Caller
-                        // Parameters are new bindings in the function scope
-                        self.instructions.push(OpCode::Let(param_name));
-                    }
-                }
-                let stmts = &fn_decl.function.body.as_ref().unwrap().stmts;
-                for s in stmts {
-                    self.gen_stmt(s);
-
-                    // If this is the last statement and it's an expression (like a + b),
-                    // we DON'T push Undefined. It will act as the implicit return value.
-                }
-                self.in_function = false;
-                // At the very end of the function body, add an implicit return
-                // This handles functions that don't have a 'return' statement
-                if stmts.is_empty() {
-                    self.instructions.push(OpCode::Push(JsValue::Undefined));
-                }
-                self.instructions.push(OpCode::Return);
-
-                // 4. Update jump target to point after the function body
-                let current_len = self.instructions.len();
-                if let OpCode::Jump(ref mut target) = self.instructions[start_ip - 1] {
-                    *target = current_len;
-                }
+                self.gen_fn_decl(Some(name), &fn_decl.function);
             }
             Stmt::Decl(Decl::Class(class_decl)) => {
                 let class_name = class_decl.ident.sym.to_string();
@@ -661,6 +740,7 @@ impl Codegen {
                     BinaryOp::GtEq => self.instructions.push(OpCode::GtEq),
                     BinaryOp::LogicalAnd => self.instructions.push(OpCode::And),
                     BinaryOp::LogicalOr => self.instructions.push(OpCode::Or),
+                    BinaryOp::InstanceOf => self.instructions.push(OpCode::InstanceOf),
                     _ => println!("Warning: Operator {:?} not supported", bin.op),
                 }
             }
@@ -832,7 +912,27 @@ impl Codegen {
                     }
                 }
             }
+            Expr::SuperProp(super_prop) => {
+                // Handle super.prop or super[expr]
+                // Stack: [] -> [property_value]
+                // For super.prop, we use GetSuperProp which looks up on the prototype chain
+
+                match &super_prop.prop {
+                    // Handle super.prop
+                    swc_ecma_ast::SuperProp::Ident(id) => {
+                        self.instructions
+                            .push(OpCode::GetSuperProp(id.sym.to_string()));
+                    }
+                    // Handle super[expr]
+                    swc_ecma_ast::SuperProp::Computed(computed) => {
+                        // For computed super properties, we need a different opcode
+                        // For now, just push undefined
+                        self.instructions.push(OpCode::Push(JsValue::Undefined));
+                    }
+                }
+            }
             Expr::Member(member) => {
+                // Regular obj.prop access
                 // 1. Load the Object/Array
                 self.gen_expr(&member.obj);
 
@@ -872,6 +972,18 @@ impl Codegen {
             Expr::This(_) => {
                 self.instructions.push(OpCode::LoadThis);
             }
+            Expr::MetaProp(meta_prop) => {
+                match meta_prop.kind {
+                    MetaPropKind::NewTarget => {
+                        // new.target - push the constructor that was called with new
+                        self.instructions.push(OpCode::NewTarget);
+                    }
+                    MetaPropKind::ImportMeta => {
+                        // import.meta - not yet supported
+                        self.instructions.push(OpCode::Push(JsValue::Undefined));
+                    }
+                }
+            }
             Expr::New(new_expr) => {
                 // new Foo(arg1, arg2) compiles to:
                 // 1. Create new empty object that will be `this`
@@ -896,6 +1008,39 @@ impl Codegen {
                 // Parenthesized expression: just evaluate the inner expression
                 self.gen_expr(&paren_expr.expr);
             }
+            Expr::Cond(cond_expr) => {
+                // Conditional expression: condition ? consequent : alternate
+                // Stack: [condition, consequent, alternate] -> [result]
+
+                // Compile condition
+                self.gen_expr(&cond_expr.test);
+
+                // Jump indices for jump if false and end
+                let jump_if_false_idx = self.instructions.len();
+                self.instructions.push(OpCode::JumpIfFalse(0)); // placeholder
+
+                // Compile consequent
+                self.gen_expr(&cond_expr.cons);
+
+                // Jump to end after consequent
+                let jump_end_idx = self.instructions.len();
+                self.instructions.push(OpCode::Jump(0)); // placeholder
+
+                // Backpatch jump_if_false
+                let after_consequent = self.instructions.len();
+                if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[jump_if_false_idx] {
+                    *addr = after_consequent;
+                }
+
+                // Compile alternate
+                self.gen_expr(&cond_expr.alt);
+
+                // Backpatch jump_end
+                let after_alternate = self.instructions.len();
+                if let OpCode::Jump(ref mut addr) = self.instructions[jump_end_idx] {
+                    *addr = after_alternate;
+                }
+            }
             _ => {}
         }
     }
@@ -908,6 +1053,14 @@ impl Codegen {
         self.private_field_indices.clear();
         self.private_method_indices.clear();
 
+        // Handle class decorators
+        // Compile class decorators: @decorator class Foo {}
+        // Each decorator is applied to the class after it's created
+        let class_decorators: Vec<&Decorator> = class.decorators.iter().collect();
+
+        // For now, we just store decorator count - actual application happens after class is created
+        let _decorator_count = class_decorators.len();
+
         // For now, we don't parse private fields from class body in this swc version
         // Private fields would be handled as regular fields with special naming
 
@@ -917,6 +1070,9 @@ impl Codegen {
 
         // Collect private field declarations for initialization
         let mut private_field_decls: Vec<(String, &Expr)> = Vec::new();
+
+        // Collect class property declarations
+        let mut class_prop_decls: Vec<(String, &Expr)> = Vec::new();
 
         for member in &class.body {
             if let ClassMember::Constructor(ctor) = member {
@@ -947,6 +1103,19 @@ impl Codegen {
                 }
                 if let Some(value) = &prop.value {
                     private_field_decls.push((field_name, value.as_ref()));
+                }
+            }
+
+            // Collect public class property declarations
+            if let ClassMember::ClassProp(prop) = member {
+                let prop_name = match &prop.key {
+                    PropName::Ident(id) => id.sym.to_string(),
+                    PropName::Str(s) => s.value.to_string_lossy().into_owned(),
+                    PropName::Num(num) => num.value.to_string(),
+                    _ => continue,
+                };
+                if let Some(value) = &prop.value {
+                    class_prop_decls.push((prop_name, value.as_ref()));
                 }
             }
         }
@@ -1028,6 +1197,23 @@ impl Codegen {
                 self.instructions.push(OpCode::SetPrivateProp(*field_index));
                 // Stack: []
             }
+        }
+
+        // Initialize class property declarations
+        for (prop_name, value_expr) in &class_prop_decls {
+            // Generate the value
+            self.gen_expr(value_expr);
+            // Stack: [value]
+
+            // Load this
+            self.instructions.push(OpCode::LoadThis);
+            // Stack: [value, this]
+            // Swap to get [this, value]
+            self.instructions.push(OpCode::Swap);
+            // Stack: [this, value]
+            // Set the property
+            self.instructions.push(OpCode::SetProp(prop_name.clone()));
+            // Stack: []
         }
 
         if let Some(body) = constructor_body {
@@ -1152,12 +1338,43 @@ impl Codegen {
         // Add methods to prototype
         for member in &class.body {
             if let ClassMember::Method(method) = member {
-                if let PropName::Ident(method_name) = &method.key {
-                    let method_name_str = method_name.sym.to_string();
-                    let unique_name = format!("__method_{}", method_name_str);
+                // Determine the property name based on method kind
+                let (prop_name, is_getter, is_setter) = match &method.key {
+                    PropName::Ident(id) => {
+                        let name = id.sym.to_string();
+                        match method.kind {
+                            MethodKind::Getter => (format!("getter:{}", name), true, false),
+                            MethodKind::Setter => (format!("setter:{}", name), false, true),
+                            MethodKind::Method => (name, false, false),
+                        }
+                    }
+                    PropName::Str(s) => {
+                        let name = s.value.to_string_lossy().into_owned();
+                        match method.kind {
+                            MethodKind::Getter => (format!("getter:{}", name), true, false),
+                            MethodKind::Setter => (format!("setter:{}", name), false, true),
+                            MethodKind::Method => (name, false, false),
+                        }
+                    }
+                    PropName::Num(num) => {
+                        let name = num.value.to_string();
+                        match method.kind {
+                            MethodKind::Getter => (format!("getter:{}", name), true, false),
+                            MethodKind::Setter => (format!("setter:{}", name), false, true),
+                            MethodKind::Method => (name, false, false),
+                        }
+                    }
+                    _ => continue, // Skip computed names for now
+                };
 
-                    // Generate the method function
-                    let params: Vec<String> = method
+                let unique_name = format!("__method_{}", prop_name.replace(":", "_"));
+
+                // Get parameters - getters have no params, setters have one param (value)
+                let params: Vec<String> = if is_getter {
+                    Vec::new() // Getters take no parameters
+                } else if is_setter {
+                    // Setters take one parameter (the value)
+                    method
                         .function
                         .params
                         .iter()
@@ -1168,55 +1385,68 @@ impl Codegen {
                                 None
                             }
                         })
-                        .collect();
+                        .collect()
+                } else {
+                    method
+                        .function
+                        .params
+                        .iter()
+                        .filter_map(|p| {
+                            if let Pat::Ident(id) = &p.pat {
+                                Some(id.id.sym.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                };
 
-                    // Push function placeholder
-                    let method_start = self.instructions.len() + 2;
-                    self.instructions.push(OpCode::Push(JsValue::Function {
-                        address: method_start,
-                        env: None,
-                    }));
+                // Push function placeholder
+                let method_start = self.instructions.len() + 2;
+                self.instructions.push(OpCode::Push(JsValue::Function {
+                    address: method_start,
+                    env: None,
+                }));
 
-                    // Jump over method body
-                    let method_jump_idx = self.instructions.len();
-                    self.instructions.push(OpCode::Jump(0));
+                // Jump over method body
+                let method_jump_idx = self.instructions.len();
+                self.instructions.push(OpCode::Jump(0));
 
-                    // Compile method body
-                    let saved_in_function = self.in_function;
-                    self.in_function = true;
+                // Compile method body
+                let saved_in_function = self.in_function;
+                self.in_function = true;
 
-                    for param in params.iter().rev() {
-                        self.instructions.push(OpCode::Let(param.clone()));
-                    }
-
-                    if let Some(body) = &method.function.body {
-                        for stmt in &body.stmts {
-                            self.gen_stmt(stmt);
-                        }
-                    }
-
-                    self.instructions.push(OpCode::LoadThis);
-                    self.instructions.push(OpCode::Return);
-                    self.in_function = saved_in_function;
-
-                    // Backpatch method jump
-                    let after_method = self.instructions.len();
-                    if let OpCode::Jump(ref mut addr) = self.instructions[method_jump_idx] {
-                        *addr = after_method;
-                    }
-
-                    // Store method in a temp
-                    self.instructions.push(OpCode::Let(unique_name.clone()));
-
-                    // Set prototype.method = method_function
-                    self.instructions
-                        .push(OpCode::Load("__proto__".to_string()));
-                    // Stack: [prototype]
-                    self.instructions.push(OpCode::Load(unique_name.clone()));
-                    // Stack: [prototype, method]
-                    self.instructions.push(OpCode::SetProp(method_name_str));
-                    // Stack: []
+                for param in params.iter().rev() {
+                    self.instructions.push(OpCode::Let(param.clone()));
                 }
+
+                if let Some(body) = &method.function.body {
+                    for stmt in &body.stmts {
+                        self.gen_stmt(stmt);
+                    }
+                }
+
+                self.instructions.push(OpCode::LoadThis);
+                self.instructions.push(OpCode::Return);
+                self.in_function = saved_in_function;
+
+                // Backpatch method jump
+                let after_method = self.instructions.len();
+                if let OpCode::Jump(ref mut addr) = self.instructions[method_jump_idx] {
+                    *addr = after_method;
+                }
+
+                // Store method in a temp
+                self.instructions.push(OpCode::Let(unique_name.clone()));
+
+                // Set prototype.method = method_function (or getter/setter)
+                self.instructions
+                    .push(OpCode::Load("__proto__".to_string()));
+                // Stack: [prototype]
+                self.instructions.push(OpCode::Load(unique_name.clone()));
+                // Stack: [prototype, method]
+                self.instructions.push(OpCode::SetProp(prop_name));
+                // Stack: []
             }
         }
 
@@ -1224,5 +1454,16 @@ impl Codegen {
         self.instructions
             .push(OpCode::Load("__wrapper__".to_string()));
         // Stack: [wrapper]
+
+        // Apply class decorators (in reverse order, as per spec)
+        // @decorator class Foo {} compiles to:
+        // [class definition] -> [decorator] -> ApplyDecorator -> [decorated_class]
+        for decorator in class_decorators.iter().rev() {
+            // Compile the decorator expression
+            self.gen_expr(&decorator.expr);
+            // Stack: [wrapper, decorator]
+            self.instructions.push(OpCode::ApplyDecorator);
+            // Stack: [decorated_wrapper]
+        }
     }
 }

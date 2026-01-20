@@ -1,0 +1,18 @@
+// Decorator test
+export function logged(target) {
+    console.log(`Decorating class: ${target.name}`);
+    return target;
+}
+
+@logged
+export class MyClass {
+    greet(name: string): string {
+        return `Hello, ${name}!`;
+    }
+}
+
+// Test instantiation
+export function test(): string {
+    const instance = new MyClass();
+    return instance.greet("World");
+}

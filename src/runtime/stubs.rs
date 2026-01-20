@@ -385,6 +385,87 @@ pub extern "C" fn tscl_not(a: u64) -> u64 {
     TsclValue::boolean(TsclValue::from_bits(a).is_falsy()).to_bits()
 }
 
+/// new.target: returns the constructor that was called with new
+/// This is a bit tricky because we don't have access to the call frame from here
+/// For now, return undefined
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_new_target() -> u64 {
+    TsclValue::undefined().to_bits()
+}
+
+/// InstanceOf operator: checks if obj's prototype chain contains constructor.prototype
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_instanceof(obj: u64, constructor: u64) -> u64 {
+    let obj_val = TsclValue::from_bits(obj);
+    let ctor_val = TsclValue::from_bits(constructor);
+
+    // Get constructor.prototype
+    let target_proto_ptr = if let Some(pointer) = ctor_val.as_pointer() {
+        unsafe {
+            let header = pointer.as_ref::<ObjectHeader>();
+            if header.kind == ObjectKind::Object {
+                let props = pointer.as_ref::<PropertyMap>();
+                // Find "prototype" in the property list
+                for (name, value) in props.iter() {
+                    if name == "prototype" {
+                        // Check if value is an object pointer
+                        let prop_val = TsclValue::from_bits(value.clone());
+                        if let Some(ptr) = prop_val.as_pointer() {
+                            return ptr.as_usize() as u64;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        0
+    } else {
+        0
+    };
+
+    if target_proto_ptr == 0 {
+        return TsclValue::boolean(false).to_bits();
+    }
+
+    // Walk the object's prototype chain
+    let mut current_ptr = obj_val.as_pointer();
+
+    const MAX_PROTO_DEPTH: usize = 100;
+    let mut depth = 0;
+
+    while let Some(ptr) = current_ptr {
+        if depth > MAX_PROTO_DEPTH {
+            break;
+        }
+        depth += 1;
+
+        if ptr.as_usize() as u64 == target_proto_ptr {
+            return TsclValue::boolean(true).to_bits();
+        }
+
+        unsafe {
+            let header = ptr.as_ref::<ObjectHeader>();
+            if header.kind == ObjectKind::Object {
+                let props = ptr.as_ref::<PropertyMap>();
+                // Find "__proto__" in the property list
+                for (name, value) in props.iter() {
+                    if name == "__proto__" {
+                        let prop_val = TsclValue::from_bits(value.clone());
+                        if let Some(proto_ptr) = prop_val.as_pointer() {
+                            current_ptr = Some(proto_ptr);
+                        }
+                        break;
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    TsclValue::boolean(false).to_bits()
+}
+
 /// Unary negation.
 #[unsafe(no_mangle)]
 pub extern "C" fn tscl_neg(a: u64) -> u64 {

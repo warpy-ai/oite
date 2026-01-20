@@ -130,6 +130,7 @@ pub mod stubs {
     pub const LT: StubCall = StubCall::new("tscl_lt", 2);
     pub const GT: StubCall = StubCall::new("tscl_gt", 2);
     pub const NOT: StubCall = StubCall::new("tscl_not", 1);
+    pub const INSTANCEOF: StubCall = StubCall::new("tscl_instanceof", 2);
 
     // Type conversion stubs
     pub const TO_BOOLEAN: StubCall = StubCall::new("tscl_to_boolean", 1);

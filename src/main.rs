@@ -8,7 +8,7 @@ mod stdlib;
 pub mod types;
 mod vm;
 
-use swc_ecma_parser::Syntax;
+use swc_ecma_parser::{Syntax, TsSyntax};
 
 use crate::ir::IrModule;
 use crate::loader::BytecodeDecoder;
@@ -40,12 +40,22 @@ fn load_and_run_script(
 
     // Determine syntax based on file extension
     let syntax = if path.ends_with(".ts") || path.ends_with(".tsx") {
-        Some(Syntax::Typescript(Default::default()))
+        // Enable decorators for TypeScript
+        let ts_syntax = TsSyntax {
+            decorators: true,
+            tsx: path.ends_with(".tsx"),
+            ..Default::default()
+        };
+        Some(Syntax::Typescript(ts_syntax))
     } else if path.ends_with(".js") || path.ends_with(".jsx") {
         Some(Syntax::Es(Default::default()))
     } else {
-        // Default to TypeScript for .tscl files
-        Some(Syntax::Typescript(Default::default()))
+        // Default to TypeScript with decorators for .tscl files
+        let ts_syntax = TsSyntax {
+            decorators: true,
+            ..Default::default()
+        };
+        Some(Syntax::Typescript(ts_syntax))
     };
 
     let bytecode = compiler
@@ -226,12 +236,21 @@ fn main() {
 
     // Determine syntax based on file extension
     let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
-        Some(Syntax::Typescript(Default::default()))
+        let ts_syntax = TsSyntax {
+            decorators: true,
+            tsx: filename.ends_with(".tsx"),
+            ..Default::default()
+        };
+        Some(Syntax::Typescript(ts_syntax))
     } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
         Some(Syntax::Es(Default::default()))
     } else {
-        // Default to TypeScript for .tscl files
-        Some(Syntax::Typescript(Default::default()))
+        // Default to TypeScript with decorators for .tscl files
+        let ts_syntax = TsSyntax {
+            decorators: true,
+            ..Default::default()
+        };
+        Some(Syntax::Typescript(ts_syntax))
     };
 
     match compiler.compile_with_syntax(&main_source, syntax) {
@@ -258,12 +277,21 @@ fn dump_ir(filename: &str) {
 
     // Determine syntax based on file extension
     let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
-        Some(Syntax::Typescript(Default::default()))
+        let ts_syntax = TsSyntax {
+            decorators: true,
+            tsx: filename.ends_with(".tsx"),
+            ..Default::default()
+        };
+        Some(Syntax::Typescript(ts_syntax))
     } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
         Some(Syntax::Es(Default::default()))
     } else {
-        // Default to TypeScript for .tscl files
-        Some(Syntax::Typescript(Default::default()))
+        // Default to TypeScript with decorators for .tscl files
+        let ts_syntax = TsSyntax {
+            decorators: true,
+            ..Default::default()
+        };
+        Some(Syntax::Typescript(ts_syntax))
     };
 
     let mut compiler = Compiler::new();
@@ -316,12 +344,21 @@ fn check_file(filename: &str) {
 
     // Determine syntax based on file extension
     let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
-        Some(Syntax::Typescript(Default::default()))
+        let ts_syntax = TsSyntax {
+            decorators: true,
+            tsx: filename.ends_with(".tsx"),
+            ..Default::default()
+        };
+        Some(Syntax::Typescript(ts_syntax))
     } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
         Some(Syntax::Es(Default::default()))
     } else {
-        // Default to TypeScript for .tscl files
-        Some(Syntax::Typescript(Default::default()))
+        // Default to TypeScript with decorators for .tscl files
+        let ts_syntax = TsSyntax {
+            decorators: true,
+            ..Default::default()
+        };
+        Some(Syntax::Typescript(ts_syntax))
     };
 
     let mut compiler = Compiler::new();
@@ -374,12 +411,21 @@ fn run_jit(filename: &str) {
 
     // Determine syntax based on file extension
     let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
-        Some(Syntax::Typescript(Default::default()))
+        let ts_syntax = TsSyntax {
+            decorators: true,
+            tsx: filename.ends_with(".tsx"),
+            ..Default::default()
+        };
+        Some(Syntax::Typescript(ts_syntax))
     } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
         Some(Syntax::Es(Default::default()))
     } else {
-        // Default to TypeScript for .tscl files
-        Some(Syntax::Typescript(Default::default()))
+        // Default to TypeScript with decorators for .tscl files
+        let ts_syntax = TsSyntax {
+            decorators: true,
+            ..Default::default()
+        };
+        Some(Syntax::Typescript(ts_syntax))
     };
 
     // Compile to bytecode
@@ -480,11 +526,21 @@ fn run_benchmark(filename: &str) {
 
     // Determine syntax based on file extension
     let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
-        Some(Syntax::Typescript(Default::default()))
+        let ts_syntax = TsSyntax {
+            decorators: true,
+            tsx: filename.ends_with(".tsx"),
+            ..Default::default()
+        };
+        Some(Syntax::Typescript(ts_syntax))
     } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
         Some(Syntax::Es(Default::default()))
     } else {
-        Some(Syntax::Typescript(Default::default()))
+        // Default to TypeScript with decorators for .tscl files
+        let ts_syntax = TsSyntax {
+            decorators: true,
+            ..Default::default()
+        };
+        Some(Syntax::Typescript(ts_syntax))
     };
 
     // Compile to bytecode
@@ -730,11 +786,21 @@ fn build_file(args: &[String]) {
 
         // Determine syntax
         let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
-            Some(Syntax::Typescript(Default::default()))
+            let ts_syntax = TsSyntax {
+                decorators: true,
+                tsx: filename.ends_with(".tsx"),
+                ..Default::default()
+            };
+            Some(Syntax::Typescript(ts_syntax))
         } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
             Some(Syntax::Es(Default::default()))
         } else {
-            Some(Syntax::Typescript(Default::default()))
+            // Default to TypeScript with decorators for .tscl files
+            let ts_syntax = TsSyntax {
+                decorators: true,
+                ..Default::default()
+            };
+            Some(Syntax::Typescript(ts_syntax))
         };
 
         // Compile to bytecode

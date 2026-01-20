@@ -91,4 +91,19 @@ pub enum OpCode {
     GetPrivateProp(usize),
     /// Set a private field: pops value and `this` from stack, sets field in class's private storage.
     SetPrivateProp(usize),
+
+    // === instanceof ===
+    /// InstanceOf: pops constructor and object, checks if constructor.prototype is in object's prototype chain
+    InstanceOf,
+
+    // === new.target ===
+    /// NewTarget: pushes the constructor that was called with new (stored in frame)
+    /// This implements the ES6 new.target meta-property
+    NewTarget,
+
+    // === Decorators ===
+    /// ApplyDecorator: applies a decorator to a class, method, or field
+    /// Stack: [target, decorator] -> [decorated_target]
+    /// The decorator is called with the target and returns the decorated result
+    ApplyDecorator,
 }
