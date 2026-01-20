@@ -833,7 +833,6 @@ impl Codegen {
                     }
                 }
             }
-            // Inside gen_expr in compiler/mod.rs
             Expr::Assign(assign_expr) => {
                 // Handle different assignment targets
                 match &assign_expr.left {
@@ -1045,6 +1044,45 @@ impl Codegen {
                 let after_alternate = self.instructions.len();
                 if let OpCode::Jump(ref mut addr) = self.instructions[jump_end_idx] {
                     *addr = after_alternate;
+                }
+            }
+            Expr::Tpl(tpl) => {
+                // Template literal: `Hello ${name}!`
+                // Compilation strategy:
+                // 1. Push empty string as starting point
+                // 2. For each quasi/expr pair:
+                //    - Push the quasi string, concatenate
+                //    - Compile the expr, concatenate
+                // 3. Push the final quasi if exists
+
+                // Handle empty template literal ``
+                if tpl.quasis.is_empty() && tpl.exprs.is_empty() {
+                    self.instructions
+                        .push(OpCode::Push(JsValue::String("".to_string())));
+                    return;
+                }
+
+                // Start with empty string
+                self.instructions
+                    .push(OpCode::Push(JsValue::String("".to_string())));
+
+                // Iterate through quasis and exprs
+                for (i, quasi) in tpl.quasis.iter().enumerate() {
+                    // Push the quasi string (cooked value - escapes processed, or raw if not available)
+                    let s_str = match quasi.cooked.as_ref() {
+                        Some(wtf8) => String::from_utf8_lossy(wtf8.as_bytes()).into_owned(),
+                        None => String::from_utf8_lossy(quasi.raw.as_bytes()).into_owned(),
+                    };
+                    self.instructions.push(OpCode::Push(JsValue::String(s_str)));
+                    // Concatenate: "prefix" + result so far
+                    self.instructions.push(OpCode::Add);
+
+                    // If there's a corresponding expression, compile and concatenate it
+                    if i < tpl.exprs.len() {
+                        self.gen_expr(&tpl.exprs[i]);
+                        // Concatenate the expression result
+                        self.instructions.push(OpCode::Add);
+                    }
                 }
             }
             _ => {}

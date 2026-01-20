@@ -1,6 +1,6 @@
 // Decorator test
 export function logged(target) {
-    console.log("Decorating class: " + target.name);
+    console.log(`Decorating class: ${target.name}`);
     return target;
 }
 

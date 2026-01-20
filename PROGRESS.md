@@ -842,13 +842,56 @@ export class MyClass { ... }
 LOG: String("Decorating class: MyClass")
 ```
 
-### Fix Applied: Template Literals Not Supported
+### Fix Applied: Template Literals Now Supported
 
-**Note:** Template literals (backticks) like `` `Hello ${name}` `` are not yet implemented in the compiler. Use string concatenation instead:
+**Feature:** Template literals (backticks) like `` `Hello ${name}` `` are now implemented!
+
 ```typescript
-// NOT YET SUPPORTED:
-console.log(`Decorating class: ${target.name}`);
-
 // WORKS:
-console.log("Decorating class: " + target.name);
+const name = "World";
+const greeting = `Hello, ${name}!`;  // "Hello, World!"
+
+// Also works in decorators:
+@logged
+export class MyClass { ... }
+// Where logged uses: console.log(`Decorating class: ${target.name}`);
+```
+
+**Implementation in `src/compiler/mod.rs:1049-1086`:**
+```rust
+Expr::Tpl(tpl) => {
+    // Handle empty template literal
+    if tpl.quasis.is_empty() && tpl.exprs.is_empty() {
+        self.instructions.push(OpCode::Push(JsValue::String("".to_string())));
+        return;
+    }
+
+    // Start with empty string
+    self.instructions.push(OpCode::Push(JsValue::String("".to_string())));
+
+    // For each quasi (static part) and expr (interpolated part):
+    for (i, quasi) in tpl.quasis.iter().enumerate() {
+        // Push the quasi string, concatenate
+        let s_str = match quasi.cooked.as_ref() {
+            Some(wtf8) => String::from_utf8_lossy(wtf8.as_bytes()).into_owned(),
+            None => String::from_utf8_lossy(quasi.raw.as_bytes()).into_owned(),
+        };
+        self.instructions.push(OpCode::Push(JsValue::String(s_str)));
+        self.instructions.push(OpCode::Add);
+
+        // If there's an expression, compile and concatenate it
+        if i < tpl.exprs.len() {
+            self.gen_expr(&tpl.exprs[i]);
+            self.instructions.push(OpCode::Add);
+        }
+    }
+}
+```
+
+**Test Results:**
+```
+LOG: String("Hello, World!")
+LOG: String("The sum of 10 and 20 is 30")
+LOG: String("Multi-line\\ntemplate\\nliteral")
+LOG: String("Decorating class: MyClass")
 ```
