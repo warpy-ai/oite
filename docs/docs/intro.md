@@ -2,46 +2,50 @@
 sidebar_position: 1
 ---
 
-# Tutorial Intro
+# Welcome to Script
 
-Let's discover **Docusaurus in less than 5 minutes**.
+**Script** is a high-performance JavaScript-like scripting language with native code execution, featuring a self-hosting compiler and Rust-inspired memory safety.
 
-## Getting Started
+```javascript
+function fib(n) {
+    if (n < 2) return n;
+    return fib(n - 1) + fib(n - 2);
+}
 
-Get started by **creating a new site**.
-
-Or **try Docusaurus immediately** with **[docusaurus.new](https://docusaurus.new)**.
-
-### What you'll need
-
-- [Node.js](https://nodejs.org/en/download/) version 20.0 or above:
-  - When installing Node.js, you are recommended to check all checkboxes related to dependencies.
-
-## Generate a new site
-
-Generate a new Docusaurus site using the **classic template**.
-
-The classic template will automatically be added to your project after you run the command:
-
-```bash
-npm init docusaurus@latest my-website classic
+console.log(fib(35));  // Compiled to native code!
 ```
 
-You can type this command into Command Prompt, Powershell, Terminal, or any other integrated terminal of your code editor.
+## Key Features
 
-The command also installs all necessary dependencies you need to run Docusaurus.
+- **Native Execution** — SSA-based IR compiled to native code via Cranelift/LLVM
+- **Link-Time Optimization** — ThinLTO and Full LTO for maximum performance
+- **Standalone Binaries** — Self-contained executables with runtime stubs in LLVM IR
+- **Memory Safety** — Ownership model with compile-time borrow checking
+- **Self-Hosting** — Bootstrap compiler written in Script itself
+- **Type Inference** — Flow-sensitive type analysis for optimization
+- **JavaScript Syntax** — Familiar syntax with ES6+ features
+- **Classes & Inheritance** — ES6 classes with extends, super(), and private fields
+- **Error Handling** — try/catch/finally with exception propagation
 
-## Start your site
-
-Run the development server:
+## Quick Start
 
 ```bash
-cd my-website
-npm run start
+# Build
+cargo build --release
+
+# Run a script
+./target/release/script myprogram.tscl
+
+# Build to native binary (requires LLVM)
+./target/release/script build myprogram.tscl --release -o myprogram
+
+# Run the compiled binary
+./myprogram
 ```
 
-The `cd` command changes the directory you're working with. In order to work with your newly created Docusaurus site, you'll need to navigate the terminal there.
+## What's Next?
 
-The `npm run start` command builds your website locally and serves it through a development server, ready for you to view at http://localhost:3000/.
-
-Open `docs/intro.md` (this page) and edit some lines: the site **reloads automatically** and displays your changes.
+- Read the [Getting Started](/docs/getting-started) guide
+- Explore [Language Features](/docs/language-features)
+- Learn about the [Architecture](/docs/architecture)
+- Check the [Development Status](/docs/development-status)
