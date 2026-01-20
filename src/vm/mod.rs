@@ -594,19 +594,11 @@ impl VM {
                     // No setter found, store the value directly
                     if let Some(heap_item) = self.heap.get_mut(ptr) {
                         if let HeapData::Object(props) = &mut heap_item.data {
-                            eprintln!(
-                                "DEBUG SetProp: inserting into heap object {}, props before={:?}",
-                                ptr, props
-                            );
                             props.insert(name.to_string(), value);
-                            eprintln!("DEBUG SetProp: props after={:?}", props);
                         }
                     }
                 } else {
-                    eprintln!(
-                        "DEBUG SetProp '{}': object was not an Object, stack underflow?",
-                        name
-                    );
+                    // Object was not an Object, silently ignore or could panic
                 }
             }
 
@@ -746,20 +738,6 @@ impl VM {
                 }
 
                 let callee = self.stack.pop().expect("Missing callee");
-                eprintln!(
-                    "DEBUG Call: callee type = {:?}",
-                    match callee {
-                        JsValue::Function { .. } => "Function",
-                        JsValue::NativeFunction(_) => "NativeFunction",
-                        JsValue::Object(_) => "Object",
-                        JsValue::Number(_) => "Number",
-                        JsValue::String(_) => "String",
-                        JsValue::Boolean(_) => "Boolean",
-                        JsValue::Null => "Null",
-                        JsValue::Undefined => "Undefined",
-                        _ => "Other",
-                    }
-                );
                 let mut args = Vec::with_capacity(arg_count);
                 for _ in 0..arg_count {
                     args.push(self.stack.pop().expect("Missing argument"));
@@ -767,7 +745,6 @@ impl VM {
 
                 match callee {
                     JsValue::Function { address, env } => {
-                        eprintln!("DEBUG Call: calling function at address {:?}", address);
                         // Record function call for tiered compilation
                         self.record_function_call(address);
 
@@ -2211,7 +2188,8 @@ impl VM {
                         let target_for_frame = target.clone();
 
                         // Call the decorator function with the target
-                        self.stack.push(target.clone());
+                        // Stack should be: [decorator, target] -> Call(1) pops target as arg, decorator as callee
+                        self.stack.push(decorator);
                         self.stack.push(target);
 
                         // Create a frame for the decorator call
