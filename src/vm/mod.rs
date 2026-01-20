@@ -17,10 +17,98 @@ use crate::vm::value::HeapData;
 use crate::vm::value::HeapObject;
 use crate::vm::value::JsValue;
 use crate::vm::value::NativeFn;
+use crate::vm::value::Promise;
+use crate::vm::value::PromiseState;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
+use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
+use tokio::runtime::Runtime;
+use tokio::sync::mpsc;
+
+/// Module cache entry
+#[derive(Debug, Clone)]
+pub struct CachedModule {
+    pub path: PathBuf,
+    pub source: String,
+    pub hash: String,
+    pub load_time: SystemTime,
+    pub namespace_object: usize, // Pointer to namespace object on heap
+}
+
+/// Module cache for hot-reload support
+pub struct ModuleCache {
+    entries: HashMap<PathBuf, CachedModule>,
+    content_hashes: HashMap<PathBuf, String>,
+    modification_times: HashMap<PathBuf, SystemTime>,
+}
+
+impl ModuleCache {
+    pub fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            content_hashes: HashMap::new(),
+            modification_times: HashMap::new(),
+        }
+    }
+
+    pub fn get(&self, path: &PathBuf) -> Option<&CachedModule> {
+        self.entries.get(path)
+    }
+
+    pub fn compute_hash(path: &PathBuf) -> String {
+        match fs::read(path) {
+            Ok(content) => {
+                let mut hasher = Sha256::new();
+                hasher.update(&content);
+                hex::encode(hasher.finalize())
+            }
+            Err(_) => String::new(),
+        }
+    }
+
+    pub fn should_reload(&self, path: &PathBuf) -> bool {
+        match fs::metadata(path) {
+            Ok(metadata) => {
+                if let Ok(modified) = metadata.modified() {
+                    if let Some(cached_time) = self.modification_times.get(path) {
+                        return modified > *cached_time;
+                    }
+                    return true;
+                }
+                true
+            }
+            Err(_) => true,
+        }
+    }
+
+    pub fn insert(&mut self, module: CachedModule) {
+        let path = module.path.clone();
+        let hash = module.hash.clone();
+
+        self.entries.insert(path.clone(), module);
+        self.content_hashes.insert(path.clone(), hash);
+        if let Ok(metadata) = fs::metadata(&path) {
+            if let Ok(modified) = metadata.modified() {
+                self.modification_times.insert(path, modified);
+            }
+        }
+    }
+
+    pub fn invalidate(&mut self, path: &PathBuf) {
+        self.entries.remove(path);
+        self.content_hashes.remove(path);
+        self.modification_times.remove(path);
+    }
+
+    pub fn invalidate_all(&mut self) {
+        self.entries.clear();
+        self.content_hashes.clear();
+        self.modification_times.clear();
+    }
+}
 
 pub struct Frame {
     pub return_address: usize,
@@ -74,6 +162,9 @@ pub struct VM {
     pub exception_handlers: Vec<ExceptionHandler>,
     pub current_exception: Option<JsValue>,
     pub current_module_path: Option<PathBuf>,
+    pub async_runtime: Option<Runtime>,
+    pub async_task_tx: Option<mpsc::Sender<JsValue>>,
+    pub module_cache: ModuleCache,
 }
 
 impl VM {
@@ -85,6 +176,7 @@ impl VM {
 
     /// Create a new VM without stdlib (for benchmarking).
     pub fn new_bare() -> Self {
+        let (tx, _) = mpsc::channel(100);
         Self {
             stack: Vec::new(),
             call_stack: vec![Frame {
@@ -94,6 +186,7 @@ impl VM {
                 this_context: JsValue::Undefined,
                 new_target: None,
                 super_called: false,
+                resume_ip: None,
             }],
             heap: Vec::new(),
             native_functions: Vec::new(),
@@ -107,7 +200,15 @@ impl VM {
             exception_handlers: Vec::new(),
             current_exception: None,
             current_module_path: None,
+            async_runtime: None,
+            async_task_tx: Some(tx),
+            module_cache: ModuleCache::new(),
         }
+    }
+
+    /// Initialize the async runtime
+    pub fn init_async(&mut self) {
+        self.async_runtime = Some(Runtime::new().expect("Failed to create async runtime"));
     }
 
     /// Record a function call for profiling/tiered compilation.
@@ -136,6 +237,35 @@ impl VM {
     pub fn reset_counters(&mut self) {
         self.function_call_counts.clear();
         self.total_instructions = 0;
+    }
+
+    /// Invalidate a specific module in the cache
+    pub fn invalidate_module(&mut self, path: &PathBuf) {
+        self.module_cache.invalidate(path);
+    }
+
+    /// Invalidate all cached modules (for hot reload)
+    pub fn invalidate_all_modules(&mut self) {
+        self.module_cache.invalidate_all();
+    }
+
+    /// Check if a module needs reloading
+    pub fn module_needs_reload(&self, path: &PathBuf) -> bool {
+        self.module_cache.should_reload(path)
+    }
+
+    /// Get the number of cached modules
+    pub fn cached_modules_count(&self) -> usize {
+        self.module_cache.entries.len()
+    }
+
+    /// Get list of cached module paths (for debugging)
+    pub fn cached_modules(&self) -> Vec<String> {
+        self.module_cache
+            .entries
+            .values()
+            .map(|m| m.path.to_string_lossy().into_owned())
+            .collect()
     }
 
     pub fn setup_stdlib(&mut self) {
@@ -823,7 +953,7 @@ impl VM {
                         let result = func(self, args);
                         self.stack.push(result);
                     }
-                    _ => panic!("Target is not callable"),
+                    _ => panic!("Target is not callable: {:?}", callee),
                 }
             }
 
@@ -1742,6 +1872,32 @@ impl VM {
                         }
                         panic!("Method {} not found on object", name);
                     }
+                    // Handle Promise.then and Promise.catch methods
+                    JsValue::Promise(promise) => {
+                        match name.as_str() {
+                            "then" => {
+                                // promise.then(onFulfilled)
+                                let on_fulfilled = self.stack.pop().unwrap_or(JsValue::Undefined);
+                                let result_promise = promise.then(Some(on_fulfilled));
+                                self.stack.push(JsValue::Promise(result_promise));
+                                self.ip += 1;
+                                return ExecResult::Continue;
+                            }
+                            "catch" => {
+                                // promise.catch(onRejected)
+                                let on_rejected = self.stack.pop().unwrap_or(JsValue::Undefined);
+                                let result_promise = promise.catch(Some(on_rejected));
+                                self.stack.push(JsValue::Promise(result_promise));
+                                self.ip += 1;
+                                return ExecResult::Continue;
+                            }
+                            _ => {
+                                self.stack.push(JsValue::Undefined);
+                                self.ip += 1;
+                                return ExecResult::Continue;
+                            }
+                        }
+                    }
                     _ => {
                         self.stack.push(JsValue::Undefined);
                         self.ip += 1;
@@ -2270,8 +2426,6 @@ impl VM {
 
             // === ES Modules ===
             OpCode::ImportAsync(specifier) => {
-                use std::fs;
-
                 let specifier_str = match self.stack.pop() {
                     Some(JsValue::String(s)) => s,
                     Some(_) => {
@@ -2338,23 +2492,58 @@ impl VM {
                     return ExecResult::Continue;
                 }
 
-                let result = fs::read_to_string(&resolved_path)
+                // Check cache first
+                let canonical_path = match fs::canonicalize(&resolved_path) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("Error canonicalizing path: {}", e);
+                        self.stack.push(JsValue::Undefined);
+                        return ExecResult::Continue;
+                    }
+                };
+
+                // Check if we have a valid cached version
+                if let Some(cached) = self.module_cache.get(&canonical_path) {
+                    if !self.module_cache.should_reload(&canonical_path) {
+                        // Cache hit - return cached namespace
+                        self.stack.push(JsValue::Object(cached.namespace_object));
+                        return ExecResult::Continue;
+                    }
+                }
+
+                // Cache miss or stale - load the module
+                let result = fs::read_to_string(&canonical_path)
                     .map_err(|e| format!("Failed to read module: {}", e));
 
                 match result {
                     Ok(source) => {
+                        let hash = ModuleCache::compute_hash(&canonical_path);
+
+                        // Create namespace object
                         let namespace_ptr = self.heap.len();
                         let mut namespace_props = HashMap::new();
-
                         namespace_props.insert(
                             "__path__".to_string(),
-                            JsValue::String(resolved_path.to_string_lossy().into_owned()),
+                            JsValue::String(canonical_path.to_string_lossy().into_owned()),
                         );
-                        namespace_props.insert("__source__".to_string(), JsValue::String(source));
+                        namespace_props
+                            .insert("__source__".to_string(), JsValue::String(source.clone()));
+                        namespace_props
+                            .insert("__hash__".to_string(), JsValue::String(hash.clone()));
 
                         self.heap.push(HeapObject {
                             data: HeapData::Object(namespace_props),
                         });
+
+                        // Cache the module
+                        let cached_module = CachedModule {
+                            path: canonical_path.clone(),
+                            source,
+                            hash,
+                            load_time: std::time::SystemTime::now(),
+                            namespace_object: namespace_ptr,
+                        };
+                        self.module_cache.insert(cached_module);
 
                         self.stack.push(JsValue::Object(namespace_ptr));
                     }

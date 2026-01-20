@@ -87,6 +87,7 @@ pub struct Codegen {
     pub instructions: Vec<OpCode>,
     scope_stack: Vec<Vec<String>>,
     in_function: bool,
+    in_async_function: bool,
     /// Tracks which variables are available in the current scope chain.
     /// Used to detect "upvars" (variables captured from outer scopes).
     outer_scope_vars: HashSet<String>,
@@ -106,6 +107,7 @@ impl Codegen {
             instructions: Vec::new(),
             scope_stack: vec![Vec::new()],
             in_function: false,
+            in_async_function: false,
             outer_scope_vars: HashSet::new(),
             loop_stack: Vec::new(),
             private_field_indices: std::collections::HashMap::new(),
@@ -500,6 +502,8 @@ impl Codegen {
     }
 
     fn gen_fn_decl(&mut self, name: Option<String>, fn_decl: &Function) {
+        let is_async = fn_decl.is_async;
+
         // For named function declarations, store them in the current scope
         // Anonymous functions are not stored (they're just values)
         let has_name = name.is_some();
@@ -528,7 +532,9 @@ impl Codegen {
 
         // 3. Compile function body
         self.in_function = true;
-        // NEW: Inside the function body, we must pop arguments into locals
+        self.in_async_function = is_async;
+
+        // Inside the function body, we must pop arguments into locals
         // We process them in REVERSE order because of how they sit on the stack
         for param in fn_decl.params.iter().rev() {
             if let Pat::Ident(id) = &param.pat {
@@ -539,19 +545,51 @@ impl Codegen {
             }
         }
         let stmts = &fn_decl.body.as_ref().unwrap().stmts;
+        
+        let mut last_instr_was_return = false;
         for s in stmts {
+            let before = self.instructions.len();
             self.gen_stmt(s);
-
-            // If this is the last statement and it's an expression (like a + b),
-            // we DON'T push Undefined. It will act as the implicit return value.
+            // Check if the last instruction emitted was a Return
+            if self.instructions.len() > before {
+                if let Some(OpCode::Return) = self.instructions.last() {
+                    last_instr_was_return = true;
+                }
+            }
         }
+        
         self.in_function = false;
-        // At the very end of the function body, add an implicit return
-        // This handles functions that don't have a 'return' statement
-        if stmts.is_empty() {
-            self.instructions.push(OpCode::Push(JsValue::Undefined));
+        self.in_async_function = false;
+        
+        // If the last statement wasn't a return, we need to handle implicit return
+        if !last_instr_was_return {
+            if stmts.is_empty() {
+                // Empty function body - return undefined
+                self.instructions.push(OpCode::Push(JsValue::Undefined));
+                // For async functions, wrap in Promise.resolve()
+                if is_async {
+                    self.instructions.push(OpCode::Push(JsValue::String("Promise".to_string())));
+                    self.instructions.push(OpCode::Load("Promise".to_string()));
+                    self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
+                    self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                    self.instructions.push(OpCode::Swap);
+                    self.instructions.push(OpCode::Call(1));
+                }
+            } else {
+                // Non-empty body but last statement wasn't a return
+                // The last expression's result is on the stack, need to return it
+                // For async functions, wrap in Promise.resolve()
+                if is_async {
+                    self.instructions.push(OpCode::Push(JsValue::String("Promise".to_string())));
+                    self.instructions.push(OpCode::Load("Promise".to_string()));
+                    self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
+                    self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                    self.instructions.push(OpCode::Swap);
+                    self.instructions.push(OpCode::Call(1));
+                }
+            }
+            self.instructions.push(OpCode::Return);
         }
-        self.instructions.push(OpCode::Return);
 
         // 4. Update jump target to point after the function body (for named functions)
         if has_name {
@@ -582,6 +620,15 @@ impl Codegen {
                     self.gen_expr(arg); // Pushes the return value to stack
                 } else {
                     self.instructions.push(OpCode::Push(JsValue::Undefined));
+                }
+                // For async functions, wrap the return value in Promise.resolve()
+                if self.in_async_function {
+                    self.instructions.push(OpCode::Push(JsValue::String("Promise".to_string())));
+                    self.instructions.push(OpCode::Load("Promise".to_string()));
+                    self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
+                    self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                    self.instructions.push(OpCode::Swap);
+                    self.instructions.push(OpCode::Call(1));
                 }
                 self.instructions.push(OpCode::Return);
             }
@@ -723,7 +770,9 @@ impl Codegen {
     fn gen_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Fn(fn_expr) => {
-                // Function expression: `function(a, b) { ... }`
+                let is_async = fn_expr.function.is_async;
+
+                // Function expression: `function(a, b) { ... }` or `async function(a, b) { ... }`
                 //
                 // CLOSURE CAPTURING: Like arrow functions, we detect and lift captured variables.
 
@@ -774,7 +823,9 @@ impl Codegen {
                 self.instructions.push(OpCode::Jump(0)); // patched after body
 
                 let prev_in_function = self.in_function;
+                let prev_async = self.in_async_function;
                 self.in_function = true;
+                self.in_async_function = is_async;
 
                 // Pop args into locals (reverse order)
                 // Parameters are new bindings in the function scope
@@ -786,15 +837,48 @@ impl Codegen {
                 }
 
                 if let Some(body) = &fn_expr.function.body {
-                    for s in &body.stmts {
+                    let stmts = &body.stmts;
+                    let mut last_instr_was_return = false;
+                    
+                    for s in stmts {
+                        let before = self.instructions.len();
                         self.gen_stmt(s);
+                        if self.instructions.len() > before {
+                            if let Some(OpCode::Return) = self.instructions.last() {
+                                last_instr_was_return = true;
+                            }
+                        }
+                    }
+                    
+                    // For async functions with no return statement at the end, wrap the result
+                    if is_async && !last_instr_was_return {
+                        if stmts.is_empty() {
+                            self.instructions.push(OpCode::Push(JsValue::Undefined));
+                        }
+                        // Wrap in Promise.resolve() and add Return
+                        self.instructions.push(OpCode::Push(JsValue::String("Promise".to_string())));
+                        self.instructions.push(OpCode::Load("Promise".to_string()));
+                        self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
+                        self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                        self.instructions.push(OpCode::Swap);
+                        self.instructions.push(OpCode::Call(1));
+                        self.instructions.push(OpCode::Return);
                     }
                 } else {
                     self.instructions.push(OpCode::Push(JsValue::Undefined));
+                    // For async functions with no body, wrap undefined in Promise.resolve()
+                    if is_async {
+                        self.instructions.push(OpCode::Push(JsValue::String("Promise".to_string())));
+                        self.instructions.push(OpCode::Load("Promise".to_string()));
+                        self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
+                        self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                        self.instructions.push(OpCode::Swap);
+                        self.instructions.push(OpCode::Call(1));
+                    }
+                    self.instructions.push(OpCode::Return);
                 }
-
-                self.instructions.push(OpCode::Return);
                 self.in_function = prev_in_function;
+                self.in_async_function = prev_async;
 
                 let after_body = self.instructions.len();
                 if let OpCode::Jump(ref mut target) = self.instructions[jump_idx] {
@@ -853,7 +937,9 @@ impl Codegen {
                 self.instructions.push(OpCode::Jump(0)); // patched after body
 
                 let prev_in_function = self.in_function;
+                let prev_async = self.in_async_function;
                 self.in_function = true;
+                self.in_async_function = arrow.is_async;
 
                 // Pop args into locals (reverse order)
                 // Parameters are new bindings in the function scope
@@ -870,20 +956,53 @@ impl Codegen {
                     BlockStmtOrExpr::Expr(e) => {
                         // Expression-bodied arrows implicitly return the expression.
                         self.gen_expr(e);
+                        // For async arrows, wrap the return value in Promise.resolve()
+                        if arrow.is_async {
+                            self.instructions.push(OpCode::Push(JsValue::String("Promise".to_string())));
+                            self.instructions.push(OpCode::Load("Promise".to_string()));
+                            self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
+                            self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                            self.instructions.push(OpCode::Swap);
+                            self.instructions.push(OpCode::Call(1));
+                        }
                         self.instructions.push(OpCode::Return);
                     }
                     BlockStmtOrExpr::BlockStmt(block) => {
-                        for s in &block.stmts {
+                        let stmts = &block.stmts;
+                        let mut last_instr_was_return = false;
+                        
+                        for s in stmts {
+                            let before = self.instructions.len();
                             self.gen_stmt(s);
+                            if self.instructions.len() > before {
+                                if let Some(OpCode::Return) = self.instructions.last() {
+                                    last_instr_was_return = true;
+                                }
+                            }
                         }
-                        if block.stmts.is_empty() {
+                        
+                        if stmts.is_empty() {
                             self.instructions.push(OpCode::Push(JsValue::Undefined));
                         }
-                        self.instructions.push(OpCode::Return);
+                        
+                        // For async arrows with no return statement at the end, wrap the result
+                        if arrow.is_async && !last_instr_was_return {
+                            self.instructions.push(OpCode::Push(JsValue::String("Promise".to_string())));
+                            self.instructions.push(OpCode::Load("Promise".to_string()));
+                            self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
+                            self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                            self.instructions.push(OpCode::Swap);
+                            self.instructions.push(OpCode::Call(1));
+                        }
+                        
+                        if !last_instr_was_return {
+                            self.instructions.push(OpCode::Return);
+                        }
                     }
                 }
 
                 self.in_function = prev_in_function;
+                self.in_async_function = prev_async;
 
                 let after_body = self.instructions.len();
                 if let OpCode::Jump(ref mut target) = self.instructions[jump_idx] {

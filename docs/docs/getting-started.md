@@ -95,4 +95,4 @@ Run it:
 
 - Learn about [Language Features](/docs/language-features)
 - Explore the [Architecture](/docs/architecture)
-- Check out [Examples](/docs/examples)
+- Review the [Standard Library](/docs/standard-library)

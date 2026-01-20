@@ -1,7 +1,7 @@
 //! Standard Library - Native functions for the WarpyScript VM
 
 use crate::vm::VM;
-use crate::vm::value::{HeapData, HeapObject, JsValue};
+use crate::vm::value::{HeapData, HeapObject, JsValue, Promise};
 
 /// console.log implementation
 pub fn native_log(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
@@ -272,4 +272,77 @@ pub fn native_string_from_char_code(vm: &mut VM, args: Vec<JsValue>) -> JsValue 
     }
 
     JsValue::String(result)
+}
+
+// ============================================================================
+// Promise Native Functions
+// ============================================================================
+
+pub fn native_promise_resolve(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    let value = args.get(0).cloned().unwrap_or(JsValue::Undefined);
+    let promise = Promise::with_value(value);
+    JsValue::Promise(promise)
+}
+
+pub fn native_promise_reject(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    let reason = args.get(0).cloned().unwrap_or(JsValue::Undefined);
+    let promise = Promise::new();
+    promise.set_value(reason, false);
+    JsValue::Promise(promise)
+}
+
+pub fn native_promise_then(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (Some(JsValue::Promise(promise)), Some(on_fulfilled)) = (args.get(0), args.get(1)) {
+        let result_promise = promise.then(Some(on_fulfilled.clone()));
+        return JsValue::Promise(result_promise);
+    }
+    JsValue::Undefined
+}
+
+pub fn native_promise_catch(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (Some(JsValue::Promise(promise)), Some(on_rejected)) = (args.get(0), args.get(1)) {
+        let result_promise = promise.catch(Some(on_rejected.clone()));
+        return JsValue::Promise(result_promise);
+    }
+    JsValue::Undefined
+}
+
+pub fn native_promise_all(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let Some(JsValue::Object(ptr)) = args.get(0) {
+        if let Some(HeapObject {
+            data: HeapData::Array(items),
+            ..
+        }) = vm.heap.get(*ptr)
+        {
+            let mut all_pending = true;
+            let mut results = Vec::new();
+
+            for item in items {
+                if let JsValue::Promise(p) = item {
+                    match p.get_state() {
+                        crate::vm::value::PromiseState::Fulfilled => {
+                            results.push(p.get_value().unwrap_or(JsValue::Undefined));
+                        }
+                        crate::vm::value::PromiseState::Rejected => {
+                            return JsValue::Promise(Promise::with_value(JsValue::Undefined));
+                        }
+                        crate::vm::value::PromiseState::Pending => {
+                            all_pending = false;
+                        }
+                    }
+                } else {
+                    results.push(item.clone());
+                }
+            }
+
+            if all_pending {
+                let result_array_ptr = vm.heap.len();
+                vm.heap.push(HeapObject {
+                    data: HeapData::Array(results),
+                });
+                return JsValue::Object(result_array_ptr);
+            }
+        }
+    }
+    JsValue::Undefined
 }

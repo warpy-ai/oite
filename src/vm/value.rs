@@ -79,6 +79,123 @@ impl PartialEq for Promise {
     }
 }
 
+impl Promise {
+    pub fn new() -> Self {
+        let state = Arc::new(Mutex::new(PromiseInternal {
+            state: PromiseState::Pending,
+            value: None,
+            handlers: Vec::new(),
+        }));
+        Self { state }
+    }
+
+    pub fn with_value(value: JsValue) -> Self {
+        let state = Arc::new(Mutex::new(PromiseInternal {
+            state: PromiseState::Fulfilled,
+            value: Some(value),
+            handlers: Vec::new(),
+        }));
+        Self { state }
+    }
+
+    pub fn get_state(&self) -> PromiseState {
+        let internal = self.state.lock().unwrap();
+        internal.state.clone()
+    }
+
+    pub fn get_value(&self) -> Option<JsValue> {
+        let internal = self.state.lock().unwrap();
+        internal.value.clone()
+    }
+
+    pub fn set_value(&self, value: JsValue, is_fulfilled: bool) {
+        let mut internal = self.state.lock().unwrap();
+
+        if matches!(internal.state, PromiseState::Pending) {
+            internal.state = if is_fulfilled {
+                PromiseState::Fulfilled
+            } else {
+                PromiseState::Rejected
+            };
+            let value_to_store = value.clone();
+            internal.value = Some(value);
+
+            let handlers = internal.handlers.clone();
+            internal.handlers.clear();
+
+            drop(internal);
+
+            for handler in handlers {
+                if is_fulfilled {
+                    if let Some(on_fulfilled) = handler.on_fulfilled {
+                        if let JsValue::Function { address, env } = *on_fulfilled {
+                            let _ = address;
+                            let _ = env;
+                            let _ = value_to_store;
+                        }
+                    }
+                } else {
+                    if let Some(on_rejected) = handler.on_rejected {
+                        if let JsValue::Function { address, env } = *on_rejected {
+                            let _ = address;
+                            let _ = env;
+                            let _ = value_to_store;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn then(&self, on_fulfilled: Option<JsValue>) -> Self {
+        let mut internal = self.state.lock().unwrap();
+
+        match internal.state {
+            PromiseState::Pending => {
+                internal.handlers.push(PromiseHandler {
+                    on_fulfilled: on_fulfilled.map(Box::new),
+                    on_rejected: None,
+                });
+                self.clone()
+            }
+            PromiseState::Fulfilled => {
+                if let Some(handler) = on_fulfilled {
+                    Promise::with_value(handler)
+                } else {
+                    Promise::with_value(internal.value.clone().unwrap_or(JsValue::Undefined))
+                }
+            }
+            PromiseState::Rejected => {
+                Promise::with_value(internal.value.clone().unwrap_or(JsValue::Undefined))
+            }
+        }
+    }
+
+    pub fn catch(&self, on_rejected: Option<JsValue>) -> Self {
+        let mut internal = self.state.lock().unwrap();
+
+        match internal.state {
+            PromiseState::Pending => {
+                internal.handlers.push(PromiseHandler {
+                    on_fulfilled: None,
+                    on_rejected: on_rejected.map(Box::new),
+                });
+                self.clone()
+            }
+            PromiseState::Fulfilled => {
+                Promise::with_value(internal.value.clone().unwrap_or(JsValue::Undefined))
+            }
+            PromiseState::Rejected => {
+                if let Some(handler) = on_rejected {
+                    Promise::with_value(handler)
+                } else {
+                    Promise::with_value(internal.value.clone().unwrap_or(JsValue::Undefined))
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PromiseInternal {
     pub state: PromiseState,
