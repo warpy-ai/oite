@@ -1,0 +1,7 @@
+// Field initialization test
+class MyClass {
+    name: string = "Test";
+}
+
+const instance = new MyClass();
+console.log("Instance name:", instance.name);

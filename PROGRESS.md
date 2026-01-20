@@ -645,7 +645,7 @@ Examples:
 Current status:
 
 ```text
-60+ tests passed, 0 failed
+94 tests passed, 0 failed
 ```
 
 Coverage:
@@ -812,4 +812,43 @@ self.stack.push(target);
 LOG: String("Creating instance...")
 LOG: String("DECORATOR CALLED!")  ← Decorator works!
 LOG: String("Instance name:") Undefined  ← Field init issue (separate bug)
+```
+
+### Fix Applied: Class Name Property on Decorator Target
+
+**Bug:** Decorator's `target.name` returned `Undefined` because class wrappers didn't have a `name` property set.
+
+**Fix in `src/compiler/mod.rs:1291-1307`:**
+```rust
+// Set wrapper.name = class name (for decorator target.name)
+if let Some(class_name) = name {
+    self.instructions
+        .push(OpCode::Load("__wrapper__".to_string()));
+    // Stack: [wrapper]
+    self.instructions.push(OpCode::Push(JsValue::String(class_name.to_string())));
+    // Stack: [wrapper, name_string]
+    self.instructions
+        .push(OpCode::SetProp("name".to_string()));
+    // Stack: []
+}
+```
+
+**Test Result:**
+```typescript
+@logged
+export class MyClass { ... }
+
+// Decorator now works:
+LOG: String("Decorating class: MyClass")
+```
+
+### Fix Applied: Template Literals Not Supported
+
+**Note:** Template literals (backticks) like `` `Hello ${name}` `` are not yet implemented in the compiler. Use string concatenation instead:
+```typescript
+// NOT YET SUPPORTED:
+console.log(`Decorating class: ${target.name}`);
+
+// WORKS:
+console.log("Decorating class: " + target.name);
 ```

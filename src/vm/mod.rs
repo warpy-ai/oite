@@ -2176,11 +2176,13 @@ impl VM {
             }
 
             OpCode::ApplyDecorator => {
-                // Apply a decorator to a target (class, method, or field)
-                // Stack: [decorator, target] -> [decorated]
+                // Apply a decorator to a target (class, method, or field: [decorator, target] ->)
+                // Stack [decorated]
                 // The decorator is called as: decorator(target)
-                let target = self.stack.pop().expect("ApplyDecorator: missing target");
+                // NOTE: Stack order is [wrapper, decorator] (wrapper at bottom, decorator on top)
+                // So first pop gets decorator, second pop gets target
                 let decorator = self.stack.pop().expect("ApplyDecorator: missing decorator");
+                let target = self.stack.pop().expect("ApplyDecorator: missing target");
 
                 match decorator {
                     JsValue::Function { address, env } => {

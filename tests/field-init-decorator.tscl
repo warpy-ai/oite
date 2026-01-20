@@ -1,0 +1,13 @@
+// Field initialization test with decorator
+function logged(target) {
+    console.log("DECORATOR CALLED!");
+    return target;
+}
+
+@logged
+class MyClass {
+    name: string = "Test";
+}
+
+const instance = new MyClass();
+console.log("Instance name:", instance.name);

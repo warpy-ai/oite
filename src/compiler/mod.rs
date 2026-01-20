@@ -252,7 +252,10 @@ impl Codegen {
             }
             ModuleDecl::ExportDefaultDecl(export_default) => match &export_default.decl {
                 DefaultDecl::Class(class_expr) => {
-                    self.gen_class(&class_expr.class);
+                    self.gen_class(
+                        &class_expr.class,
+                        class_expr.ident.as_ref().map(|id| id.sym.as_str()),
+                    );
                 }
                 DefaultDecl::Fn(fn_expr) => {
                     let name = if let Some(id) = fn_expr.ident.clone() {
@@ -274,7 +277,10 @@ impl Codegen {
                     self.gen_fn_decl(name, &fn_expr.function);
                 }
                 Expr::Class(class_expr) => {
-                    self.gen_class(&class_expr.class);
+                    self.gen_class(
+                        &class_expr.class,
+                        class_expr.ident.as_ref().map(|id| id.sym.as_str()),
+                    );
                 }
                 _ => {}
             },
@@ -294,7 +300,7 @@ impl Codegen {
                 self.gen_fn_decl(Some(name), &fn_decl.function);
             }
             Decl::Class(class_decl) => {
-                self.gen_class(&class_decl.class);
+                self.gen_class(&class_decl.class, Some(class_decl.ident.sym.as_str()));
             }
             Decl::Var(var_decl) => {
                 self.gen_var_decl(var_decl);
@@ -419,7 +425,7 @@ impl Codegen {
             }
             Stmt::Decl(Decl::Class(class_decl)) => {
                 let class_name = class_decl.ident.sym.to_string();
-                self.gen_class(&class_decl.class);
+                self.gen_class(&class_decl.class, Some(class_name.as_str()));
                 self.instructions.push(OpCode::Let(class_name.clone()));
                 self.outer_scope_vars.insert(class_name);
             }
@@ -1045,7 +1051,7 @@ impl Codegen {
         }
     }
 
-    fn gen_class(&mut self, class: &Class) {
+    fn gen_class(&mut self, class: &Class, name: Option<&str>) {
         // Check if this class has a superclass
         let has_super = class.super_class.is_some();
 
@@ -1290,6 +1296,18 @@ impl Codegen {
             .push(OpCode::Let("__wrapper__".to_string()));
         // Stack: []
 
+        // Set wrapper.name = class name (for decorator target.name)
+        if let Some(class_name) = name {
+            self.instructions
+                .push(OpCode::Load("__wrapper__".to_string()));
+            // Stack: [wrapper]
+            self.instructions
+                .push(OpCode::Push(JsValue::String(class_name.to_string())));
+            // Stack: [wrapper, name_string]
+            self.instructions.push(OpCode::SetProp("name".to_string()));
+            // Stack: []
+        }
+
         // Now set prototype.constructor = wrapper
         self.instructions
             .push(OpCode::Load("__proto__".to_string()));
@@ -1461,7 +1479,7 @@ impl Codegen {
         for decorator in class_decorators.iter().rev() {
             // Compile the decorator expression
             self.gen_expr(&decorator.expr);
-            // Stack: [wrapper, decorator]
+            // Stack should be: [wrapper, decorator]
             self.instructions.push(OpCode::ApplyDecorator);
             // Stack: [decorated_wrapper]
         }

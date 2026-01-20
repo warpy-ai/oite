@@ -79,6 +79,7 @@ const config: Config = {
       logo: {
         alt: 'Script Logo',
         src: 'img/logo.png',
+        srcDark: 'img/logo_bg.png',
       },
       items: [
         {
