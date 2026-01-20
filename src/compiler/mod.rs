@@ -91,6 +91,10 @@ pub struct Codegen {
     outer_scope_vars: HashSet<String>,
     /// Stack of loop contexts for nested loops (break/continue support)
     loop_stack: Vec<LoopContext>,
+    /// Maps private field names to their indices for the current class
+    private_field_indices: std::collections::HashMap<String, usize>,
+    /// Maps private method names to their indices for the current class
+    private_method_indices: std::collections::HashMap<String, usize>,
 }
 
 impl Codegen {
@@ -101,6 +105,8 @@ impl Codegen {
             in_function: false,
             outer_scope_vars: HashSet::new(),
             loop_stack: Vec::new(),
+            private_field_indices: std::collections::HashMap::new(),
+            private_method_indices: std::collections::HashMap::new(),
         }
     }
 
@@ -722,11 +728,24 @@ impl Codegen {
                 // Load the function
                 match &call_expr.callee {
                     Callee::Expr(expr) => self.gen_expr(expr),
-                    Callee::Super(_) => {}  // Handle super calls if needed
+                    Callee::Super(_) => {
+                        // For super() calls, we need to:
+                        // 1. Load __super__ from the frame's locals
+                        // 2. The CallSuper opcode will use it
+                        self.instructions.push(OpCode::LoadSuper);
+                    }
                     Callee::Import(_) => {} // Handle import calls if needed
                 }
                 // Call it
-                self.instructions.push(OpCode::Call(arg_count));
+                match &call_expr.callee {
+                    Callee::Super(_) => {
+                        // Use CallSuper opcode for super() calls
+                        self.instructions.push(OpCode::CallSuper(arg_count));
+                    }
+                    _ => {
+                        self.instructions.push(OpCode::Call(arg_count));
+                    }
+                }
             }
             // Inside gen_expr in compiler/mod.rs
             Expr::Assign(assign_expr) => {
@@ -760,7 +779,31 @@ impl Codegen {
                                     self.gen_expr(&computed.expr); // Push the index
                                     self.instructions.push(OpCode::StoreElement);
                                 }
-                                _ => println!("Warning: Private field assignment not supported."),
+                                MemberProp::PrivateName(pn) => {
+                                    // obj.#field = value - use SetPrivateProp
+                                    let field_name = format!("#{}", pn.name);
+
+                                    // If this is the first time seeing this private field, assign it an index
+                                    if !self.private_field_indices.contains_key(&field_name) {
+                                        let new_index = self.private_field_indices.len();
+                                        self.private_field_indices
+                                            .insert(field_name.clone(), new_index);
+                                    }
+
+                                    if let Some(field_index) =
+                                        self.private_field_indices.get(&field_name)
+                                    {
+                                        self.instructions
+                                            .push(OpCode::SetPrivateProp(*field_index));
+                                    } else {
+                                        println!(
+                                            "Warning: Private field '{}' not found",
+                                            field_name
+                                        );
+                                        // Pop the value
+                                        self.instructions.push(OpCode::Pop);
+                                    }
+                                }
                             }
                         }
                         _ => println!("Warning: Complex assignment target not supported."),
@@ -803,9 +846,26 @@ impl Codegen {
                         self.gen_expr(&computed.expr); // Push the index expression
                         self.instructions.push(OpCode::LoadElement);
                     }
-                    // Handle #privateField (Standard in modern JS, but let's skip for now)
-                    MemberProp::PrivateName(_) => {
-                        println!("Warning: Private class fields (#) are not yet supported.");
+                    // Handle #privateField
+                    MemberProp::PrivateName(pn) => {
+                        // Private field name in swc doesn't include the #
+                        // We need to add it to our tracking
+                        let field_name = format!("#{}", pn.name);
+
+                        // If this is the first time seeing this private field in the current class context,
+                        // assign it an index
+                        if !self.private_field_indices.contains_key(&field_name) {
+                            let new_index = self.private_field_indices.len();
+                            self.private_field_indices
+                                .insert(field_name.clone(), new_index);
+                        }
+
+                        if let Some(field_index) = self.private_field_indices.get(&field_name) {
+                            self.instructions.push(OpCode::GetPrivateProp(*field_index));
+                        } else {
+                            println!("Warning: Private field '{}' not found", field_name);
+                            self.instructions.push(OpCode::Push(JsValue::Undefined));
+                        }
                     }
                 }
             }
@@ -841,9 +901,22 @@ impl Codegen {
     }
 
     fn gen_class(&mut self, class: &Class) {
+        // Check if this class has a superclass
+        let has_super = class.super_class.is_some();
+
+        // Clear previous private field/method indices
+        self.private_field_indices.clear();
+        self.private_method_indices.clear();
+
+        // For now, we don't parse private fields from class body in this swc version
+        // Private fields would be handled as regular fields with special naming
+
         // Collect constructor params and body
         let mut constructor_params: Vec<String> = Vec::new();
         let mut constructor_body: Option<&BlockStmt> = None;
+
+        // Collect private field declarations for initialization
+        let mut private_field_decls: Vec<(String, &Expr)> = Vec::new();
 
         for member in &class.body {
             if let ClassMember::Constructor(ctor) = member {
@@ -863,7 +936,23 @@ impl Codegen {
                 }
                 constructor_body = ctor.body.as_ref();
             }
+
+            // Collect private field declarations
+            if let ClassMember::PrivateProp(prop) = member {
+                let field_name = format!("#{}", prop.key.name);
+                if !self.private_field_indices.contains_key(&field_name) {
+                    let new_index = self.private_field_indices.len();
+                    self.private_field_indices
+                        .insert(field_name.clone(), new_index);
+                }
+                if let Some(value) = &prop.value {
+                    private_field_decls.push((field_name, value.as_ref()));
+                }
+            }
         }
+
+        // Store private field indices for use in constructor
+        let private_field_count = 0; // Will be set dynamically as we encounter private fields
 
         // Create constructor function
         let constructor_start = self.instructions.len() + 2;
@@ -882,6 +971,63 @@ impl Codegen {
 
         for param in constructor_params.iter().rev() {
             self.instructions.push(OpCode::Let(param.clone()));
+        }
+
+        // Set up private field storage for this instance
+        // Create storage array for private fields (one entry per field)
+        // Simplified approach: create storage, then for each field, dup, push index, create object, swap, store
+        self.instructions.push(OpCode::NewArray(16));
+        // Stack: [storage]
+        for i in 0..16 {
+            // Dup storage to keep it on stack
+            self.instructions.push(OpCode::Dup);
+            // Stack: [storage, storage]
+            // Push index
+            self.instructions
+                .push(OpCode::Push(JsValue::Number(i as f64)));
+            // Stack: [storage, storage, index]
+            // Create object (this will be the "WeakMap" for this field)
+            self.instructions.push(OpCode::NewObject);
+            // Stack: [storage, storage, index, field_map]
+            // Swap to get [storage, storage, field_map, index]
+            self.instructions.push(OpCode::Swap);
+            // Stack: [storage, storage, field_map, index]
+            // Store: pops index, value, array - stores value at index in array
+            self.instructions.push(OpCode::StoreElement);
+            // Stack: [storage]
+        }
+
+        // Store the private storage array in this.__private_storage__
+        self.instructions.push(OpCode::LoadThis);
+        // Stack: [this]
+        self.instructions.push(OpCode::Swap);
+        // Stack: [storage_array, this]
+        self.instructions
+            .push(OpCode::SetProp("__private_storage__".to_string()));
+        // Stack: []
+
+        // Store the private storage array in a temp for later use
+        self.instructions
+            .push(OpCode::Let("__private_storage__".to_string()));
+        // Stack: []
+
+        // Initialize private field declarations
+        for (field_name, value_expr) in &private_field_decls {
+            // Generate the value
+            self.gen_expr(value_expr);
+            // Stack: [value]
+
+            // Get the field index
+            if let Some(field_index) = self.private_field_indices.get(field_name) {
+                // Load this
+                self.instructions.push(OpCode::LoadThis);
+                // Stack: [value, this]
+                // Swap to get [this, value]
+                self.instructions.push(OpCode::Swap);
+                // Stack: [this, value]
+                self.instructions.push(OpCode::SetPrivateProp(*field_index));
+                // Stack: []
+            }
         }
 
         if let Some(body) = constructor_body {
@@ -906,6 +1052,29 @@ impl Codegen {
         self.instructions.push(OpCode::Let("__ctor__".to_string()));
         // Stack: []
 
+        // If there's a superclass, compile it and get its prototype
+        if has_super {
+            // Compile the superclass expression
+            self.gen_expr(class.super_class.as_ref().unwrap());
+            // Stack: [parent_wrapper]
+            // Save parent wrapper to temp
+            self.instructions
+                .push(OpCode::Let("__parent__".to_string()));
+            // Stack: []
+
+            // Get parent's prototype: parent_wrapper.prototype
+            self.instructions
+                .push(OpCode::Load("__parent__".to_string()));
+            // Stack: [parent_wrapper]
+            self.instructions
+                .push(OpCode::GetProp("prototype".to_string()));
+            // Stack: [parent_prototype]
+            // Save parent prototype for prototype chain
+            self.instructions
+                .push(OpCode::Let("__parent_proto__".to_string()));
+            // Stack: []
+        }
+
         // Create prototype object
         self.instructions.push(OpCode::NewObject);
         // Stack: [prototype]
@@ -914,21 +1083,22 @@ impl Codegen {
         self.instructions.push(OpCode::Let("__proto__".to_string()));
         // Stack: []
 
-        // Set prototype.constructor = wrapper (not the constructor function!)
-        // In JavaScript, Foo.prototype.constructor === Foo
-        // So the constructor property on the prototype should point to the class (wrapper)
-        // Stack for SetProp: [value, object] with value on top
-        // We want prototype.constructor = wrapper
-        // So value = wrapper, object = prototype
-        // Stack should be: [prototype, wrapper] with wrapper on top
-        self.instructions
-            .push(OpCode::Load("__proto__".to_string()));
-        // Stack: [prototype]
-        // We'll load wrapper later after it's created
+        // Set prototype.__proto__ = parent_prototype (for inheritance)
+        if has_super {
+            self.instructions
+                .push(OpCode::Load("__proto__".to_string()));
+            // Stack: [prototype]
+            self.instructions
+                .push(OpCode::Load("__parent_proto__".to_string()));
+            // Stack: [prototype, parent_prototype]
+            self.instructions
+                .push(OpCode::SetProp("__proto__".to_string()));
+            // Stack: []
+        }
 
         // Create wrapper object for the class
         self.instructions.push(OpCode::NewObject);
-        // Stack: [prototype, wrapper]
+        // Stack: [wrapper]
         // Store wrapper in temp for later retrieval (methods will consume the stack)
         self.instructions
             .push(OpCode::Let("__wrapper__".to_string()));
@@ -946,10 +1116,6 @@ impl Codegen {
         // Stack: []
 
         // Set wrapper.constructor = constructor
-        // Stack for SetProp: [value, object] where value is on top
-        // We want wrapper.constructor = constructor
-        // So value = constructor, object = wrapper
-        // Stack should be: [wrapper, constructor] with constructor on top
         self.instructions
             .push(OpCode::Load("__wrapper__".to_string()));
         // Stack: [wrapper]
@@ -960,9 +1126,6 @@ impl Codegen {
         // Stack: []
 
         // Set wrapper.prototype = prototype
-        // We want wrapper.prototype = prototype
-        // So value = prototype, object = wrapper
-        // Stack should be: [wrapper, prototype] with prototype on top
         self.instructions
             .push(OpCode::Load("__wrapper__".to_string()));
         // Stack: [wrapper]
@@ -972,7 +1135,19 @@ impl Codegen {
         self.instructions
             .push(OpCode::SetProp("prototype".to_string()));
         // Stack: []
-        eprintln!("DEBUG gen_class: after SetProp prototype, stack has []");
+
+        // If there's a superclass, also store it in the wrapper for super() calls
+        if has_super {
+            self.instructions
+                .push(OpCode::Load("__wrapper__".to_string()));
+            // Stack: [wrapper]
+            self.instructions
+                .push(OpCode::Load("__parent__".to_string()));
+            // Stack: [wrapper, parent]
+            self.instructions
+                .push(OpCode::SetProp("__super__".to_string()));
+            // Stack: []
+        }
 
         // Add methods to prototype
         for member in &class.body {
@@ -1034,9 +1209,6 @@ impl Codegen {
                     self.instructions.push(OpCode::Let(unique_name.clone()));
 
                     // Set prototype.method = method_function
-                    // We need: prototype.method = method
-                    // Stack for SetProp: [value, object] with value on top
-                    // So we need [prototype, method] with method on top
                     self.instructions
                         .push(OpCode::Load("__proto__".to_string()));
                     // Stack: [prototype]

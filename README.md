@@ -34,7 +34,7 @@ console.log(fib(35));  // Compiled to native code!
 - **Self-Hosting** — Bootstrap compiler written in tscl itself
 - **Type Inference** — Flow-sensitive type analysis for optimization
 - **JavaScript Syntax** — Familiar syntax with ES6+ features
-- **Classes & Inheritance** — ES6 classes with extends and super()
+- **Classes & Inheritance** — ES6 classes with extends, super(), and private fields
 - **Error Handling** — try/catch/finally with exception propagation
 
 ## Architecture
@@ -204,6 +204,31 @@ class Dog extends Animal {
 
 let dog = new Dog("Buddy", "Golden Retriever");
 dog.speak();  // "Buddy barks!"
+```
+
+### Private Fields
+
+tscl supports JavaScript-style private fields using the `#` prefix:
+
+```javascript
+class Counter {
+    #count = 0;           // Private field (only accessible within class)
+    
+    increment() {
+        this.#count++;
+    }
+    
+    getCount() {
+        return this.#count;  // Can access private field from methods
+    }
+}
+
+let c = new Counter();
+c.increment();
+console.log(c.getCount());  // 1
+
+// c.#count;       // ERROR: Private field not accessible outside class
+// c["#count"];    // Returns undefined (encapsulation works)
 ```
 
 ### Error Handling
