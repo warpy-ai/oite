@@ -15,7 +15,7 @@ use crate::loader::BytecodeDecoder;
 use crate::vm::VM;
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[cfg(test)]
 mod tests;
 
@@ -67,7 +67,8 @@ fn load_and_run_script(
         let offset = vm.append_program(bytecode);
         println!("  {} ({} ops at offset {})", path, bytecode_len, offset);
     } else {
-        vm.load_program(bytecode);
+        let path_buf = PathBuf::from(path);
+        vm.load_program_with_path(bytecode, path_buf);
         println!("  {} ({} ops)", path, bytecode_len);
     }
 
@@ -256,6 +257,8 @@ fn main() {
     match compiler.compile_with_syntax(&main_source, syntax) {
         Ok(main_bytecode) => {
             let offset = vm.append_program(main_bytecode);
+            // Update the current module path to the main script for relative imports
+            vm.set_current_module_path(PathBuf::from(filename));
             println!("Running from offset {}...", offset);
             vm.run_event_loop();
         }

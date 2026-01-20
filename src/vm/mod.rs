@@ -4,6 +4,7 @@ const MAX_CALL_STACK_DEPTH: usize = 1000;
 pub mod opcodes;
 pub mod value;
 
+use crate::compiler::Compiler;
 use crate::stdlib::{
     native_byte_stream_length, native_byte_stream_patch_u32, native_byte_stream_to_array,
     native_byte_stream_write_f64, native_byte_stream_write_string, native_byte_stream_write_u8,
@@ -22,9 +23,11 @@ use crate::vm::value::PromiseState;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
+use swc_common::{input::StringInput, BytePos, FileName};
+use swc_ecma_parser::{lexer::Lexer, Parser, Syntax, TsSyntax};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
@@ -55,7 +58,51 @@ impl ModuleCache {
     }
 
     pub fn get(&self, path: &PathBuf) -> Option<&CachedModule> {
-        self.entries.get(path)
+        if let Some(cached) = self.entries.get(path) {
+            // Verify the content hash matches
+            let current_hash = ModuleCache::compute_hash(path);
+            if cached.hash == current_hash {
+                return Some(cached);
+            }
+        }
+        None
+    }
+
+    pub fn get_valid(&self, path: &PathBuf) -> Option<&CachedModule> {
+        // Get cached module if it exists and hasn't been modified
+        if let Some(cached) = self.entries.get(path) {
+            // Check if file still exists and hasn't been modified
+            if let Ok(metadata) = fs::metadata(path) {
+                if let Ok(modified) = metadata.modified() {
+                    if let Some(cached_time) = self.modification_times.get(path) {
+                        if modified <= *cached_time {
+                            return Some(cached);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn get_or_compute(&mut self, path: &PathBuf) -> Option<CachedModule> {
+        // First check if we have a valid cached version
+        if let Some(cached) = self.get_valid(path) {
+            return Some(cached.clone());
+        }
+        
+        // Compute and store hash for new/modified files
+        let hash = ModuleCache::compute_hash(path);
+        if !hash.is_empty() {
+            if let Ok(metadata) = fs::metadata(path) {
+                if let Ok(modified) = metadata.modified() {
+                    self.content_hashes.insert(path.clone(), hash.clone());
+                    self.modification_times.insert(path.clone(), modified);
+                    return None; // Signal that file exists but not cached
+                }
+            }
+        }
+        None
     }
 
     pub fn compute_hash(path: &PathBuf) -> String {
@@ -108,6 +155,198 @@ impl ModuleCache {
         self.content_hashes.clear();
         self.modification_times.clear();
     }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn cache_size_bytes(&self) -> usize {
+        self.entries.values()
+            .map(|cached| {
+                cached.path.as_os_str().len() + // path
+                cached.source.len() + // source
+                cached.hash.len() // hash
+            })
+            .sum()
+    }
+
+    pub fn get_cache_info(&self, path: &PathBuf) -> Option<(SystemTime, String, usize)> {
+        self.entries.get(path).map(|cached| {
+            (
+                cached.load_time.clone(),
+                cached.hash.clone(),
+                cached.namespace_object,
+            )
+        })
+    }
+
+    pub fn check_hot_reload(&mut self, path: &PathBuf) -> bool {
+        // Returns true if file was modified and cache was invalidated
+        if self.should_reload(path) {
+            self.invalidate(path);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// Parse module source and extract exports as a HashMap
+fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValue> {
+    let mut exports = HashMap::new();
+    
+    let cm: swc_common::SourceMap = Default::default();
+    let fm = cm.new_source_file(
+        FileName::Custom(file_name.to_string()).into(),
+        source.to_string(),
+    );
+    
+    let lexer = Lexer::new(
+        Syntax::Typescript(TsSyntax {
+            decorators: true,
+            tsx: false,
+            dts: false,
+            no_early_errors: false,
+            disallow_ambiguous_jsx_like: true,
+        }),
+        Default::default(),
+        StringInput::from(&*fm),
+        None,
+    );
+    
+    let mut parser = Parser::new_from(lexer);
+    
+    match parser.parse_module() {
+        Ok(ast) => {
+            for item in &ast.body {
+                if let swc_ecma_ast::ModuleItem::ModuleDecl(decl) = item {
+                    match decl {
+                        swc_ecma_ast::ModuleDecl::ExportNamed(named) => {
+                            if let Some(_src) = &named.src {
+                                // Re-export: export { x } from './module'
+                                for spec in &named.specifiers {
+                                    match spec {
+                                        swc_ecma_ast::ExportSpecifier::Named(named) => {
+                                            let export_name = named
+                                                .exported
+                                                .as_ref()
+                                                .map(|e| {
+                                                    let atom = e.atom();
+                                                    let s: &str = &*atom;
+                                                    s.to_string()
+                                                })
+                                                .unwrap_or_else(|| {
+                                                    let atom = named.orig.atom();
+                                                    let s: &str = &*atom;
+                                                    s.to_string()
+                                                });
+                                            exports.insert(export_name, JsValue::Undefined);
+                                        }
+                                        swc_ecma_ast::ExportSpecifier::Default(_) => {
+                                            exports.insert("default".to_string(), JsValue::Undefined);
+                                        }
+                                        swc_ecma_ast::ExportSpecifier::Namespace(ns) => {
+                                            let atom = ns.name.atom();
+                                            let s: &str = &*atom;
+                                            exports.insert(s.to_string(), JsValue::Undefined);
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Local export: export { x } or export const x = 1
+                                for spec in &named.specifiers {
+                                    match spec {
+                                        swc_ecma_ast::ExportSpecifier::Named(named) => {
+                                            let export_name = named
+                                                .exported
+                                                .as_ref()
+                                                .map(|e| {
+                                                    let atom = e.atom();
+                                                    let s: &str = &*atom;
+                                                    s.to_string()
+                                                })
+                                                .unwrap_or_else(|| {
+                                                    let atom = named.orig.atom();
+                                                    let s: &str = &*atom;
+                                                    s.to_string()
+                                                });
+                                            exports.insert(export_name, JsValue::Undefined);
+                                        }
+                                        swc_ecma_ast::ExportSpecifier::Default(_) => {
+                                            exports.insert("default".to_string(), JsValue::Undefined);
+                                        }
+                                        swc_ecma_ast::ExportSpecifier::Namespace(ns) => {
+                                            let atom = ns.name.atom();
+                                            let s: &str = &*atom;
+                                            exports.insert(s.to_string(), JsValue::Undefined);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        swc_ecma_ast::ModuleDecl::ExportAll(_all) => {
+                            // export * from './module'
+                            exports.insert("*".to_string(), JsValue::Undefined);
+                        }
+                        swc_ecma_ast::ModuleDecl::ExportDefaultDecl(_default_decl) => {
+                            exports.insert("default".to_string(), JsValue::Undefined);
+                        }
+                        swc_ecma_ast::ModuleDecl::ExportDefaultExpr(_) => {
+                            exports.insert("default".to_string(), JsValue::Undefined);
+                        }
+                        swc_ecma_ast::ModuleDecl::ExportDecl(decl) => {
+                            use swc_ecma_ast::Decl::*;
+                            match &decl.decl {
+                                Fn(fn_decl) => {
+                                    exports.insert(fn_decl.ident.sym.to_string(), JsValue::Undefined);
+                                }
+                                Var(var_decl) => {
+                                    for declarator in &var_decl.decls {
+                                        if let swc_ecma_ast::Pat::Ident(ident) = &declarator.name {
+                                            exports.insert(ident.id.sym.to_string(), JsValue::Undefined);
+                                        }
+                                    }
+                                }
+                                Class(class_decl) => {
+                                    exports.insert(class_decl.ident.sym.to_string(), JsValue::Undefined);
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                } else if let swc_ecma_ast::ModuleItem::Stmt(stmt) = item {
+                    if let swc_ecma_ast::Stmt::Decl(decl) = stmt {
+                        match decl {
+                            swc_ecma_ast::Decl::Var(var_decl) => {
+                                for declarator in &var_decl.decls {
+                                    if let swc_ecma_ast::Pat::Ident(ident) = &declarator.name {
+                                        exports.insert(ident.id.sym.to_string(), JsValue::Undefined);
+                                    }
+                                }
+                            }
+                            swc_ecma_ast::Decl::Fn(fn_decl) => {
+                                exports.insert(fn_decl.ident.sym.to_string(), JsValue::Undefined);
+                            }
+                            swc_ecma_ast::Decl::Class(class_decl) => {
+                                exports.insert(class_decl.ident.sym.to_string(), JsValue::Undefined);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Warning: Failed to parse module for exports: {:?}", e);
+        }
+    }
+    
+    exports
 }
 
 pub struct Frame {
@@ -165,6 +404,7 @@ pub struct VM {
     pub async_runtime: Option<Runtime>,
     pub async_task_tx: Option<mpsc::Sender<JsValue>>,
     pub module_cache: ModuleCache,
+    pub compiler: Compiler,
 }
 
 impl VM {
@@ -203,6 +443,7 @@ impl VM {
             async_runtime: None,
             async_task_tx: Some(tx),
             module_cache: ModuleCache::new(),
+            compiler: Compiler::new(),
         }
     }
 
@@ -256,7 +497,7 @@ impl VM {
 
     /// Get the number of cached modules
     pub fn cached_modules_count(&self) -> usize {
-        self.module_cache.entries.len()
+        self.module_cache.len()
     }
 
     /// Get list of cached module paths (for debugging)
@@ -266,6 +507,114 @@ impl VM {
             .values()
             .map(|m| m.path.to_string_lossy().into_owned())
             .collect()
+    }
+
+    /// Get cache size in bytes
+    pub fn cache_size(&self) -> usize {
+        self.module_cache.cache_size_bytes()
+    }
+
+    /// Clear all cached modules
+    pub fn clear_module_cache(&mut self) {
+        self.module_cache.invalidate_all();
+    }
+
+    /// Check if a module is cached
+    pub fn is_module_cached(&self, path: &PathBuf) -> bool {
+        self.module_cache.get(path).is_some()
+    }
+
+    /// Get cache info for a specific module
+    pub fn get_module_cache_info(&self, path: &PathBuf) -> Option<(String, String)> {
+        self.module_cache.get(path).map(|cached| {
+            (
+                cached.load_time.elapsed()
+                    .map(|d| format!("{:?}", d))
+                    .unwrap_or_else(|_| "unknown".to_string()),
+                cached.hash.clone(),
+            )
+        })
+    }
+
+    /// Compile and execute a module source, returning the export values
+    /// This is used by the ImportAsync handler to actually run imported modules
+    pub fn execute_module(
+        &mut self,
+        source: &str,
+        path: &Path,
+        export_names: &[String],
+    ) -> Result<HashMap<String, JsValue>, String> {
+        let syntax = if path.to_string_lossy().ends_with(".ts")
+            || path.to_string_lossy().ends_with(".tsx")
+        {
+            Some(Syntax::Typescript(TsSyntax {
+                decorators: true,
+                tsx: path.to_string_lossy().ends_with(".tsx"),
+                ..Default::default()
+            }))
+        } else if path.to_string_lossy().ends_with(".js")
+            || path.to_string_lossy().ends_with(".jsx")
+        {
+            Some(Syntax::Es(Default::default()))
+        } else {
+            Some(Syntax::Typescript(TsSyntax {
+                decorators: true,
+                ..Default::default()
+            }))
+        };
+
+        let bytecode = self
+            .compiler
+            .compile_with_syntax(source, syntax)
+            .map_err(|e| format!("Failed to compile module {}: {}", path.display(), e))?;
+
+        // Save IP BEFORE appending program, because append_program modifies IP
+        let saved_ip = self.ip;
+        let saved_module_path = self.current_module_path.clone();
+
+        let start_offset = self.append_program(bytecode);
+        let end_offset = self.program.len();
+
+        self.current_module_path = Some(path.to_path_buf());
+        self.ip = start_offset;
+
+        // Execute only the module's bytecode, not the entire program
+        // We run until we hit the module's Halt or reach the end of module bytecode
+        loop {
+            if self.ip >= end_offset {
+                break;
+            }
+            if self.ip >= self.program.len() {
+                break;
+            }
+            let result = self.exec_one();
+            // Don't stop the entire VM on module Halt - just break from module execution
+            if result == ExecResult::Stop {
+                // Check if this is a Halt within the module
+                if self.ip > 0 && self.ip <= end_offset + 5 {
+                    // This is likely the module's Halt, break normally
+                    break;
+                }
+                // Otherwise, it's a real stop
+                break;
+            }
+        }
+
+        self.ip = saved_ip;
+        self.current_module_path = saved_module_path;
+
+        let mut exports = HashMap::new();
+        let global_locals = &self.call_stack[0].locals;
+
+        for name in export_names {
+            if let Some(value) = global_locals.get(name) {
+                exports.insert(name.clone(), value.clone());
+            } else {
+                exports.insert(name.clone(), JsValue::Undefined);
+            }
+        }
+
+        Ok(exports)
     }
 
     pub fn setup_stdlib(&mut self) {
@@ -440,6 +789,18 @@ impl VM {
     pub fn load_program(&mut self, bytecode: Vec<OpCode>) {
         self.program = bytecode;
         self.ip = 0;
+        self.current_module_path = None;
+    }
+
+    pub fn load_program_with_path(&mut self, bytecode: Vec<OpCode>, path: PathBuf) {
+        self.program = bytecode;
+        self.ip = 0;
+        self.current_module_path = Some(path);
+    }
+
+    /// Update the current module path (for relative imports)
+    pub fn set_current_module_path(&mut self, path: PathBuf) {
+        self.current_module_path = Some(path);
     }
 
     /// Append bytecode to the existing program and return the starting offset.
@@ -2445,45 +2806,59 @@ impl VM {
                 let resolved_path = {
                     let importer_dir = importer_path
                         .as_ref()
-                        .and_then(|p| if p.is_file() { p.parent() } else { Some(p) })
-                        .unwrap_or(std::path::Path::new("."));
+                        .and_then(|p| {
+                            if p.is_file() {
+                                p.parent()
+                            } else if p.exists() && p.is_dir() {
+                                Some(p)
+                            } else {
+                                Some(p)
+                            }
+                        })
+                        .map(|p| {
+                            if p.as_os_str().is_empty() {
+                                Path::new(".")
+                            } else {
+                                p
+                            }
+                        })
+                        .unwrap_or(Path::new("."));
 
-                    let mut path = importer_dir.to_path_buf();
+                    let mut resolved = importer_dir.to_path_buf();
 
                     for component in specifier_str.split('/') {
                         match component {
                             "." => {}
                             ".." => {
-                                if !path.as_os_str().is_empty() {
-                                    path.pop();
+                                if !resolved.as_os_str().is_empty() {
+                                    resolved.pop();
                                 }
                             }
                             "" if specifier_str.starts_with("./") => {}
                             "" if specifier_str.starts_with("../") => {}
-                            _ => path.push(component),
+                            _ => resolved.push(component),
                         };
                     }
 
-                    let extensions = [".tscl", ".ts", ".js"];
-                    if path.as_os_str().is_empty() || specifier_str.ends_with('/') {
-                        for ext in extensions {
-                            let index_path = path.join("index").with_extension(&ext[1..]);
+                    let extensions = ["tscl", "ts", "js"];
+                    if resolved.as_os_str().is_empty() || specifier_str.ends_with('/') {
+                        for ext in &extensions {
+                            let index_path = resolved.join("index").with_extension(ext);
                             if index_path.exists() {
-                                path = index_path;
+                                resolved = index_path;
                                 break;
                             }
                         }
-                    } else if !path.exists() {
-                        for ext in extensions {
-                            let with_ext = path.with_extension(ext);
+                    } else if !resolved.exists() {
+                        for ext in &extensions {
+                            let with_ext = resolved.with_extension(ext);
                             if with_ext.exists() {
-                                path = with_ext;
+                                resolved = with_ext;
                                 break;
                             }
                         }
                     }
-
-                    path
+                    resolved
                 };
 
                 if !resolved_path.exists() {
@@ -2504,11 +2879,16 @@ impl VM {
 
                 // Check if we have a valid cached version
                 if let Some(cached) = self.module_cache.get(&canonical_path) {
-                    if !self.module_cache.should_reload(&canonical_path) {
-                        // Cache hit - return cached namespace
-                        self.stack.push(JsValue::Object(cached.namespace_object));
-                        return ExecResult::Continue;
-                    }
+                    // Cache hit - return cached namespace object
+                    self.stack.push(JsValue::Object(cached.namespace_object));
+                    return ExecResult::Continue;
+                }
+
+                // Check if file exists but hash doesn't match (stale cache entry)
+                let current_hash = ModuleCache::compute_hash(&canonical_path);
+                if self.module_cache.content_hashes.contains_key(&canonical_path) {
+                    // Hash mismatch - stale cache, invalidate
+                    self.module_cache.invalidate(&canonical_path);
                 }
 
                 // Cache miss or stale - load the module
@@ -2519,9 +2899,15 @@ impl VM {
                     Ok(source) => {
                         let hash = ModuleCache::compute_hash(&canonical_path);
 
-                        // Create namespace object
-                        let namespace_ptr = self.heap.len();
+                        // Parse module and extract exports
+                        let exports =
+                            parse_module_exports(&source, &canonical_path.to_string_lossy());
+
+                        let export_names: Vec<String> = exports.keys().cloned().collect();
+
                         let mut namespace_props = HashMap::new();
+
+                        // Add metadata
                         namespace_props.insert(
                             "__path__".to_string(),
                             JsValue::String(canonical_path.to_string_lossy().into_owned()),
@@ -2531,6 +2917,22 @@ impl VM {
                         namespace_props
                             .insert("__hash__".to_string(), JsValue::String(hash.clone()));
 
+                        // Execute the module to populate exports
+                        match self.execute_module(&source, &canonical_path, &export_names) {
+                            Ok(module_exports) => {
+                                for (name, value) in module_exports {
+                                    namespace_props.insert(name, value);
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Error executing module '{}': {}", specifier_str, e);
+                                for name in &export_names {
+                                    namespace_props.insert(name.clone(), JsValue::Undefined);
+                                }
+                            }
+                        }
+
+                        let namespace_ptr = self.heap.len();
                         self.heap.push(HeapObject {
                             data: HeapData::Object(namespace_props),
                         });
@@ -2578,12 +2980,10 @@ impl VM {
                         }
                     }
                     Some(_) => {
-                        eprintln!("Warning: GetExport expected namespace object");
                         self.stack.push(JsValue::Undefined);
                         return ExecResult::Continue;
                     }
                     None => {
-                        eprintln!("Warning: GetExport missing namespace on stack");
                         self.stack.push(JsValue::Undefined);
                         return ExecResult::Continue;
                     }
