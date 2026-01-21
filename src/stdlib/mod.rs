@@ -2,6 +2,9 @@ use crate::vm::value::{HeapData, HeapObject, JsValue, Promise};
 use crate::vm::Frame;
 use crate::vm::VM;
 
+pub mod array;
+pub mod string;
+
 pub fn native_log(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     for arg in args {
         match arg {

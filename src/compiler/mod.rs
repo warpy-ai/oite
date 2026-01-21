@@ -572,6 +572,12 @@ impl Codegen {
                     self.instructions.push(OpCode::Load("Promise".to_string()));
                     self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
                     self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                    // Stack: [undefined, Promise, PromiseObj, resolveFn]
+                    // Pop PromiseObj and Promise, keeping resolveFn and undefined
+                    self.instructions.push(OpCode::Pop);
+                    self.instructions.push(OpCode::Pop);
+                    // Stack: [undefined, resolveFn]
+                    // Swap to get [resolveFn, undefined]
                     self.instructions.push(OpCode::Swap);
                     self.instructions.push(OpCode::Call(1));
                 }
@@ -584,6 +590,12 @@ impl Codegen {
                     self.instructions.push(OpCode::Load("Promise".to_string()));
                     self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
                     self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                    // Stack: [returnValue, Promise, PromiseObj, resolveFn]
+                    // Pop PromiseObj and Promise, keeping resolveFn
+                    self.instructions.push(OpCode::Pop);
+                    self.instructions.push(OpCode::Pop);
+                    // Stack: [returnValue, resolveFn]
+                    // Swap to get [resolveFn, returnValue]
                     self.instructions.push(OpCode::Swap);
                     self.instructions.push(OpCode::Call(1));
                 }
@@ -860,6 +872,12 @@ impl Codegen {
                         self.instructions.push(OpCode::Load("Promise".to_string()));
                         self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
                         self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                        // Stack: [returnValue, Promise, PromiseObj, resolveFn]
+                        // Pop PromiseObj and Promise, keeping resolveFn
+                        self.instructions.push(OpCode::Pop);
+                        self.instructions.push(OpCode::Pop);
+                        // Stack: [returnValue, resolveFn]
+                        // Swap to get [resolveFn, returnValue]
                         self.instructions.push(OpCode::Swap);
                         self.instructions.push(OpCode::Call(1));
                         self.instructions.push(OpCode::Return);
@@ -872,6 +890,12 @@ impl Codegen {
                         self.instructions.push(OpCode::Load("Promise".to_string()));
                         self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
                         self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                        // Stack: [undefined, Promise, PromiseObj, resolveFn]
+                        // Pop PromiseObj and Promise, keeping resolveFn
+                        self.instructions.push(OpCode::Pop);
+                        self.instructions.push(OpCode::Pop);
+                        // Stack: [undefined, resolveFn]
+                        // Swap to get [resolveFn, undefined]
                         self.instructions.push(OpCode::Swap);
                         self.instructions.push(OpCode::Call(1));
                     }
@@ -962,6 +986,12 @@ impl Codegen {
                             self.instructions.push(OpCode::Load("Promise".to_string()));
                             self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
                             self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                            // Stack: [returnValue, Promise, PromiseObj, resolveFn]
+                            // Pop PromiseObj and Promise, keeping resolveFn
+                            self.instructions.push(OpCode::Pop);
+                            self.instructions.push(OpCode::Pop);
+                            // Stack: [returnValue, resolveFn]
+                            // Swap to get [resolveFn, returnValue]
                             self.instructions.push(OpCode::Swap);
                             self.instructions.push(OpCode::Call(1));
                         }
@@ -991,6 +1021,12 @@ impl Codegen {
                             self.instructions.push(OpCode::Load("Promise".to_string()));
                             self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
                             self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                            // Stack: [returnValue, Promise, PromiseObj, resolveFn]
+                            // Pop PromiseObj and Promise, keeping resolveFn
+                            self.instructions.push(OpCode::Pop);
+                            self.instructions.push(OpCode::Pop);
+                            // Stack: [returnValue, resolveFn]
+                            // Swap to get [resolveFn, returnValue]
                             self.instructions.push(OpCode::Swap);
                             self.instructions.push(OpCode::Call(1));
                         }

@@ -1,11 +1,14 @@
 /// Maximum call stack depth to prevent stack overflow in deeply recursive code
-const MAX_CALL_STACK_DEPTH: usize = 1000;
+pub const MAX_CALL_STACK_DEPTH: usize = 1000;
 
 pub mod opcodes;
 pub mod value;
+pub mod module_cache;
+pub mod stdlib_setup;
+pub mod property;
 
-use crate::compiler::Compiler;
-use crate::stdlib::{
+pub use crate::compiler::Compiler;
+pub use crate::stdlib::{
     native_byte_stream_length, native_byte_stream_patch_u32, native_byte_stream_to_array,
     native_byte_stream_write_f64, native_byte_stream_write_u8,
     native_byte_stream_write_u32, native_byte_stream_write_varint, native_create_byte_stream,
@@ -14,200 +17,40 @@ use crate::stdlib::{
     native_require, native_set_timeout, native_string_from_char_code, native_write_binary_file,
     native_write_file,
 };
-use crate::vm::opcodes::OpCode;
-use crate::vm::value::HeapData;
-use crate::vm::value::HeapObject;
-use crate::vm::value::JsValue;
-use crate::vm::value::NativeFn;
-use crate::vm::value::Promise;
-use crate::vm::value::PromiseState;
-use crate::vm::value::AsyncContext;
-use crate::vm::value::ContinuationCallback;
-use sha2::{Digest, Sha256};
-use std::collections::{HashMap, VecDeque};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
-use swc_common::{input::StringInput, BytePos, FileName};
-use swc_ecma_parser::{lexer::Lexer, Parser, Syntax, TsSyntax};
-use tokio::runtime::Runtime;
-use tokio::sync::mpsc;
-
-/// Module cache entry
-#[derive(Debug, Clone)]
-pub struct CachedModule {
-    pub path: PathBuf,
-    pub source: String,
-    pub hash: String,
-    pub load_time: SystemTime,
-    pub namespace_object: usize, // Pointer to namespace object on heap
-}
-
-/// Module cache for hot-reload support
-pub struct ModuleCache {
-    entries: HashMap<PathBuf, CachedModule>,
-    content_hashes: HashMap<PathBuf, String>,
-    modification_times: HashMap<PathBuf, SystemTime>,
-}
-
-impl ModuleCache {
-    pub fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-            content_hashes: HashMap::new(),
-            modification_times: HashMap::new(),
-        }
-    }
-
-    pub fn get(&self, path: &PathBuf) -> Option<&CachedModule> {
-        if let Some(cached) = self.entries.get(path) {
-            // Verify the content hash matches
-            let current_hash = ModuleCache::compute_hash(path);
-            if cached.hash == current_hash {
-                return Some(cached);
-            }
-        }
-        None
-    }
-
-    pub fn get_valid(&self, path: &PathBuf) -> Option<&CachedModule> {
-        // Get cached module if it exists and hasn't been modified
-        if let Some(cached) = self.entries.get(path) {
-            // Check if file still exists and hasn't been modified
-            if let Ok(metadata) = fs::metadata(path) {
-                if let Ok(modified) = metadata.modified() {
-                    if let Some(cached_time) = self.modification_times.get(path) {
-                        if modified <= *cached_time {
-                            return Some(cached);
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    pub fn get_or_compute(&mut self, path: &PathBuf) -> Option<CachedModule> {
-        // First check if we have a valid cached version
-        if let Some(cached) = self.get_valid(path) {
-            return Some(cached.clone());
-        }
-        
-        // Compute and store hash for new/modified files
-        let hash = ModuleCache::compute_hash(path);
-        if !hash.is_empty() {
-            if let Ok(metadata) = fs::metadata(path) {
-                if let Ok(modified) = metadata.modified() {
-                    self.content_hashes.insert(path.clone(), hash.clone());
-                    self.modification_times.insert(path.clone(), modified);
-                    return None; // Signal that file exists but not cached
-                }
-            }
-        }
-        None
-    }
-
-    pub fn compute_hash(path: &PathBuf) -> String {
-        match fs::read(path) {
-            Ok(content) => {
-                let mut hasher = Sha256::new();
-                hasher.update(&content);
-                hex::encode(hasher.finalize())
-            }
-            Err(_) => String::new(),
-        }
-    }
-
-    pub fn should_reload(&self, path: &PathBuf) -> bool {
-        match fs::metadata(path) {
-            Ok(metadata) => {
-                if let Ok(modified) = metadata.modified() {
-                    if let Some(cached_time) = self.modification_times.get(path) {
-                        return modified > *cached_time;
-                    }
-                    return true;
-                }
-                true
-            }
-            Err(_) => true,
-        }
-    }
-
-    pub fn insert(&mut self, module: CachedModule) {
-        let path = module.path.clone();
-        let hash = module.hash.clone();
-
-        self.entries.insert(path.clone(), module);
-        self.content_hashes.insert(path.clone(), hash);
-        if let Ok(metadata) = fs::metadata(&path) {
-            if let Ok(modified) = metadata.modified() {
-                self.modification_times.insert(path, modified);
-            }
-        }
-    }
-
-    pub fn invalidate(&mut self, path: &PathBuf) {
-        self.entries.remove(path);
-        self.content_hashes.remove(path);
-        self.modification_times.remove(path);
-    }
-
-    pub fn invalidate_all(&mut self) {
-        self.entries.clear();
-        self.content_hashes.clear();
-        self.modification_times.clear();
-    }
-
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    pub fn cache_size_bytes(&self) -> usize {
-        self.entries.values()
-            .map(|cached| {
-                cached.path.as_os_str().len() + // path
-                cached.source.len() + // source
-                cached.hash.len() // hash
-            })
-            .sum()
-    }
-
-    pub fn get_cache_info(&self, path: &PathBuf) -> Option<(SystemTime, String, usize)> {
-        self.entries.get(path).map(|cached| {
-            (
-                cached.load_time.clone(),
-                cached.hash.clone(),
-                cached.namespace_object,
-            )
-        })
-    }
-
-    pub fn check_hot_reload(&mut self, path: &PathBuf) -> bool {
-        // Returns true if file was modified and cache was invalidated
-        if self.should_reload(path) {
-            self.invalidate(path);
-            true
-        } else {
-            false
-        }
-    }
-}
+pub use crate::stdlib::string;
+pub use crate::stdlib::array;
+pub use crate::vm::opcodes::OpCode;
+pub use crate::vm::value::HeapData;
+pub use crate::vm::value::HeapObject;
+pub use crate::vm::value::JsValue;
+pub use crate::vm::value::NativeFn;
+pub use crate::vm::value::Promise;
+pub use crate::vm::value::PromiseState;
+pub use crate::vm::value::AsyncContext;
+pub use crate::vm::value::ContinuationCallback;
+pub use crate::vm::module_cache::CachedModule;
+pub use crate::vm::module_cache::ModuleCache;
+pub use sha2::{Digest, Sha256};
+pub use std::collections::{HashMap, VecDeque};
+pub use std::fs;
+pub use std::path::{Path, PathBuf};
+pub use std::sync::{Arc, Mutex};
+pub use std::time::{Duration, Instant, SystemTime};
+pub use swc_common::{input::StringInput, BytePos, FileName};
+pub use swc_ecma_parser::{lexer::Lexer, Parser, Syntax, TsSyntax};
+pub use tokio::runtime::Runtime;
+pub use tokio::sync::mpsc;
 
 /// Parse module source and extract exports as a HashMap
 fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValue> {
     let mut exports = HashMap::new();
-    
+
     let cm: swc_common::SourceMap = Default::default();
     let fm = cm.new_source_file(
         FileName::Custom(file_name.to_string()).into(),
         source.to_string(),
     );
-    
+
     let lexer = Lexer::new(
         Syntax::Typescript(TsSyntax {
             decorators: true,
@@ -220,9 +63,9 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
         StringInput::from(&*fm),
         None,
     );
-    
+
     let mut parser = Parser::new_from(lexer);
-    
+
     match parser.parse_module() {
         Ok(ast) => {
             for item in &ast.body {
@@ -230,7 +73,6 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
                     match decl {
                         swc_ecma_ast::ModuleDecl::ExportNamed(named) => {
                             if let Some(_src) = &named.src {
-                                // Re-export: export { x } from './module'
                                 for spec in &named.specifiers {
                                     match spec {
                                         swc_ecma_ast::ExportSpecifier::Named(named) => {
@@ -260,7 +102,6 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
                                     }
                                 }
                             } else {
-                                // Local export: export { x } or export const x = 1
                                 for spec in &named.specifiers {
                                     match spec {
                                         swc_ecma_ast::ExportSpecifier::Named(named) => {
@@ -292,7 +133,6 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
                             }
                         }
                         swc_ecma_ast::ModuleDecl::ExportAll(_all) => {
-                            // export * from './module'
                             exports.insert("*".to_string(), JsValue::Undefined);
                         }
                         swc_ecma_ast::ModuleDecl::ExportDefaultDecl(_default_decl) => {
@@ -348,7 +188,7 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
             eprintln!("Warning: Failed to parse module for exports: {:?}", e);
         }
     }
-    
+
     exports
 }
 
@@ -516,7 +356,7 @@ impl VM {
     /// Get list of cached module paths (for debugging)
     pub fn cached_modules(&self) -> Vec<String> {
         self.module_cache
-            .entries
+            .entries()
             .values()
             .map(|m| m.path.to_string_lossy().into_owned())
             .collect()
@@ -988,81 +828,18 @@ impl VM {
         }
     }
 
-    /// Get a property from an object, walking the prototype chain if needed.
-    /// This implements JavaScript's prototype-based inheritance lookup.
-    fn get_prop_with_proto_chain(&self, obj_ptr: usize, name: &str) -> JsValue {
-        let mut current_ptr = Some(obj_ptr);
-        let mut depth = 0;
-        const MAX_PROTO_DEPTH: usize = 100; // Prevent infinite loops
-
-        while let Some(ptr) = current_ptr {
-            if depth > MAX_PROTO_DEPTH {
-                break;
-            }
-            depth += 1;
-
-            if let Some(HeapObject {
-                data: HeapData::Object(props),
-            }) = self.heap.get(ptr)
-            {
-                // Check if property exists on this object
-                if let Some(val) = props.get(name) {
-                    return val.clone();
-                }
-
-                // Walk up the prototype chain
-                if let Some(JsValue::Object(proto_ptr)) = props.get("__proto__") {
-                    current_ptr = Some(*proto_ptr);
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        JsValue::Undefined
+    // Property helpers moved to property.rs
+    // Re-exporting for backward compatibility
+    pub fn get_prop_with_proto_chain(&self, obj_ptr: usize, name: &str) -> JsValue {
+        crate::vm::property::get_prop_with_proto_chain(self, obj_ptr, name)
     }
 
-    fn find_setter_with_proto_chain(
+    pub fn find_setter_with_proto_chain(
         &self,
         obj_ptr: usize,
         name: &str,
     ) -> Option<(usize, Option<usize>)> {
-        let setter_name = format!("setter:{}", name);
-        let mut current_ptr = Some(obj_ptr);
-        let mut depth = 0;
-        const MAX_PROTO_DEPTH: usize = 100; // Prevent infinite loops
-
-        while let Some(ptr) = current_ptr {
-            if depth > MAX_PROTO_DEPTH {
-                break;
-            }
-            depth += 1;
-
-            if let Some(HeapObject {
-                data: HeapData::Object(props),
-            }) = self.heap.get(ptr)
-            {
-                // Check if setter exists on this object
-                if let Some(setter_val) = props.get(&setter_name) {
-                    if let JsValue::Function { address, env } = setter_val {
-                        return Some((*address, *env));
-                    }
-                }
-
-                // Walk up the prototype chain
-                if let Some(JsValue::Object(proto_ptr)) = props.get("__proto__") {
-                    current_ptr = Some(*proto_ptr);
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        None
+        crate::vm::property::find_setter_with_proto_chain(self, obj_ptr, name)
     }
 
     fn execute_task(&mut self, task: Task) {
@@ -2094,303 +1871,70 @@ impl VM {
 
                 match reciever {
                     // -- String methods --
-                    JsValue::String(s) => match name.as_str() {
-                        "trim" => {
-                            let result = s.trim().to_string();
-                            self.stack.push(JsValue::String(result));
-                            self.ip += 1;
-                            return ExecResult::Continue;
-                        }
-                        "includes" => {
-                            // includes(searchString) - checks if string contains the search string
-                            let search_value = self.stack.pop().unwrap_or(JsValue::Undefined);
-                            let search_str = match search_value {
-                                JsValue::String(ss) => ss,
-                                JsValue::Number(n) => n.to_string(),
-                                JsValue::Boolean(b) => b.to_string(),
-                                JsValue::Null => "null".to_string(),
-                                JsValue::Undefined => "undefined".to_string(),
-                                _ => "".to_string(),
-                            };
-                            let found = s.contains(&search_str);
-                            self.stack.push(JsValue::Boolean(found));
-                            self.ip += 1;
-                            return ExecResult::Continue;
-                        }
-                        "charCodeAt" => {
-                            let idx_val = self.stack.pop().unwrap_or(JsValue::Number(0.0));
-                            if let JsValue::Number(idx) = idx_val {
-                                let code =
-                                    s.chars().nth(idx as usize).map(|c| c as u32).unwrap_or(0);
-                                self.stack.push(JsValue::Number(code as f64));
-                            }
-                            self.ip += 1;
-                            return ExecResult::Continue;
-                        }
-                        "charAt" => {
-                            let idx_val = self.stack.pop().unwrap_or(JsValue::Number(0.0));
-                            if let JsValue::Number(idx) = idx_val {
-                                let char = s
-                                    .chars()
-                                    .nth(idx as usize)
-                                    .map(|c| c.to_string())
-                                    .unwrap_or("".to_string());
-                                self.stack.push(JsValue::String(char));
-                            }
-                            self.ip += 1;
-                            return ExecResult::Continue;
-                        }
-                        "slice" => {
-                            // slice(start, end?) - end is optional, defaults to string length
-                            // Arguments are on stack in reverse order (last arg on top)
-                            let end = if arg_count > 1 {
-                                self.stack
-                                    .pop()
-                                    .and_then(|v| match v {
-                                        JsValue::Number(n) => {
-                                            // Handle negative indices: count from end
-                                            let char_count = s.chars().count();
-                                            if n < 0.0 {
-                                                Some((char_count as f64 + n) as usize)
-                                            } else {
-                                                Some(n as usize)
-                                            }
-                                        }
-                                        _ => None,
-                                    })
-                                    .unwrap_or(s.chars().count())
-                            } else {
-                                s.chars().count()
-                            };
-                            let start = self
-                                .stack
-                                .pop()
-                                .and_then(|v| match v {
-                                    JsValue::Number(n) => {
-                                        // Handle negative indices: count from end
-                                        let char_count = s.chars().count();
-                                        if n < 0.0 {
-                                            Some((char_count as f64 + n) as usize)
-                                        } else {
-                                            Some(n as usize)
-                                        }
-                                    }
-                                    _ => None,
-                                })
-                                .unwrap_or(0);
-
-                            // Clamp indices to valid range
-                            let char_count = s.chars().count();
-                            let start = start.min(char_count);
-                            let end = end.min(char_count).max(start);
-
-                            // Extract substring by character position
-                            let result: String = s
-                                .chars()
-                                .enumerate()
-                                .filter_map(|(i, ch)| {
-                                    if i >= start && i < end {
-                                        Some(ch)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect();
-
-                            self.stack.push(JsValue::String(result));
-                            self.ip += 1;
-                            return ExecResult::Continue;
-                        }
-                        _ => {
+                    JsValue::String(s) => {
+                        if let Some(result) = string::call_string_method(self, &s, &name, arg_count) {
+                            self.stack.push(result);
+                        } else {
                             self.stack.push(JsValue::Undefined);
-                            self.ip += 1;
-                            return ExecResult::Continue;
                         }
-                    },
+                        self.ip += 1;
+                        return ExecResult::Continue;
+                    }
                     JsValue::Object(ptr) => {
                         // Check if this is an array and handle array methods
                         if let Some(HeapObject {
                             data: HeapData::Array(arr),
                         }) = self.heap.get_mut(ptr)
                         {
-                            match name.as_str() {
-                                // Mutable methods
-                                "push" => {
-                                    // Collect all arguments
-                                    let mut args = Vec::with_capacity(arg_count);
-                                    for _ in 0..arg_count {
-                                        args.push(self.stack.pop().expect("Missing argument"));
-                                    }
-                                    args.reverse();
-                                    // Push all arguments to the array
-                                    for arg in args {
-                                        arr.push(arg);
-                                    }
-                                    // Return the new length
-                                    self.stack.push(JsValue::Number(arr.len() as f64));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
+                            // Handle splice inline since it needs heap access
+                            if name == "splice" {
+                                let mut args = Vec::with_capacity(arg_count);
+                                for _ in 0..arg_count {
+                                    args.push(self.stack.pop().expect("Missing argument"));
                                 }
-                                "pop" => {
-                                    let result = arr.pop().unwrap_or(JsValue::Undefined);
-                                    self.stack.push(result);
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "shift" => {
-                                    let result = if arr.is_empty() {
-                                        JsValue::Undefined
-                                    } else {
-                                        arr.remove(0)
-                                    };
-                                    self.stack.push(result);
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "unshift" => {
-                                    // Collect all arguments
-                                    let mut args = Vec::with_capacity(arg_count);
-                                    for _ in 0..arg_count {
-                                        args.push(self.stack.pop().expect("Missing argument"));
-                                    }
-                                    args.reverse();
-                                    // Insert at the beginning (reverse order to maintain argument order)
-                                    for arg in args.into_iter().rev() {
-                                        arr.insert(0, arg);
-                                    }
-                                    // Return the new length
-                                    self.stack.push(JsValue::Number(arr.len() as f64));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "splice" => {
-                                    // splice(start, deleteCount, ...items)
-                                    // Collect arguments
-                                    let mut args = Vec::with_capacity(arg_count);
-                                    for _ in 0..arg_count {
-                                        args.push(self.stack.pop().expect("Missing argument"));
-                                    }
-                                    args.reverse();
+                                args.reverse();
 
-                                    let start = args
-                                        .first()
-                                        .and_then(|v| match v {
-                                            JsValue::Number(n) => Some(*n as usize),
-                                            _ => None,
-                                        })
-                                        .unwrap_or(0);
-                                    let delete_count = args
-                                        .get(1)
-                                        .and_then(|v| match v {
-                                            JsValue::Number(n) => Some(*n as usize),
-                                            _ => None,
-                                        })
-                                        .unwrap_or(0);
-                                    let items_to_insert: Vec<JsValue> =
-                                        args.into_iter().skip(2).collect();
+                                let start = args
+                                    .first()
+                                    .and_then(|v| match v {
+                                        JsValue::Number(n) => Some(*n as usize),
+                                        _ => None,
+                                    })
+                                    .unwrap_or(0);
+                                let delete_count = args
+                                    .get(1)
+                                    .and_then(|v| match v {
+                                        JsValue::Number(n) => Some(*n as usize),
+                                        _ => None,
+                                    })
+                                    .unwrap_or(0);
+                                let items_to_insert: Vec<JsValue> = args.into_iter().skip(2).collect();
 
-                                    // Create result array with deleted elements
-                                    let deleted: Vec<JsValue> = if start < arr.len() {
-                                        let end = (start + delete_count).min(arr.len());
-                                        arr.drain(start..end).collect()
-                                    } else {
-                                        Vec::new()
-                                    };
+                                let deleted: Vec<JsValue> = if start < arr.len() {
+                                    let end = (start + delete_count).min(arr.len());
+                                    arr.drain(start..end).collect()
+                                } else {
+                                    Vec::new()
+                                };
 
-                                    // Insert new items at start position
-                                    for (i, item) in items_to_insert.into_iter().enumerate() {
-                                        arr.insert(start + i, item);
-                                    }
-
-                                    // Return array of deleted elements
-                                    let deleted_ptr = self.heap.len();
-                                    self.heap.push(HeapObject {
-                                        data: HeapData::Array(deleted),
-                                    });
-                                    self.stack.push(JsValue::Object(deleted_ptr));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
+                                for (i, item) in items_to_insert.into_iter().enumerate() {
+                                    arr.insert(start + i, item);
                                 }
-                                // Read-only methods
-                                "length" => {
-                                    self.stack.push(JsValue::Number(arr.len() as f64));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "indexOf" => {
-                                    // indexOf takes 1-2 arguments: (searchElement, fromIndex?)
-                                    // Arguments are on stack in reverse order (last arg on top)
-                                    let from_index = if arg_count > 1 {
-                                        self.stack
-                                            .pop()
-                                            .and_then(|v| match v {
-                                                JsValue::Number(n) => Some(n as usize),
-                                                _ => None,
-                                            })
-                                            .unwrap_or(0)
-                                    } else {
-                                        0
-                                    };
-                                    let search_value =
-                                        self.stack.pop().expect("Missing argument for indexOf");
 
-                                    let result = arr
-                                        .iter()
-                                        .enumerate()
-                                        .skip(from_index)
-                                        .find(|(_, val)| **val == search_value)
-                                        .map(|(i, _)| i as f64)
-                                        .unwrap_or(-1.0);
+                                let deleted_ptr = self.heap.len();
+                                self.heap.push(HeapObject {
+                                    data: HeapData::Array(deleted),
+                                });
+                                self.stack.push(JsValue::Object(deleted_ptr));
+                                self.ip += 1;
+                                return ExecResult::Continue;
+                            }
 
-                                    self.stack.push(JsValue::Number(result));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "includes" => {
-                                    // includes takes 1 argument: searchElement
-                                    let search_value =
-                                        self.stack.pop().expect("Missing argument for includes");
-                                    let found = arr.contains(&search_value);
-                                    self.stack.push(JsValue::Boolean(found));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "join" => {
-                                    // join takes 0-1 arguments: (separator?)
-                                    // If no argument, separator defaults to ","
-                                    let separator = if arg_count > 0 {
-                                        self.stack
-                                            .pop()
-                                            .map(|v| match v {
-                                                JsValue::String(s) => s,
-                                                JsValue::Undefined => ",".to_string(),
-                                                _ => ",".to_string(),
-                                            })
-                                            .unwrap_or_else(|| ",".to_string())
-                                    } else {
-                                        ",".to_string()
-                                    };
-
-                                    let result = arr
-                                        .iter()
-                                        .map(|v| match v {
-                                            JsValue::String(s) => s.clone(),
-                                            JsValue::Number(n) => n.to_string(),
-                                            JsValue::Boolean(b) => b.to_string(),
-                                            JsValue::Null => "null".to_string(),
-                                            JsValue::Undefined => "undefined".to_string(),
-                                            _ => "".to_string(),
-                                        })
-                                        .collect::<Vec<String>>()
-                                        .join(&separator);
-
-                                    self.stack.push(JsValue::String(result));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                _ => {
-                                    // Not an array method, fall through to object method lookup
-                                }
+                            // For all other array methods, use the helper function
+                            if let Some(result) = array::call_array_method(&mut self.stack, arr, &name, arg_count) {
+                                self.stack.push(result);
+                                self.ip += 1;
+                                return ExecResult::Continue;
                             }
                         }
 
@@ -3111,7 +2655,7 @@ impl VM {
 
                 // Check if file exists but hash doesn't match (stale cache entry)
                 let current_hash = ModuleCache::compute_hash(&canonical_path);
-                if self.module_cache.content_hashes.contains_key(&canonical_path) {
+                if self.module_cache.has_content_hash(&canonical_path) {
                     // Hash mismatch - stale cache, invalidate
                     self.module_cache.invalidate(&canonical_path);
                 }
