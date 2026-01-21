@@ -1,13 +1,13 @@
 // file_reader.tscl
-const fs = require("fs");
-let content = fs.readFileSync("./examples/file_reader.tscl");
+const fs: Dict = require("fs");
+let content: string = fs.readFileSync("./examples/file_reader.tscl");
 
-let i = 0;
-let charCount = 0;
+let i: number = 0;
+let charCount: number = 0;
 
 while (i < content.length) {
-    let char = content[i];
-    if(char !== " " && char !== "\n"){
+    let char: string = content[i];
+    if (char !== " " && char !== "\n") {
         charCount = charCount + 1;
     }
     i = i + 1;
@@ -15,26 +15,25 @@ while (i < content.length) {
 
 console.log("Non-whitespace characters:", charCount);
 
-let char = "5";
-
-let code = char.charCodeAt(0);
+let char: string = "5";
+let code: number = char.charCodeAt(0);
 
 // ASCII for '0' is 48, '9' is 57
-
-if(code >= 48 && code <= 57) {
+if (code >= 48 && code <= 57) {
     console.log("Is a digit");
 } else {
     console.log("It is not a digit");
 }
 
+let source: string = "let x = 10;";
+let tokens: Array<string> = [];
+let start: number = 0;
+let current: number = 0;
 
-let source = "let x = 10;";
-let tokens = [];
-let start = 0; 
-let current = 0;
+while (current < 3) {
+    current = current + 1;
+}
 
-while (current < 3) { current = current + 1;}
-
-let word = source.slice(start,current);
+let word: string = source.slice(start, current);
 tokens.push(word);
 console.log("Found token:", tokens[0]);

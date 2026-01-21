@@ -1,7 +1,7 @@
 // ============================================================================
 // Bootstrap Emitter for tscl
 // Transforms AST to bytecode using ByteStream
-// Requires: std/prelude.tscl to be loaded first
+// Requires: std/prelude.tscl, bootstrap/lexer.tscl, and bootstrap/parser.tscl
 // ============================================================================
 
 // ============================================================================
@@ -11,13 +11,9 @@
 function createEmitter() {
     return {
         stream: ByteStream.create(),
-        // For tracking function addresses and backpatching jumps
         functions: {},
-        // Pending jump patches (for forward jumps)
         patches: [],
-        // Break/continue stack for loops
         loopStack: [],
-        // Current compilation scope (null = global)
         scope: null
     };
 }
@@ -83,21 +79,19 @@ function currentLoop(emitter) {
 function createScope(parent) {
     return {
         parent: parent,
-        locals: [],        // Array of {name, slot} pairs
+        locals: [],
         nextSlot: 0
     };
 }
 
 function scopeDefine(scope, name) {
     let slot = scope.nextSlot;
-    // Store as array entry to work around VM object property issues
     scope.locals.push({ name: name, slot: slot });
     scope.nextSlot = scope.nextSlot + 1;
     return slot;
 }
 
 function scopeResolve(scope, name) {
-    // Search through array of locals
     let i = 0;
     while (i < scope.locals.length) {
         let entry = scope.locals[i];
@@ -106,7 +100,7 @@ function scopeResolve(scope, name) {
         }
         i = i + 1;
     }
-    return -1;  // Not a local
+    return -1;
 }
 
 // ============================================================================
@@ -124,6 +118,44 @@ function emitLoadLocal(emitter, slot) {
 }
 
 // ============================================================================
+// Operator Code Mapping
+// ============================================================================
+
+function getOpCodeForBinaryOp(operator) {
+    if (operator == "+") { return 32; }
+    if (operator == "-") { return 33; }
+    if (operator == "*") { return 34; }
+    if (operator == "/") { return 35; }
+    if (operator == "%") { return 36; }
+    if (operator == "**") { return 37; }
+    if (operator == "==") { return 38; }
+    if (operator == "!=") { return 39; }
+    if (operator == "===") { return 40; }
+    if (operator == "!==") { return 41; }
+    if (operator == "<") { return 42; }
+    if (operator == "<=") { return 43; }
+    if (operator == ">") { return 44; }
+    if (operator == ">=") { return 45; }
+    if (operator == "<<") { return 46; }
+    if (operator == ">>") { return 47; }
+    if (operator == ">>>") { return 48; }
+    if (operator == "&") { return 49; }
+    if (operator == "^") { return 50; }
+    if (operator == "|") { return 51; }
+    if (operator == "&&") { return 52; }
+    if (operator == "||") { return 53; }
+    return -1;
+}
+
+function getOpCodeForUnaryOp(operator) {
+    if (operator == "-") { return 64; }
+    if (operator == "!") { return 65; }
+    if (operator == "~") { return 66; }
+    if (operator == "+") { return 67; }
+    return -1;
+}
+
+// ============================================================================
 // Main Emit Function (AST Visitor)
 // ============================================================================
 
@@ -132,52 +164,58 @@ function emit(emitter, node) {
         return;
     }
 
-    if (node.type == "Program") {
+    let type = node.type;
+
+    if (type == "Program") {
         emitProgram(emitter, node);
-    } else if (node.type == "VariableDeclaration") {
+    } else if (type == "VariableDeclaration") {
         emitVariableDeclaration(emitter, node);
-    } else if (node.type == "FunctionDeclaration") {
+    } else if (type == "FunctionDeclaration") {
         emitFunctionDeclaration(emitter, node);
-    } else if (node.type == "ReturnStatement") {
+    } else if (type == "ReturnStatement") {
         emitReturnStatement(emitter, node);
-    } else if (node.type == "IfStatement") {
+    } else if (type == "IfStatement") {
         emitIfStatement(emitter, node);
-    } else if (node.type == "WhileStatement") {
+    } else if (type == "WhileStatement") {
         emitWhileStatement(emitter, node);
-    } else if (node.type == "BlockStatement") {
+    } else if (type == "BlockStatement") {
         emitBlockStatement(emitter, node);
-    } else if (node.type == "ExpressionStatement") {
+    } else if (type == "ExpressionStatement") {
         emitExpressionStatement(emitter, node);
-    } else if (node.type == "BinaryExpression") {
+    } else if (type == "BinaryExpression") {
         emitBinaryExpression(emitter, node);
-    } else if (node.type == "UnaryExpression") {
+    } else if (type == "UnaryExpression") {
         emitUnaryExpression(emitter, node);
-    } else if (node.type == "AssignmentExpression") {
+    } else if (type == "AssignmentExpression") {
         emitAssignmentExpression(emitter, node);
-    } else if (node.type == "CallExpression") {
+    } else if (type == "CallExpression") {
         emitCallExpression(emitter, node);
-    } else if (node.type == "MemberExpression") {
+    } else if (type == "MemberExpression") {
         emitMemberExpression(emitter, node);
-    } else if (node.type == "Identifier") {
+    } else if (type == "Identifier") {
         emitIdentifier(emitter, node);
-    } else if (node.type == "Literal") {
+    } else if (type == "Literal") {
         emitLiteral(emitter, node);
-    } else if (node.type == "ArrayExpression") {
+    } else if (type == "ArrayExpression") {
         emitArrayExpression(emitter, node);
-    } else if (node.type == "ObjectExpression") {
+    } else if (type == "ObjectExpression") {
         emitObjectExpression(emitter, node);
-    } else if (node.type == "NewExpression") {
+    } else if (type == "NewExpression") {
         emitNewExpression(emitter, node);
-    } else if (node.type == "ThisExpression") {
+    } else if (type == "ThisExpression") {
         emitThisExpression(emitter, node);
-    } else if (node.type == "ArrowFunctionExpression" || node.type == "FunctionExpression") {
+    } else if (type == "ArrowFunctionExpression" || type == "FunctionExpression") {
         emitFunctionExpression(emitter, node);
-    } else if (node.type == "BreakStatement") {
+    } else if (type == "BreakStatement") {
         emitBreakStatement(emitter, node);
-    } else if (node.type == "ContinueStatement") {
+    } else if (type == "ContinueStatement") {
         emitContinueStatement(emitter, node);
+    } else if (type == "EmptyStatement") {
+        // Do nothing
+    } else if (type == "ForStatement") {
+        emitForStatement(emitter, node);
     } else {
-        console.log("Unknown node type:", node.type);
+        console.log("Unknown node type:", type);
     }
 }
 
@@ -191,7 +229,6 @@ function emitProgram(emitter, node) {
         emit(emitter, node.body[i]);
         i = i + 1;
     }
-    // End program with HALT
     emitU8(emitter, OP.HALT);
 }
 
@@ -205,89 +242,69 @@ function emitBlockStatement(emitter, node) {
 
 function emitExpressionStatement(emitter, node) {
     emit(emitter, node.expression);
-    // Pop the result (expression statements don't keep their value)
     emitU8(emitter, OP.POP);
 }
 
 function emitVariableDeclaration(emitter, node) {
     if (node.init != null) {
-        // Emit the initializer
         emit(emitter, node.init);
     } else {
-        // Push undefined
         emitU8(emitter, OP.PUSH);
         emitU8(emitter, TYPE.UNDEFINED);
     }
-    // Store in variable (local or global)
     if (emitter.scope != null) {
-        // Inside function - define and store as indexed local
         let slot = scopeDefine(emitter.scope, node.name);
         emitStoreLocal(emitter, slot);
     } else {
-        // Global scope - use string-based store
         emitU8(emitter, OP.STORE);
         emitString(emitter, node.name);
     }
 }
 
 function emitFunctionDeclaration(emitter, node) {
-    // Jump over the function body
     emitU8(emitter, OP.JUMP);
     let jumpPatch = currentOffset(emitter);
-    emitU32(emitter, 0); // placeholder
+    emitU32(emitter, 0);
 
-    // Record function start address
     let funcAddr = currentOffset(emitter);
 
-    // Create new scope for function
     let outerScope = emitter.scope;
     emitter.scope = createScope(null);
 
-    // Register parameters as locals 0, 1, 2, ...
     let i = 0;
     while (i < node.params.length) {
         scopeDefine(emitter.scope, node.params[i]);
         i = i + 1;
     }
 
-    // Emit prologue: pop args into local slots (reverse order)
-    // Args are on stack in order: arg0, arg1, arg2, ...
-    // We pop them in reverse order into their slots
     i = node.params.length - 1;
     while (i >= 0) {
         emitStoreLocal(emitter, i);
         i = i - 1;
     }
 
-    // Emit function body (with scope active)
     emit(emitter, node.body);
 
-    // Restore outer scope
     emitter.scope = outerScope;
 
-    // Ensure function returns (implicit return undefined)
     emitU8(emitter, OP.PUSH);
     emitU8(emitter, TYPE.UNDEFINED);
     emitU8(emitter, OP.RETURN);
 
-    // Patch the jump
     patchU32(emitter, jumpPatch, currentOffset(emitter));
 
-    // Push empty environment object for closure (required by VM)
     emitU8(emitter, OP.NEW_OBJECT);
 
-    // Create closure and store
     emitU8(emitter, OP.MAKE_CLOSURE);
     emitU32(emitter, funcAddr);
     emitU8(emitter, node.params.length);
-    // Emit parameter names
+
     i = 0;
     while (i < node.params.length) {
         emitString(emitter, node.params[i]);
         i = i + 1;
     }
 
-    // Store in variable
     emitU8(emitter, OP.STORE);
     emitString(emitter, node.name);
 }
@@ -303,71 +320,87 @@ function emitReturnStatement(emitter, node) {
 }
 
 function emitIfStatement(emitter, node) {
-    // Emit test expression
     emit(emitter, node.test);
 
-    // Jump if false to else/end
     emitU8(emitter, OP.JUMP_IF_FALSE);
     let falsePatch = currentOffset(emitter);
-    emitU32(emitter, 0); // placeholder
+    emitU32(emitter, 0);
 
-    // Emit consequent
     emit(emitter, node.consequent);
 
     if (node.alternate != null) {
-        // Jump over else
         emitU8(emitter, OP.JUMP);
         let endPatch = currentOffset(emitter);
-        emitU32(emitter, 0); // placeholder
+        emitU32(emitter, 0);
 
-        // Patch false jump to here
         patchU32(emitter, falsePatch, currentOffset(emitter));
 
-        // Emit alternate
         emit(emitter, node.alternate);
 
-        // Patch end jump
         patchU32(emitter, endPatch, currentOffset(emitter));
     } else {
-        // Patch false jump to here
         patchU32(emitter, falsePatch, currentOffset(emitter));
     }
 }
 
 function emitWhileStatement(emitter, node) {
-    // Push loop context
     pushLoop(emitter);
 
-    // Record loop start
     let loopStart = currentOffset(emitter);
+    let loop = currentLoop(emitter);
+    if (loop != null) {
+        loop.continueTarget = loopStart;
+    }
 
-    // Set continue target
-    currentLoop(emitter).continueTarget = loopStart;
-
-    // Emit test
     emit(emitter, node.test);
 
-    // Jump if false to end
     emitU8(emitter, OP.JUMP_IF_FALSE);
     let endPatch = currentOffset(emitter);
-    emitU32(emitter, 0); // placeholder
+    emitU32(emitter, 0);
 
-    // Emit body
     emit(emitter, node.body);
 
-    // Jump back to start
     emitU8(emitter, OP.JUMP);
     emitU32(emitter, loopStart);
 
-    // Patch end jump
     patchU32(emitter, endPatch, currentOffset(emitter));
 
-    // Patch all break statements
-    let loop = popLoop(emitter);
-    let i = 0;
-    while (i < loop.breakPatches.length) {
-        patchU32(emitter, loop.breakPatches[i], currentOffset(emitter));
-        i = i + 1;
+    let loopInfo = popLoop(emitter);
+    if (loopInfo != null) {
+        let j = 0;
+        while (j < loopInfo.breakPatches.length) {
+            patchU32(emitter, loopInfo.breakPatches[j], currentOffset(emitter));
+            j = j + 1;
+        }
+    }
+}
+
+function emitForStatement(emitter, node) {
+    let forNode = node;
+
+    if (forNode.init != null) {
+        emit(emitter, forNode.init);
+    }
+
+    let loopStart = currentOffset(emitter);
+
+    if (forNode.test != null) {
+        emit(emitter, forNode.test);
+        emitU8(emitter, OP.JUMP_IF_FALSE);
+        let endPatch = currentOffset(emitter);
+        emitU32(emitter, 0);
+
+        emit(emitter, forNode.body);
+
+        if (forNode.update != null) {
+            emit(emitter, forNode.update);
+            emitU8(emitter, OP.POP);
+        }
+
+        emitU8(emitter, OP.JUMP);
+        emitU32(emitter, loopStart);
+
+        patchU32(emitter, endPatch, currentOffset(emitter));
     }
 }
 
@@ -379,7 +412,7 @@ function emitBreakStatement(emitter, node) {
     }
     emitU8(emitter, OP.JUMP);
     loop.breakPatches.push(currentOffset(emitter));
-    emitU32(emitter, 0); // placeholder
+    emitU32(emitter, 0);
 }
 
 function emitContinueStatement(emitter, node) {
@@ -397,16 +430,13 @@ function emitContinueStatement(emitter, node) {
 // ============================================================================
 
 function emitBinaryExpression(emitter, node) {
-    // Save properties FIRST before any recursive calls
     let operator = node.operator;
     let left = node.left;
     let right = node.right;
 
-    // Emit left operand
     emit(emitter, left);
-    // Emit right operand
     emit(emitter, right);
-    // Emit operator
+
     let opcode = getOpCodeForBinaryOp(operator);
     if (opcode == -1) {
         console.log("Unknown binary operator:", operator);
@@ -416,11 +446,11 @@ function emitBinaryExpression(emitter, node) {
 }
 
 function emitUnaryExpression(emitter, node) {
-    // Save before recursive calls
     let operator = node.operator;
     let argument = node.argument;
 
     emit(emitter, argument);
+
     let opcode = getOpCodeForUnaryOp(operator);
     if (opcode == -1) {
         console.log("Unknown unary operator:", operator);
@@ -430,17 +460,17 @@ function emitUnaryExpression(emitter, node) {
 }
 
 function emitAssignmentExpression(emitter, node) {
-    // Handle different assignment targets
-    if (node.left.type == "Identifier") {
-        // Simple variable assignment: x = value
-        emit(emitter, node.right);        // Push value
-        emitU8(emitter, OP.DUP);          // DUP for expression result
+    let left = node.left;
+    let right = node.right;
 
-        // Check if variable is a local in current scope
+    if (left.type == "Identifier") {
+        emit(emitter, right);
+        emitU8(emitter, OP.DUP);
+
         let isLocal = false;
         let slot = -1;
         if (emitter.scope != null) {
-            slot = scopeResolve(emitter.scope, node.left.name);
+            slot = scopeResolve(emitter.scope, left.name);
             if (slot != -1) {
                 isLocal = true;
             }
@@ -450,85 +480,78 @@ function emitAssignmentExpression(emitter, node) {
             emitStoreLocal(emitter, slot);
         } else {
             emitU8(emitter, OP.STORE);
-            emitString(emitter, node.left.name);
+            emitString(emitter, left.name);
         }
-    } else if (node.left.type == "MemberExpression") {
-        // Property assignment: obj.prop = value or obj[key] = value
-        // SET_PROP(name) pops: value, obj; sets obj[name] = value
-        // Stack should end with: value (the expression result)
+    } else if (left.type == "MemberExpression") {
+        emit(emitter, left.object);
+        emit(emitter, right);
+        emitU8(emitter, OP.DUP);
 
-        emit(emitter, node.left.object);  // Push obj
-        emit(emitter, node.right);        // Push value
-        emitU8(emitter, OP.DUP);          // Stack: obj, value, value
-
-        if (node.left.computed) {
-            // obj[key] = value - STORE_ELEMENT pops: index, value, array
-            emit(emitter, node.left.property);  // Push key
+        if (left.computed) {
+            emit(emitter, left.property);
             emitU8(emitter, OP.STORE_ELEMENT);
         } else {
-            // obj.prop = value - SET_PROP pops: value, obj
             emitU8(emitter, OP.SET_PROP);
-            emitString(emitter, node.left.property.name);
+            let propName = "";
+            if (left.property.type == "Identifier") {
+                propName = left.property.name;
+            }
+            emitString(emitter, propName);
         }
-        // Stack now: value (the expression result)
     } else {
-        console.log("Invalid assignment target:", node.left.type);
+        console.log("Invalid assignment target:", left.type);
     }
 }
 
 function emitCallExpression(emitter, node) {
-    if (node.callee.type == "MemberExpression") {
-        // Method call: obj.method(args)
-        // Emit arguments FIRST (they go on stack before receiver)
+    let callee = node.callee;
+    let arguments = node.arguments;
+
+    if (callee.type == "MemberExpression") {
         let i = 0;
-        while (i < node.arguments.length) {
-            emit(emitter, node.arguments[i]);
+        while (i < arguments.length) {
+            emit(emitter, arguments[i]);
             i = i + 1;
         }
-        // Emit object/receiver LAST (CallMethod pops receiver first)
-        emit(emitter, node.callee.object);
-        // Call method
+        emit(emitter, callee.object);
         emitU8(emitter, OP.CALL_METHOD);
-        if (node.callee.computed) {
-            // Dynamic method name - need different handling
-            console.log("TODO: computed method calls");
-        } else {
-            emitString(emitter, node.callee.property.name);
+        if (!callee.computed) {
+            let methodName = "";
+            if (callee.property.type == "Identifier") {
+                methodName = callee.property.name;
+            }
+            emitString(emitter, methodName);
         }
-        emitU8(emitter, node.arguments.length);
+        emitU8(emitter, arguments.length);
     } else {
-        // Regular function call
-        // Emit arguments first
         let i = 0;
-        while (i < node.arguments.length) {
-            emit(emitter, node.arguments[i]);
+        while (i < arguments.length) {
+            emit(emitter, arguments[i]);
             i = i + 1;
         }
-        // Emit callee
-        emit(emitter, node.callee);
-        // Call
+        emit(emitter, callee);
         emitU8(emitter, OP.CALL);
-        emitU8(emitter, node.arguments.length);
+        emitU8(emitter, arguments.length);
     }
 }
 
 function emitMemberExpression(emitter, node) {
-    // Emit object
     emit(emitter, node.object);
 
     if (node.computed) {
-        // Computed: obj[expr]
         emit(emitter, node.property);
         emitU8(emitter, OP.LOAD_ELEMENT);
     } else {
-        // Non-computed: obj.prop
         emitU8(emitter, OP.GET_PROP);
-        emitString(emitter, node.property.name);
+        let propName = "";
+        if (node.property.type == "Identifier") {
+            propName = node.property.name;
+        }
+        emitString(emitter, propName);
     }
 }
 
 function emitIdentifier(emitter, node) {
-    // Check if variable is a local in current scope
     let isLocal = false;
     let slot = -1;
 
@@ -540,17 +563,14 @@ function emitIdentifier(emitter, node) {
     }
 
     if (isLocal) {
-        // Local variable - use indexed access
         emitLoadLocal(emitter, slot);
     } else {
-        // Global or not found locally - use string-based load
         emitU8(emitter, OP.LOAD);
         emitString(emitter, node.name);
     }
 }
 
 function emitLiteral(emitter, node) {
-    // Save node properties before any operations
     let literalType = node.literalType;
     let value = node.value;
 
@@ -571,7 +591,6 @@ function emitLiteral(emitter, node) {
         emitU8(emitter, TYPE.STRING);
         emitString(emitter, value);
     } else {
-        // Fallback: treat as string
         console.log("Warning: unknown literal type:", literalType);
         emitU8(emitter, TYPE.STRING);
         emitString(emitter, value);
@@ -579,57 +598,50 @@ function emitLiteral(emitter, node) {
 }
 
 function emitArrayExpression(emitter, node) {
-    // Create new array
     emitU8(emitter, OP.NEW_ARRAY);
 
-    // Add elements
     let i = 0;
     while (i < node.elements.length) {
-        emitU8(emitter, OP.DUP); // Keep array on stack
+        emitU8(emitter, OP.DUP);
         emitU8(emitter, OP.PUSH);
         emitU8(emitter, TYPE.NUMBER);
-        emitF64(emitter, i); // Index
-        emit(emitter, node.elements[i]); // Value
+        emitF64(emitter, i);
+        let element = node.elements[i];
+        if (element != null) {
+            emit(emitter, element);
+        }
         emitU8(emitter, OP.STORE_ELEMENT);
         i = i + 1;
     }
 }
 
 function emitObjectExpression(emitter, node) {
-    // Create new object
     emitU8(emitter, OP.NEW_OBJECT);
 
-    // Add properties
     let i = 0;
     while (i < node.properties.length) {
         let prop = node.properties[i];
-        emitU8(emitter, OP.DUP); // Keep object on stack
-
-        // Property value (emit first, will be popped by SET_PROP)
+        emitU8(emitter, OP.DUP);
         emit(emitter, prop.value);
-
-        // SET_PROP expects property name in bytecode, not on stack
         emitU8(emitter, OP.SET_PROP);
+        let keyName = "";
         if (prop.key.type == "Identifier") {
-            emitString(emitter, prop.key.name);
+            keyName = prop.key.name;
         } else if (prop.key.type == "Literal") {
-            emitString(emitter, prop.key.value);
+            keyName = prop.key.value;
         }
-
+        emitString(emitter, keyName);
         i = i + 1;
     }
 }
 
 function emitNewExpression(emitter, node) {
-    // Emit arguments
     let i = 0;
     while (i < node.arguments.length) {
         emit(emitter, node.arguments[i]);
         i = i + 1;
     }
-    // Emit constructor
     emit(emitter, node.callee);
-    // Construct
     emitU8(emitter, OP.CONSTRUCT);
     emitU8(emitter, node.arguments.length);
 }
@@ -639,63 +651,53 @@ function emitThisExpression(emitter, node) {
 }
 
 function emitFunctionExpression(emitter, node) {
-    // Jump over the function body
+    let funcNode = node;
+
     emitU8(emitter, OP.JUMP);
     let jumpPatch = currentOffset(emitter);
-    emitU32(emitter, 0); // placeholder
+    emitU32(emitter, 0);
 
-    // Record function start address
     let funcAddr = currentOffset(emitter);
 
-    // Create new scope for function
     let outerScope = emitter.scope;
     emitter.scope = createScope(null);
 
-    // Register parameters as locals 0, 1, 2, ...
     let i = 0;
-    while (i < node.params.length) {
-        scopeDefine(emitter.scope, node.params[i]);
+    while (i < funcNode.params.length) {
+        scopeDefine(emitter.scope, funcNode.params[i]);
         i = i + 1;
     }
 
-    // Emit prologue: pop args into local slots (reverse order)
-    i = node.params.length - 1;
+    i = funcNode.params.length - 1;
     while (i >= 0) {
         emitStoreLocal(emitter, i);
         i = i - 1;
     }
 
-    // Emit function body (with scope active)
-    if (node.body.type == "BlockStatement") {
-        emit(emitter, node.body);
+    if (funcNode.body.type == "BlockStatement") {
+        emit(emitter, funcNode.body);
     } else {
-        // Arrow function with expression body
-        emit(emitter, node.body);
+        emit(emitter, funcNode.body);
         emitU8(emitter, OP.RETURN);
     }
 
-    // Restore outer scope
     emitter.scope = outerScope;
 
-    // Ensure function returns (implicit return undefined)
     emitU8(emitter, OP.PUSH);
     emitU8(emitter, TYPE.UNDEFINED);
     emitU8(emitter, OP.RETURN);
 
-    // Patch the jump
     patchU32(emitter, jumpPatch, currentOffset(emitter));
 
-    // Push empty environment object for closure (required by VM)
     emitU8(emitter, OP.NEW_OBJECT);
 
-    // Create closure
     emitU8(emitter, OP.MAKE_CLOSURE);
     emitU32(emitter, funcAddr);
-    emitU8(emitter, node.params.length);
-    // Emit parameter names
+    emitU8(emitter, funcNode.params.length);
+
     i = 0;
-    while (i < node.params.length) {
-        emitString(emitter, node.params[i]);
+    while (i < funcNode.params.length) {
+        emitString(emitter, funcNode.params[i]);
         i = i + 1;
     }
 }
@@ -705,27 +707,23 @@ function emitFunctionExpression(emitter, node) {
 // ============================================================================
 
 function compile(source) {
-    // Parse source to AST
     let ast = parseSource(source);
     if (ast == null) {
         console.log("Parse error");
         return null;
     }
 
-    // Create emitter
     let emitter = createEmitter();
 
-    // Emit header: "TSCL" (4 bytes) + version (1 byte) + reserved (3 bytes)
-    emitU8(emitter, 0x54); // 'T'
-    emitU8(emitter, 0x53); // 'S'
-    emitU8(emitter, 0x43); // 'C'
-    emitU8(emitter, 0x4C); // 'L'
-    emitU8(emitter, 0x01); // Version 1
-    emitU8(emitter, 0x00); // Reserved
-    emitU8(emitter, 0x00); // Reserved
-    emitU8(emitter, 0x00); // Reserved
+    emitU8(emitter, 84);
+    emitU8(emitter, 83);
+    emitU8(emitter, 67);
+    emitU8(emitter, 76);
+    emitU8(emitter, 1);
+    emitU8(emitter, 0);
+    emitU8(emitter, 0);
+    emitU8(emitter, 0);
 
-    // Emit bytecode
     emit(emitter, ast);
 
     return emitter.stream;

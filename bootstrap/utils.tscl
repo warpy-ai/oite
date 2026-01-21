@@ -1,5 +1,22 @@
-function debugAST(node) {
-    constole.log("Node Type::", node.type);
-    if(node.left) debugAST(node.left);
-    if(node.right) debugAST(node.right);
+// debugAST.tscl - Debug utility for printing AST structure
+function debugAST(node: Node): void {
+    console.log("Node Type:", node.type);
+    if (node.type == "BinaryExpression") {
+        let binNode: BinaryExpression = node;
+        if (binNode.left) debugAST(binNode.left);
+        if (binNode.right) debugAST(binNode.right);
+    } else if (node.type == "UnaryExpression") {
+        let unNode: UnaryExpression = node;
+        if (unNode.argument) debugAST(unNode.argument);
+    } else if (node.type == "CallExpression") {
+        let callNode: CallExpression = node;
+        if (callNode.callee) debugAST(callNode.callee);
+    } else if (node.type == "MemberExpression") {
+        let memNode: MemberExpression = node;
+        if (memNode.object) debugAST(memNode.object);
+    } else if (node.type == "Identifier") {
+        // Leaf node - do nothing extra
+    } else if (node.type == "Literal") {
+        // Leaf node - do nothing extra
+    }
 }

@@ -1,7 +1,4 @@
 <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-  <!-- Background -->
-  <rect width="512" height="512" rx="96" fill="#F5F5F5"/>
-
   <!-- Owl Body -->
   <circle cx="256" cy="270" r="150" fill="#0A0A0A"/>
 
@@ -20,8 +17,8 @@
   <path d="M256 210 L240 240 L272 240 Z" fill="#FFFFFF"/>
 
   <!-- Wings -->
-  <ellipse cx="160" cy="300" rx="45" ry="70" fill="#151515"/>
-  <ellipse cx="352" cy="300" rx="45" ry="70" fill="#151515"/>
+  <ellipse cx="160" cy="300" rx="45" ry="70" fill="#F5F5F5"/>
+  <ellipse cx="352" cy="300" rx="45" ry="70" fill="#F5F5F5"/>
 
   <!-- Feet -->
   <ellipse cx="220" cy="410" rx="22" ry="10" fill="#0A0A0A"/>

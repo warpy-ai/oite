@@ -97,14 +97,7 @@ function scanIdentifier(lexer) {
     }
 
     let value = lexer.source.slice(start, lexer.pos);
-
-    // Check if it's a keyword
-    let type = TOKEN.IDENTIFIER;
-    if (arrayIncludes(KEYWORDS, value)) {
-        type = TOKEN.KEYWORD;
-    }
-
-    return makeToken(type, value, startLine, startCol);
+    return makeToken(TOKEN.IDENTIFIER, value, startLine, startCol);
 }
 
 function scanNumber(lexer) {
@@ -112,32 +105,12 @@ function scanNumber(lexer) {
     let startCol = lexer.col;
     let start = lexer.pos;
 
-    // Check for hex literal: 0x or 0X
-    if (lexerPeek(lexer) == 48) { // '0'
-        let next = lexerPeekNext(lexer);
-        if (next == 120 || next == 88) { // 'x' or 'X'
-            lexerAdvance(lexer); // consume '0'
-            lexerAdvance(lexer); // consume 'x'
-
-            // Parse hex digits and compute value
-            let hexValue = 0;
-            while (lexer.pos < lexer.source.length && isHexDigit(lexerPeek(lexer))) {
-                hexValue = hexValue * 16 + hexCharToValue(lexerPeek(lexer));
-                lexerAdvance(lexer);
-            }
-
-            // Return the decimal string representation
-            return makeToken(TOKEN.NUMBER, "" + hexValue, startLine, startCol);
-        }
-    }
-
-    // Regular decimal number
     while (lexer.pos < lexer.source.length && isDigit(lexerPeek(lexer))) {
         lexerAdvance(lexer);
     }
 
-    // Check for decimal point (46 = '.')
-    if (lexerPeek(lexer) == 46 && isDigit(lexerPeekNext(lexer))) {
+    // Check for decimal point
+    if (lexerPeek(lexer) == 46) { // '.'
         lexerAdvance(lexer);
         while (lexer.pos < lexer.source.length && isDigit(lexerPeek(lexer))) {
             lexerAdvance(lexer);
@@ -151,83 +124,189 @@ function scanNumber(lexer) {
 function scanString(lexer) {
     let startLine = lexer.line;
     let startCol = lexer.col;
-    let quote = lexerPeek(lexer); // 34 = " or 39 = '
-    lexerAdvance(lexer);
+    let quote = lexerPeek(lexer);
+    lexerAdvance(lexer); // Skip opening quote
 
     let value = "";
-
     while (lexer.pos < lexer.source.length) {
         let code = lexerPeek(lexer);
-
         if (code == quote) {
             lexerAdvance(lexer);
-            return makeToken(TOKEN.STRING, value, startLine, startCol);
+            break;
         }
-
-        if (code == 92) {
-            // backslash - escape sequence
+        if (code == 92) { // Backslash escape
             lexerAdvance(lexer);
             let nextCode = lexerPeek(lexer);
-            if (nextCode == 110) { value = value + "\n"; }
-            else if (nextCode == 116) { value = value + "\t"; }
-            else if (nextCode == 34) { value = value + "\""; }
-            else if (nextCode == 39) { value = value + "'"; }
-            else if (nextCode == 92) { value = value + "\\"; }
-            else if (nextCode != -1) {
+            if (nextCode == 110) { // 'n'
+                value = value + "\n";
+            } else if (nextCode == 116) { // 't'
+                value = value + "\t";
+            } else if (nextCode == 114) { // 'r'
+                value = value + "\r";
+            } else if (nextCode == 92) { // Backslash
+                value = value + "\\";
+            } else if (nextCode == 39) { // Single quote
+                value = value + "'";
+            } else if (nextCode == 34) { // Double quote
+                value = value + "\"";
+            } else {
                 value = value + String.fromCharCode(nextCode);
             }
             lexerAdvance(lexer);
-        } else if (code == 10) {
-            return makeToken(TOKEN.ERROR, "Unterminated string", startLine, startCol);
         } else {
-            value = value + lexer.source.slice(lexer.pos, lexer.pos + 1);
+            value = value + String.fromCharCode(code);
             lexerAdvance(lexer);
         }
     }
 
-    return makeToken(TOKEN.ERROR, "Unterminated string", startLine, startCol);
+    return makeToken(TOKEN.STRING, value, startLine, startCol);
 }
 
 function scanOperatorOrDelimiter(lexer) {
     let startLine = lexer.line;
     let startCol = lexer.col;
+    let start = lexer.pos;
+    let code = lexerAdvance(lexer);
 
-    if (lexer.pos >= lexer.source.length) {
-        return makeToken(TOKEN.ERROR, "Unexpected end of file", startLine, startCol);
-    }
-
-    let code = lexerPeek(lexer);
-    let char = String.fromCharCode(code);
-
-    // Check for two-character operators first
-    if (lexer.pos + 1 < lexer.source.length) {
-        let twoChar = lexer.source.slice(lexer.pos, lexer.pos + 2);
-        if (arrayIncludes(TWO_CHAR_OPS, twoChar)) {
+    // Multi-character operators
+    if (code == 61) { // '='
+        if (lexerPeek(lexer) == 61) { // '='
             lexerAdvance(lexer);
-            lexerAdvance(lexer);
-            return makeToken(TOKEN.OPERATOR, twoChar, startLine, startCol);
+            if (lexerPeek(lexer) == 61) { // '='
+                lexerAdvance(lexer);
+                return makeToken(TOKEN.OPERATOR, "===", startLine, startCol);
+            }
+            return makeToken(TOKEN.OPERATOR, "==", startLine, startCol);
         }
+        return makeToken(TOKEN.OPERATOR, "=", startLine, startCol);
     }
 
-    // Check single-character operators
-    if (arrayIncludes(SINGLE_CHAR_OPS, char)) {
-        lexerAdvance(lexer);
-        return makeToken(TOKEN.OPERATOR, char, startLine, startCol);
+    if (code == 38) { // '&'
+        if (lexerPeek(lexer) == 38) { // '&'
+            lexerAdvance(lexer);
+            return makeToken(TOKEN.OPERATOR, "&&", startLine, startCol);
+        }
+        return makeToken(TOKEN.OPERATOR, "&", startLine, startCol);
     }
 
-    // Check delimiters
-    if (arrayIncludes(DELIMITERS, char)) {
-        lexerAdvance(lexer);
-        return makeToken(TOKEN.DELIMITER, char, startLine, startCol);
+    if (code == 124) { // '|'
+        if (lexerPeek(lexer) == 124) { // '|'
+            lexerAdvance(lexer);
+            return makeToken(TOKEN.OPERATOR, "||", startLine, startCol);
+        }
+        return makeToken(TOKEN.OPERATOR, "|", startLine, startCol);
     }
+
+    if (code == 33) { // '!'
+        if (lexerPeek(lexer) == 61) { // '='
+            lexerAdvance(lexer);
+            if (lexerPeek(lexer) == 61) { // '='
+                lexerAdvance(lexer);
+                return makeToken(TOKEN.OPERATOR, "!==", startLine, startCol);
+            }
+            return makeToken(TOKEN.OPERATOR, "!=", startLine, startCol);
+        }
+        return makeToken(TOKEN.OPERATOR, "!", startLine, startCol);
+    }
+
+    if (code == 60) { // '<'
+        if (lexerPeek(lexer) == 61) { // '='
+            lexerAdvance(lexer);
+            return makeToken(TOKEN.OPERATOR, "<=", startLine, startCol);
+        }
+        return makeToken(TOKEN.OPERATOR, "<", startLine, startCol);
+    }
+
+    if (code == 62) { // '>'
+        if (lexerPeek(lexer) == 61) { // '='
+            lexerAdvance(lexer);
+            return makeToken(TOKEN.OPERATOR, ">=", startLine, startCol);
+        }
+        return makeToken(TOKEN.OPERATOR, ">", startLine, startCol);
+    }
+
+    if (code == 43) { // '+'
+        if (lexerPeek(lexer) == 43) { // '+'
+            lexerAdvance(lexer);
+            return makeToken(TOKEN.OPERATOR, "++", startLine, startCol);
+        }
+        if (lexerPeek(lexer) == 61) { // '='
+            lexerAdvance(lexer);
+            return makeToken(TOKEN.OPERATOR, "+=", startLine, startCol);
+        }
+        return makeToken(TOKEN.OPERATOR, "+", startLine, startCol);
+    }
+
+    if (code == 45) { // '-'
+        if (lexerPeek(lexer) == 45) { // '-'
+            lexerAdvance(lexer);
+            return makeToken(TOKEN.OPERATOR, "--", startLine, startCol);
+        }
+        if (lexerPeek(lexer) == 61) { // '='
+            lexerAdvance(lexer);
+            return makeToken(TOKEN.OPERATOR, "-=", startLine, startCol);
+        }
+        return makeToken(TOKEN.OPERATOR, "-", startLine, startCol);
+    }
+
+    if (code == 42) { // '*'
+        if (lexerPeek(lexer) == 42) { // '*'
+            lexerAdvance(lexer);
+            if (lexerPeek(lexer) == 61) { // '='
+                lexerAdvance(lexer);
+                return makeToken(TOKEN.OPERATOR, "**=", startLine, startCol);
+            }
+            return makeToken(TOKEN.OPERATOR, "**", startLine, startCol);
+        }
+        if (lexerPeek(lexer) == 61) { // '='
+            lexerAdvance(lexer);
+            return makeToken(TOKEN.OPERATOR, "*=", startLine, startCol);
+        }
+        return makeToken(TOKEN.OPERATOR, "*", startLine, startCol);
+    }
+
+    if (code == 47) { // '/'
+        if (lexerPeek(lexer) == 61) { // '='
+            lexerAdvance(lexer);
+            return makeToken(TOKEN.OPERATOR, "/=", startLine, startCol);
+        }
+        return makeToken(TOKEN.OPERATOR, "/", startLine, startCol);
+    }
+
+    // Single character operators and delimiters
+    if (code == 37) { return makeToken(TOKEN.OPERATOR, "%", startLine, startCol); } // %
+    if (code == 94) { return makeToken(TOKEN.OPERATOR, "^", startLine, startCol); } // ^
+
+    if (code == 123) { return makeToken(TOKEN.DELIMITER, "{", startLine, startCol); } // {
+    if (code == 125) { return makeToken(TOKEN.DELIMITER, "}", startLine, startCol); } // }
+    if (code == 40) { return makeToken(TOKEN.DELIMITER, "(", startLine, startCol); } // (
+    if (code == 41) { return makeToken(TOKEN.DELIMITER, ")", startLine, startCol); } // )
+    if (code == 91) { return makeToken(TOKEN.DELIMITER, "[", startLine, startCol); } // [
+    if (code == 93) { return makeToken(TOKEN.DELIMITER, "]", startLine, startCol); } // ]
+    if (code == 46) { return makeToken(TOKEN.DELIMITER, ".", startLine, startCol); } // .
+    if (code == 59) { return makeToken(TOKEN.DELIMITER, ";", startLine, startCol); } // ;
+    if (code == 58) { return makeToken(TOKEN.DELIMITER, ":", startLine, startCol); } // :
+    if (code == 44) { return makeToken(TOKEN.DELIMITER, ",", startLine, startCol); } // ,
 
     // Unknown character
-    lexerAdvance(lexer);
-    return makeToken(TOKEN.ERROR, "Unknown character: " + char, startLine, startCol);
+    return makeToken(TOKEN.OPERATOR, String.fromCharCode(code), startLine, startCol);
 }
 
 // ============================================================================
-// Main Tokenize Function
+// Token Factory
+// ============================================================================
+
+function makeToken(type, value, line, col) {
+    return {
+        type: type,
+        value: value,
+        line: line,
+        col: col
+    };
+}
+
+// ============================================================================
+// Main Tokenization Function
 // ============================================================================
 
 function tokenize(source) {
@@ -245,7 +324,7 @@ function tokenize(source) {
             break;
         }
 
-        let token = null;
+        let token;
 
         if (isAlpha(code)) {
             token = scanIdentifier(lexer);
@@ -265,17 +344,3 @@ function tokenize(source) {
 
     return lexer.tokens;
 }
-
-// ============================================================================
-// Debug Helper
-// ============================================================================
-
-function printTokens(tokens) {
-    let i = 0;
-    while (i < tokens.length) {
-        let tok = tokens[i];
-        console.log(tok.type, tok.value, "at line", tok.line, "col", tok.col);
-        i = i + 1;
-    }
-}
-

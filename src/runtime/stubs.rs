@@ -14,7 +14,7 @@
 
 use super::abi::TsclValue;
 use super::heap::{
-    NativeArray, NativeObject, NativeString, ObjectHeader, ObjectKind, PropertyMap, heap,
+    heap, NativeArray, NativeObject, NativeString, ObjectHeader, ObjectKind, PropertyMap,
 };
 
 // =========================================================================

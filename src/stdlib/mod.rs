@@ -182,6 +182,19 @@ pub fn native_byte_stream_write_f64(vm: &mut VM, args: Vec<JsValue>) -> JsValue 
     JsValue::Undefined
 }
 
+pub fn native_byte_stream_write_string(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (Some(JsValue::Object(ptr)), Some(JsValue::String(s))) = (args.first(), args.get(1)) {
+        if let Some(HeapObject {
+            data: HeapData::ByteStream(bytes),
+        }) = vm.heap.get_mut(*ptr)
+        {
+            bytes.extend_from_slice(s.as_bytes());
+            return JsValue::Undefined;
+        }
+    }
+    JsValue::Undefined
+}
+
 pub fn native_byte_stream_length(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     if let Some(JsValue::Object(ptr)) = args.first() {
         if let Some(HeapObject {

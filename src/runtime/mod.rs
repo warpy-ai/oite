@@ -10,10 +10,13 @@
 //! Native code uses TsclValue (NaN-boxed) for efficient representation.
 
 pub mod abi;
+pub mod abi_tests;
+pub mod abi_version;
 pub mod heap;
 pub mod stubs;
 
 pub use abi::TsclValue;
+pub use abi_version::ABI_VERSION;
 pub use heap::{HeapPtr, NativeHeap};
 
 // Provide rust_eh_personality for panic handling when linking standalone

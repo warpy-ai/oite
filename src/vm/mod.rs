@@ -261,7 +261,7 @@ impl VM {
         Self {
             stack: Vec::new(),
             call_stack: vec![Frame {
-                return_address: 0,
+                return_address: usize::MAX,  // Set to MAX so global return stops execution
                 locals: HashMap::new(),
                 indexed_locals: Vec::new(),
                 this_context: JsValue::Undefined,
@@ -796,7 +796,8 @@ impl VM {
 
             OpCode::SetProp(name) => {
                 let value = self.stack.pop().unwrap();
-                if let Some(JsValue::Object(ptr)) = self.stack.pop() {
+                let target = self.stack.pop().unwrap();
+                if let JsValue::Object(ptr) = target {
                     // Check for setter in prototype chain
                     let setter_addr_and_env = self.find_setter_with_proto_chain(ptr, &name);
 
@@ -924,6 +925,11 @@ impl VM {
                 // Create a new binding in the CURRENT frame only (let declaration)
                 // This shadows any outer variable with the same name
                 let val = self.stack.pop().unwrap_or(JsValue::Undefined);
+                if self.call_stack.is_empty() {
+                    eprintln!("ERROR: Let opcode with empty call_stack at ip={}", self.ip);
+                    eprintln!("Stack depth: {}", self.stack.len());
+                    return ExecResult::Stop;
+                }
                 self.call_stack.last_mut().unwrap().locals.insert(name, val);
             }
 
@@ -986,7 +992,6 @@ impl VM {
                         // Record function call for tiered compilation
                         self.record_function_call(address);
 
-                        args.reverse();
                         for arg in &args {
                             self.stack.push(arg.clone());
                         }
@@ -1030,8 +1035,14 @@ impl VM {
             }
 
             OpCode::Return => {
+                eprintln!("DEBUG: Return at ip={}, call_stack.len={}", self.ip, self.call_stack.len());
+                if self.call_stack.is_empty() {
+                    eprintln!("ERROR: Return opcode with empty call_stack at ip={}", self.ip);
+                    return ExecResult::Stop;
+                }
                 let frame = self.call_stack.pop().expect("Missing frame");
                 self.ip = frame.return_address;
+                eprintln!("DEBUG: Return, frame.return_address={}, new ip={}", frame.return_address, self.ip);
                 if self.ip == usize::MAX {
                     return ExecResult::Stop;
                 }
@@ -1699,8 +1710,7 @@ impl VM {
                         self.stack.push(native_result);
                     }
                 } else {
-                    // Regular function - push this and call
-                    self.stack.push(this_obj);
+                    // Regular function - just call, this is set in frame
                     self.call_stack.push(frame);
                     self.ip = address;
                     return ExecResult::ContinueNoIpInc;

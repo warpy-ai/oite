@@ -415,8 +415,9 @@ fn setup_date(vm: &mut VM) {
 fn setup_bytestream(vm: &mut VM) {
     use crate::stdlib::{
         native_byte_stream_length, native_byte_stream_patch_u32, native_byte_stream_to_array,
-        native_byte_stream_write_f64, native_byte_stream_write_u32, native_byte_stream_write_u8,
-        native_byte_stream_write_varint, native_create_byte_stream,
+        native_byte_stream_write_f64, native_byte_stream_write_string,
+        native_byte_stream_write_u32, native_byte_stream_write_u8, native_byte_stream_write_varint,
+        native_create_byte_stream,
     };
 
     let create_byte_stream_idx = vm.register_native(native_create_byte_stream);
@@ -424,6 +425,7 @@ fn setup_bytestream(vm: &mut VM) {
     let write_varint_idx = vm.register_native(native_byte_stream_write_varint);
     let write_u32_idx = vm.register_native(native_byte_stream_write_u32);
     let write_f64_idx = vm.register_native(native_byte_stream_write_f64);
+    let write_string_idx = vm.register_native(native_byte_stream_write_string);
     let patch_u32_idx = vm.register_native(native_byte_stream_patch_u32);
     let stream_length_idx = vm.register_native(native_byte_stream_length);
     let to_array_idx = vm.register_native(native_byte_stream_to_array);
@@ -446,6 +448,10 @@ fn setup_bytestream(vm: &mut VM) {
     byte_stream_props.insert(
         "writeF64".to_string(),
         JsValue::NativeFunction(write_f64_idx),
+    );
+    byte_stream_props.insert(
+        "writeString".to_string(),
+        JsValue::NativeFunction(write_string_idx),
     );
     byte_stream_props.insert(
         "patchU32".to_string(),

@@ -177,14 +177,8 @@ pub fn native_fs_rename(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
 
 pub fn native_fs_read_file_sync(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     if let Some(JsValue::String(filename)) = args.first() {
-        match std::fs::read(filename) {
-            Ok(bytes) => {
-                let ptr = vm.heap.len();
-                vm.heap.push(HeapObject {
-                    data: HeapData::ByteStream(bytes),
-                });
-                JsValue::Object(ptr)
-            }
+        match std::fs::read_to_string(filename) {
+            Ok(contents) => JsValue::String(contents),
             Err(e) => {
                 eprintln!("Error reading file '{}': {}", filename, e);
                 JsValue::Undefined

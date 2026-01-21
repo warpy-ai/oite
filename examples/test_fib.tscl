@@ -1,10 +1,20 @@
-function fib(n: i32): i32 {
+// Test fibonacci implementation
+function fib(n: number): number {
     if (n <= 1) {
         return n;
     }
     return fib(n - 1) + fib(n - 2);
 }
+
 function main(): void {
-    const result: i32 = fib(40);
-    console.log(result);
+    let result: number = fib(10);
+    console.log("fib(10) =", result);
+
+    let i: number = 0;
+    while (i <= 10) {
+        console.log("fib(" + i + ") =", fib(i));
+        i = i + 1;
+    }
 }
+
+main();

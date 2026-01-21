@@ -17,6 +17,7 @@ pub mod opt;
 pub mod stubs;
 pub mod typecheck;
 pub mod verify;
+pub mod format;
 
 use std::collections::HashMap;
 use std::fmt;

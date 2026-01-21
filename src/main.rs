@@ -121,6 +121,18 @@ fn main() {
         eprintln!("  build [options] <filename>  Build a .tscl file to native binary");
         eprintln!("  <filename>           Run a .tscl file (VM interpreter)");
         eprintln!("  --run-binary <file>  Run a bytecode file (.bc)");
+        eprintln!("");
+        eprintln!("Build options:");
+        eprintln!("  --backend <llvm|cranelift>  Choose code generator (default: llvm)");
+        eprintln!("  --output <file>, -o <file>  Output file name");
+        eprintln!("  --release                      Optimize with ThinLTO");
+        eprintln!("  --dist                         Full LTO for maximum performance");
+        eprintln!("  --debug                        No optimization, debug info");
+        eprintln!("  --format <exe|lib|dylib|obj>   Output format");
+        eprintln!("  --emit-ir                      Emit SSA IR to .ir file");
+        eprintln!("  --emit-llvm                    Emit LLVM IR to .ll file");
+        eprintln!("  --emit-obj                     Emit object file to .o file");
+        eprintln!("  --verify-ir                    Validate IR and exit");
         return;
     }
 
@@ -686,6 +698,10 @@ fn build_file(args: &[String]) {
     let mut opt_level = OptLevel::None; // Default to dev mode
     let mut format = OutputFormat::Executable;
     let mut lto_mode = LtoMode::None;
+    let mut emit_ir = false;
+    let mut emit_llvm = false;
+    let mut emit_obj = false;
+    let mut verify_ir = false;
 
     // Parse arguments
     let mut i = 0;
@@ -743,6 +759,18 @@ fn build_file(args: &[String]) {
                     }
                 };
             }
+            "--emit-ir" => {
+                emit_ir = true;
+            }
+            "--emit-llvm" => {
+                emit_llvm = true;
+            }
+            "--emit-obj" => {
+                emit_obj = true;
+            }
+            "--verify-ir" => {
+                verify_ir = true;
+            }
             _ => {
                 if !args[i].starts_with('-') {
                     filenames.push(args[i].clone());
@@ -758,20 +786,16 @@ fn build_file(args: &[String]) {
     if filenames.is_empty() {
         eprintln!("Error: No input file specified");
         eprintln!(
-            "Usage: {} build [--backend llvm] [--output <file>] [--release|--dist] <filename>...",
+            "Usage: {} build [--backend llvm] [--output <file>] [--release|--dist] [--emit-ir|--emit-llvm|--emit-obj] [--verify-ir] <filename>...",
             env::args().next().unwrap()
         );
+        eprintln!("Emission flags:");
+        eprintln!("  --emit-ir       Output SSA IR to file.ir");
+        eprintln!("  --emit-llvm     Output LLVM IR to file.ll");
+        eprintln!("  --emit-obj      Output object file to file.o");
+        eprintln!("  --verify-ir     Validate SSA IR and exit");
         std::process::exit(1);
     }
-
-    let output_path = output.unwrap_or_else(|| {
-        // Use first filename as default output name
-        Path::new(&filenames[0])
-            .file_stem()
-            .unwrap()
-            .to_string_lossy()
-            .to_string()
-    });
 
     // Compile all source files to IR modules
     let mut modules = Vec::new();
@@ -828,7 +852,53 @@ fn build_file(args: &[String]) {
         ir::typecheck::typecheck_module(&mut module);
         ir::opt::optimize_module(&mut module);
 
+        // Verify IR if requested
+        if verify_ir {
+            match ir::verify::verify_module(&module) {
+                Ok(()) => {
+                    println!("IR verification passed for {}", filename);
+                }
+                Err(errors) => {
+                    eprintln!("IR verification failed for {}:", filename);
+                    for error in &errors {
+                        eprintln!("  - {}", error);
+                    }
+                    std::process::exit(1);
+                }
+            }
+            continue; // Skip to next file
+        }
+
+        // Emit IR if requested
+        if emit_ir {
+            let ir_output = Path::new(filename)
+                .file_stem()
+                .map(|s| Path::new(filename).with_extension("ir").to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("output.ir"));
+
+            match ir::format::write_ir_to_file(&module, &ir_output) {
+                Ok(()) => {
+                    println!("IR written to: {}", ir_output.display());
+                }
+                Err(e) => {
+                    eprintln!("Failed to write IR: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+
         modules.push(module);
+    }
+
+    // If only verification was requested, we're done
+    if verify_ir {
+        println!("All files verified successfully.");
+        return;
+    }
+
+    // If only IR emission was requested, we're done
+    if emit_ir && !emit_llvm && !emit_obj {
+        return;
     }
 
     // AOT compile
@@ -854,6 +924,46 @@ fn build_file(args: &[String]) {
 
     // Compile all modules (with LTO support if enabled)
     let module_refs: Vec<&IrModule> = modules.iter().collect();
+
+    // Determine output path
+    let output_path = output.unwrap_or_else(|| {
+        // Use first filename as default output name
+        Path::new(&filenames[0])
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_string()
+    });
+
+    // Emit object file if requested
+    if emit_obj {
+        let obj_output = Path::new(&output_path).with_extension("o");
+        match aot.compile_modules_to_object(&module_refs, &obj_output) {
+            Ok(()) => {
+                println!("Object file written to: {}", obj_output.display());
+            }
+            Err(e) => {
+                eprintln!("Object file compilation failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Emit LLVM IR if requested
+    if emit_llvm {
+        let llvm_output = Path::new(&output_path).with_extension("ll");
+        match aot.compile_modules_to_llvm_ir(&module_refs, &llvm_output) {
+            Ok(()) => {
+                println!("LLVM IR written to: {}", llvm_output.display());
+            }
+            Err(e) => {
+                eprintln!("LLVM IR emission failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Full compilation to executable/library
     match aot.compile_modules_to_file(&module_refs, Path::new(&output_path)) {
         Ok(()) => {
             println!("Successfully compiled to: {}", output_path);

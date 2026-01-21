@@ -1,0 +1,289 @@
+// ============================================================================
+// Type Definitions for tscl Bootstrap Compiler
+// ============================================================================
+
+// ============================================================================
+// Token Types
+// ============================================================================
+
+enum TOKEN {
+    EOF = "EOF",
+    IDENTIFIER = "IDENTIFIER",
+    NUMBER = "NUMBER",
+    STRING = "STRING",
+    KEYWORD = "KEYWORD",
+    OPERATOR = "OPERATOR",
+    DELIMITER = "DELIMITER",
+    COMMENT = "COMMENT"
+}
+
+// ============================================================================
+// Token Interface
+// ============================================================================
+
+interface Token {
+    type: TOKEN | string;
+    value: string;
+    line: number;
+    col: number;
+}
+
+// ============================================================================
+// Lexer Interface
+// ============================================================================
+
+interface Lexer {
+    source: string;
+    pos: number;
+    line: number;
+    col: number;
+    tokens: Array<Token>;
+}
+
+// ============================================================================
+// Parser Interface
+// ============================================================================
+
+interface Parser {
+    tokens: Array<Token>;
+    pos: number;
+}
+
+// ============================================================================
+// AST Node Types
+// ============================================================================
+
+interface Node {
+    type: string;
+}
+
+interface Program extends Node {
+    type: "Program";
+    body: Array<Statement>;
+}
+
+// Statement Nodes
+interface Statement extends Node {}
+
+interface VariableDeclaration extends Statement {
+    type: "VariableDeclaration";
+    name: string;
+    init: Expression | null;
+    kind: "let" | "const" | "var";
+}
+
+interface FunctionDeclaration extends Statement {
+    type: "FunctionDeclaration";
+    name: string;
+    params: Array<string>;
+    body: BlockStatement;
+}
+
+interface ReturnStatement extends Statement {
+    type: "ReturnStatement";
+    argument: Expression | null;
+}
+
+interface IfStatement extends Statement {
+    type: "IfStatement";
+    test: Expression;
+    consequent: Statement;
+    alternate: Statement | null;
+}
+
+interface WhileStatement extends Statement {
+    type: "WhileStatement";
+    test: Expression;
+    body: Statement;
+}
+
+interface ForStatement extends Statement {
+    type: "ForStatement";
+    init: Statement | null;
+    test: Expression | null;
+    update: Expression | null;
+    body: Statement;
+}
+
+interface BlockStatement extends Statement {
+    type: "BlockStatement";
+    body: Array<Statement>;
+}
+
+interface ExpressionStatement extends Statement {
+    type: "ExpressionStatement";
+    expression: Expression;
+}
+
+interface BreakStatement extends Statement {
+    type: "BreakStatement";
+}
+
+interface ContinueStatement extends Statement {
+    type: "ContinueStatement";
+}
+
+// Expression Nodes
+interface Expression extends Node {}
+
+interface BinaryExpression extends Expression {
+    type: "BinaryExpression";
+    operator: string;
+    left: Expression;
+    right: Expression;
+}
+
+interface UnaryExpression extends Expression {
+    type: "UnaryExpression";
+    operator: string;
+    argument: Expression;
+}
+
+interface AssignmentExpression extends Expression {
+    type: "AssignmentExpression";
+    operator: string;
+    left: Identifier | MemberExpression;
+    right: Expression;
+}
+
+interface CallExpression extends Expression {
+    type: "CallExpression";
+    callee: Expression;
+    arguments: Array<Expression>;
+}
+
+interface MemberExpression extends Expression {
+    type: "MemberExpression";
+    object: Expression;
+    property: Expression;
+    computed: boolean;
+}
+
+interface Identifier extends Expression {
+    type: "Identifier";
+    name: string;
+}
+
+interface Literal extends Expression {
+    type: "Literal";
+    literalType: "null" | "boolean" | "number" | "string";
+    value: null | boolean | number | string;
+}
+
+interface ArrayExpression extends Expression {
+    type: "ArrayExpression";
+    elements: Array<Expression | null>;
+}
+
+interface ObjectExpression extends Expression {
+    type: "ObjectExpression";
+    properties: Array<ObjectProperty>;
+}
+
+interface ObjectProperty {
+    key: Identifier | Literal;
+    value: Expression;
+    kind: "init" | "get" | "set";
+}
+
+interface NewExpression extends Expression {
+    type: "NewExpression";
+    callee: Expression;
+    arguments: Array<Expression>;
+}
+
+interface ThisExpression extends Expression {
+    type: "ThisExpression";
+}
+
+interface FunctionExpression extends Expression {
+    type: "FunctionExpression" | "ArrowFunctionExpression";
+    params: Array<string>;
+    body: BlockStatement | Expression;
+}
+
+// ============================================================================
+// Emitter Types
+// ============================================================================
+
+interface LoopInfo {
+    breakPatches: Array<number>;
+    continueTarget: number;
+}
+
+interface Scope {
+    parent: Scope | null;
+    locals: Array<{ name: string; slot: number }>;
+    nextSlot: number;
+}
+
+interface Emitter {
+    stream: ByteStream;
+    functions: Dict;
+    patches: Array<number>;
+    loopStack: Array<LoopInfo>;
+    scope: Scope | null;
+}
+
+// ============================================================================
+// ByteStream Interface
+// ============================================================================
+
+interface ByteStream {
+    data: Array<number>;
+    length(): number;
+    writeU8(byte: number): void;
+    writeU32(value: number): void;
+    writeF64(value: number): void;
+    writeVarint(value: number): void;
+    writeString(str: string): void;
+    patchU32(offset: number, value: number): void;
+}
+
+// ============================================================================
+// Operator Codes
+// ============================================================================
+
+enum OP {
+    HALT = 0,
+    PUSH = 1,
+    POP = 2,
+    DUP = 3,
+    LOAD = 4,
+    STORE = 5,
+    LOAD_LOCAL = 6,
+    STORE_LOCAL = 7,
+    LOAD_THIS = 8,
+    LOAD_ELEMENT = 9,
+    STORE_ELEMENT = 10,
+    GET_PROP = 11,
+    SET_PROP = 12,
+    NEW_OBJECT = 13,
+    NEW_ARRAY = 14,
+    CALL = 15,
+    CALL_METHOD = 16,
+    CONSTRUCT = 17,
+    RETURN = 18,
+    JUMP = 19,
+    JUMP_IF_FALSE = 20,
+    MAKE_CLOSURE = 21
+}
+
+enum TYPE {
+    NULL = 0,
+    UNDEFINED = 1,
+    TRUE = 2,
+    FALSE = 3,
+    NUMBER = 4,
+    STRING = 5,
+    OBJECT = 6,
+    ARRAY = 7,
+    FUNCTION = 8
+}
+
+// ============================================================================
+// Utility Types
+// ============================================================================
+
+type Dict = { [key: string]: any };
+type Result<T> = { ok: T } | { error: string };

@@ -274,6 +274,50 @@ impl AotCompiler {
             )),
         }
     }
+
+    /// Compile modules to object file
+    pub fn compile_modules_to_object(
+        &mut self,
+        modules: &[&IrModule],
+        output: &Path,
+    ) -> Result<(), BackendError> {
+        if modules.is_empty() {
+            return Err(BackendError::AotError("No modules to compile".into()));
+        }
+
+        match self.config.kind {
+            BackendKind::LlvmAot => {
+                // Compile first module to object file
+                super::llvm::compile_to_object_file(modules[0], &self.config, output)?;
+                Ok(())
+            }
+            _ => Err(BackendError::AotError(
+                "Object file compilation requires LlvmAot backend".into(),
+            )),
+        }
+    }
+
+    /// Compile modules to LLVM IR text format
+    pub fn compile_modules_to_llvm_ir(
+        &mut self,
+        modules: &[&IrModule],
+        output: &Path,
+    ) -> Result<(), BackendError> {
+        if modules.is_empty() {
+            return Err(BackendError::AotError("No modules to compile".into()));
+        }
+
+        match self.config.kind {
+            BackendKind::LlvmAot => {
+                // Compile first module to LLVM IR
+                super::llvm::compile_to_llvm_ir_file(modules[0], &self.config, output)?;
+                Ok(())
+            }
+            _ => Err(BackendError::AotError(
+                "LLVM IR emission requires LlvmAot backend".into(),
+            )),
+        }
+    }
 }
 
 /// Get the default target triple for the current platform

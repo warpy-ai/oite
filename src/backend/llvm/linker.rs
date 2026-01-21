@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::super::{BackendError, LtoMode, aot::OutputFormat};
+use super::super::{aot::OutputFormat, BackendError, LtoMode};
 
 /// Link object files with runtime library to create an executable or library
 pub fn link_object_files(
