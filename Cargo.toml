@@ -41,3 +41,12 @@ hex = "0.4"
 # Then set: export LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)
 # Or use llvmenv: cargo install llvmenv && llvmenv build-entry --version 18
 llvm-sys = "180"
+
+# JSON parsing
+serde_json = "1.0"
+
+# Random number generation
+fastrand = "2.0"
+
+# Date/time handling
+chrono = "0.4"

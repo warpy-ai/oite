@@ -660,8 +660,31 @@ All tests completed!
 
 **Files Modified:**
 - `src/vm/mod.rs` - Added all string methods to `CallMethod` handler
+- `src/stdlib/string.rs` - Extracted String methods to dedicated module
+- `src/stdlib/array.rs` - Extracted Array methods to dedicated module
 
-### 7.8 Standard Library Surface
+### 7.8 VM Modularization ✅ (Jan 2026)
+
+**Status:** PARTIALLY COMPLETE ✅
+
+Refactored `src/vm/mod.rs` to improve separation of concerns:
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/vm/mod.rs` | ~2,840 | Core VM orchestration |
+| `src/vm/module_cache.rs` | **NEW (166)** | ModuleCache struct, caching, hot-reload |
+| `src/vm/stdlib_setup.rs` | **NEW (155)** | `setup_stdlib()` function |
+| `src/vm/property.rs` | **NEW (73)** | Prototype chain lookup helpers |
+
+**Changes:**
+- `MAX_CALL_STACK_DEPTH` made public for access by stdlib modules
+- ModuleCache extracted to dedicated file with re-exports for backward compatibility
+- Property lookup helpers (`get_prop_with_proto_chain`, `find_setter_with_proto_chain`) extracted
+- String methods (`src/stdlib/string.rs`) and Array methods (`src/stdlib/array.rs`) modularized
+
+**Lines Reduced:** ~3,070 → ~2,840 (-230 lines, 7.5% reduction)
+
+### 7.9 Standard Library Surface
 
 Implemented:
 - `console.log`
@@ -878,6 +901,7 @@ Phase 3: Language Completion – COMPLETE ✅
 → ✅ Modules (`import`/`export`) – FULLY WORKING Jan 2026
 → ✅ Async/await + Promise runtime
 → ✅ String methods (ALL JavaScript methods implemented)
+→ ✅ VM modularization (module_cache.rs, stdlib_setup.rs, property.rs extracted)
 → 🚧 Rich stdlib and server/runtime stack
 ```
 

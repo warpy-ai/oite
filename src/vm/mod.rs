@@ -4,19 +4,10 @@ pub const MAX_CALL_STACK_DEPTH: usize = 1000;
 pub mod opcodes;
 pub mod value;
 pub mod module_cache;
-pub mod stdlib_setup;
 pub mod property;
+pub mod stdlib_setup;
 
 pub use crate::compiler::Compiler;
-pub use crate::stdlib::{
-    native_byte_stream_length, native_byte_stream_patch_u32, native_byte_stream_to_array,
-    native_byte_stream_write_f64, native_byte_stream_write_u8,
-    native_byte_stream_write_u32, native_byte_stream_write_varint, native_create_byte_stream,
-    native_log, native_promise_all, native_promise_constructor, native_promise_catch,
-    native_promise_reject, native_promise_resolve, native_promise_then, native_read_file,
-    native_require, native_set_timeout, native_string_from_char_code, native_write_binary_file,
-    native_write_file,
-};
 pub use crate::stdlib::string;
 pub use crate::stdlib::array;
 pub use crate::vm::opcodes::OpCode;
@@ -547,161 +538,7 @@ impl VM {
     }
 
     pub fn setup_stdlib(&mut self) {
-        // Register native functions
-        let log_idx = self.register_native(native_log);
-        let timeout_idx = self.register_native(native_set_timeout);
-        let read_idx = self.register_native(native_read_file);
-        let write_idx = self.register_native(native_write_file);
-        let require_idx = self.register_native(native_require);
-
-        // ByteStream native functions
-        let create_byte_stream_idx = self.register_native(native_create_byte_stream);
-        let write_u8_idx = self.register_native(native_byte_stream_write_u8);
-        let write_varint_idx = self.register_native(native_byte_stream_write_varint);
-        let write_u32_idx = self.register_native(native_byte_stream_write_u32);
-        let write_f64_idx = self.register_native(native_byte_stream_write_f64);
-        let patch_u32_idx = self.register_native(native_byte_stream_patch_u32);
-        let stream_length_idx = self.register_native(native_byte_stream_length);
-        let to_array_idx = self.register_native(native_byte_stream_to_array);
-        let write_binary_file_idx = self.register_native(native_write_binary_file);
-
-        // ASCII String Native Functions
-        let string_from_char_code_idx = self.register_native(native_string_from_char_code);
-
-        // console = { log: <native fn> }
-        let console_ptr = self.heap.len();
-        let mut console_props = HashMap::new();
-        console_props.insert("log".to_string(), JsValue::NativeFunction(log_idx));
-        self.heap.push(HeapObject {
-            data: HeapData::Object(console_props),
-        });
-
-        // fs = { readFileSync, writeFileSync, writeBinaryFile }
-        let fs_ptr = self.heap.len();
-        let mut fs_props = HashMap::new();
-        fs_props.insert(
-            "readFileSync".to_string(),
-            JsValue::NativeFunction(read_idx),
-        );
-        fs_props.insert(
-            "writeFileSync".to_string(),
-            JsValue::NativeFunction(write_idx),
-        );
-        fs_props.insert(
-            "writeBinaryFile".to_string(),
-            JsValue::NativeFunction(write_binary_file_idx),
-        );
-        self.heap.push(HeapObject {
-            data: HeapData::Object(fs_props),
-        });
-
-        // ByteStream = { create, writeU8, writeVarint, writeString, writeU32, writeF64, patchU32, length, toArray }
-        let byte_stream_ptr = self.heap.len();
-        let mut byte_stream_props = HashMap::new();
-        byte_stream_props.insert(
-            "create".to_string(),
-            JsValue::NativeFunction(create_byte_stream_idx),
-        );
-        byte_stream_props.insert("writeU8".to_string(), JsValue::NativeFunction(write_u8_idx));
-        byte_stream_props.insert(
-            "writeVarint".to_string(),
-            JsValue::NativeFunction(write_varint_idx),
-        );
-        byte_stream_props.insert(
-            "writeU32".to_string(),
-            JsValue::NativeFunction(write_u32_idx),
-        );
-        byte_stream_props.insert(
-            "writeF64".to_string(),
-            JsValue::NativeFunction(write_f64_idx),
-        );
-        byte_stream_props.insert(
-            "patchU32".to_string(),
-            JsValue::NativeFunction(patch_u32_idx),
-        );
-        byte_stream_props.insert(
-            "length".to_string(),
-            JsValue::NativeFunction(stream_length_idx),
-        );
-        byte_stream_props.insert("toArray".to_string(), JsValue::NativeFunction(to_array_idx));
-        self.heap.push(HeapObject {
-            data: HeapData::Object(byte_stream_props),
-        });
-
-        // Global bindings
-        let globals = self.call_stack.first_mut().expect("Missing global frame");
-        globals
-            .locals
-            .insert("console".into(), JsValue::Object(console_ptr));
-        globals
-            .locals
-            .insert("setTimeout".into(), JsValue::NativeFunction(timeout_idx));
-        globals
-            .locals
-            .insert("require".into(), JsValue::NativeFunction(require_idx));
-        globals
-            .locals
-            .insert("ByteStream".into(), JsValue::Object(byte_stream_ptr));
-
-        // Module registry
-        self.modules
-            .insert("fs".to_string(), JsValue::Object(fs_ptr));
-
-        let string_ptr = self.heap.len();
-        let mut string_props = HashMap::new();
-        string_props.insert(
-            "fromCharCode".to_string(),
-            JsValue::NativeFunction(string_from_char_code_idx),
-        );
-        self.heap.push(HeapObject {
-            data: HeapData::Object(string_props),
-        });
-        self.call_stack[0]
-            .locals
-            .insert("String".into(), JsValue::Object(string_ptr));
-
-        // Promise = { resolve, reject, all, then, catch }
-        let promise_constructor_idx = self.register_native(native_promise_constructor);
-        let promise_resolve_idx = self.register_native(native_promise_resolve);
-        let promise_reject_idx = self.register_native(native_promise_reject);
-        let promise_then_idx = self.register_native(native_promise_then);
-        let promise_catch_idx = self.register_native(native_promise_catch);
-        let promise_all_idx = self.register_native(native_promise_all);
-
-        // Create Promise as a function object with a constructor property
-        // This allows `new Promise(...)` to work
-        let promise_ptr = self.heap.len();
-        let mut promise_props = HashMap::new();
-
-        // The Promise "class" itself is a function at address 0 (native constructor)
-        // But we need to set it up as an object with constructor property for ES6 semantics
-        promise_props.insert(
-            "constructor".to_string(),
-            JsValue::NativeFunction(promise_constructor_idx),
-        );
-        promise_props.insert(
-            "resolve".to_string(),
-            JsValue::NativeFunction(promise_resolve_idx),
-        );
-        promise_props.insert(
-            "reject".to_string(),
-            JsValue::NativeFunction(promise_reject_idx),
-        );
-        promise_props.insert(
-            "then".to_string(),
-            JsValue::NativeFunction(promise_then_idx),
-        );
-        promise_props.insert(
-            "catch".to_string(),
-            JsValue::NativeFunction(promise_catch_idx),
-        );
-        promise_props.insert("all".to_string(), JsValue::NativeFunction(promise_all_idx));
-        self.heap.push(HeapObject {
-            data: HeapData::Object(promise_props),
-        });
-        self.call_stack[0]
-            .locals
-            .insert("Promise".into(), JsValue::Object(promise_ptr));
+        stdlib_setup::setup_stdlib(self);
     }
 
     pub fn register_native(&mut self, func: NativeFn) -> usize {
@@ -1142,6 +979,7 @@ impl VM {
                 for _ in 0..arg_count {
                     args.push(self.stack.pop().expect("Missing argument"));
                 }
+                args.reverse();
 
                 match callee {
                     JsValue::Function { address, env } => {
@@ -1185,7 +1023,9 @@ impl VM {
                         let result = func(self, args);
                         self.stack.push(result);
                     }
-                    _ => panic!("Target is not callable: {:?}", callee),
+                    other => {
+                        panic!("Target is not callable: {:?}", other);
+                    }
                 }
             }
 
@@ -1819,7 +1659,18 @@ impl VM {
                         // If no executor or invalid executor, just return the Promise
                         self.stack.push(JsValue::Promise(promise));
                     } else {
-                        // Regular native constructor
+                        // Regular native constructor - push a frame with this_context
+                        let mut native_frame = Frame {
+                            return_address: self.ip + 1,
+                            locals: HashMap::new(),
+                            indexed_locals: Vec::new(),
+                            this_context: this_obj.clone(),
+                            new_target: Some(new_target_val.clone()),
+                            super_called: false,
+                            resume_ip: None,
+                        };
+                        self.call_stack.push(native_frame);
+
                         let native_result = if let JsValue::Object(ptr) = &new_target_val {
                             if let Some(heap_obj) = self.heap.get(*ptr) {
                                 if let HeapData::Object(props) = &heap_obj.data {
@@ -1840,6 +1691,9 @@ impl VM {
                         } else {
                             JsValue::Undefined
                         };
+
+                        // Pop the native frame
+                        self.call_stack.pop();
 
                         // Push result and continue
                         self.stack.push(native_result);

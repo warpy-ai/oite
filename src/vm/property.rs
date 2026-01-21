@@ -1,5 +1,5 @@
-use crate::vm::value::{HeapData, HeapObject, JsValue};
 use crate::vm::VM;
+use crate::vm::value::{HeapData, HeapObject, JsValue};
 
 const MAX_PROTO_DEPTH: usize = 100;
 

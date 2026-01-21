@@ -131,7 +131,7 @@ impl LlvmCodegen {
                     // Mark as used to prevent LTO dead code elimination
                     let i8_ty = llvm_sys::core::LLVMInt8TypeInContext(self.context);
                     let i8_ptr_ty = llvm_sys::core::LLVMPointerType(i8_ty, 0);
-                    let used_array_ty = llvm_sys::core::LLVMArrayType(i8_ptr_ty, 1);
+                    let used_array_ty = llvm_sys::core::LLVMArrayType2(i8_ptr_ty, 1);
                     let used_name = std::ffi::CString::new("llvm.used").unwrap();
 
                     let existing_used =
@@ -145,12 +145,11 @@ impl LlvmCodegen {
                             used_name.as_ptr(),
                         )
                     };
-
                     if !used_global.is_null() {
                         let main_as_i8 = llvm_sys::core::LLVMConstBitCast(c_main, i8_ptr_ty);
                         let mut main_ptr = main_as_i8;
                         let used_array =
-                            llvm_sys::core::LLVMConstArray(i8_ptr_ty, &mut main_ptr, 1);
+                            llvm_sys::core::LLVMConstArray2(i8_ptr_ty, &mut main_ptr, 1);
                         llvm_sys::core::LLVMSetInitializer(used_global, used_array);
                         llvm_sys::core::LLVMSetLinkage(
                             used_global,
