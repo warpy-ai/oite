@@ -1,0 +1,270 @@
+// ============================================================================
+// IR Types for tscl Compiler
+// ============================================================================
+
+// ============================================================================
+// IR Value and Types
+// ============================================================================
+
+type IrValue = number;
+
+enum IrType {
+    NUMBER = 0,
+    STRING = 1,
+    BOOLEAN = 2,
+    OBJECT = 3,
+    ARRAY = 4,
+    FUNCTION = 5,
+    ANY = 6,
+    NEVER = 7,
+    VOID = 8
+}
+
+// ============================================================================
+// IR Operation Codes
+// ============================================================================
+
+enum IrOpCode {
+    CONST = 0,
+    ADD = 1,
+    SUB = 2,
+    MUL = 3,
+    DIV = 4,
+    MOD = 5,
+    NEG = 6,
+    NOT = 7,
+    EQ = 8,
+    NE = 9,
+    LT = 10,
+    GT = 11,
+    LE = 12,
+    GE = 13,
+    AND = 14,
+    OR = 15,
+    LOAD = 16,
+    STORE = 17,
+    LOAD_LOCAL = 18,
+    STORE_LOCAL = 19,
+    LOAD_PROP = 20,
+    STORE_PROP = 21,
+    LOAD_ELEMENT = 22,
+    STORE_ELEMENT = 23,
+    JUMP = 24,
+    JUMP_IF_FALSE = 25,
+    CALL = 26,
+    CALL_METHOD = 27,
+    RETURN = 28,
+    PHI = 29,
+    NEW_OBJECT = 30,
+    NEW_ARRAY = 31,
+    LENGTH = 32,
+    TO_NUMBER = 33,
+    TO_STRING = 34,
+    TO_BOOLEAN = 35
+}
+
+// ============================================================================
+// IR Data Structures
+// ============================================================================
+
+interface IrInstruction {
+    opcode: IrOpCode;
+    dest: number | null;
+    args: number[];
+    immediate: IrValue | null;
+    label: string | null;
+}
+
+interface IrBlock {
+    label: string;
+    ops: IrInstruction[];
+    predecessors: IrBlock[];
+    successors: IrBlock[];
+}
+
+interface IrFunction {
+    name: string;
+    params: string[];
+    return_type: IrType;
+    locals: { index: number, name: string, type: IrType }[];
+    blocks: IrBlock[];
+    entry_block: IrBlock;
+}
+
+interface IrModule {
+    version: number;
+    abi_version: number;
+    functions: IrFunction[];
+}
+
+interface RegisterAllocator {
+    next_reg: number;
+    max_regs: number;
+}
+
+// ============================================================================
+// IR Verification
+// ============================================================================
+
+function verifyIrModule(module: IrModule): boolean {
+    let i = 0;
+    while (i < module.functions.length) {
+        let func = module.functions[i];
+        if (!verifyIrFunction(func)) {
+            console.log("IR verification failed for function: " + func.name);
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+function verifyIrFunction(func: IrFunction): boolean {
+    if (func.name == null || func.name == "") {
+        console.log("Function name is empty");
+        return false;
+    }
+    if (func.entry_block == null) {
+        console.log("Function " + func.name + " has no entry block");
+        return false;
+    }
+    let i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        if (!verifyIrBlock(block)) {
+            console.log("IR verification failed for block: " + block.label);
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+function verifyIrBlock(block: IrBlock): boolean {
+    if (block.label == null || block.label == "") {
+        console.log("Block label is empty");
+        return false;
+    }
+    let i = 0;
+    while (i < block.ops.length) {
+        let op = block.ops[i];
+        if (op.opcode == null) {
+            console.log("Block " + block.label + " has instruction with null opcode");
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// ============================================================================
+// IR Serialization (Deterministic)
+// ============================================================================
+
+function serializeIrModule(module: IrModule): string {
+    let lines: string[] = [];
+    lines.push("; ============================================================");
+    lines.push("; tscl IR Module");
+    lines.push("; Format version: " + module.version);
+    lines.push("; ABI version: " + module.abi_version);
+    lines.push("; ============================================================");
+    lines.push("");
+
+    let i = 0;
+    while (i < module.functions.length) {
+        lines.push(serializeIrFunction(module.functions[i]));
+        lines.push("");
+        i = i + 1;
+    }
+
+    let result = "";
+    let j = 0;
+    while (j < lines.length) {
+        result = result + lines[j] + "\n";
+        j = j + 1;
+    }
+    return result;
+}
+
+function serializeIrFunction(func: IrFunction): string {
+    let lines: string[] = [];
+    lines.push("fn " + func.name + "(" + func.params.join(", ") + ") -> " + IrType[func.return_type] + " {");
+
+    let i = 0;
+    while (i < func.locals.length) {
+        let loc = func.locals[i];
+        lines.push("    local $" + loc.index + ": " + loc.name + ": " + IrType[loc.type]);
+        i = i + 1;
+    }
+    lines.push("");
+
+    let j = 0;
+    while (j < func.blocks.length) {
+        lines.push(serializeIrBlock(func.blocks[j]));
+        j = j + 1;
+    }
+    lines.push("}");
+
+    let result = "";
+    let k = 0;
+    while (k < lines.length) {
+        result = result + lines[k] + "\n";
+        k = k + 1;
+    }
+    return result;
+}
+
+function serializeIrBlock(block: IrBlock): string {
+    let lines: string[] = [];
+    lines.push(block.label + ":");
+    let i = 0;
+    while (i < block.ops.length) {
+        lines.push("    " + serializeIrInstruction(block.ops[i]));
+        i = i + 1;
+    }
+    let result = "";
+    let j = 0;
+    while (j < lines.length) {
+        result = result + lines[j] + "\n";
+        j = j + 1;
+    }
+    return result;
+}
+
+function serializeIrInstruction(inst: IrInstruction): string {
+    let opName = IrOpCode[inst.opcode];
+    if (inst.dest != null) {
+        if (inst.args.length > 0) {
+            let args = "";
+            let i = 0;
+            while (i < inst.args.length) {
+                args = args + "v" + inst.args[i];
+                if (i < inst.args.length - 1) {
+                    args = args + ", ";
+                }
+                i = i + 1;
+            }
+            return opName + " v" + inst.dest + " = " + args;
+        } else if (inst.immediate != null) {
+            return opName + " v" + inst.dest + " = " + String(inst.immediate);
+        } else {
+            return opName + " v" + inst.dest;
+        }
+    } else {
+        if (inst.args.length > 0) {
+            let args = "";
+            let i = 0;
+            while (i < inst.args.length) {
+                args = args + "v" + inst.args[i];
+                if (i < inst.args.length - 1) {
+                    args = args + ", ";
+                }
+                i = i + 1;
+            }
+            return opName + " " + args;
+        }
+    }
+    return opName;
+}
+
+console.log("IR module loaded");

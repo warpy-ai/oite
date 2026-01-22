@@ -1,0 +1,13 @@
+// ============================================================================
+// AST Module for tscl Compiler
+// ============================================================================
+
+require ./types;
+
+// Re-export for convenience
+type Node = types.Node;
+type Program = types.Program;
+type Statement = types.Statement;
+type Expression = types.Expression;
+
+console.log("AST module loaded");

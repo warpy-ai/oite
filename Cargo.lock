@@ -882,6 +882,7 @@ dependencies = [
  "cranelift-native",
  "fastrand",
  "hex",
+ "libc",
  "llvm-sys",
  "serde_json",
  "sha2",

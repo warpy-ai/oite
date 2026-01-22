@@ -1,0 +1,338 @@
+// ============================================================================
+// Lexer Module for tscl Compiler
+// ============================================================================
+
+require ./token;
+
+// ============================================================================
+// Lexer Implementation
+// ============================================================================
+
+interface Lexer {
+    source: string;
+    pos: number;
+    line: number;
+    col: number;
+    tokens: Array<Token>;
+}
+
+function createLexer(source: string): Lexer {
+    let lexer: Lexer = {
+        source: source,
+        pos: 0,
+        line: 1,
+        col: 0,
+        tokens: []
+    };
+    return lexer;
+}
+
+function isAlpha(c: string): boolean {
+    if (c == null) return false;
+    let code = c.charCodeAt(0);
+    return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || c == "_" || c == "$";
+}
+
+function isDigit(c: string): boolean {
+    if (c == null) return false;
+    let code = c.charCodeAt(0);
+    return code >= 48 && code <= 57;
+}
+
+function isAlphaNumeric(c: string): boolean {
+    return isAlpha(c) || isDigit(c);
+}
+
+function peek(lexer: Lexer): string {
+    if (lexer.pos >= lexer.source.length) {
+        return "";
+    }
+    return lexer.source[lexer.pos];
+}
+
+function peekChar(lexer: Lexer): string {
+    if (lexer.pos >= lexer.source.length) {
+        return "";
+    }
+    return lexer.source[lexer.pos];
+}
+
+function advance(lexer: Lexer): string {
+    if (lexer.pos >= lexer.source.length) {
+        return "";
+    }
+    let c = lexer.source[lexer.pos];
+    lexer.pos = lexer.pos + 1;
+    lexer.col = lexer.col + 1;
+    if (c == "\n") {
+        lexer.line = lexer.line + 1;
+        lexer.col = 0;
+    }
+    return c;
+}
+
+function skipWhitespace(lexer: Lexer) {
+    let c = peekChar(lexer);
+    while (c == " " || c == "\t" || c == "\n" || c == "\r") {
+        advance(lexer);
+        c = peekChar(lexer);
+    }
+}
+
+function readString(lexer: Lexer, quote: string): string {
+    advance(lexer);
+    let value = "";
+    let c = peekChar(lexer);
+    while (c != quote && c != "" && c != "\n") {
+        if (c == "\\") {
+            advance(lexer);
+            let escaped = advance(lexer);
+            if (escaped == "n") value = value + "\n";
+            else if (escaped == "t") value = value + "\t";
+            else if (escaped == "r") value = value + "\r";
+            else if (escaped == "\\") value = value + "\\";
+            else if (escaped == "'") value = value + "'";
+            else if (escaped == '"') value = value + '"';
+            else if (escaped == "`") value = value + "`";
+            else value = value + escaped;
+        } else {
+            value = value + c;
+            advance(lexer);
+        }
+        c = peekChar(lexer);
+    }
+    advance(lexer);
+    return value;
+}
+
+function readNumber(lexer: Lexer, start: string): string {
+    let value = start;
+    let c = peekChar(lexer);
+    while (c != "" && (isDigit(c) || c == "." || c == "e" || c == "E" || c == "+" || c == "-")) {
+        if (c == "e" || c == "E" || c == "+" || c == "-") {
+            if (value.indexOf("e") == -1 && value.indexOf("E") == -1) {
+                value = value + c;
+                advance(lexer);
+            } else if (c == "+" || c == "-") {
+                break;
+            }
+        } else {
+            value = value + c;
+        }
+        c = peekChar(lexer);
+        if (c != "" && (isDigit(c) || c == "." || c == "e" || c == "E")) {
+            advance(lexer);
+        } else {
+            break;
+        }
+    }
+    return value;
+}
+
+function readIdentifier(lexer: Lexer, start: string): string {
+    let value = start;
+    let c = peekChar(lexer);
+    while (c != "" && (isAlphaNumeric(c))) {
+        value = value + c;
+        advance(lexer);
+        c = peekChar(lexer);
+    }
+    return value;
+}
+
+function readOperator(lexer: Lexer): string {
+    let c = peekChar(lexer);
+    let ops = [
+        "===", "!==", "==", "!=", "<=", ">=", "=>",
+        "&&", "||", "??", "?.", "++", "--",
+        "+=", "-=", "*=", "/=", "%=", "**=",
+        "<<=", ">>=", ">>>=", "&=", "|=", "^=",
+        "+", "-", "*", "/", "%", "**", "!", "~",
+        "<", ">", "&", "|", "^", "<<", ">>", ">>>"
+    ];
+    let i = 0;
+    while (i < ops.length) {
+        let opLen = ops[i].length;
+        if (lexer.pos + opLen <= lexer.source.length) {
+            let slice = "";
+            let j = 0;
+            while (j < opLen) {
+                slice = slice + lexer.source[lexer.pos + j];
+                j = j + 1;
+            }
+            if (slice == ops[i]) {
+                let k = 0;
+                while (k < opLen) {
+                    advance(lexer);
+                    k = k + 1;
+                }
+                return ops[i];
+            }
+        }
+        i = i + 1;
+    }
+    advance(lexer);
+    return c;
+}
+
+function readToken(lexer: Lexer): Token {
+    skipWhitespace(lexer);
+
+    let line = lexer.line;
+    let col = lexer.col;
+    let c = peekChar(lexer);
+
+    if (c == "") {
+        return { type: TOKEN.EOF, value: "", line: line, col: col };
+    }
+
+    if (c == "\"" || c == "'" || c == "`") {
+        let value = readString(lexer, c);
+        return { type: TOKEN.STRING, value: value, line: line, col: col };
+    }
+
+    if (isDigit(c)) {
+        let value = readNumber(lexer, c);
+        return { type: TOKEN.NUMBER, value: value, line: line, col: col };
+    }
+
+    if (isAlpha(c) || c == "_" || c == "$") {
+        let value = readIdentifier(lexer, c);
+        if (isKeyword(value)) {
+            return { type: TOKEN.KEYWORD, value: value, line: line, col: col };
+        }
+        return { type: TOKEN.IDENTIFIER, value: value, line: line, col: col };
+    }
+
+    if (c == "/") {
+        let next = "";
+        if (lexer.pos + 1 < lexer.source.length) {
+            next = lexer.source[lexer.pos + 1];
+        }
+        if (next == "/") {
+            advance(lexer);
+            advance(lexer);
+            let comment = "";
+            let nc = peekChar(lexer);
+            while (nc != "" && nc != "\n") {
+                comment = comment + nc;
+                advance(lexer);
+                nc = peekChar(lexer);
+            }
+            return { type: TOKEN.COMMENT, value: comment, line: line, col: col };
+        }
+        if (next == "*") {
+            advance(lexer);
+            advance(lexer);
+            let comment = "";
+            let nc = peekChar(lexer);
+            let pc = "";
+            while (nc != "" && !(pc == "*" && nc == "/")) {
+                comment = comment + nc;
+                pc = nc;
+                advance(lexer);
+                nc = peekChar(lexer);
+            }
+            advance(lexer);
+            advance(lexer);
+            return { type: TOKEN.COMMENT, value: comment, line: line, col: col };
+        }
+        if (next == "=") {
+            advance(lexer);
+            advance(lexer);
+            return { type: TOKEN.OPERATOR, value: "/=", line: line, col: col };
+        }
+        advance(lexer);
+        return { type: TOKEN.OPERATOR, value: "/", line: line, col: col };
+    }
+
+    if (c == ":") {
+        advance(lexer);
+        return { type: TOKEN.DELIMITER, value: ":", line: line, col: col };
+    }
+
+    if (c == ";") {
+        advance(lexer);
+        return { type: TOKEN.DELIMITER, value: ";", line: line, col: col };
+    }
+
+    if (c == ",") {
+        advance(lexer);
+        return { type: TOKEN.DELIMITER, value: ",", line: line, col: col };
+    }
+
+    if (c == ".") {
+        advance(lexer);
+        let next = peekChar(lexer);
+        if (next == ".") {
+            advance(lexer);
+            if (peekChar(lexer) == ".") {
+                advance(lexer);
+                return { type: TOKEN.OPERATOR, value: "...", line: line, col: col };
+            }
+            return { type: TOKEN.OPERATOR, value: "..", line: line, col: col };
+        }
+        return { type: TOKEN.DELIMITER, value: ".", line: line, col: col };
+    }
+
+    if (c == "(") {
+        advance(lexer);
+        return { type: TOKEN.DELIMITER, value: "(", line: line, col: col };
+    }
+
+    if (c == ")") {
+        advance(lexer);
+        return { type: TOKEN.DELIMITER, value: ")", line: line, col: col };
+    }
+
+    if (c == "[") {
+        advance(lexer);
+        return { type: TOKEN.DELIMITER, value: "[", line: line, col: col };
+    }
+
+    if (c == "]") {
+        advance(lexer);
+        return { type: TOKEN.DELIMITER, value: "]", line: line, col: col };
+    }
+
+    if (c == "{") {
+        advance(lexer);
+        return { type: TOKEN.DELIMITER, value: "{", line: line, col: col };
+    }
+
+    if (c == "}") {
+        advance(lexer);
+        return { type: TOKEN.DELIMITER, value: "}", line: line, col: col };
+    }
+
+    if (c == "?") {
+        advance(lexer);
+        let next = peekChar(lexer);
+        if (next == "?") {
+            advance(lexer);
+            return { type: TOKEN.OPERATOR, value: "??", line: line, col: col };
+        }
+        if (next == ".") {
+            advance(lexer);
+            return { type: TOKEN.OPERATOR, value: "?.", line: line, col: col };
+        }
+        return { type: TOKEN.OPERATOR, value: "?", line: line, col: col };
+    }
+
+    let value = readOperator(lexer);
+    return { type: TOKEN.OPERATOR, value: value, line: line, col: col };
+}
+
+function tokenize(source: string): Array<Token> {
+    let lexer = createLexer(source);
+    let token = readToken(lexer);
+    while (token.type != TOKEN.EOF) {
+        if (token.type != TOKEN.COMMENT) {
+            lexer.tokens.push(token);
+        }
+        token = readToken(lexer);
+    }
+    return lexer.tokens;
+}
+
+console.log("Lexer module loaded");

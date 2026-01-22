@@ -1,0 +1,159 @@
+// ============================================================================
+// Built-in Functions for tscl Compiler
+// ============================================================================
+
+// ============================================================================
+// Global Functions (runtime-provided)
+// ============================================================================
+
+// Type conversion
+declare function parseInt(str: string): number;
+declare function parseFloat(str: string): number;
+declare function Number(value: any): number;
+declare function String(value: any): string;
+declare function Boolean(value: any): boolean;
+
+// Type checking
+declare function typeof(value: any): string;
+declare function isNaN(value: number): boolean;
+declare function isFinite(value: number): boolean;
+
+// Error handling
+declare function Error(message: string): any;
+declare function RangeError(message: string): any;
+declare function TypeError(message: string): any;
+
+// ============================================================================
+// Math Functions (runtime-provided)
+// ============================================================================
+
+declare namespace Math {
+    const PI: number;
+    const E: number;
+    const LN2: number;
+    const LN10: number;
+    const LOG2E: number;
+    const LOG10E: number;
+    const SQRT1_2: number;
+    const SQRT2: number;
+
+    function abs(x: number): number;
+    function floor(x: number): number;
+    function ceil(x: number): number;
+    function round(x: number): number;
+    function trunc(x: number): number;
+    function max(...args: number[]): number;
+    function min(...args: number[]): number;
+    function pow(x: number, y: number): number;
+    function sqrt(x: number): number;
+    function cbrt(x: number): number;
+    function exp(x: number): number;
+    function log(x: number): number;
+    function log10(x: number): number;
+    function log2(x: number): number;
+    function sin(x: number): number;
+    function cos(x: number): number;
+    function tan(x: number): number;
+    function asin(x: number): number;
+    function acos(x: number): number;
+    function atan(x: number): number;
+    function atan2(y: number, x: number): number;
+    function sinh(x: number): number;
+    function cosh(x: number): number;
+    function tanh(x: number): number;
+    function random(): number;
+    function imul(a: number, b: number): number;
+    function clz32(x: number): number;
+    function fround(x: number): number;
+    function sign(x: number): number;
+    function hypot(...args: number[]): number;
+}
+
+// ============================================================================
+// String Functions (runtime-provided)
+// ============================================================================
+
+declare namespace String {
+    function fromCharCode(...codes: number[]): string;
+}
+
+// ============================================================================
+// Console Object (runtime-provided)
+// ============================================================================
+
+declare namespace console {
+    function log(...args: any[]): void;
+    function error(...args: any[]): void;
+    function warn(...args: any[]): void;
+    function info(...args: any[]): void;
+    function debug(...args: any[]): void;
+    function trace(...args: any[]): void;
+    function time(label: string): void;
+    function timeEnd(label: string): void;
+}
+
+// ============================================================================
+// JSON (runtime-provided)
+// ============================================================================
+
+declare namespace JSON {
+    function parse(text: string): any;
+    function stringify(value: any): string;
+}
+
+// ============================================================================
+// Async/Runtime (runtime-provided)
+// ============================================================================
+
+declare function setTimeout(callback: Function, delay: number): number;
+declare function clearTimeout(id: number): void;
+declare function setInterval(callback: Function, delay: number): number;
+declare function clearInterval(id: number): void;
+
+declare namespace Promise {
+    function resolve(value: any): Promise<any>;
+    function reject(reason: any): Promise<any>;
+    function all(promises: Promise<any>[]): Promise<any[]>;
+    function race(promises: Promise<any>[]): Promise<any>;
+}
+
+interface Promise<T> {
+    then(onfulfilled: Function, onrejected?: Function): Promise<any>;
+    catch(onrejected: Function): Promise<any>;
+    finally(onfinally: Function): Promise<any>;
+}
+
+// ============================================================================
+// ByteStream (runtime-provided)
+// ============================================================================
+
+declare namespace ByteStream {
+    function create(): any;
+    function writeU8(stream: any, byte: number): void;
+    function writeU32(stream: any, value: number): void;
+    function writeVarint(stream: any, value: number): void;
+    function writeF64(stream: any, value: number): void;
+    function writeString(stream: any, str: string): void;
+    function length(stream: any): number;
+    function toArray(stream: any): number[];
+}
+
+// ============================================================================
+// File System (runtime-provided)
+// ============================================================================
+
+declare namespace fs {
+    function readFileSync(path: string, encoding?: string): string;
+    function writeFileSync(path: string, data: string): void;
+    function appendFileSync(path: string, data: string): void;
+    function existsSync(path: string): boolean;
+    function mkdirSync(path: string): void;
+    function readdirSync(path: string): string[];
+    function unlinkSync(path: string): void;
+    function rmdirSync(path: string): void;
+    function statSync(path: string): any;
+    function copyFileSync(src: string, dest: string): void;
+    function renameSync(oldPath: string, newPath: string): void;
+}
+
+console.log("Built-in functions loaded");

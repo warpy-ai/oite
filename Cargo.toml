@@ -20,6 +20,9 @@ swc_common = "18.0.1"
 swc_ecma_ast = "19.0.0"
 swc_ecma_parser = "32.0.0"
 
+# System calls
+libc = "0.2"
+
 # Async runtime
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
 

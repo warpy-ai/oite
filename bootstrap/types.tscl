@@ -68,6 +68,7 @@ interface Statement extends Node {}
 interface VariableDeclaration extends Statement {
     type: "VariableDeclaration";
     name: string;
+    typeAnnotation: TypeAnnotation | null;
     init: Expression | null;
     kind: "let" | "const" | "var";
 }
@@ -75,8 +76,10 @@ interface VariableDeclaration extends Statement {
 interface FunctionDeclaration extends Statement {
     type: "FunctionDeclaration";
     name: string;
-    params: Array<string>;
+    params: Array<string | TypedParam>;
+    returnType: TypeAnnotation | null;
     body: BlockStatement;
+    isAsync: boolean;
 }
 
 interface ReturnStatement extends Statement {
@@ -121,6 +124,52 @@ interface BreakStatement extends Statement {
 
 interface ContinueStatement extends Statement {
     type: "ContinueStatement";
+}
+
+// Module Declaration Nodes
+interface ImportDeclaration extends Statement {
+    type: "ImportDeclaration";
+    specifiers: Array<ImportSpecifier | ImportDefaultSpecifier | ImportNamespaceSpecifier>;
+    source: string;
+}
+
+interface ImportSpecifier {
+    type: "ImportSpecifier";
+    imported: string;
+    local: string;
+}
+
+interface ImportDefaultSpecifier {
+    type: "ImportDefaultSpecifier";
+    local: string;
+}
+
+interface ImportNamespaceSpecifier {
+    type: "ImportNamespaceSpecifier";
+    local: string;
+}
+
+interface ExportNamedDeclaration extends Statement {
+    type: "ExportNamedDeclaration";
+    specifiers: Array<ExportSpecifier>;
+    source: string | null;
+    declaration: Statement | null;
+}
+
+interface ExportDefaultDeclaration extends Statement {
+    type: "ExportDefaultDeclaration";
+    declaration: Expression | Statement;
+}
+
+interface ExportAllDeclaration extends Statement {
+    type: "ExportAllDeclaration";
+    source: string;
+}
+
+interface ExportSpecifier {
+    type: "ExportSpecifier";
+    local: string;
+    exported: string;
 }
 
 // Expression Nodes
@@ -198,8 +247,27 @@ interface ThisExpression extends Expression {
 
 interface FunctionExpression extends Expression {
     type: "FunctionExpression" | "ArrowFunctionExpression";
-    params: Array<string>;
+    params: Array<string | TypedParam>;
     body: BlockStatement | Expression;
+    returnType: TypeAnnotation | null;
+}
+
+// ============================================================================
+// Type Annotation Types
+// ============================================================================
+
+interface TypeAnnotation extends Node {
+    type: "TypeAnnotation";
+    typeKind: string;  // "number", "string", "boolean", "any", "void", "never", "null", "undefined"
+    isArray: boolean;  // true if type[]
+    elementType: TypeAnnotation | null;  // for arrays
+    unionTypes: Array<TypeAnnotation> | null;  // for union types (A | B)
+    genericParams: Array<TypeAnnotation> | null;  // for generic types like Promise<T>
+}
+
+interface TypedParam {
+    name: string;
+    typeAnnotation: TypeAnnotation | null;
 }
 
 // ============================================================================

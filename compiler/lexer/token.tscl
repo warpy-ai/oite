@@ -1,0 +1,182 @@
+// ============================================================================
+// Token Types for tscl Compiler
+// ============================================================================
+
+// ============================================================================
+// Token Types Enumeration
+// ============================================================================
+
+enum TOKEN {
+    EOF = "EOF",
+    IDENTIFIER = "IDENTIFIER",
+    NUMBER = "NUMBER",
+    STRING = "STRING",
+    KEYWORD = "KEYWORD",
+    OPERATOR = "OPERATOR",
+    DELIMITER = "DELIMITER",
+    COMMENT = "COMMENT"
+}
+
+// ============================================================================
+// Keyword Enumeration
+// ============================================================================
+
+enum KEYWORD {
+    IF = "if",
+    ELSE = "else",
+    FOR = "for",
+    WHILE = "while",
+    DO = "do",
+    BREAK = "break",
+    CONTINUE = "continue",
+    RETURN = "return",
+    FUNCTION = "function",
+    VAR = "var",
+    LET = "let",
+    CONST = "const",
+    TRUE = "true",
+    FALSE = "false",
+    NULL = "null",
+    UNDEFINED = "undefined",
+    NAN = "NaN",
+    TRY = "try",
+    CATCH = "catch",
+    FINALLY = "finally",
+    THROW = "throw",
+    CLASS = "class",
+    EXTENDS = "extends",
+    SUPER = "super",
+    NEW = "new",
+    THIS = "this",
+    IMPORT = "import",
+    EXPORT = "export",
+    FROM = "from",
+    AS = "as",
+    DEFAULT = "default",
+    ASYNC = "async",
+    AWAIT = "await",
+    TYPEOF = "typeof",
+    INSTANCEOF = "instanceof",
+    IN = "in",
+    OF = "of",
+    DELETE = "delete",
+    VOID = "void"
+}
+
+// ============================================================================
+// Operator Enumeration
+// ============================================================================
+
+enum OP {
+    PLUS = "+",
+    MINUS = "-",
+    MULTIPLY = "*",
+    DIVIDE = "/",
+    MODULO = "%",
+    POWER = "**",
+    EQUAL = "==",
+    NOT_EQUAL = "!=",
+    STRICT_EQUAL = "===",
+    STRICT_NOT_EQUAL = "!==",
+    LESS_THAN = "<",
+    GREATER_THAN = ">",
+    LESS_THAN_EQUAL = "<=",
+    GREATER_THAN_EQUAL = ">=",
+    AND = "&&",
+    OR = "||",
+    NOT = "!",
+    BITWISE_AND = "&",
+    BITWISE_OR = "|",
+    BITWISE_XOR = "^",
+    BITWISE_NOT = "~",
+    LEFT_SHIFT = "<<",
+    RIGHT_SHIFT = ">>",
+    UNSIGNED_RIGHT_SHIFT = ">>>",
+    PLUS_EQUALS = "+=",
+    MINUS_EQUALS = "-=",
+    MULTIPLY_EQUALS = "*=",
+    DIVIDE_EQUALS = "/=",
+    MODULO_EQUALS = "%=",
+    POWER_EQUALS = "**=",
+    LEFT_SHIFT_EQUALS = "<<=",
+    RIGHT_SHIFT_EQUALS = ">>=",
+    UNSIGNED_RIGHT_SHIFT_EQUALS = ">>>=",
+    BITWISE_AND_EQUALS = "&=",
+    BITWISE_OR_EQUALS = "|=",
+    BITWISE_XOR_EQUALS = "^=",
+    INCREMENT = "++",
+    DECREMENT = "--",
+    OPTIONAL_CHAINING = "?.",
+    NULLISH_COALESCE = "??"
+}
+
+// ============================================================================
+// Type Enumeration
+// ============================================================================
+
+enum TYPE {
+    NUMBER = "number",
+    STRING = "string",
+    BOOLEAN = "boolean",
+    UNDEFINED = "undefined",
+    OBJECT = "object",
+    FUNCTION = "function",
+    SYMBOL = "symbol",
+    BIGINT = "bigint"
+}
+
+// ============================================================================
+// Token Interface
+// ============================================================================
+
+interface Token {
+    type: TOKEN | string;
+    value: string;
+    line: number;
+    col: number;
+}
+
+// ============================================================================
+// Token Helper Functions
+// ============================================================================
+
+function isKeyword(value: string): boolean {
+    let keywords = [
+        "if", "else", "for", "while", "do", "break", "continue", "return",
+        "function", "var", "let", "const", "true", "false", "null", "undefined",
+        "NaN", "try", "catch", "finally", "throw", "class", "extends", "super",
+        "new", "this", "import", "export", "from", "as", "default", "async",
+        "await", "typeof", "instanceof", "in", "of", "delete", "void"
+    ];
+    let i = 0;
+    while (i < keywords.length) {
+        if (keywords[i] == value) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function getKeywordType(value: string): string {
+    if (value == "function") return "FunctionDeclaration";
+    if (value == "async") return "AsyncFunction";
+    if (value == "class") return "ClassDeclaration";
+    if (value == "import") return "ImportDeclaration";
+    if (value == "export") return "ExportDeclaration";
+    if (value == "const") return "VariableDeclaration";
+    if (value == "let") return "VariableDeclaration";
+    if (value == "var") return "VariableDeclaration";
+    if (value == "if") return "IfStatement";
+    if (value == "for") return "ForStatement";
+    if (value == "while") return "WhileStatement";
+    if (value == "do") return "DoWhileStatement";
+    if (value == "return") return "ReturnStatement";
+    if (value == "throw") return "ThrowStatement";
+    if (value == "try") return "TryStatement";
+    if (value == "break") return "BreakStatement";
+    if (value == "continue") return "ContinueStatement";
+    return "Unknown";
+}
+
+console.log("Token types loaded");

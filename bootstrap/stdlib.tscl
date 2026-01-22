@@ -1,0 +1,248 @@
+// ============================================================================
+// Bootstrap Compiler Standard Library Declarations
+// ============================================================================
+// These interfaces document the runtime-provided functions that the bootstrap
+// compiler depends on. The actual implementations are provided by the Rust VM.
+// ============================================================================
+
+// ============================================================================
+// Console API
+// ============================================================================
+
+interface Console {
+    log(...args: any[]): void;
+    error(...args: any[]): void;
+    warn(...args: any[]): void;
+}
+
+declare const console: Console;
+
+// ============================================================================
+// File System API
+// ============================================================================
+
+interface FileSystem {
+    // Read a file as UTF-8 string
+    readFileSync(path: string, encoding?: string): string;
+
+    // Write string content to a file
+    writeFileSync(path: string, content: string): void;
+
+    // Write binary data to a file
+    writeBinaryFile(path: string, data: Array<number>): void;
+
+    // Append to a file
+    appendFileSync(path: string, content: string): void;
+
+    // Check if file/directory exists
+    existsSync(path: string): boolean;
+
+    // Create directory (recursive)
+    mkdirSync(path: string, options?: { recursive: boolean }): void;
+
+    // Read directory contents
+    readdirSync(path: string): Array<string>;
+
+    // Delete a file
+    unlink(path: string): void;
+
+    // Delete a directory
+    rmdir(path: string): void;
+
+    // Get file stats
+    statSync(path: string): FileStat;
+
+    // Copy a file
+    copyFileSync(src: string, dest: string): void;
+
+    // Rename/move a file
+    rename(oldPath: string, newPath: string): void;
+}
+
+interface FileStat {
+    size: number;
+    isFile: boolean;
+    isDirectory: boolean;
+    mtime: number;
+}
+
+declare const fs: FileSystem;
+
+// ============================================================================
+// ByteStream API (for bytecode generation)
+// ============================================================================
+
+interface ByteStreamStatic {
+    // Create a new empty byte stream
+    create(): ByteStreamInstance;
+
+    // Write an unsigned 8-bit integer
+    writeU8(stream: ByteStreamInstance, value: number): void;
+
+    // Write an unsigned 32-bit integer (little-endian)
+    writeU32(stream: ByteStreamInstance, value: number): void;
+
+    // Write a 64-bit floating point number
+    writeF64(stream: ByteStreamInstance, value: number): void;
+
+    // Write a variable-length integer (LEB128)
+    writeVarint(stream: ByteStreamInstance, value: number): void;
+
+    // Write a length-prefixed string (UTF-8)
+    writeString(stream: ByteStreamInstance, str: string): void;
+
+    // Patch a U32 value at a specific offset
+    patchU32(stream: ByteStreamInstance, offset: number, value: number): void;
+
+    // Get current length of stream
+    length(stream: ByteStreamInstance): number;
+
+    // Convert stream to byte array
+    toArray(stream: ByteStreamInstance): Array<number>;
+}
+
+interface ByteStreamInstance {
+    data: Array<number>;
+}
+
+declare const ByteStream: ByteStreamStatic;
+
+// ============================================================================
+// String Extensions (runtime-provided)
+// ============================================================================
+
+interface String {
+    length: number;
+    charAt(index: number): string;
+    charCodeAt(index: number): number;
+    slice(start: number, end?: number): string;
+    substring(start: number, end?: number): string;
+    indexOf(search: string, fromIndex?: number): number;
+    lastIndexOf(search: string, fromIndex?: number): number;
+    includes(search: string): boolean;
+    startsWith(prefix: string): boolean;
+    endsWith(suffix: string): boolean;
+    trim(): string;
+    trimStart(): string;
+    trimEnd(): string;
+    toUpperCase(): string;
+    toLowerCase(): string;
+    split(separator: string, limit?: number): Array<string>;
+    repeat(count: number): string;
+    replace(search: string, replacement: string): string;
+}
+
+interface StringConstructor {
+    fromCharCode(code: number): string;
+}
+
+declare const String: StringConstructor;
+
+// ============================================================================
+// Array Extensions (runtime-provided)
+// ============================================================================
+
+interface Array<T> {
+    length: number;
+    push(item: T): number;
+    pop(): T | undefined;
+    shift(): T | undefined;
+    unshift(item: T): number;
+    splice(start: number, deleteCount?: number, ...items: T[]): Array<T>;
+    slice(start?: number, end?: number): Array<T>;
+    indexOf(item: T): number;
+    includes(item: T): boolean;
+    map<U>(fn: (item: T, index: number) => U): Array<U>;
+    filter(fn: (item: T, index: number) => boolean): Array<T>;
+    forEach(fn: (item: T, index: number) => void): void;
+    reduce<U>(fn: (acc: U, item: T, index: number) => U, initial: U): U;
+    join(separator?: string): string;
+}
+
+// ============================================================================
+// Math API (runtime-provided)
+// ============================================================================
+
+interface MathStatic {
+    PI: number;
+    E: number;
+    abs(x: number): number;
+    floor(x: number): number;
+    ceil(x: number): number;
+    round(x: number): number;
+    trunc(x: number): number;
+    max(...values: number[]): number;
+    min(...values: number[]): number;
+    pow(base: number, exp: number): number;
+    sqrt(x: number): number;
+    random(): number;
+    sin(x: number): number;
+    cos(x: number): number;
+    tan(x: number): number;
+    log(x: number): number;
+    log10(x: number): number;
+    exp(x: number): number;
+}
+
+declare const Math: MathStatic;
+
+// ============================================================================
+// JSON API (runtime-provided)
+// ============================================================================
+
+interface JSONStatic {
+    parse(text: string): any;
+    stringify(value: any, replacer?: any, space?: number): string;
+}
+
+declare const JSON: JSONStatic;
+
+// ============================================================================
+// Date API (runtime-provided)
+// ============================================================================
+
+interface DateConstructor {
+    new(): Date;
+    new(value: number | string): Date;
+    now(): number;
+    parse(dateString: string): number;
+}
+
+interface Date {
+    getTime(): number;
+    getFullYear(): number;
+    getMonth(): number;
+    getDate(): number;
+    getHours(): number;
+    getMinutes(): number;
+    getSeconds(): number;
+    getMilliseconds(): number;
+    toISOString(): string;
+    toString(): string;
+}
+
+declare const Date: DateConstructor;
+
+// ============================================================================
+// Global Functions
+// ============================================================================
+
+declare function parseInt(str: string, radix?: number): number;
+declare function parseFloat(str: string): number;
+declare function isNaN(value: number): boolean;
+declare function isFinite(value: number): boolean;
+
+// ============================================================================
+// Character Classification (from std/prelude.tscl)
+// ============================================================================
+
+declare function isAlpha(code: number): boolean;
+declare function isDigit(code: number): boolean;
+declare function isAlphaNumeric(code: number): boolean;
+declare function isWhitespace(code: number): boolean;
+
+// ============================================================================
+// Module require (CommonJS-style, for bootstrap)
+// ============================================================================
+
+declare function require(path: string): any;

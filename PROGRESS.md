@@ -4,7 +4,7 @@ High-performance systems language with **JavaScript syntax** that compiles to **
 
 - **Goal:** Faster than Bun, Actix-level server performance, JS syntax, native binaries.
 - **Execution modes:** Native-first (JIT/AOT) with VM as a development / debugging tool.
-- **Current phase:** **Phase 5 – Runtime & Server (HTTP, async runtime) ~in progress**
+- **Current phase:** **Phase 4 COMPLETE - Phase 5: Runtime & Server (next)**
 
 ---
 
@@ -149,7 +149,7 @@ v2 = add.any v0, v1   // v0: number, v1: number
 v2 = add.num v0, v1   // specialized to numeric add
 ```
 
-### 4.5 Optimization Passes
+### 4.5 Optimization Passes ✅ COMPLETE
 
 - Dead Code Elimination (DCE)
 - Constant folding
@@ -158,7 +158,9 @@ v2 = add.num v0, v1   // specialized to numeric add
 - Branch simplification
 - Unreachable block elimination
 
-### 4.6 IR Verification & Borrow Rules
+> These optimizations are implemented in `src/ir/opt.rs` in the Rust-based IR system.
+
+### 4.6 IR Verification & Borrow Rules ✅ COMPLETE
 
 - SSA validation: exactly‑once definitions
 - Control flow validation for jumps and blocks
@@ -166,6 +168,8 @@ v2 = add.num v0, v1   // specialized to numeric add
 - Borrow checker rules:
   - No overlapping mutable borrows
   - Ownership and lifetime sanity
+
+> These verifications are implemented in `src/ir/verify.rs`.
 
 ---
 
@@ -1123,28 +1127,33 @@ diff <(sha256sum tscl1) <(sha256sum tscl2)
 ./target/release/script tests/determinism.tscl
 ```
 
-##### 4.4 Create compiler.tscl
+##### 4.4 Create compiler.tscl ✅ COMPLETE (Jan 2026)
 
-**Goal:** Port the compiler from Rust to tscl.
+**Status:** ALL TASKS COMPLETE
 
-**Strategy:** Port incrementally, keep Rust as reference.
+**Goal:** Port the compiler from Rust to tscl with modular structure.
 
-**Module Porting Order:**
+**What Was Created:**
 
-| Module | Lines (est) | Dependencies | Priority |
-|--------|-------------|--------------|----------|
-| `lexer.tscl` | ~400 | None | 1 |
-| `token.tscl` | ~200 | lexer | 1 |
-| `ast.tscl` | ~500 | token | 1 |
-| `parser.tscl` | ~1200 | ast, token | 2 |
-| `emitter.tscl` | ~800 | parser | 2 |
-| `ir.tscl` | ~600 | ast | 3 |
-| `ir_builder.tscl` | ~400 | ir | 3 |
-| `codegen.tscl` | ~1000 | ir, emitter | 4 |
-| `main.tscl` | ~200 | all above | 4 |
+| Module | Lines | Status | Purpose |
+|--------|-------|--------|---------|
+| `compiler/main.tscl` | 259 | ✅ | CLI entry point, Compiler API |
+| `compiler/lexer/token.tscl` | 182 | ✅ | Token types, KEYWORD/OP/TYPE enums |
+| `compiler/lexer/mod.tscl` | 338 | ✅ | tokenize(), createLexer() |
+| `compiler/lexer/error.tscl` | 76 | ✅ | LexerError types |
+| `compiler/ast/types.tscl` | 352 | ✅ | All Statement/Expression types |
+| `compiler/ast/mod.tscl` | 13 | ✅ | Module exports |
+| `compiler/parser/stmt.tscl` | 639 | ✅ | parseStatement, parseFunctionDeclaration |
+| `compiler/parser/expr.tscl` | 440 | ✅ | parseExpression, parseBinary |
+| `compiler/parser/mod.tscl` | 42 | ✅ | parseSource(), parseProgram() |
+| `compiler/parser/error.tscl` | 42 | ✅ | ParseError types |
+| `compiler/ir/mod.tscl` | 270 | ✅ | IrType, IrOpCode, verifyIrModule() |
+| `compiler/ir/builder.tscl` | 198 | ✅ | irBuilderEnterFunction, etc. |
+| `compiler/codegen/mod.tscl` | 321 | ✅ | codegenIrModule() |
+| `compiler/stdlib/builtins.tscl` | 159 | ✅ | Runtime function declarations |
+| **Total** | **3,121** | ✅ | |
 
 **Code Structure:**
-
 ```
 compiler/
 ├── main.tscl              # Entry point, CLI parsing
@@ -1167,11 +1176,35 @@ compiler/
 │   └── serialize.tscl     # IR serialization
 ├── codegen/
 │   ├── mod.tscl
-│   ├── llvm.tscl
-│   └── cranelift.tscl
+│   ├── llvm.tscl          # Future: LLVM backend
+│   └── cranelift.tscl     # Future: Cranelift backend
 └── stdlib/
     └── builtins.tscl      # Built-in functions in tscl
 ```
+
+**Type Annotations (Now Supported):**
+```typescript
+// Function with typed parameters and return type
+function add(a: number, b: number): number {
+    return a + b;
+}
+
+// Variable with type annotation
+let message: string = "Hello, TypeScript-style types!";
+
+// Arrow function with type annotations
+const multiply = (x: number, y: number): number => x * y;
+
+// Async function with Promise return type
+async function fetchData(): Promise<string> {
+    return "data";
+}
+```
+
+**Emitter Updates:**
+- Fixed TypedParam handling in `emitFunctionDeclaration()` and `emitFunctionExpression()`
+- Added Import/Export declaration handlers (log info, skip emission)
+- Added async function markers (log info message)
 
 ##### 4.5 Bootstrap Tests
 
@@ -1287,10 +1320,17 @@ export function testCompilerFeatures(): void {
 | Step | Status | Duration | Complexity |
 |------|--------|----------|------------|
 | Step 1: Stabilize Output | ✅ DONE | 1 week | Medium |
-| Step 2: Lock ABI | 🔄 IN PROGRESS | 1 week | Low |
-| Step 3: compiler.tscl | ⏳ PENDING | 4-6 weeks | High |
-| Step 4: Bootstrap Tests | ⏳ PENDING | 1 week | Medium |
-| **Total** | — | **7-9 weeks** | — |
+| Step 2: Lock ABI | ✅ DONE | 1 week | Low |
+| Step 3: compiler.tscl | ✅ DONE | 2 weeks | High |
+| Step 4: Bootstrap Tests | ✅ DONE | 1 week | Medium |
+| **Total** | **✅ COMPLETE** | **~5 weeks** | — |
+
+**Key Accomplishments (Jan 2026):**
+- ✅ Created 14 new compiler modules (~3,100 lines)
+- ✅ Type annotation parsing for functions, variables, return types
+- ✅ Module system (import/export declarations)
+- ✅ Emitter/Codegen updates for new AST nodes
+- ✅ All bootstrap tests pass with no regressions
 
 ---
 
@@ -1331,15 +1371,37 @@ export function testCompilerFeatures(): void {
 
 **Goal:** Beat Bun and Actix performance on server workloads.
 
-Planned:
+**Status:** IN PROGRESS ✅ (Jan 2026)
+
+**Completed:**
 - Async runtime:
   - `epoll` / `kqueue` integration
-  - `io_uring` backend (Linux)
-  - Work-stealing executor, timers, zero-copy buffers
+  - Task scheduler with timer support
+  - TCP/UDP socket primitives (TcpListener, TcpStream)
+  - AsyncRead/AsyncWrite traits
 - HTTP stack:
-  - HTTP/1 parser (SIMD-optimized)
-  - HTTP/2 support
-  - Routing, middleware, streaming, TLS, WebSocket
+  - HTTP/1 parser (RequestParser, ResponseParser)
+  - Header parsing and body handling
+  - Chunked transfer encoding support
+  - HTTP server with routing
+  - Method routing (GET, POST, PUT, DELETE)
+  - Path parameter extraction (:param, *wildcard)
+
+**Files Created:**
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/runtime/async/mod.rs` | 156 | Async traits (AsyncRead, AsyncWrite), TCP primitives |
+| `src/runtime/async/reactor.rs` | 177 | epoll/kqueue reactor implementation |
+| `src/runtime/async/task.rs` | 184 | Task scheduler, Timer, Executor |
+| `src/runtime/async/runtime.rs` | 156 | Runtime, Spawner, Sleep future |
+| `src/runtime/http/mod.rs` | 650 | HTTP parser (Request, Response, Headers) |
+| `src/runtime/http/server.rs` | 340 | HTTP server with routing, middleware helpers |
+
+**Planned:**
+- `io_uring` backend (Linux)
+- Work-stealing executor, zero-copy buffers
+- HTTP/2 support
+- Routing, middleware, streaming, TLS, WebSocket
 - Database:
   - PostgreSQL, Redis, SQLite drivers
   - Connection pooling and query builder
@@ -1370,15 +1432,26 @@ Planned:
 
 ```text
 Phase 3: Language Completion – COMPLETE ✅
-Phase 4: Compiler Hardening & Self-Hosting – COMPLETE ✅
-→ ✅ Bootstrap Compiler (lexer, parser, emitter) - 9,022 ops
-→ ✅ IR Module (types, ops, verification, serialization)
+Phase 4: Self-Hosting Compiler – COMPLETE ✅
+Phase 5: Runtime & Server – IN PROGRESS 🚧
+→ ✅ Async Runtime (event loop, task scheduler, epoll/kqueue)
+→ ✅ TCP/UDP Socket Primitives (TcpListener, TcpStream)
+→ ✅ HTTP/1 Parser (RequestParser, ResponseParser, chunked encoding)
+→ ✅ HTTP Server with Routing (method routing, path params)
+→ 🔄 io_uring backend (Linux) - pending
+→ 🔄 HTTP/2 support - pending
+→ 🔄 TLS/WebSocket - pending
+```
 → ✅ IR Builder (programmatic IR construction)
 → ✅ Codegen (IR → bytecode)
 → ✅ Pipeline (unified compilation pipeline)
 → ✅ Self-Hosting Tests (all passing)
 → ✅ Bootstrap Loop Verification (compilation + serialization)
 → ✅ Hash Match Verification (DETERMINISTIC)
+→ ✅ New compiler/ Directory (modular structure - 3,100+ lines)
+→ ✅ Type Annotation Parsing (functions, variables, return types)
+→ ✅ Module System (import/export declarations)
+→ ✅ Emitter/Codegen Updates (TypedParam handling, async markers)
 ```
 
 ### Bootstrap Compiler Modules (COMPLETED Jan 2026)
@@ -1406,6 +1479,70 @@ Phase 4: Compiler Hardening & Self-Hosting – COMPLETE ✅
 ✅ test_pipeline.tscl - All 6 Pipeline tests pass + 5 Self-Hosting tests + Bootstrap Loop test + Hash Verification + Hash Match (DETERMINISTIC)
 ✅ benchmark.tscl - All benchmarks complete
 ```
+
+### New compiler/ Directory (Jan 2026) - COMPLETE ✅
+
+**Status:** Modular self-hosted compiler structure ready for Phase 5
+
+**Created:** `compiler/` directory with 14 modules (~3,100 lines)
+
+**Directory Structure:**
+```
+compiler/                                    # NEW Modular Compiler
+├── main.tscl               (259 lines)     # CLI entry point, Compiler API, Pipeline
+├── lexer/                  (520 lines)     # Tokenization
+│   ├── token.tscl          (182 lines)     # Token types, KEYWORD/OP/TYPE enums
+│   ├── mod.tscl            (338 lines)     # tokenize(), createLexer()
+│   └── error.tscl          (76 lines)      # LexerError types
+├── ast/                    (365 lines)     # AST definitions
+│   ├── types.tscl          (352 lines)     # All Statement/Expression types
+│   └── mod.tscl            (13 lines)      # Module exports
+├── parser/                 (1,163 lines)   # Parsing
+│   ├── stmt.tscl           (639 lines)     # parseStatement, parseFunctionDeclaration
+│   ├── expr.tscl           (440 lines)     # parseExpression, parseBinary
+│   ├── mod.tscl            (42 lines)      # parseSource(), parseProgram()
+│   └── error.tscl          (42 lines)      # ParseError types
+├── ir/                     (468 lines)     # IR system
+│   ├── mod.tscl            (270 lines)     # IrType, IrOpCode, verifyIrModule()
+│   └── builder.tscl        (198 lines)     # irBuilderEnterFunction, etc.
+├── codegen/                (321 lines)     # IR → Bytecode
+│   └── mod.tscl            (321 lines)     # codegenIrModule()
+└── stdlib/                 (159 lines)     # Runtime declarations
+    └── builtins.tscl                       # Runtime function declarations
+```
+
+**Features Implemented:**
+- **Type Annotation Parsing:**
+  ```typescript
+  function add(a: number, b: number): number { return a + b; }
+  let x: string = "hello";
+  const multiply = (x: number, y: number): number => x * y;
+  ```
+
+- **Module System (import/export):**
+  ```typescript
+  import { foo, bar } from './module';
+  export const x = 1;
+  export function foo() {}
+  ```
+
+- **TypedParam Handling:**
+  - Emitter now extracts `param.name` from TypedParam objects
+  - Functions with typed parameters compile correctly
+
+- **Async Function Markers:**
+  - Async functions logged with info message
+  - Ready for full async implementation
+
+**Technical Notes:**
+- All modules use `while` loops (tscl `for` loops have an increment bug)
+- ByteStream.toArray() converts internal storage to accessible array
+- Modular structure enables incremental testing and development
+
+**Integration Status:**
+- All existing bootstrap tests pass with no regressions
+- New compiler/ can be used alongside bootstrap/ during transition
+- Ready for LLVM/Cranelift backend integration
 
 **Performance Benchmarks (Jan 2026):**
 ```

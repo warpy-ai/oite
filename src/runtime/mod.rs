@@ -14,6 +14,8 @@ pub mod abi_tests;
 pub mod abi_version;
 pub mod heap;
 pub mod stubs;
+pub mod r#async;
+pub mod http;
 
 pub use abi::TsclValue;
 pub use abi_version::ABI_VERSION;

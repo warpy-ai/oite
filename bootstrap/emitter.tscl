@@ -261,6 +261,25 @@ function emit(emitter, node) {
         emitForStatement(emitter, node);
         return;
     }
+    if (type == "ImportDeclaration") {
+        console.log("Info: Import declaration ignored during bytecode emission. Module: " + node.source);
+        return;
+    }
+    if (type == "ExportNamedDeclaration") {
+        console.log("Info: Export named declaration ignored during bytecode emission.");
+        if (node.declaration != null) {
+            emit(emitter, node.declaration);
+        }
+        return;
+    }
+    if (type == "ExportDefaultDeclaration") {
+        console.log("Info: Export default declaration ignored during bytecode emission.");
+        return;
+    }
+    if (type == "ExportAllDeclaration") {
+        console.log("Info: Export all declaration ignored during bytecode emission. Source: " + node.source);
+        return;
+    }
     console.log("Unknown node type:", type);
 }
 
@@ -307,6 +326,10 @@ function emitVariableDeclaration(emitter, node) {
 }
 
 function emitFunctionDeclaration(emitter, node) {
+    if (node.isAsync === true) {
+        console.log("Info: Async function '" + node.name + "' - async semantics not yet implemented, treating as synchronous");
+    }
+
     emitU8(emitter, OP.JUMP);
     let jumpPatch = currentOffset(emitter);
     emitU32(emitter, 0);
@@ -316,13 +339,19 @@ function emitFunctionDeclaration(emitter, node) {
     let outerScope = emitter.scope;
     emitter.scope = createScope(null);
 
+    let paramCount = node.params.length;
     let i = 0;
-    while (i < node.params.length) {
-        scopeDefine(emitter.scope, node.params[i]);
+    while (i < paramCount) {
+        let param = node.params[i];
+        let paramName = param;
+        if (typeof param === "object" && param.name != null) {
+            paramName = param.name;
+        }
+        scopeDefine(emitter.scope, paramName);
         i = i + 1;
     }
 
-    i = node.params.length - 1;
+    i = paramCount - 1;
     while (i >= 0) {
         emitStoreLocal(emitter, i);
         i = i - 1;
@@ -342,11 +371,16 @@ function emitFunctionDeclaration(emitter, node) {
 
     emitU8(emitter, OP.MAKE_CLOSURE);
     emitU32(emitter, funcAddr);
-    emitU8(emitter, node.params.length);
+    emitU8(emitter, paramCount);
 
     i = 0;
-    while (i < node.params.length) {
-        emitString(emitter, node.params[i]);
+    while (i < paramCount) {
+        let param = node.params[i];
+        let paramName = param;
+        if (typeof param === "object" && param.name != null) {
+            paramName = param.name;
+        }
+        emitString(emitter, paramName);
         i = i + 1;
     }
 
@@ -707,6 +741,10 @@ function emitThisExpression(emitter, node) {
 }
 
 function emitFunctionExpression(emitter, node) {
+    if (node.isAsync === true) {
+        console.log("Info: Async function expression - async semantics not yet implemented, treating as synchronous");
+    }
+
     let funcNode = node;
 
     emitU8(emitter, OP.JUMP);
@@ -718,13 +756,19 @@ function emitFunctionExpression(emitter, node) {
     let outerScope = emitter.scope;
     emitter.scope = createScope(null);
 
+    let paramCount = funcNode.params.length;
     let i = 0;
-    while (i < funcNode.params.length) {
-        scopeDefine(emitter.scope, funcNode.params[i]);
+    while (i < paramCount) {
+        let param = funcNode.params[i];
+        let paramName = param;
+        if (typeof param === "object" && param.name != null) {
+            paramName = param.name;
+        }
+        scopeDefine(emitter.scope, paramName);
         i = i + 1;
     }
 
-    i = funcNode.params.length - 1;
+    i = paramCount - 1;
     while (i >= 0) {
         emitStoreLocal(emitter, i);
         i = i - 1;
@@ -749,11 +793,16 @@ function emitFunctionExpression(emitter, node) {
 
     emitU8(emitter, OP.MAKE_CLOSURE);
     emitU32(emitter, funcAddr);
-    emitU8(emitter, funcNode.params.length);
+    emitU8(emitter, paramCount);
 
     i = 0;
-    while (i < funcNode.params.length) {
-        emitString(emitter, funcNode.params[i]);
+    while (i < paramCount) {
+        let param = funcNode.params[i];
+        let paramName = param;
+        if (typeof param === "object" && param.name != null) {
+            paramName = param.name;
+        }
+        emitString(emitter, paramName);
         i = i + 1;
     }
     return;

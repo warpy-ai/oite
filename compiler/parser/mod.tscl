@@ -1,0 +1,42 @@
+// ============================================================================
+// Parser Module for tscl Compiler
+// ============================================================================
+
+require ./stmt;
+require ./expr;
+require ../lexer/token;
+
+// ============================================================================
+// Main Parse Function
+// ============================================================================
+
+function parseSource(source) {
+    let tokens = tokenize(source);
+    if (tokens == null) {
+        return null;
+    }
+    let parser = createParser(tokens);
+    return parseProgram(parser);
+}
+
+function parseProgram(parser) {
+    let body = [];
+    while (!isAtEnd(parser)) {
+        let stmt = parseStatement(parser);
+        if (stmt != null) {
+            body.push(stmt);
+        }
+    }
+    return {
+        type: "Program",
+        body: body
+    };
+}
+
+// Re-export for convenience
+type Parser = {
+    tokens: Array<Token>,
+    pos: number
+};
+
+console.log("Parser module loaded");

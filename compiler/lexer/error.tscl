@@ -1,0 +1,67 @@
+// ============================================================================
+// Lexer Errors for tscl Compiler
+// ============================================================================
+
+interface LexerError {
+    type: string;
+    message: string;
+    line: number;
+    col: number;
+    offset: number;
+}
+
+function createLexerError(type: string, message: string, line: number, col: number, offset: number): LexerError {
+    return {
+        type: type,
+        message: message,
+        line: line,
+        col: col,
+        offset: offset
+    };
+}
+
+function unexpectedCharacterError(c: string, line: number, col: number): LexerError {
+    return createLexerError(
+        "UnexpectedCharacter",
+        "Unexpected character: " + c,
+        line,
+        col,
+        0
+    );
+}
+
+function unterminatedStringError(line: number, col: number): LexerError {
+    return createLexerError(
+        "UnterminatedString",
+        "Unterminated string literal",
+        line,
+        col,
+        0
+    );
+}
+
+function invalidNumberError(str: string, line: number, col: number): LexerError {
+    return createLexerError(
+        "InvalidNumber",
+        "Invalid number literal: " + str,
+        line,
+        col,
+        0
+    );
+}
+
+function maxDepthExceededError(line: number, col: number): LexerError {
+    return createLexerError(
+        "MaxDepthExceeded",
+        "Maximum parsing depth exceeded",
+        line,
+        col,
+        0
+    );
+}
+
+function formatLexerError(error: LexerError): string {
+    return "Lexer Error [" + error.type + "] at line " + error.line + ", col " + error.col + ": " + error.message;
+}
+
+console.log("Lexer errors module loaded");

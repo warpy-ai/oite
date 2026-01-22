@@ -90,6 +90,107 @@ function isAtEnd(parser) {
 }
 
 // ============================================================================
+// Type Annotation Parsers
+// ============================================================================
+
+// Parse a type annotation after ':'
+// Examples: number, string, boolean, any, void, Array<T>, T[], Promise<T>, A | B
+function parseTypeAnnotation(parser) {
+    let baseType = parseBaseType(parser);
+    if (baseType == null) {
+        return null;
+    }
+
+    // Check for union type: A | B
+    if (check(parser, TOKEN.OPERATOR, "|")) {
+        let unionTypes = [baseType];
+        while (match(parser, TOKEN.OPERATOR, "|")) {
+            let nextType = parseBaseType(parser);
+            if (nextType != null) {
+                unionTypes.push(nextType);
+            }
+        }
+        return {
+            type: "TypeAnnotation",
+            typeKind: "union",
+            isArray: false,
+            elementType: null,
+            unionTypes: unionTypes,
+            genericParams: null
+        };
+    }
+
+    return baseType;
+}
+
+// Parse base type: number, string, Array<T>, T[], etc.
+function parseBaseType(parser) {
+    let typeKind = "";
+
+    // Check for identifier (type name)
+    if (peekType(parser) == TOKEN.IDENTIFIER || peekType(parser) == TOKEN.KEYWORD) {
+        let tok = parserAdvance(parser);
+        typeKind = tok.value;
+    } else {
+        return null;
+    }
+
+    // Check for generic parameters: Type<T, U>
+    let genericParams = null;
+    if (check(parser, TOKEN.OPERATOR, "<")) {
+        parserAdvance(parser);
+        genericParams = [];
+        while (!check(parser, TOKEN.OPERATOR, ">")) {
+            if (genericParams.length > 0) {
+                expect(parser, TOKEN.DELIMITER, ",");
+            }
+            let paramType = parseTypeAnnotation(parser);
+            if (paramType != null) {
+                genericParams.push(paramType);
+            }
+        }
+        expect(parser, TOKEN.OPERATOR, ">");
+    }
+
+    // Check for array notation: type[]
+    let isArray = false;
+    let elementType = null;
+    if (check(parser, TOKEN.DELIMITER, "[")) {
+        parserAdvance(parser);
+        expect(parser, TOKEN.DELIMITER, "]");
+        isArray = true;
+        elementType = {
+            type: "TypeAnnotation",
+            typeKind: typeKind,
+            isArray: false,
+            elementType: null,
+            unionTypes: null,
+            genericParams: genericParams
+        };
+        typeKind = "array";
+        genericParams = null;
+    }
+
+    return {
+        type: "TypeAnnotation",
+        typeKind: typeKind,
+        isArray: isArray,
+        elementType: elementType,
+        unionTypes: null,
+        genericParams: genericParams
+    };
+}
+
+// Try to parse optional type annotation (: type)
+function tryParseTypeAnnotation(parser) {
+    if (check(parser, TOKEN.DELIMITER, ":")) {
+        parserAdvance(parser);
+        return parseTypeAnnotation(parser);
+    }
+    return null;
+}
+
+// ============================================================================
 // Statement Parsers
 // ============================================================================
 
@@ -121,6 +222,16 @@ function parseStatement(parser) {
         }
         if (value == "function") {
             return parseFunctionDeclaration(parser);
+        }
+        if (value == "async") {
+            // async function declaration
+            return parseFunctionDeclaration(parser);
+        }
+        if (value == "import") {
+            return parseImportDeclaration(parser);
+        }
+        if (value == "export") {
+            return parseExportDeclaration(parser);
         }
         if (value == "return") {
             return parseReturnStatement(parser);
@@ -199,6 +310,9 @@ function parseVariableDeclaration(parser) {
         name = nameTok.value;
     }
 
+    // Parse optional type annotation: let x: number
+    let typeAnnotation = tryParseTypeAnnotation(parser);
+
     let init =  null;
     if (match(parser, TOKEN.OPERATOR, "=")) {
         init = parseExpression(parser, 0);
@@ -209,12 +323,20 @@ function parseVariableDeclaration(parser) {
     return {
         type: "VariableDeclaration",
         name: name,
+        typeAnnotation: typeAnnotation,
         init: init,
         kind: kind
     };
 }
 
 function parseFunctionDeclaration(parser) {
+    // Check for async keyword
+    let isAsync = false;
+    if (check(parser, TOKEN.KEYWORD, "async")) {
+        parserAdvance(parser);
+        isAsync = true;
+    }
+
     expect(parser, TOKEN.KEYWORD, "function");
 
     let name =  "";
@@ -232,11 +354,23 @@ function parseFunctionDeclaration(parser) {
         }
         let paramTok =  expect(parser, TOKEN.IDENTIFIER, null);
         if (paramTok != null) {
-            params.push(paramTok.value);
+            // Check for parameter type annotation: param: type
+            let paramType = tryParseTypeAnnotation(parser);
+            if (paramType != null) {
+                params.push({
+                    name: paramTok.value,
+                    typeAnnotation: paramType
+                });
+            } else {
+                params.push(paramTok.value);
+            }
         }
     }
 
     expect(parser, TOKEN.DELIMITER, ")");
+
+    // Parse optional return type annotation: ): type
+    let returnType = tryParseTypeAnnotation(parser);
 
     let body =  parseBlockStatement(parser);
 
@@ -244,7 +378,9 @@ function parseFunctionDeclaration(parser) {
         type: "FunctionDeclaration",
         name: name,
         params: params,
-        body: body
+        returnType: returnType,
+        body: body,
+        isAsync: isAsync
     };
 }
 
@@ -391,6 +527,259 @@ function parseContinueStatement(parser) {
     expect(parser, TOKEN.KEYWORD, "continue");
     match(parser, TOKEN.DELIMITER, ";");
     return { type: "ContinueStatement" };
+}
+
+// ============================================================================
+// Module Declaration Parsers (import/export)
+// ============================================================================
+
+// Parse: import { a, b } from './module';
+// Parse: import defaultExport from './module';
+// Parse: import * as ns from './module';
+// Parse: import './module';
+function parseImportDeclaration(parser) {
+    expect(parser, TOKEN.KEYWORD, "import");
+
+    let specifiers = [];
+    let source = "";
+
+    // Check for side-effect only import: import './module';
+    if (peekType(parser) == TOKEN.STRING) {
+        let sourceTok = parserAdvance(parser);
+        source = sourceTok.value;
+        match(parser, TOKEN.DELIMITER, ";");
+        return {
+            type: "ImportDeclaration",
+            specifiers: [],
+            source: source
+        };
+    }
+
+    // Check for namespace import: import * as ns from './module';
+    if (check(parser, TOKEN.OPERATOR, "*")) {
+        parserAdvance(parser);
+        expect(parser, TOKEN.KEYWORD, "as");
+        let localTok = expect(parser, TOKEN.IDENTIFIER, null);
+        if (localTok != null) {
+            specifiers.push({
+                type: "ImportNamespaceSpecifier",
+                local: localTok.value
+            });
+        }
+    }
+    // Check for default import: import defaultExport from './module';
+    else if (peekType(parser) == TOKEN.IDENTIFIER && !check(parser, TOKEN.DELIMITER, "{")) {
+        let localTok = parserAdvance(parser);
+        specifiers.push({
+            type: "ImportDefaultSpecifier",
+            local: localTok.value
+        });
+
+        // Check for comma followed by named imports: import default, { a, b } from './module';
+        if (match(parser, TOKEN.DELIMITER, ",")) {
+            if (check(parser, TOKEN.DELIMITER, "{")) {
+                let namedSpecifiers = parseNamedImports(parser);
+                for (let i = 0; i < namedSpecifiers.length; i = i + 1) {
+                    specifiers.push(namedSpecifiers[i]);
+                }
+            }
+        }
+    }
+    // Named imports: import { a, b } from './module';
+    else if (check(parser, TOKEN.DELIMITER, "{")) {
+        specifiers = parseNamedImports(parser);
+    }
+
+    expect(parser, TOKEN.KEYWORD, "from");
+
+    let sourceTok = expect(parser, TOKEN.STRING, null);
+    if (sourceTok != null) {
+        source = sourceTok.value;
+    }
+
+    match(parser, TOKEN.DELIMITER, ";");
+
+    return {
+        type: "ImportDeclaration",
+        specifiers: specifiers,
+        source: source
+    };
+}
+
+// Parse named imports: { a, b as c, d }
+function parseNamedImports(parser) {
+    let specifiers = [];
+    expect(parser, TOKEN.DELIMITER, "{");
+
+    while (!check(parser, TOKEN.DELIMITER, "}")) {
+        if (specifiers.length > 0) {
+            expect(parser, TOKEN.DELIMITER, ",");
+        }
+
+        if (check(parser, TOKEN.DELIMITER, "}")) {
+            break;
+        }
+
+        let importedTok = expect(parser, TOKEN.IDENTIFIER, null);
+        if (importedTok == null) {
+            break;
+        }
+
+        let imported = importedTok.value;
+        let local = imported;
+
+        // Check for alias: a as b
+        if (match(parser, TOKEN.KEYWORD, "as")) {
+            let localTok = expect(parser, TOKEN.IDENTIFIER, null);
+            if (localTok != null) {
+                local = localTok.value;
+            }
+        }
+
+        specifiers.push({
+            type: "ImportSpecifier",
+            imported: imported,
+            local: local
+        });
+    }
+
+    expect(parser, TOKEN.DELIMITER, "}");
+    return specifiers;
+}
+
+// Parse: export { a, b };
+// Parse: export { a } from './module';
+// Parse: export * from './module';
+// Parse: export default expr;
+// Parse: export const x = 1;
+// Parse: export function foo() {}
+function parseExportDeclaration(parser) {
+    expect(parser, TOKEN.KEYWORD, "export");
+
+    // export default expr;
+    if (match(parser, TOKEN.KEYWORD, "default")) {
+        let declaration = null;
+
+        // export default function foo() {}
+        if (check(parser, TOKEN.KEYWORD, "function") || check(parser, TOKEN.KEYWORD, "async")) {
+            declaration = parseFunctionDeclaration(parser);
+        } else {
+            // export default expression;
+            declaration = parseExpression(parser, 0);
+            match(parser, TOKEN.DELIMITER, ";");
+        }
+
+        return {
+            type: "ExportDefaultDeclaration",
+            declaration: declaration
+        };
+    }
+
+    // export * from './module';
+    if (check(parser, TOKEN.OPERATOR, "*")) {
+        parserAdvance(parser);
+        expect(parser, TOKEN.KEYWORD, "from");
+        let sourceTok = expect(parser, TOKEN.STRING, null);
+        let source = "";
+        if (sourceTok != null) {
+            source = sourceTok.value;
+        }
+        match(parser, TOKEN.DELIMITER, ";");
+
+        return {
+            type: "ExportAllDeclaration",
+            source: source
+        };
+    }
+
+    // export { a, b } or export { a } from './module';
+    if (check(parser, TOKEN.DELIMITER, "{")) {
+        let specifiers = parseNamedExports(parser);
+        let source = null;
+
+        // Check for re-export: export { a } from './module';
+        if (match(parser, TOKEN.KEYWORD, "from")) {
+            let sourceTok = expect(parser, TOKEN.STRING, null);
+            if (sourceTok != null) {
+                source = sourceTok.value;
+            }
+        }
+
+        match(parser, TOKEN.DELIMITER, ";");
+
+        return {
+            type: "ExportNamedDeclaration",
+            specifiers: specifiers,
+            source: source,
+            declaration: null
+        };
+    }
+
+    // export const/let/var x = 1;
+    if (check(parser, TOKEN.KEYWORD, "let") || check(parser, TOKEN.KEYWORD, "const") || check(parser, TOKEN.KEYWORD, "var")) {
+        let declaration = parseVariableDeclaration(parser);
+        return {
+            type: "ExportNamedDeclaration",
+            specifiers: [],
+            source: null,
+            declaration: declaration
+        };
+    }
+
+    // export function foo() {} or export async function foo() {}
+    if (check(parser, TOKEN.KEYWORD, "function") || check(parser, TOKEN.KEYWORD, "async")) {
+        let declaration = parseFunctionDeclaration(parser);
+        return {
+            type: "ExportNamedDeclaration",
+            specifiers: [],
+            source: null,
+            declaration: declaration
+        };
+    }
+
+    console.log("Parse error: unexpected export syntax");
+    return null;
+}
+
+// Parse named exports: { a, b as c }
+function parseNamedExports(parser) {
+    let specifiers = [];
+    expect(parser, TOKEN.DELIMITER, "{");
+
+    while (!check(parser, TOKEN.DELIMITER, "}")) {
+        if (specifiers.length > 0) {
+            expect(parser, TOKEN.DELIMITER, ",");
+        }
+
+        if (check(parser, TOKEN.DELIMITER, "}")) {
+            break;
+        }
+
+        let localTok = expect(parser, TOKEN.IDENTIFIER, null);
+        if (localTok == null) {
+            break;
+        }
+
+        let local = localTok.value;
+        let exported = local;
+
+        // Check for alias: a as b
+        if (match(parser, TOKEN.KEYWORD, "as")) {
+            let exportedTok = expect(parser, TOKEN.IDENTIFIER, null);
+            if (exportedTok != null) {
+                exported = exportedTok.value;
+            }
+        }
+
+        specifiers.push({
+            type: "ExportSpecifier",
+            local: local,
+            exported: exported
+        });
+    }
+
+    expect(parser, TOKEN.DELIMITER, "}");
+    return specifiers;
 }
 
 // ============================================================================

@@ -97,7 +97,8 @@ function isKeyword(value) {
            value == "super" || value == "import" || value == "export" ||
            value == "default" || value == "async" || value == "await" ||
            value == "yield" || value == "try" || value == "catch" ||
-           value == "finally" || value == "throw" || value == "instanceof";
+           value == "finally" || value == "throw" || value == "instanceof" ||
+           value == "from" || value == "as";
 }
 
 function scanIdentifierOrKeyword(lexer) {
@@ -320,7 +321,7 @@ function tokenize(source) {
         // Check if it's an operator or delimiter
         if (value == "{" || value == "}" || value == "(" || value == ")" ||
             value == "[" || value == "]" || value == ";" || value == "," ||
-            value == "." || value == "...") {
+            value == "." || value == "..." || value == ":") {
             lexer.tokens.push(makeToken(TOKEN.DELIMITER, value, startLine, startCol));
         } else {
             lexer.tokens.push(makeToken(TOKEN.OPERATOR, value, startLine, startCol));

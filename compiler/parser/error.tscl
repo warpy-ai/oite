@@ -1,0 +1,110 @@
+// ============================================================================
+// Parser Errors for tscl Compiler
+// ============================================================================
+
+interface ParseError {
+    type: string;
+    message: string;
+    line: number;
+    col: number;
+    token: any;
+    expected: string | null;
+}
+
+function createParseError(type: string, message: string, line: number, col: number, token: any, expected: string | null): ParseError {
+    return {
+        type: type,
+        message: message,
+        line: line,
+        col: col,
+        token: token,
+        expected: expected
+    };
+}
+
+function unexpectedTokenError(token: any): ParseError {
+    return createParseError(
+        "UnexpectedToken",
+        "Unexpected token: " + token.value + " (type: " + token.type + ")",
+        token.line,
+        token.col,
+        token,
+        null
+    );
+}
+
+function expectedTokenError(expected: string, token: any): ParseError {
+    return createParseError(
+        "ExpectedToken",
+        "Expected " + expected + " but got " + token.value,
+        token.line,
+        token.col,
+        token,
+        expected
+    );
+}
+
+function syntaxError(message: string, line: number, col: number): ParseError {
+    return createParseError(
+        "SyntaxError",
+        message,
+        line,
+        col,
+        null,
+        null
+    );
+}
+
+function unterminatedBlockError(line: number, col: number): ParseError {
+    return createParseError(
+        "UnterminatedBlock",
+        "Unterminated block statement",
+        line,
+        col,
+        null,
+        "}"
+    );
+}
+
+function invalidAssignmentTargetError(token: any): ParseError {
+    return createParseError(
+        "InvalidAssignmentTarget",
+        "Invalid assignment target",
+        token.line,
+        token.col,
+        token,
+        null
+    );
+}
+
+function duplicateIdentifierError(name: string, line: number, col: number): ParseError {
+    return createParseError(
+        "DuplicateIdentifier",
+        "Duplicate identifier: " + name,
+        line,
+        col,
+        null,
+        null
+    );
+}
+
+function undefinedVariableError(name: string, line: number, col: number): ParseError {
+    return createParseError(
+        "UndefinedVariable",
+        "Undefined variable: " + name,
+        line,
+        col,
+        null,
+        null
+    );
+}
+
+function formatParseError(error: ParseError): string {
+    let loc = "";
+    if (error.line > 0) {
+        loc = " at line " + error.line + ", col " + error.col;
+    }
+    return "Parse Error [" + error.type + "]" + loc + ": " + error.message;
+}
+
+console.log("Parser errors module loaded");

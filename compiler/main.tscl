@@ -1,0 +1,259 @@
+// ============================================================================
+// tscl Compiler - Main Entry Point
+// ============================================================================
+
+require ./lexer/mod;
+require ./ast/types;
+require ./parser/mod;
+require ./ir/mod;
+require ./ir/builder;
+require ./stdlib/builtins;
+
+// ============================================================================
+// Command Line Interface
+// ============================================================================
+
+interface CliArgs {
+    command: string;
+    inputFile: string;
+    outputFile: string;
+    emitIr: boolean;
+    emitAst: boolean;
+    verbose: boolean;
+}
+
+function parseArgs(args: string[]): CliArgs {
+    let result: CliArgs = {
+        command: "run",
+        inputFile: "",
+        outputFile: "",
+        emitIr: false,
+        emitAst: false,
+        verbose: false
+    };
+
+    let i = 0;
+    while (i < args.length) {
+        let arg = args[i];
+        if (arg == "run" || arg == "build" || arg == "ir" || arg == "ast") {
+            result.command = arg;
+        } else if (arg == "-o" || arg == "--output") {
+            i = i + 1;
+            if (i < args.length) {
+                result.outputFile = args[i];
+            }
+        } else if (arg == "--emit-ir") {
+            result.emitIr = true;
+        } else if (arg == "--emit-ast") {
+            result.emitAst = true;
+        } else if (arg == "-v" || arg == "--verbose") {
+            result.verbose = true;
+        } else if (arg != "") {
+            result.inputFile = arg;
+        }
+        i = i + 1;
+    }
+
+    return result;
+}
+
+function printUsage() {
+    console.log("tscl - TypeScript Compiler");
+    console.log("");
+    console.log("Usage: tscl <command> [options] <input>");
+    console.log("");
+    console.log("Commands:");
+    console.log("  run <file>      Run the file");
+    console.log("  build <file>    Compile to native binary");
+    console.log("  ir <file>       Output IR");
+    console.log("  ast <file>      Output AST");
+    console.log("");
+    console.log("Options:");
+    console.log("  -o, --output    Output file");
+    console.log("  --emit-ir       Emit IR to file");
+    console.log("  --emit-ast      Emit AST to file");
+    console.log("  -v, --verbose   Verbose output");
+    console.log("  --help          Show this help");
+}
+
+function logVerbose(verbose: boolean, message: string) {
+    if (verbose) {
+        console.log(message);
+    }
+}
+
+// ============================================================================
+// Compiler Pipeline
+// ============================================================================
+
+function compileSource(source: string, verbose: boolean): any {
+    logVerbose(verbose, "Tokenizing...");
+    let tokens = tokenize(source);
+    logVerbose(verbose, "  " + tokens.length + " tokens");
+
+    logVerbose(verbose, "Parsing...");
+    let ast = parseSource(source);
+    if (ast == null) {
+        console.log("Parse error");
+        return null;
+    }
+    logVerbose(verbose, "  " + ast.body.length + " statements");
+
+    logVerbose(verbose, "Lowering to IR...");
+    let irModule = lowerProgramToIr(ast);
+    if (irModule == null) {
+        console.log("IR lowering error");
+        return null;
+    }
+    logVerbose(verbose, "  " + irModule.functions.length + " functions");
+
+    logVerbose(verbose, "Verifying IR...");
+    if (!verifyIrModule(irModule)) {
+        console.log("IR verification failed");
+        return null;
+    }
+
+    logVerbose(verbose, "Compilation complete");
+    return irModule;
+}
+
+function lowerProgramToIr(ast: Program): any {
+    let builder = createIrBuilder();
+    let funcCount = 0;
+    let i = 0;
+    while (i < ast.body.length) {
+        let stmt = ast.body[i];
+        if (stmt.type == "FunctionDeclaration") {
+            lowerFunctionDeclaration(builder, stmt);
+            funcCount = funcCount + 1;
+        }
+        i = i + 1;
+    }
+    return irBuilderFinish(builder);
+}
+
+function lowerFunctionDeclaration(builder: any, node: any) {
+    let returnType = IrType.ANY;
+    if (node.returnType != null) {
+        returnType = irTypeFromAnnotation(node.returnType);
+    }
+
+    let func = irBuilderEnterFunction(builder, node.name, returnType);
+    irBuilderCreateEntryBlock(builder);
+
+    let j = 0;
+    while (j < node.params.length) {
+        let param = node.params[j];
+        let paramName = param;
+        if (typeof param === "object" && param.name != null) {
+            paramName = param.name;
+        }
+        irBuilderAddParam(builder, paramName);
+        j = j + 1;
+    }
+
+    // TODO: Lower function body to IR
+    // For now, emit a simple return
+    if (node.body != null && node.body.type == "BlockStatement") {
+        let hasReturn = false;
+        let k = 0;
+        while (k < node.body.body.length) {
+            let bodyStmt = node.body.body[k];
+            if (bodyStmt.type == "ReturnStatement") {
+                hasReturn = true;
+            }
+            k = k + 1;
+        }
+        if (!hasReturn) {
+            irBuilderEmitReturnVoid(builder);
+        }
+    }
+
+    return func;
+}
+
+function irTypeFromAnnotation(annotation: any): IrType {
+    if (annotation == null) {
+        return IrType.ANY;
+    }
+    let kind = annotation.typeKind;
+    if (kind == "number") return IrType.NUMBER;
+    if (kind == "string") return IrType.STRING;
+    if (kind == "boolean") return IrType.BOOLEAN;
+    if (kind == "any") return IrType.ANY;
+    if (kind == "void") return IrType.VOID;
+    if (kind == "never") return IrType.NEVER;
+    if (kind == "object") return IrType.OBJECT;
+    if (kind == "function") return IrType.FUNCTION;
+    return IrType.ANY;
+}
+
+// ============================================================================
+// Main Entry Point
+// ============================================================================
+
+function main(args: string[]) {
+    if (args.length < 2) {
+        printUsage();
+        return;
+    }
+
+    let parsed = parseArgs(args);
+
+    if (parsed.inputFile == "") {
+        console.log("Error: No input file specified");
+        return;
+    }
+
+    if (!fs.existsSync(parsed.inputFile)) {
+        console.log("Error: File not found: " + parsed.inputFile);
+        return;
+    }
+
+    let source = fs.readFileSync(parsed.inputFile, "utf8");
+
+    if (parsed.command == "ast") {
+        let ast = parseSource(source);
+        if (ast != null) {
+            console.log(JSON.stringify(ast, null, 2));
+        }
+        return;
+    }
+
+    if (parsed.command == "ir") {
+        let irModule = compileSource(source, parsed.verbose);
+        if (irModule != null) {
+            let irText = serializeIrModule(irModule);
+            if (parsed.outputFile != "") {
+                fs.writeFileSync(parsed.outputFile, irText);
+            } else {
+                console.log(irText);
+            }
+        }
+        return;
+    }
+
+    if (parsed.command == "build") {
+        console.log("AOT compilation not yet implemented");
+        console.log("Use 'run' command for VM execution");
+        return;
+    }
+
+    // Default: run command
+    console.log("VM execution not yet implemented with new compiler");
+    console.log("Use bootstrap compiler: ./target/release/script " + parsed.inputFile);
+}
+
+// Export for external use
+let Compiler = {
+    compile: compileSource,
+    parse: parseSource,
+    tokenize: tokenize,
+    lowerToIr: lowerProgramToIr,
+    verifyIr: verifyIrModule,
+    serializeIr: serializeIrModule,
+    version: "0.1.0"
+};
+
+console.log("tscl compiler loaded");
+console.log("Use: require('./compiler/main') to access Compiler API");

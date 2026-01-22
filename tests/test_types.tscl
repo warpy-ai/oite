@@ -1,0 +1,42 @@
+// Test file to verify type annotations work in .tscl
+// This file uses type annotations that are now supported
+
+// Function with typed parameters and return type
+function add(a: number, b: number): number {
+    return a + b;
+}
+
+// Arrow function with type annotations
+const multiply = (x: number, y: number): number => x * y;
+
+// Variable with type annotation
+let message: string = "Hello, TypeScript-style types!";
+let count: number = 42;
+let isActive: boolean = true;
+
+// Array with type annotation
+let numbers: number[] = [1, 2, 3, 4, 5];
+
+// Function with async (Promise type)
+async function fetchData(): Promise<string> {
+    return "data";
+}
+
+// Higher-order function with typed parameters
+const apply = (fn: (x: number) => number, value: number): number => {
+    return fn(value);
+};
+
+// Test the functions
+console.log("Type Annotation Test");
+console.log("====================");
+console.log("add(2, 3) = " + add(2, 3));
+console.log("multiply(4, 5) = " + multiply(4, 5));
+console.log("message = " + message);
+console.log("count = " + count);
+console.log("isActive = " + isActive);
+console.log("numbers[0] = " + numbers[0]);
+console.log("apply(double, 10) = " + apply((x: number): number => x * 2, 10));
+
+console.log("");
+console.log("All type annotations compiled successfully!");

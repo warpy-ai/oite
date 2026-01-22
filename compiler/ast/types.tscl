@@ -1,0 +1,352 @@
+// ============================================================================
+// AST Node Types for tscl Compiler
+// ============================================================================
+
+// ============================================================================
+// Base Node Interface
+// ============================================================================
+
+interface Node {
+    type: string;
+}
+
+interface Program extends Node {
+    type: "Program";
+    body: Array<Statement>;
+}
+
+// ============================================================================
+// Statement Nodes
+// ============================================================================
+
+interface Statement extends Node {}
+
+interface VariableDeclaration extends Statement {
+    type: "VariableDeclaration";
+    name: string;
+    typeAnnotation: TypeAnnotation | null;
+    init: Expression | null;
+    kind: "let" | "const" | "var";
+}
+
+interface FunctionDeclaration extends Statement {
+    type: "FunctionDeclaration";
+    name: string;
+    params: Array<string | TypedParam>;
+    returnType: TypeAnnotation | null;
+    body: BlockStatement;
+    isAsync: boolean;
+}
+
+interface ReturnStatement extends Statement {
+    type: "ReturnStatement";
+    argument: Expression | null;
+}
+
+interface IfStatement extends Statement {
+    type: "IfStatement";
+    test: Expression;
+    consequent: Statement;
+    alternate: Statement | null;
+}
+
+interface WhileStatement extends Statement {
+    type: "WhileStatement";
+    test: Expression;
+    body: Statement;
+}
+
+interface DoWhileStatement extends Statement {
+    type: "DoWhileStatement";
+    body: Statement;
+    test: Expression;
+}
+
+interface ForStatement extends Statement {
+    type: "ForStatement";
+    init: VariableDeclaration | Expression | null;
+    test: Expression | null;
+    update: Expression | null;
+    body: Statement;
+}
+
+interface BreakStatement extends Statement {
+    type: "BreakStatement";
+    label: string | null;
+}
+
+interface ContinueStatement extends Statement {
+    type: "ContinueStatement";
+    label: string | null;
+}
+
+interface ThrowStatement extends Statement {
+    type: "ThrowStatement";
+    argument: Expression;
+}
+
+interface TryStatement extends Statement {
+    type: "TryStatement";
+    block: BlockStatement;
+    handler: CatchClause | null;
+    finalizer: BlockStatement | null;
+}
+
+interface CatchClause extends Node {
+    type: "CatchClause";
+    param: string;
+    body: BlockStatement;
+}
+
+interface BlockStatement extends Statement {
+    type: "BlockStatement";
+    body: Array<Statement>;
+}
+
+interface ExpressionStatement extends Statement {
+    type: "ExpressionStatement";
+    expression: Expression;
+}
+
+interface EmptyStatement extends Statement {
+    type: "EmptyStatement";
+}
+
+interface ClassDeclaration extends Statement {
+    type: "ClassDeclaration";
+    name: string;
+    superClass: Identifier | null;
+    body: ClassBody;
+    decorators: Array<Expression>;
+}
+
+interface ClassBody extends Node {
+    type: "ClassBody";
+    body: Array<ClassMethod | ClassProperty>;
+}
+
+interface ClassMethod extends Node {
+    type: "ClassMethod";
+    key: Expression;
+    value: FunctionExpression;
+    kind: "constructor" | "method" | "get" | "set";
+    isStatic: boolean;
+}
+
+interface ClassProperty extends Node {
+    type: "ClassProperty";
+    key: Expression;
+    value: Expression | null;
+    isStatic: boolean;
+}
+
+interface ImportDeclaration extends Statement {
+    type: "ImportDeclaration";
+    specifiers: Array<ImportSpecifier | ImportDefaultSpecifier | ImportNamespaceSpecifier>;
+    source: string;
+}
+
+interface ImportSpecifier extends Node {
+    type: "ImportSpecifier";
+    imported: string;
+    local: string;
+}
+
+interface ImportDefaultSpecifier extends Node {
+    type: "ImportDefaultSpecifier";
+    local: string;
+}
+
+interface ImportNamespaceSpecifier extends Node {
+    type: "ImportNamespaceSpecifier";
+    local: string;
+}
+
+interface ExportNamedDeclaration extends Statement {
+    type: "ExportNamedDeclaration";
+    specifiers: Array<ExportSpecifier>;
+    source: string | null;
+    declaration: Statement | null;
+}
+
+interface ExportDefaultDeclaration extends Statement {
+    type: "ExportDefaultDeclaration";
+    declaration: Expression | Statement;
+}
+
+interface ExportAllDeclaration extends Statement {
+    type: "ExportAllDeclaration";
+    source: string;
+}
+
+interface ExportSpecifier extends Node {
+    type: "ExportSpecifier";
+    local: string;
+    exported: string;
+}
+
+// ============================================================================
+// Expression Nodes
+// ============================================================================
+
+interface Expression extends Node {}
+
+interface Identifier extends Expression {
+    type: "Identifier";
+    name: string;
+}
+
+interface Literal extends Expression {
+    type: "Literal";
+    value: string | number | boolean | null;
+    raw: string;
+}
+
+interface BinaryExpression extends Expression {
+    type: "BinaryExpression";
+    operator: string;
+    left: Expression;
+    right: Expression;
+}
+
+interface UnaryExpression extends Expression {
+    type: "UnaryExpression";
+    operator: string;
+    argument: Expression;
+    prefix: boolean;
+}
+
+interface AssignmentExpression extends Expression {
+    type: "AssignmentExpression";
+    operator: string;
+    left: Expression;
+    right: Expression;
+}
+
+interface CallExpression extends Expression {
+    type: "CallExpression";
+    callee: Expression;
+    arguments: Array<Expression>;
+}
+
+interface NewExpression extends Expression {
+    type: "NewExpression";
+    callee: Expression;
+    arguments: Array<Expression>;
+}
+
+interface MemberExpression extends Expression {
+    type: "MemberExpression";
+    object: Expression;
+    property: Expression;
+    computed: boolean;
+    optional: boolean;
+}
+
+interface ArrayExpression extends Expression {
+    type: "ArrayExpression";
+    elements: Array<Expression | null>;
+}
+
+interface ObjectExpression extends Expression {
+    type: "ObjectExpression";
+    properties: Array<ObjectProperty>;
+}
+
+interface ObjectProperty extends Node {
+    type: "ObjectProperty";
+    key: Expression;
+    value: Expression;
+    kind: "init" | "get" | "set";
+}
+
+interface FunctionExpression extends Expression {
+    type: "FunctionExpression";
+    name: string;
+    params: Array<string | TypedParam>;
+    returnType: TypeAnnotation | null;
+    body: BlockStatement;
+    isAsync: boolean;
+}
+
+interface ArrowFunctionExpression extends Expression {
+    type: "ArrowFunctionExpression";
+    params: Array<string | TypedParam>;
+    returnType: TypeAnnotation | null;
+    body: Expression | BlockStatement;
+    isAsync: boolean;
+}
+
+interface ThisExpression extends Expression {
+    type: "ThisExpression";
+}
+
+interface ConditionalExpression extends Expression {
+    type: "ConditionalExpression";
+    test: Expression;
+    consequent: Expression;
+    alternate: Expression;
+}
+
+interface TemplateLiteral extends Expression {
+    type: "TemplateLiteral";
+    quasis: Array<TemplateElement>;
+    expressions: Array<Expression>;
+}
+
+interface TemplateElement extends Node {
+    type: "TemplateElement";
+    value: {
+        raw: string;
+        cooked: string;
+    };
+    tail: boolean;
+}
+
+interface AwaitExpression extends Expression {
+    type: "AwaitExpression";
+    argument: Expression;
+}
+
+interface YieldExpression extends Expression {
+    type: "YieldExpression";
+    argument: Expression | null;
+    delegate: boolean;
+}
+
+interface ChainExpression extends Expression {
+    type: "ChainExpression";
+    expression: Expression;
+}
+
+interface AssignmentTargetObject extends Expression {
+    type: "AssignmentTargetObject";
+    object: Expression;
+    property: Expression;
+    optional: boolean;
+}
+
+interface SimpleAssignmentTarget extends Expression {
+    type: "SimpleAssignmentTarget";
+    node: Expression;
+}
+
+// ============================================================================
+// Type Annotation Nodes
+// ============================================================================
+
+interface TypeAnnotation extends Node {
+    type: "TypeAnnotation";
+    typeKind: string;
+    isArray: boolean;
+    elementType: TypeAnnotation | null;
+    unionTypes: Array<TypeAnnotation> | null;
+    genericParams: Array<TypeAnnotation> | null;
+}
+
+interface TypedParam {
+    name: string;
+    typeAnnotation: TypeAnnotation | null;
+}
+
+console.log("AST types loaded");

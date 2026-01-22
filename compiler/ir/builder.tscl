@@ -1,0 +1,198 @@
+// ============================================================================
+// IR Builder for tscl Compiler
+// ============================================================================
+
+require ./mod;
+
+// ============================================================================
+// Builder State
+// ============================================================================
+
+function createIrBuilder() {
+    return {
+        currentFunction: null,
+        currentBlock: null,
+        ra: createRegisterAllocator(),
+        functions: []
+    };
+}
+
+function irBuilderEnterFunction(builder, name, returnType) {
+    let func = {
+        name: name,
+        params: [],
+        return_type: returnType,
+        locals: [],
+        blocks: [],
+        entry_block: null,
+        current_block: null
+    };
+    builder.currentFunction = func;
+    builder.functions.push(func);
+    resetRegisterAllocator(builder.ra);
+    return func;
+}
+
+function irBuilderAddParam(builder, name) {
+    let func = builder.currentFunction;
+    let slot = func.params.length;
+    func.params.push(name);
+    func.locals.push({ index: slot, name: name, type: IrType.ANY });
+    return slot;
+}
+
+function irBuilderCreateEntryBlock(builder) {
+    let func = builder.currentFunction;
+    let block = createIrBlock(func.name + "_entry");
+    func.entry_block = block;
+    func.blocks.push(block);
+    builder.currentBlock = block;
+    return block;
+}
+
+function irBuilderAddBlock(builder, label) {
+    let func = builder.currentFunction;
+    let block = createIrBlock(label);
+    func.blocks.push(block);
+    builder.currentBlock = block;
+    return block;
+}
+
+function irBuilderSetBlock(builder, block) {
+    builder.currentBlock = block;
+}
+
+function irBuilderGetBlockOpCount(builder) {
+    if (builder.currentBlock == null) {
+        return 0;
+    }
+    return builder.currentBlock.ops.length;
+}
+
+function irBuilderEmitConst(builder, value) {
+    let dest = allocateRegister(builder.ra);
+    emitConst(builder.currentBlock, dest, value);
+    return dest;
+}
+
+function irBuilderEmitConstString(builder, value) {
+    let dest = allocateRegister(builder.ra);
+    emitIrOp(builder.currentBlock, IrOpCode.CONST, dest, [], value);
+    return dest;
+}
+
+function irBuilderEmitBinaryOp(builder, opcode, left, right) {
+    let dest = allocateRegister(builder.ra);
+    emitBinaryOp(builder.currentBlock, opcode, dest, left, right);
+    return dest;
+}
+
+function irBuilderEmitAdd(builder, left, right) {
+    return irBuilderEmitBinaryOp(builder, IrOpCode.ADD, left, right);
+}
+
+function irBuilderEmitSub(builder, left, right) {
+    return irBuilderEmitBinaryOp(builder, IrOpCode.SUB, left, right);
+}
+
+function irBuilderEmitMul(builder, left, right) {
+    return irBuilderEmitBinaryOp(builder, IrOpCode.MUL, left, right);
+}
+
+function irBuilderEmitDiv(builder, left, right) {
+    return irBuilderEmitBinaryOp(builder, IrOpCode.DIV, left, right);
+}
+
+function irBuilderEmitLoadLocal(builder, slot) {
+    let dest = allocateRegister(builder.ra);
+    emitLoadLocal(builder.currentBlock, dest, slot);
+    return dest;
+}
+
+function irBuilderEmitStoreLocal(builder, slot, value) {
+    emitStoreLocal(builder.currentBlock, slot, value);
+}
+
+function irBuilderEmitJump(builder, targetBlock) {
+    emitJump(builder.currentBlock, targetBlock);
+}
+
+function irBuilderEmitJumpIfFalse(builder, cond, targetBlock) {
+    emitJumpIfFalse(builder.currentBlock, cond, targetBlock);
+}
+
+function irBuilderEmitReturn(builder, value) {
+    emitReturn(builder.currentBlock, value);
+}
+
+function irBuilderEmitReturnVoid(builder) {
+    emitReturn(builder.currentBlock, null);
+}
+
+function irBuilderEmitCall(builder, funcReg, argc) {
+    let dest = allocateRegister(builder.ra);
+    emitCall(builder.currentBlock, dest, funcReg, argc);
+    return dest;
+}
+
+function irBuilderEmitLoad(builder, address) {
+    let dest = allocateRegister(builder.ra);
+    emitIrOp(builder.currentBlock, IrOpCode.LOAD, dest, [address], null);
+    return dest;
+}
+
+function irBuilderEmitStore(builder, address, value) {
+    emitIrOp(builder.currentBlock, IrOpCode.STORE, null, [address, value], null);
+}
+
+function irBuilderGetMaxRegs(builder) {
+    return getMaxRegisters(builder.ra);
+}
+
+// ============================================================================
+// High-level IR Construction Helpers
+// ============================================================================
+
+function irBuilderCreateSimpleFunction(builder, name, bodyBuilder) {
+    let func = irBuilderEnterFunction(builder, name, IrType.ANY);
+    irBuilderCreateEntryBlock(builder);
+    bodyBuilder(builder);
+    return func;
+}
+
+function irBuilderCreateMathFunction(builder, name, op) {
+    return irBuilderCreateSimpleFunction(builder, name, function(b) {
+        let aSlot = irBuilderAddParam(b, "a");
+        let bSlot = irBuilderAddParam(b, "b");
+        let a = irBuilderEmitLoadLocal(b, aSlot);
+        let b = irBuilderEmitLoadLocal(b, bSlot);
+        let result = irBuilderEmitBinaryOp(b, op, a, b);
+        irBuilderEmitReturn(b, result);
+    });
+}
+
+function irBuilderCreateComparisonFunction(builder, name, op) {
+    return irBuilderCreateSimpleFunction(builder, name, function(b) {
+        let aSlot = irBuilderAddParam(b, "a");
+        let bSlot = irBuilderAddParam(b, "b");
+        let a = irBuilderEmitLoadLocal(b, aSlot);
+        let b = irBuilderEmitLoadLocal(b, bSlot);
+        let result = irBuilderEmitBinaryOp(b, op, a, b);
+        irBuilderEmitReturn(b, result);
+    });
+}
+
+// ============================================================================
+// Module Building
+// ============================================================================
+
+function irBuilderFinish(builder) {
+    let module = {
+        version: 1,
+        abi_version: 1,
+        functions: builder.functions
+    };
+    return module;
+}
+
+console.log("IR builder loaded");

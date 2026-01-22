@@ -1,0 +1,306 @@
+// ============================================================================
+// IR to Bytecode Codegen for tscl Compiler
+// ============================================================================
+
+require ../ir/mod;
+
+// ============================================================================
+// Code Generator State
+// ============================================================================
+
+function createCodegen() {
+    return {
+        stream: null,
+        functions: [],
+        constants: [],
+        currentFunction: null
+    };
+}
+
+// ============================================================================
+// Bytecode Opcodes for Codegen
+// ============================================================================
+
+let CODEGEN_OP = {
+    CONST: 1,
+    LOAD: 2,
+    STORE: 3,
+    LOAD_LOCAL: 4,
+    STORE_LOCAL: 5,
+    ADD: 6,
+    SUB: 7,
+    MUL: 8,
+    DIV: 9,
+    MOD: 10,
+    NEG: 11,
+    NOT: 12,
+    EQ: 13,
+    NE: 14,
+    LT: 15,
+    GT: 16,
+    LE: 17,
+    GE: 18,
+    AND: 19,
+    OR: 20,
+    JUMP: 21,
+    JUMP_IF_FALSE: 22,
+    CALL: 23,
+    CALL_METHOD: 24,
+    RETURN: 25,
+    HALT: 0
+};
+
+// ============================================================================
+// Codegen Helpers
+// ============================================================================
+
+function codegenU8(cg, byte) {
+    ByteStream.writeU8(cg.stream, byte);
+}
+
+function codegenU32(cg, value) {
+    ByteStream.writeU32(cg.stream, value);
+}
+
+function codegenF64(cg, value) {
+    ByteStream.writeF64(cg.stream, value);
+}
+
+function codegenVarint(cg, value) {
+    ByteStream.writeVarint(cg.stream, value);
+}
+
+function codegenString(cg, str) {
+    ByteStream.writeString(cg.stream, str);
+}
+
+function codegenOp(cg, op) {
+    codegenU8(cg, op);
+}
+
+function codegenReg(cg, reg) {
+    codegenVarint(cg, reg);
+}
+
+function codegenRegReg(cg, op, reg1, reg2) {
+    codegenOp(cg, op);
+    codegenReg(cg, reg1);
+    codegenReg(cg, reg2);
+}
+
+function codegenJump(cg, op, target) {
+    codegenOp(cg, op);
+    codegenU32(cg, target);
+}
+
+// ============================================================================
+// IR OpCode to Bytecode OpCode Mapping
+// ============================================================================
+
+function irOpToBytecode(op) {
+    if (op == IrOpCode.CONST) { return CODEGEN_OP.CONST; }
+    if (op == IrOpCode.LOAD) { return CODEGEN_OP.LOAD; }
+    if (op == IrOpCode.STORE) { return CODEGEN_OP.STORE; }
+    if (op == IrOpCode.LOAD_LOCAL) { return CODEGEN_OP.LOAD_LOCAL; }
+    if (op == IrOpCode.STORE_LOCAL) { return CODEGEN_OP.STORE_LOCAL; }
+    if (op == IrOpCode.ADD) { return CODEGEN_OP.ADD; }
+    if (op == IrOpCode.SUB) { return CODEGEN_OP.SUB; }
+    if (op == IrOpCode.MUL) { return CODEGEN_OP.MUL; }
+    if (op == IrOpCode.DIV) { return CODEGEN_OP.DIV; }
+    if (op == IrOpCode.MOD) { return CODEGEN_OP.MOD; }
+    if (op == IrOpCode.NEG) { return CODEGEN_OP.NEG; }
+    if (op == IrOpCode.NOT) { return CODEGEN_OP.NOT; }
+    if (op == IrOpCode.EQ) { return CODEGEN_OP.EQ; }
+    if (op == IrOpCode.NE) { return CODEGEN_OP.NE; }
+    if (op == IrOpCode.LT) { return CODEGEN_OP.LT; }
+    if (op == IrOpCode.GT) { return CODEGEN_OP.GT; }
+    if (op == IrOpCode.LE) { return CODEGEN_OP.LE; }
+    if (op == IrOpCode.GE) { return CODEGEN_OP.GE; }
+    if (op == IrOpCode.AND) { return CODEGEN_OP.AND; }
+    if (op == IrOpCode.OR) { return CODEGEN_OP.OR; }
+    if (op == IrOpCode.JUMP) { return CODEGEN_OP.JUMP; }
+    if (op == IrOpCode.JUMP_IF_FALSE) { return CODEGEN_OP.JUMP_IF_FALSE; }
+    if (op == IrOpCode.CALL) { return CODEGEN_OP.CALL; }
+    if (op == IrOpCode.CALL_METHOD) { return CODEGEN_OP.CALL_METHOD; }
+    if (op == IrOpCode.RETURN) { return CODEGEN_OP.RETURN; }
+    return 0;
+}
+
+// ============================================================================
+// Block Codegen
+// ============================================================================
+
+function codegenBlock(cg, block, labelToOffset) {
+    let offset = ByteStream.length(cg.stream);
+    block._offset = offset;
+    labelToOffset[block.label] = offset;
+
+    let i = 0;
+    while (i < block.ops.length) {
+        codegenInstruction(cg, block.ops[i], labelToOffset);
+        i = i + 1;
+    }
+}
+
+function codegenInstruction(cg, inst, labelToOffset) {
+    let bcOp = irOpToBytecode(inst.opcode);
+
+    if (inst.opcode == IrOpCode.CONST) {
+        codegenOp(cg, bcOp);
+        codegenReg(cg, inst.dest);
+        codegenF64(cg, inst.immediate);
+        return;
+    }
+
+    if (inst.opcode == IrOpCode.JUMP) {
+        let targetOffset = labelToOffset[inst.args[0].label];
+        codegenJump(cg, bcOp, targetOffset);
+        return;
+    }
+
+    if (inst.opcode == IrOpCode.JUMP_IF_FALSE) {
+        let targetOffset = labelToOffset[inst.args[1].label];
+        codegenOp(cg, bcOp);
+        codegenReg(cg, inst.args[0]);
+        codegenU32(cg, targetOffset);
+        return;
+    }
+
+    if (inst.opcode == IrOpCode.RETURN) {
+        codegenOp(cg, bcOp);
+        if (inst.args.length > 0) {
+            codegenReg(cg, inst.args[0]);
+        }
+        return;
+    }
+
+    if (inst.opcode == IrOpCode.CALL) {
+        codegenOp(cg, bcOp);
+        codegenReg(cg, inst.dest);
+        codegenReg(cg, inst.args[0]);
+        codegenReg(cg, inst.args[1]);
+        return;
+    }
+
+    if (inst.opcode == IrOpCode.NEW_OBJECT) {
+        codegenOp(cg, CODEGEN_OP.LOAD);
+        return;
+    }
+
+    if (inst.opcode == IrOpCode.NEW_ARRAY) {
+        codegenOp(cg, CODEGEN_OP.LOAD);
+        return;
+    }
+
+    // Binary operations
+    if (inst.args.length == 2) {
+        codegenRegReg(cg, bcOp, inst.dest, inst.args[0], inst.args[1]);
+        return;
+    }
+
+    // Unary operations
+    if (inst.args.length == 1) {
+        codegenRegReg(cg, bcOp, inst.dest, inst.args[0], 0);
+        return;
+    }
+
+    // Void operations
+    codegenOp(cg, bcOp);
+}
+
+// ============================================================================
+// Function Codegen
+// ============================================================================
+
+function codegenFunction(cg, func) {
+    let nameOffset = codegenString(cg, func.name);
+
+    codegenU32(cg, func.params.length);
+    codegenU32(cg, func.locals.length);
+
+    let blockCount = func.blocks.length;
+    codegenU32(cg, blockCount);
+
+    let blockOffsets = [];
+    let i = 0;
+    while (i < blockCount) {
+        blockOffsets.push(ByteStream.length(cg.stream));
+        codegenU32(cg, 0);
+        i = i + 1;
+    }
+
+    let labelToOffset = {};
+
+    i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        let offset = ByteStream.length(cg.stream);
+        labelToOffset[block.label] = offset;
+        codegenBlock(cg, block, labelToOffset);
+        i = i + 1;
+    }
+
+    codegenOp(cg, CODEGEN_OP.HALT);
+}
+
+// ============================================================================
+// Module Codegen
+// ============================================================================
+
+function codegenModule(cg, module) {
+    codegenU32(cg, 0x5443434C);
+    codegenU32(cg, module.version);
+    codegenU32(cg, module.abi_version);
+
+    codegenU32(cg, module.functions.length);
+
+    let i = 0;
+    while (i < module.functions.length) {
+        codegenFunction(cg, module.functions[i]);
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Public API
+// ============================================================================
+
+function codegenIrModule(module) {
+    let cg = {
+        stream: ByteStream.create(),
+        functions: [],
+        constants: [],
+        currentFunction: null
+    };
+
+    codegenModule(cg, module);
+
+    return {
+        bytecode: cg.stream,
+        length: ByteStream.length(cg.stream)
+    };
+}
+
+function compileAstToBytecode(ast) {
+    let module = lowerProgramToIr(ast);
+    let result = codegenIrModule(module);
+    return result;
+}
+
+function compileSourceToBytecode(source) {
+    let ast = parseSource(source);
+    if (ast == null) {
+        return null;
+    }
+    return compileAstToBytecode(ast);
+}
+
+// Re-export
+type Codegen = {
+    create: typeof createCodegen,
+    codegen: typeof codegenIrModule,
+    compileAst: typeof compileAstToBytecode,
+    compileSource: typeof compileSourceToBytecode
+};
+
+console.log("Codegen module loaded");
