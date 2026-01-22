@@ -270,12 +270,12 @@ enum OP {
 }
 
 enum TYPE {
-    NULL = 0,
-    UNDEFINED = 1,
+    NUMBER = 0,
+    STRING = 1,
     TRUE = 2,
     FALSE = 3,
-    NUMBER = 4,
-    STRING = 5,
+    NULL = 4,
+    UNDEFINED = 5,
     OBJECT = 6,
     ARRAY = 7,
     FUNCTION = 8

@@ -884,6 +884,63 @@ impl Lowerer {
                 let _importer = self.pop()?;
                 let _chain = self.pop()?;
             }
+
+            // Bitwise operators - emit as number operations
+            OpCode::BitAnd => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Number);
+                self.emit(IrOp::BitAnd(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::BitOr => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Number);
+                self.emit(IrOp::BitOr(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::Xor => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Number);
+                self.emit(IrOp::Xor(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::ShiftLeft => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Number);
+                self.emit(IrOp::Shl(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::ShiftRight => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Number);
+                self.emit(IrOp::Shr(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::ShiftRightUnsigned => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Number);
+                self.emit(IrOp::ShrU(dst, a, b));
+                self.push(dst);
+            }
+
+            OpCode::Pow => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Number);
+                self.emit(IrOp::Pow(dst, a, b));
+                self.push(dst);
+            }
         }
 
         Ok(())

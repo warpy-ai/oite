@@ -441,11 +441,14 @@ function parseExpression(parser, minPrec) {
         }
     } else if (tok.type == TOKEN.NUMBER) {
         parserAdvance(parser);
-        left = {
+        let numVal = parseFloat(tok.value);
+        let lit = {
             type: "Literal",
             literalType: "number",
-            value: parseFloat(tok.value)
+            value: numVal
         };
+        left = lit;
+    } else if (tok.type == TOKEN.STRING) {
     } else if (tok.type == TOKEN.STRING) {
         parserAdvance(parser);
         left = {

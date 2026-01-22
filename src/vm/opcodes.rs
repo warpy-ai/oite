@@ -63,6 +63,22 @@ pub enum OpCode {
     /// Load indexed local variable slot onto stack
     LoadLocal(u32),
 
+    // === Bitwise operators ===
+    /// Bitwise AND (&)
+    BitAnd,
+    /// Bitwise OR (|)
+    BitOr,
+    /// Bitwise XOR (^)
+    Xor,
+    /// Left shift (<<)
+    ShiftLeft,
+    /// Right shift (>>) - arithmetic
+    ShiftRight,
+    /// Unsigned right shift (>>>) - logical
+    ShiftRightUnsigned,
+    /// Exponentiation (**)
+    Pow,
+
     // === Exception handling ===
     /// Throw an exception: pops value from stack and begins unwinding
     Throw,

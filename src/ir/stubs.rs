@@ -51,6 +51,18 @@ pub enum InlineOp {
     FCmpNe,
     /// Boolean NOT.
     BoolNot,
+    /// Integer AND.
+    And,
+    /// Integer OR.
+    Or,
+    /// Integer XOR.
+    Xor,
+    /// Integer left shift.
+    Shl,
+    /// Integer right shift (arithmetic).
+    Shr,
+    /// Integer right shift (logical/unsigned).
+    ShrU,
     /// Copy value (register move).
     Copy,
     /// Load from local slot (stack load).
@@ -124,6 +136,7 @@ pub mod stubs {
     pub const DIV_ANY: StubCall = StubCall::new("tscl_div_any", 2).may_trap();
     pub const MOD_ANY: StubCall = StubCall::new("tscl_mod_any", 2).may_trap();
     pub const NEG_ANY: StubCall = StubCall::new("tscl_neg_any", 1);
+    pub const POW: StubCall = StubCall::new("tscl_pow", 2);
 
     // Comparison stubs
     pub const EQ_STRICT: StubCall = StubCall::new("tscl_eq_strict", 2);
@@ -181,6 +194,15 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         IrOp::Not(_, _) => CompileStrategy::Inline(InlineOp::BoolNot),
         IrOp::And(_, _, _) => CompileStrategy::NoOp, // Handled by control flow
         IrOp::Or(_, _, _) => CompileStrategy::NoOp,  // Handled by control flow
+
+        // Bitwise operations - inline integer instructions
+        IrOp::BitAnd(_, _, _) => CompileStrategy::Inline(InlineOp::And),
+        IrOp::BitOr(_, _, _) => CompileStrategy::Inline(InlineOp::Or),
+        IrOp::Xor(_, _, _) => CompileStrategy::Inline(InlineOp::Xor),
+        IrOp::Shl(_, _, _) => CompileStrategy::Inline(InlineOp::Shl),
+        IrOp::Shr(_, _, _) => CompileStrategy::Inline(InlineOp::Shr),
+        IrOp::ShrU(_, _, _) => CompileStrategy::Inline(InlineOp::ShrU),
+        IrOp::Pow(_, _, _) => CompileStrategy::StubCall(stubs::POW),
 
         // Local variable access - inline stack operations
         IrOp::LoadLocal(_, _) => CompileStrategy::Inline(InlineOp::LoadLocal),

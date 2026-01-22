@@ -12,12 +12,12 @@
 //! - Bytecode (current VM format) or AST
 //! - Native backends (Cranelift, LLVM)
 
+pub mod format;
 pub mod lower;
 pub mod opt;
 pub mod stubs;
 pub mod typecheck;
 pub mod verify;
-pub mod format;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -411,6 +411,22 @@ pub enum IrOp {
     /// Dynamic negate
     NegAny(ValueId, ValueId),
 
+    // === Bitwise operations ===
+    /// Bitwise AND: dst = a & b
+    BitAnd(ValueId, ValueId, ValueId),
+    /// Bitwise OR: dst = a | b
+    BitOr(ValueId, ValueId, ValueId),
+    /// Bitwise XOR: dst = a ^ b
+    Xor(ValueId, ValueId, ValueId),
+    /// Left shift: dst = a << b
+    Shl(ValueId, ValueId, ValueId),
+    /// Right shift (arithmetic): dst = a >> b
+    Shr(ValueId, ValueId, ValueId),
+    /// Right shift (logical): dst = a >>> b
+    ShrU(ValueId, ValueId, ValueId),
+    /// Power: dst = a ** b
+    Pow(ValueId, ValueId, ValueId),
+
     // === Comparison ===
     /// Strict equality: dst = a === b
     EqStrict(ValueId, ValueId, ValueId),
@@ -554,6 +570,13 @@ impl IrOp {
             | IrOp::Not(d, _)
             | IrOp::And(d, _, _)
             | IrOp::Or(d, _, _)
+            | IrOp::BitAnd(d, _, _)
+            | IrOp::BitOr(d, _, _)
+            | IrOp::Xor(d, _, _)
+            | IrOp::Shl(d, _, _)
+            | IrOp::Shr(d, _, _)
+            | IrOp::ShrU(d, _, _)
+            | IrOp::Pow(d, _, _)
             | IrOp::LoadLocal(d, _)
             | IrOp::LoadGlobal(d, _)
             | IrOp::NewObject(d)
@@ -621,6 +644,13 @@ impl IrOp {
             | IrOp::GtEq(_, a, b)
             | IrOp::And(_, a, b)
             | IrOp::Or(_, a, b)
+            | IrOp::BitAnd(_, a, b)
+            | IrOp::BitOr(_, a, b)
+            | IrOp::Xor(_, a, b)
+            | IrOp::Shl(_, a, b)
+            | IrOp::Shr(_, a, b)
+            | IrOp::ShrU(_, a, b)
+            | IrOp::Pow(_, a, b)
             // Borrow store
             | IrOp::DerefStore(a, b) => vec![*a, *b],
 
@@ -1136,6 +1166,13 @@ impl fmt::Display for IrOp {
             IrOp::Not(d, a) => write!(f, "{} = not {}", d, a),
             IrOp::And(d, a, b) => write!(f, "{} = and {}, {}", d, a, b),
             IrOp::Or(d, a, b) => write!(f, "{} = or {}, {}", d, a, b),
+            IrOp::BitAnd(d, a, b) => write!(f, "{} = and {}, {}", d, a, b),
+            IrOp::BitOr(d, a, b) => write!(f, "{} = or {}, {}", d, a, b),
+            IrOp::Xor(d, a, b) => write!(f, "{} = xor {}, {}", d, a, b),
+            IrOp::Shl(d, a, b) => write!(f, "{} = shl {}, {}", d, a, b),
+            IrOp::Shr(d, a, b) => write!(f, "{} = shr {}, {}", d, a, b),
+            IrOp::ShrU(d, a, b) => write!(f, "{} = shr.u {}, {}", d, a, b),
+            IrOp::Pow(d, a, b) => write!(f, "{} = pow {}, {}", d, a, b),
             IrOp::LoadLocal(d, slot) => write!(f, "{} = load.local ${}", d, slot),
             IrOp::StoreLocal(slot, v) => write!(f, "store.local ${}, {}", slot, v),
             IrOp::LoadGlobal(d, name) => write!(f, "{} = load.global @{}", d, name),

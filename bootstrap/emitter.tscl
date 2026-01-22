@@ -122,34 +122,34 @@ function emitLoadLocal(emitter, slot) {
 // ============================================================================
 
 function getOpCodeForBinaryOp(operator) {
-    if (operator == "+") { return 32; }
-    if (operator == "-") { return 33; }
-    if (operator == "*") { return 34; }
-    if (operator == "/") { return 35; }
+    if (operator == "+") { return 2; }
+    if (operator == "-") { return 3; }
+    if (operator == "*") { return 4; }
+    if (operator == "/") { return 5; }
     if (operator == "%") { return 36; }
     if (operator == "**") { return 37; }
-    if (operator == "==") { return 38; }
-    if (operator == "!=") { return 39; }
-    if (operator == "===") { return 40; }
-    if (operator == "!==") { return 41; }
-    if (operator == "<") { return 42; }
-    if (operator == "<=") { return 43; }
-    if (operator == ">") { return 44; }
-    if (operator == ">=") { return 45; }
+    if (operator == "===") { return 38; }
+    if (operator == "==") { return 39; }
+    if (operator == "!==") { return 40; }
+    if (operator == "!=") { return 41; }
+    if (operator == "<") { return 22; }
+    if (operator == "<=") { return 23; }
+    if (operator == ">") { return 24; }
+    if (operator == ">=") { return 25; }
     if (operator == "<<") { return 46; }
     if (operator == ">>") { return 47; }
     if (operator == ">>>") { return 48; }
     if (operator == "&") { return 49; }
     if (operator == "^") { return 50; }
     if (operator == "|") { return 51; }
-    if (operator == "&&") { return 52; }
-    if (operator == "||") { return 53; }
+    if (operator == "&&") { return 27; }
+    if (operator == "||") { return 28; }
     return -1;
 }
 
 function getOpCodeForUnaryOp(operator) {
-    if (operator == "-") { return 64; }
-    if (operator == "!") { return 65; }
+    if (operator == "-") { return 30; }
+    if (operator == "!") { return 29; }
     if (operator == "~") { return 66; }
     if (operator == "+") { return 67; }
     return -1;
@@ -726,6 +726,7 @@ function compile(source) {
 
     emit(emitter, ast);
 
+    console.log("Compilation complete");
     return emitter.stream;
 }
 

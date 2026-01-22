@@ -897,6 +897,20 @@ fn translate_op(
             let _ = get_value(ctx, *dst)?;
             let _ = get_value(ctx, *val)?;
         }
+
+        // Bitwise operations - not implemented in Cranelift backend yet
+        IrOp::BitAnd(_, _, _)
+        | IrOp::BitOr(_, _, _)
+        | IrOp::Xor(_, _, _)
+        | IrOp::Shl(_, _, _)
+        | IrOp::Shr(_, _, _)
+        | IrOp::ShrU(_, _, _)
+        | IrOp::Pow(_, _, _) => {
+            // TODO: Implement bitwise operations
+            return Err(BackendError::UnsupportedOp(
+                "Bitwise operations not yet implemented in Cranelift backend".to_string(),
+            ));
+        }
     }
 
     Ok(())

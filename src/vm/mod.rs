@@ -1264,6 +1264,76 @@ impl VM {
                 }
             }
 
+            OpCode::BitAnd => {
+                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
+                    (self.stack.pop(), self.stack.pop())
+                {
+                    self.stack.push(JsValue::Number((a as i64 & b as i64) as f64));
+                } else {
+                    self.stack.push(JsValue::Undefined);
+                }
+            }
+
+            OpCode::BitOr => {
+                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
+                    (self.stack.pop(), self.stack.pop())
+                {
+                    self.stack.push(JsValue::Number((a as i64 | b as i64) as f64));
+                } else {
+                    self.stack.push(JsValue::Undefined);
+                }
+            }
+
+            OpCode::Xor => {
+                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
+                    (self.stack.pop(), self.stack.pop())
+                {
+                    self.stack.push(JsValue::Number((a as i64 ^ b as i64) as f64));
+                } else {
+                    self.stack.push(JsValue::Undefined);
+                }
+            }
+
+            OpCode::ShiftLeft => {
+                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
+                    (self.stack.pop(), self.stack.pop())
+                {
+                    self.stack.push(JsValue::Number(((a as i64) << (b as i64)) as f64));
+                } else {
+                    self.stack.push(JsValue::Undefined);
+                }
+            }
+
+            OpCode::ShiftRight => {
+                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
+                    (self.stack.pop(), self.stack.pop())
+                {
+                    self.stack.push(JsValue::Number(((a as i64) >> (b as i64)) as f64));
+                } else {
+                    self.stack.push(JsValue::Undefined);
+                }
+            }
+
+            OpCode::ShiftRightUnsigned => {
+                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
+                    (self.stack.pop(), self.stack.pop())
+                {
+                    self.stack.push(JsValue::Number((((a as u64) >> (b as u64)) as u64) as f64));
+                } else {
+                    self.stack.push(JsValue::Undefined);
+                }
+            }
+
+            OpCode::Pow => {
+                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
+                    (self.stack.pop(), self.stack.pop())
+                {
+                    self.stack.push(JsValue::Number(a.powf(b)));
+                } else {
+                    self.stack.push(JsValue::Undefined);
+                }
+            }
+
             OpCode::Div => {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
                     (self.stack.pop(), self.stack.pop())

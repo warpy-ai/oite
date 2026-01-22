@@ -100,6 +100,16 @@ pub fn constant_folding(func: &mut IrFunction) {
                         local_constants.remove(slot);
                     }
                 }
+                // Bitwise operations
+                IrOp::BitAnd(_, _, _)
+                | IrOp::BitOr(_, _, _)
+                | IrOp::Xor(_, _, _)
+                | IrOp::Shl(_, _, _)
+                | IrOp::Shr(_, _, _)
+                | IrOp::ShrU(_, _, _)
+                | IrOp::Pow(_, _, _) => {}
+
+                // Other operations - no constants to track
                 _ => {}
             }
         }
@@ -370,6 +380,16 @@ fn extract_expr_key(op: &IrOp) -> Option<(ExprKey, ValueId)> {
         IrOp::LoadLocal(d, slot) => Some((ExprKey::LoadLocal(*slot), *d)),
         IrOp::LoadGlobal(d, name) => Some((ExprKey::LoadGlobal(name.clone()), *d)),
         IrOp::GetProp(d, obj, name) => Some((ExprKey::GetProp(*obj, name.clone()), *d)),
+        // Bitwise operations - not supported for CSE yet
+        IrOp::BitAnd(_, _, _)
+        | IrOp::BitOr(_, _, _)
+        | IrOp::Xor(_, _, _)
+        | IrOp::Shl(_, _, _)
+        | IrOp::Shr(_, _, _)
+        | IrOp::ShrU(_, _, _)
+        | IrOp::Pow(_, _, _) => None,
+
+        // Other operations - not supported for CSE
         _ => None,
     }
 }
@@ -436,7 +456,14 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
         | IrOp::Gt(_, a, b)
         | IrOp::GtEq(_, a, b)
         | IrOp::And(_, a, b)
-        | IrOp::Or(_, a, b) => {
+        | IrOp::Or(_, a, b)
+        | IrOp::BitAnd(_, a, b)
+        | IrOp::BitOr(_, a, b)
+        | IrOp::Xor(_, a, b)
+        | IrOp::Shl(_, a, b)
+        | IrOp::Shr(_, a, b)
+        | IrOp::ShrU(_, a, b)
+        | IrOp::Pow(_, a, b) => {
             resolve(a);
             resolve(b);
         }

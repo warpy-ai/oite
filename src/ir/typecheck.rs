@@ -328,6 +328,17 @@ impl<'a> TypeChecker<'a> {
                 let ty = self.get_type(*src);
                 self.set_type(*dst, ty);
             }
+
+            // Bitwise operations always produce numbers
+            IrOp::BitAnd(dst, _, _)
+            | IrOp::BitOr(dst, _, _)
+            | IrOp::Xor(dst, _, _)
+            | IrOp::Shl(dst, _, _)
+            | IrOp::Shr(dst, _, _)
+            | IrOp::ShrU(dst, _, _)
+            | IrOp::Pow(dst, _, _) => {
+                self.set_type(*dst, IrType::Number);
+            }
         }
     }
 }

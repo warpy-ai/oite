@@ -355,6 +355,40 @@ pub extern "C" fn tscl_mod_any(a: u64, b: u64) -> u64 {
     }
 }
 
+/// Exponentiation (a ** b).
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_pow(a: u64, b: u64) -> u64 {
+    let va = TsclValue::from_bits(a);
+    let vb = TsclValue::from_bits(b);
+
+    if va.is_number() && vb.is_number() {
+        TsclValue::number(va.as_number_unchecked().powf(vb.as_number_unchecked())).to_bits()
+    } else {
+        TsclValue::number(f64::NAN).to_bits()
+    }
+}
+
+/// Get the bytes of an f64 value.
+///
+/// Returns 8 bytes in little-endian order via output array.
+/// # Parameters
+/// - `value`: The f64 value as bits
+/// - `output`: Pointer to array of 8 bytes to write to
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_f64_to_bytes(value: u64, output: *mut u8) {
+    // f64 bytes in little-endian order
+    unsafe {
+        *output = (value & 0xFF) as u8;
+        *output.add(1) = ((value >> 8) & 0xFF) as u8;
+        *output.add(2) = ((value >> 16) & 0xFF) as u8;
+        *output.add(3) = ((value >> 24) & 0xFF) as u8;
+        *output.add(4) = ((value >> 32) & 0xFF) as u8;
+        *output.add(5) = ((value >> 40) & 0xFF) as u8;
+        *output.add(6) = ((value >> 48) & 0xFF) as u8;
+        *output.add(7) = ((value >> 56) & 0xFF) as u8;
+    }
+}
+
 /// Dynamic strict equality (===).
 #[unsafe(no_mangle)]
 pub extern "C" fn tscl_eq_strict(a: u64, b: u64) -> u64 {

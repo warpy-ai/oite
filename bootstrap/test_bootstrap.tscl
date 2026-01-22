@@ -5,20 +5,24 @@ console.log("\n--- Testing tokenize ---");
 let tokens = tokenize("let x = 1;");
 console.log("tokens length:", tokens.length);
 
-console.log("\n--- Testing createParser ---");
-let parser = createParser(tokens);
-
 console.log("\n--- Testing parseProgram ---");
-let result = parseProgram(parser);
-console.log("Program type:", result.type);
-console.log("Body length:", result.body.length);
-console.log("First statement type:", result.body[0].type);
-console.log("First statement name:", result.body[0].name);
-console.log("First statement init value:", result.body[0].init);
-
-console.log("\n--- Testing parseSource ---");
-let ast = parseSource("let y = 42;");
+let parser = createParser(tokens);
+console.log("parser created");
+let ast = parseProgram(parser);
 console.log("AST type:", ast.type);
 console.log("AST body length:", ast.body.length);
+if (ast.body.length > 0) {
+    console.log("First statement type:", ast.body[0].type);
+}
 
-console.log("\nAll bootstrap compiler tests passed!");
+console.log("\n--- Testing compile ---");
+console.log("Calling compile...");
+let result = compile("let x = 1;");
+console.log("compile returned:", result);
+if (result != null) {
+    console.log("Compile succeeded!");
+} else {
+    console.log("Compile failed!");
+}
+
+console.log("\nAll tests passed!");

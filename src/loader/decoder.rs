@@ -343,18 +343,38 @@ impl<'a> BytecodeDecoder<'a> {
 
             // 35 is not used
 
+            // Binary operators (36-53)
+            36 => Ok(OpCode::Mod),                // %
+            37 => Ok(OpCode::Pow),                // ** (need to add to VM)
+            38 => Ok(OpCode::Eq),                 // ===
+            39 => Ok(OpCode::EqEq),               // ==
+            40 => Ok(OpCode::Ne),                 // !==
+            41 => Ok(OpCode::NeEq),               // !=
+            42 => Ok(OpCode::Lt),                 // <
+            43 => Ok(OpCode::LtEq),               // <=
+            44 => Ok(OpCode::Gt),                 // >
+            45 => Ok(OpCode::GtEq),               // >=
+            46 => Ok(OpCode::ShiftLeft),          // <<
+            47 => Ok(OpCode::ShiftRight),         // >>
+            48 => Ok(OpCode::ShiftRightUnsigned), // >>>
+            49 => Ok(OpCode::BitAnd),             // &
+            50 => Ok(OpCode::Xor),                // ^
+            51 => Ok(OpCode::BitOr),              // |
+            52 => Ok(OpCode::And),                // &&
+            53 => Ok(OpCode::Or),                 // ||
+
             // CallMethod with name and arg count
-            36 => {
+            54 => {
                 let name = self.read_string()?;
                 let arg_count = self.read_u8()? as usize;
                 Ok(OpCode::CallMethod(name, arg_count))
             }
 
             // Require
-            37 => Ok(OpCode::Require),
+            55 => Ok(OpCode::Require),
 
             // MakeClosure with address and param names (param names are discarded)
-            38 => {
+            56 => {
                 let addr = self.read_u32_le()? as usize;
                 let param_count = self.read_u8()?;
                 // Read and discard parameter names
@@ -365,13 +385,13 @@ impl<'a> BytecodeDecoder<'a> {
             }
 
             // Construct with arg count
-            39 => Ok(OpCode::Construct(self.read_u8()? as usize)),
+            57 => Ok(OpCode::Construct(self.read_u8()? as usize)),
 
             // StoreLocal (indexed local variable store)
-            40 => Ok(OpCode::StoreLocal(self.read_u32_le()?)),
+            58 => Ok(OpCode::StoreLocal(self.read_u32_le()?)),
 
             // LoadLocal (indexed local variable load)
-            41 => Ok(OpCode::LoadLocal(self.read_u32_le()?)),
+            59 => Ok(OpCode::LoadLocal(self.read_u32_le()?)),
 
             // Halt
             255 => Ok(OpCode::Halt),
