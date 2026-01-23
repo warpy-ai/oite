@@ -7,9 +7,6 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
-#[cfg(all(target_os = "linux", feature = "io-uring"))]
-use super::io_uring::IoUringReactor;
-
 pub struct Reactor {
     fd: RawFd,
     interest: Interest,
@@ -359,57 +356,13 @@ impl Drop for ReactorHandle {
     }
 }
 
-/// Linux with io_uring feature: io_uring-based reactor handle
-#[cfg(all(target_os = "linux", feature = "io-uring"))]
-pub struct ReactorHandle {
-    inner: std::sync::Mutex<IoUringReactor>,
-}
-
-#[cfg(all(target_os = "linux", feature = "io-uring"))]
-impl ReactorHandle {
-    pub fn new() -> io::Result<Self> {
-        Ok(Self {
-            inner: std::sync::Mutex::new(IoUringReactor::new()?),
-        })
-    }
-
-    pub fn add(&self, reactor: &Reactor) -> io::Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.register(reactor.fd, reactor.interest.clone(), None)?;
-        Ok(())
-    }
-
-    pub fn add_rw(&self, fd: RawFd) -> io::Result<()> {
-        // io_uring handles this differently
-        let mut inner = self.inner.lock().unwrap();
-        inner.register(fd, Interest::Readable, None)?;
-        Ok(())
-    }
-
-    pub fn register(&self, fd: RawFd, interest: &Interest) -> io::Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.register(fd, interest.clone(), None)?;
-        Ok(())
-    }
-
-    pub fn deregister(&self, _fd: RawFd) -> io::Result<()> {
-        // io_uring doesn't need explicit deregistration for poll
-        Ok(())
-    }
-
-    pub fn wait(&self, timeout_ms: i32) -> io::Result<Vec<(Token, Interest)>> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.wait(timeout_ms)
-    }
-}
-
-/// Linux without io_uring: epoll-based reactor handle with edge-triggered events
-#[cfg(all(target_os = "linux", not(feature = "io-uring")))]
+/// Linux: epoll-based reactor handle with edge-triggered events
+#[cfg(target_os = "linux")]
 pub struct ReactorHandle {
     epoll_fd: RawFd,
 }
 
-#[cfg(all(target_os = "linux", not(feature = "io-uring")))]
+#[cfg(target_os = "linux")]
 impl ReactorHandle {
     pub fn new() -> io::Result<Self> {
         let epoll_fd = sys::create_epoll()?;
@@ -462,7 +415,7 @@ impl ReactorHandle {
     }
 }
 
-#[cfg(all(target_os = "linux", not(feature = "io-uring")))]
+#[cfg(target_os = "linux")]
 impl Drop for ReactorHandle {
     fn drop(&mut self) {
         unsafe {

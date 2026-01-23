@@ -14,14 +14,10 @@ use super::reactor::ReactorHandle;
 use super::task::{Executor, Task, Timer};
 use super::{Interest, Token};
 
-#[cfg(feature = "work-stealing")]
-use super::work_stealing::WorkStealingExecutor;
-
 // ============================================================================
-// Single-threaded Runtime (default)
+// Single-threaded Runtime
 // ============================================================================
 
-#[cfg(not(feature = "work-stealing"))]
 pub struct Runtime {
     executor: Executor,
     reactor: Mutex<ReactorHandle>,
@@ -30,7 +26,6 @@ pub struct Runtime {
     threads: Vec<thread::JoinHandle<()>>,
 }
 
-#[cfg(not(feature = "work-stealing"))]
 impl Runtime {
     pub fn new() -> io::Result<Self> {
         Ok(Self {
@@ -135,73 +130,6 @@ impl Runtime {
 }
 
 // ============================================================================
-// Multi-threaded Work-Stealing Runtime
-// ============================================================================
-
-#[cfg(feature = "work-stealing")]
-pub struct Runtime {
-    executor: WorkStealingExecutor,
-    parked: Mutex<Vec<Arc<Task>>>,
-    io_events: Mutex<Vec<(Token, Interest)>>,
-}
-
-#[cfg(feature = "work-stealing")]
-impl Runtime {
-    /// Create a new multi-threaded runtime with work-stealing.
-    ///
-    /// The number of worker threads is automatically determined based on
-    /// the number of available CPU cores.
-    pub fn new() -> io::Result<Self> {
-        Self::with_workers(0)
-    }
-
-    /// Create a runtime with a specific number of worker threads.
-    ///
-    /// If `num_workers` is 0, uses the number of available CPU cores.
-    pub fn with_workers(num_workers: usize) -> io::Result<Self> {
-        Ok(Self {
-            executor: WorkStealingExecutor::new(num_workers)?,
-            parked: Mutex::new(Vec::new()),
-            io_events: Mutex::new(Vec::new()),
-        })
-    }
-
-    /// Spawn a task on the executor.
-    pub fn spawn<F>(&self, future: F)
-    where
-        F: std::future::Future<Output = ()> + Send + 'static,
-    {
-        self.executor.spawn(future);
-    }
-
-    /// Block the current thread until the future completes.
-    pub fn block_on<F>(&self, future: F) -> F::Output
-    where
-        F: std::future::Future,
-    {
-        self.executor.block_on(future)
-    }
-
-    /// Run a future to completion.
-    pub fn run<F>(&self, future: F) -> F::Output
-    where
-        F: std::future::Future,
-    {
-        self.block_on(future)
-    }
-
-    /// Get the number of worker threads.
-    pub fn num_workers(&self) -> usize {
-        self.executor.num_workers()
-    }
-
-    /// Shutdown the runtime gracefully.
-    pub fn shutdown(&self) {
-        self.executor.shutdown();
-    }
-}
-
-// ============================================================================
 // Shared utilities
 // ============================================================================
 
@@ -231,14 +159,7 @@ pub fn spawn<F>(future: F)
 where
     F: std::future::Future<Output = ()> + Send + 'static,
 {
-    #[cfg(not(feature = "work-stealing"))]
-    {
-        Runtime::new().unwrap().spawn(future);
-    }
-    #[cfg(feature = "work-stealing")]
-    {
-        Runtime::new().unwrap().spawn(future);
-    }
+    Runtime::new().unwrap().spawn(future);
 }
 
 pub fn sleep(duration: Duration) -> Sleep {

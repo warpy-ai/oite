@@ -2,9 +2,9 @@
   <h1>Script</h1>
   <p>A high-performance JavaScript-like scripting language with native code execution</p>
   <p>Featuring a self-hosting compiler and Rust-inspired memory safety</p>
-  
+
   <br/>
-  
+
   <img src="https://img.shields.io/badge/rust-1.70+-orange.svg" alt="Rust 1.70+"/>
   <img src="https://img.shields.io/badge/tests-60%20passing-brightgreen.svg" alt="Tests"/>
   <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"/>
@@ -14,7 +14,7 @@
 
 ## Overview
 
-**tscl** is a scripting language that combines JavaScript-like syntax with Rust-inspired memory safety and native code performance.
+**Script** is a scripting language that combines JavaScript-like syntax with Rust-inspired memory safety and native code performance.
 
 ```javascript
 function fib(n) {
@@ -31,7 +31,7 @@ console.log(fib(35));  // Compiled to native code!
 - **Link-Time Optimization** — ThinLTO and Full LTO for maximum performance
 - **Standalone Binaries** — Self-contained executables with runtime stubs in LLVM IR
 - **Memory Safety** — Ownership model with compile-time borrow checking
-- **Self-Hosting** — Bootstrap compiler written in tscl itself
+- **Self-Hosting** — Bootstrap compiler written in Script itself
 - **Type Inference** — Flow-sensitive type analysis for optimization
 - **JavaScript Syntax** — Familiar syntax with ES6+ features
 - **Classes & Inheritance** — ES6 classes with extends, super(), and private fields
@@ -39,13 +39,38 @@ console.log(fib(35));  // Compiled to native code!
 
 ## Architecture
 
+Script is the **language core** — the compiler, type system, and minimal runtime primitives. Library functionality (HTTP, TLS, file system, etc.) will be provided by the **Rolls** ecosystem in a separate repository.
+
+```
+┌─────────────────────────────────────────┐
+│            User App Code                │
+└──────────────────┬──────────────────────┘
+                   │
+┌──────────────────▼──────────────────────┐
+│   Rolls (official system libs)          │  ← FUTURE: separate repo
+│   @rolls/http, @rolls/tls, @rolls/fs    │
+└──────────────────┬──────────────────────┘
+                   │
+┌──────────────────▼──────────────────────┐
+│   Unroll (runtime + tooling)            │  ← FUTURE: separate repo
+│   pkg manager, lockfiles, bundler, LSP  │
+└──────────────────┬──────────────────────┘
+                   │
+┌──────────────────▼──────────────────────┐
+│   Script (language core)                │  ← THIS REPO
+│   compiler, type system, ABI, bootstrap │
+└─────────────────────────────────────────┘
+```
+
+### Compilation Pipeline
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         tscl Source                             │
+│                         Script Source                           │
 └───────────────────────────┬─────────────────────────────────────┘
                             ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                     tscl Compiler                               │
+│                     Script Compiler                             │
 │  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────┐  │
 │  │   Parser    │─▶│ Borrow Check │─▶│   SSA IR Generation    │  │
 │  │  (SWC AST)  │  │  (Ownership) │  │ (Type Inference, Opts) │  │
@@ -110,7 +135,7 @@ cargo build --release
 
 ```javascript
 let x = 42;              // Number
-let name = "tscl";       // String
+let name = "script";     // String
 let active = true;       // Boolean
 let data = { key: 1 };   // Object
 let items = [1, 2, 3];   // Array
@@ -179,11 +204,11 @@ let first = arr[0];
 ```javascript
 class Animal {
     name: string;
-    
+
     constructor(name: string) {
         this.name = name;
     }
-    
+
     speak() {
         console.log(this.name + " makes a sound");
     }
@@ -191,12 +216,12 @@ class Animal {
 
 class Dog extends Animal {
     breed: string;
-    
+
     constructor(name: string, breed: string) {
         super(name);
         this.breed = breed;
     }
-    
+
     speak() {
         console.log(this.name + " barks!");
     }
@@ -208,16 +233,16 @@ dog.speak();  // "Buddy barks!"
 
 ### Private Fields
 
-tscl supports JavaScript-style private fields using the `#` prefix:
+Script supports JavaScript-style private fields using the `#` prefix:
 
 ```javascript
 class Counter {
     #count = 0;           // Private field (only accessible within class)
-    
+
     increment() {
         this.#count++;
     }
-    
+
     getCount() {
         return this.#count;  // Can access private field from methods
     }
@@ -245,7 +270,7 @@ try {
 
 ## Memory Model
 
-tscl uses a Rust-inspired ownership system:
+Script uses a Rust-inspired ownership system:
 
 ```javascript
 let a = { value: 42 };
@@ -268,7 +293,7 @@ console.log(x);           // OK: 10
 
 ## SSA IR
 
-tscl compiles to an SSA (Static Single Assignment) intermediate representation:
+Script compiles to an SSA (Static Single Assignment) intermediate representation:
 
 ```
 // Source: let x = 1 + 2; let y = x * 3;
@@ -301,31 +326,20 @@ The type inference pass specializes dynamic operations:
 | `add.any v0, v1` | `add.num v0, v1` | ~10x |
 | `mul.any v0, v1` | `mul.num v0, v1` | ~10x |
 
-## Standard Library
+## Minimal Standard Library
+
+Script core provides only essential primitives:
 
 ### Console
 
 ```javascript
 console.log("Hello", 42, true);
-```
-
-### Timers
-
-```javascript
-setTimeout(() => {
-    console.log("Delayed!");
-}, 1000);
-```
-
-### File System
-
-```javascript
-let fs = require("fs");
-let content = fs.readFileSync("file.txt");
-fs.writeFileSync("out.txt", "Hello!");
+console.error("Error message");
 ```
 
 ### ByteStream (Binary Data)
+
+Used by the bootstrap compiler for bytecode emission:
 
 ```javascript
 let stream = ByteStream.create();
@@ -336,61 +350,91 @@ ByteStream.writeString(stream, "hello");
 let bytes = ByteStream.toArray(stream);
 ```
 
+### File I/O (Minimal)
+
+Basic file operations for the bootstrap compiler:
+
+```javascript
+let fs = require("fs");
+let content = fs.readFileSync("file.txt");
+fs.writeFileSync("out.txt", "Hello!");
+```
+
+> **Note:** Full standard library functionality (Math, Date, JSON, comprehensive fs/path, etc.) will be provided by the **Rolls** ecosystem in a separate repository. See `docs/future/rolls-design.md` for the planned architecture.
+
 ## Project Structure
 
 ```
-tscl/
+script/
+├── Cargo.toml                    # Minimal dependencies
+├── README.md                     # This file
+├── PROGRESS.md                   # Development status
+├── bootstrap/                    # Self-hosted compiler
+│   ├── main.tscl                 # CLI entry point
+│   ├── lexer.tscl                # Tokenization
+│   ├── parser.tscl               # AST generation
+│   ├── ir.tscl                   # IR types
+│   ├── ir_builder.tscl           # AST → IR
+│   ├── codegen.tscl              # IR → Bytecode
+│   ├── emitter.tscl              # Bytecode serialization
+│   ├── pipeline.tscl             # Compilation orchestration
+│   ├── stdlib.tscl               # Runtime declarations
+│   ├── types.tscl                # Type definitions
+│   └── utils.tscl                # Helpers
 ├── src/
-│   ├── main.rs              # Entry point
-│   ├── compiler/            # Rust compiler (SWC-based)
-│   │   ├── mod.rs           # Bytecode generation
-│   │   └── borrow_ck.rs     # Borrow checker
-│   ├── ir/                  # SSA IR system
-│   │   ├── mod.rs           # IR types, ownership model
-│   │   ├── lower.rs         # Bytecode → SSA
-│   │   ├── typecheck.rs     # Type inference
-│   │   ├── opt.rs           # Optimizations
-│   │   ├── verify.rs        # IR validation
-│   │   └── stubs.rs         # Runtime stub mapping
-│   ├── runtime/             # Native runtime kernel
-│   │   ├── abi.rs           # NaN-boxed values
-│   │   ├── heap.rs          # Allocator
-│   │   └── stubs.rs         # C ABI functions
-│   ├── vm/                  # Stack-based VM (debug)
-│   │   ├── mod.rs           # VM implementation
-│   │   ├── opcodes.rs       # Bytecode opcodes
-│   │   └── value.rs         # Runtime values
-│   ├── loader/              # Bytecode loader
-│   └── stdlib/              # Standard library
-├── bootstrap/               # Self-hosting compiler
-│   ├── lexer.tscl           # Tokenizer
-│   ├── parser.tscl          # Parser
-│   └── emitter.tscl         # Bytecode emitter
-├── std/
-│   └── prelude.tscl         # Standard prelude
-└── examples/
-    └── *.tscl               # Example programs
+│   ├── main.rs                   # Entry point
+│   ├── lib.rs                    # Library target
+│   ├── compiler/
+│   │   ├── mod.rs                # Parser → Bytecode
+│   │   └── borrow_ck.rs          # Borrow checker
+│   ├── ir/
+│   │   ├── mod.rs                # SSA IR types
+│   │   ├── lower.rs              # Bytecode → IR
+│   │   ├── typecheck.rs          # Type inference
+│   │   ├── verify.rs             # Validation
+│   │   ├── opt.rs                # Optimizations
+│   │   └── format.rs             # IR serialization
+│   ├── backend/
+│   │   ├── mod.rs                # Backend trait
+│   │   ├── cranelift.rs          # JIT backend
+│   │   ├── jit.rs                # JIT runtime
+│   │   ├── layout.rs             # Memory layout
+│   │   └── llvm/                 # AOT backend
+│   ├── runtime/
+│   │   ├── mod.rs                # Runtime module
+│   │   ├── abi.rs                # NaN-boxed values
+│   │   ├── heap.rs               # Memory allocation
+│   │   ├── stubs.rs              # FFI bridge
+│   │   └── async/
+│   │       ├── mod.rs            # Core async traits
+│   │       ├── task.rs           # Task abstraction
+│   │       ├── reactor.rs        # Basic epoll/kqueue
+│   │       └── runtime_impl.rs   # Simple executor
+│   ├── vm/                       # Debug interpreter
+│   │   ├── mod.rs                # VM implementation
+│   │   ├── value.rs              # Runtime values
+│   │   ├── opcodes.rs            # Bytecode opcodes
+│   │   └── stdlib_setup.rs       # Minimal setup
+│   └── stdlib/
+│       └── mod.rs                # console, ByteStream only
+├── docs/
+│   └── future/                   # Future architecture docs
+│       ├── rolls-design.md       # Rolls (system libraries)
+│       └── unroll-design.md      # Unroll (tooling)
+└── tests/
 ```
-
-## Performance
-
-| Benchmark | Target |
-|-----------|--------|
-| fib(35) | 20ms |
-| Startup | 5ms |
-| HTTP hello | 250k rps |
 
 ## Development Status
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| Phase 0 | ✅ Complete | Runtime kernel (NaN-boxing, allocator, stubs) |
-| Phase 1 | ✅ Complete | SSA IR (lowering, type inference, optimizations) |
-| Phase 2 | ✅ Complete | Cranelift JIT backend |
-| Phase 3 | ✅ Complete | LLVM AOT backend with LTO |
-| Phase 4 | 🚧 In Progress | Self-hosted native compiler |
+| Phase 0 | Complete | Runtime kernel (NaN-boxing, allocator, stubs) |
+| Phase 1 | Complete | SSA IR (lowering, type inference, optimizations) |
+| Phase 2 | Complete | Cranelift JIT backend |
+| Phase 3 | Complete | LLVM AOT backend with LTO |
+| Phase 4 | Complete | Self-hosted bootstrap compiler |
 
-See [progress.md](progress.md) for detailed implementation notes.
+See [PROGRESS.md](PROGRESS.md) for detailed implementation notes.
 
 ## Testing
 
@@ -400,9 +444,16 @@ cargo test --release
 
 # Run specific IR tests
 cargo test --release ir::
-
-# Output: 59 tests passed
 ```
+
+## Future: Rolls & Unroll
+
+The Script ecosystem will eventually include:
+
+- **Rolls**: Official system libraries (`@rolls/http`, `@rolls/tls`, `@rolls/fs`, etc.)
+- **Unroll**: Package manager, build system, and developer tooling
+
+See `docs/future/` for detailed architecture designs.
 
 ## Contributing
 
@@ -410,6 +461,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-tscl is distributed under the terms of the Apache License (Version 2.0).
+Script is distributed under the terms of the Apache License (Version 2.0).
 
 See [LICENSE](LICENSE) for details.

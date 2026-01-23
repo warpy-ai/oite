@@ -12,32 +12,10 @@ pub mod reactor;
 pub mod task;
 pub mod runtime_impl;
 
-#[cfg(all(target_os = "linux", feature = "io-uring"))]
-pub mod io_uring;
-
-#[cfg(feature = "work-stealing")]
-pub mod worker;
-#[cfg(feature = "work-stealing")]
-pub mod work_stealing;
-
-#[cfg(feature = "tls")]
-pub mod tls;
-
 pub use reactor::{Reactor, ReactorHandle};
-
-#[cfg(all(target_os = "linux", feature = "io-uring"))]
-pub use io_uring::IoUringReactor;
 pub use task::{Executor, Task, JoinSet, Timer};
 pub use task::{TASK_IDLE, TASK_SCHEDULED, TASK_RUNNING, TASK_COMPLETED};
 pub use runtime_impl::Runtime;
-
-#[cfg(feature = "work-stealing")]
-pub use work_stealing::WorkStealingExecutor;
-#[cfg(feature = "work-stealing")]
-pub use worker::Worker;
-
-#[cfg(feature = "tls")]
-pub use tls::{TlsStream, TlsClientConfig, TlsServerConfig, TlsAcceptor, TlsConnector};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Interest {

@@ -15,15 +15,37 @@ High-performance systems language with **TypeScript syntax** compiling to **nati
 | Phase 2 | ✅ Complete | Native Backend (Cranelift + LLVM) |
 | Phase 3 | ✅ Complete | Language Completion |
 | Phase 4 | ✅ Complete | Self-Hosting Compiler |
-| Phase 5 | 🚧 In Progress | Runtime & Server |
-| Phase 6 | 📋 Planned | Tooling (fmt, lint, LSP) |
-| Phase 7 | 📋 Planned | Distribution & Packaging |
 
-**Current Focus:** Phase 5 - Async runtime, HTTP server, work-stealing executor
+**Current Focus:** Language core is complete. Library functionality (HTTP, TLS, fs, etc.) will be developed in the **Rolls** ecosystem (separate repository).
 
 ---
 
 ## Architecture
+
+Script is the **language core** — compiler, type system, and minimal runtime. Library functionality is separated:
+
+```
+┌─────────────────────────────────────────┐
+│            User App Code                │
+└──────────────────┬──────────────────────┘
+                   │
+┌──────────────────▼──────────────────────┐
+│   Rolls (official system libs)          │  ← FUTURE: separate repo
+│   @rolls/http, @rolls/tls, @rolls/fs    │
+└──────────────────┬──────────────────────┘
+                   │
+┌──────────────────▼──────────────────────┐
+│   Unroll (runtime + tooling)            │  ← FUTURE: separate repo
+│   pkg manager, lockfiles, bundler, LSP  │
+└──────────────────┬──────────────────────┘
+                   │
+┌──────────────────▼──────────────────────┐
+│   Script (language core)                │  ← THIS REPO
+│   compiler, type system, ABI, bootstrap │
+└─────────────────────────────────────────┘
+```
+
+### Compilation Pipeline
 
 ```
 tscl source → Compiler → SSA IR → Native Backend → CPU
@@ -142,20 +164,19 @@ Full TypeScript-style language with ownership semantics.
 - `Promise.resolve()`, `.then()`, `.catch()`
 - `await` expression handling
 
-#### Standard Library
+#### Minimal Standard Library
+
+Script core includes only essential primitives:
 
 | Module | Methods |
 |--------|---------|
 | `console` | `log`, `error` |
-| `Math` | 35+ methods (abs, floor, sin, random, etc.) + constants |
-| `String` | 20+ methods (trim, slice, indexOf, split, etc.) |
-| `Array` | push, pop, map, filter, forEach, splice, etc. |
-| `JSON` | parse, stringify |
-| `Date` | Constructor, now, parse, UTC, 22 instance methods |
-| `Promise` | Constructor, resolve, reject, then, catch, all |
-| `fs` | 18 methods (sync + async file operations) |
-| `path` | join, resolve, dirname, basename, extname, parse |
-| `ByteStream` | Binary data manipulation |
+| `String` | `fromCharCode` |
+| `ByteStream` | Binary data manipulation for bootstrap compiler |
+| `fs` | `readFileSync`, `writeFileSync`, `writeBinaryFile` (minimal) |
+| `require` | Module loading |
+
+> **Note:** Full standard library (Math, Date, JSON, comprehensive fs/path, HTTP, TLS, etc.) will be provided by the **Rolls** ecosystem. See `docs/future/rolls-design.md`.
 
 ---
 
@@ -176,18 +197,22 @@ tscl₀ (Rust) ──compile──> tscl₁ (native)
 - **ABI Frozen:** `ABI_VERSION = 1`, stable runtime interface
 - **IR Frozen:** Deterministic serialization with `--emit-ir`
 - **Deterministic Builds:** Bit-for-bit reproducible with `--dist`
-- **Self-Hosted Compiler:** 3,100+ lines in `compiler/` directory
+- **Self-Hosted Compiler:** ~5,000 lines in `bootstrap/` directory
 
-#### Compiler Structure
+#### Bootstrap Compiler Structure
 ```
-compiler/
-├── main.tscl           # CLI, pipeline
-├── lexer/              # Tokenization (520 lines)
-├── parser/             # AST generation (1,163 lines)
-├── ast/                # Type definitions (365 lines)
-├── ir/                 # IR system (468 lines)
-├── codegen/            # Code generation (321 lines)
-└── stdlib/             # Built-in declarations
+bootstrap/
+├── main.tscl           # CLI entry point (273 lines)
+├── types.tscl          # Type definitions (357 lines)
+├── lexer.tscl          # Tokenization (335 lines)
+├── parser.tscl         # AST generation (1,432 lines)
+├── ir.tscl             # IR types (619 lines)
+├── ir_builder.tscl     # AST → IR (270 lines)
+├── codegen.tscl        # IR → Bytecode (315 lines)
+├── emitter.tscl        # Bytecode serialization (846 lines)
+├── pipeline.tscl       # Compilation orchestration (228 lines)
+├── stdlib.tscl         # Runtime declarations (248 lines)
+└── utils.tscl          # Helpers (22 lines)
 ```
 
 #### CLI Flags
@@ -200,62 +225,46 @@ compiler/
 
 ---
 
-### Phase 5: Runtime & Server 🚧
+## Future: Rolls & Unroll
 
-Building high-performance async runtime and HTTP stack.
+Library functionality has been extracted to future repositories:
 
-#### Completed
-| Component | Status | Description |
-|-----------|--------|-------------|
-| Async Runtime | ✅ | Task scheduler, timer support |
-| I/O Reactor | ✅ | epoll (Linux), kqueue (macOS) |
-| io_uring | ✅ | Linux feature-gated (`--features io-uring`) |
-| TCP Primitives | ✅ | TcpListener, TcpStream, AsyncRead/AsyncWrite |
-| HTTP/1 Parser | ✅ | Request/Response, headers, chunked encoding |
-| HTTP Server | ✅ | Routing, method handlers, path parameters |
-| Work-Stealing Executor | ✅ | Multi-threaded with `--features work-stealing` |
-| TLS Integration | ✅ | rustls with aws-lc-rs (`--features tls`) |
-| HTTPS Server | ✅ | HttpsServer with session resumption |
+### Rolls (System Libraries)
 
-#### Key Files
-| File | Lines | Purpose |
-|------|-------|---------|
-| `src/runtime/async/mod.rs` | 255 | Async traits, TCP primitives |
-| `src/runtime/async/reactor.rs` | 282 | epoll/kqueue reactor |
-| `src/runtime/async/task.rs` | 345 | Task scheduler, Timer, Executor |
-| `src/runtime/async/work_stealing.rs` | 260 | Work-stealing executor |
-| `src/runtime/async/worker.rs` | 120 | Worker thread implementation |
-| `src/runtime/async/io_uring.rs` | 330 | io_uring backend (Linux) |
-| `src/runtime/async/tls.rs` | 530 | TLS with rustls, session resumption |
-| `src/runtime/http/mod.rs` | 650 | HTTP parser |
-| `src/runtime/http/server.rs` | 535 | HTTP/HTTPS server with routing |
+Official libraries built on Script core:
 
-#### Planned
-- HTTP/2 support
-- WebSocket support
-- Database drivers (PostgreSQL, Redis, SQLite)
-- Connection pooling
+| Roll | Purpose |
+|------|---------|
+| `@rolls/async` | Work-stealing executor, io_uring |
+| `@rolls/tls` | TLS encryption via rustls |
+| `@rolls/http` | HTTP/1.1, HTTP/2 server |
+| `@rolls/websocket` | WebSocket protocol |
+| `@rolls/fs` | File system operations |
+| `@rolls/path` | Path utilities |
+| `@rolls/json` | JSON parse/stringify |
+| `@rolls/math` | Math functions |
+| `@rolls/date` | Date/time handling |
+| `@rolls/string` | String methods |
+| `@rolls/array` | Array methods |
+| `@rolls/promise` | Promise implementation |
 
----
+See `docs/future/rolls-design.md` for detailed architecture.
 
-### Phase 6: Tooling 📋
+### Unroll (Tooling)
 
-- `script repl` - Interactive REPL
-- `script fmt` - Code formatter
-- `script lint` - Linter
-- Language Server (LSP)
-- Debugger integration
-- Profiler with flamegraphs
+Package manager and developer tools:
 
----
+| Component | Purpose |
+|-----------|---------|
+| `unroll new` | Create new project |
+| `unroll add` | Add Roll dependency |
+| `unroll build` | Build with static linking |
+| `unroll run` | Build and run |
+| `unroll fmt` | Code formatter |
+| `unroll lint` | Linter |
+| LSP | Language server |
 
-### Phase 7: Distribution 📋
-
-- `script install` - Package manager
-- Lockfiles and dependency resolution
-- Cross-compilation support
-- Official binaries (GitHub Releases, Homebrew, apt/rpm)
-- Docker images
+See `docs/future/unroll-design.md` for detailed architecture.
 
 ---
 
@@ -263,10 +272,10 @@ Building high-performance async runtime and HTTP stack.
 
 ### Test Suite
 ```
-118 tests passed
+60+ tests passed
 ```
 
-Coverage includes: IR lowering, type inference, optimizations, borrow checker, JIT compilation, LLVM backend, language features, async runtime.
+Coverage includes: IR lowering, type inference, optimizations, borrow checker, JIT compilation, LLVM backend, language features.
 
 ### Performance Benchmarks
 
@@ -280,7 +289,6 @@ Coverage includes: IR lowering, type inference, optimizations, borrow checker, J
 
 | Benchmark | Node.js | Bun | Target |
 |-----------|---------|-----|--------|
-| HTTP hello world | 100k rps | 200k rps | 250k rps |
 | fib(35) | 50 ms | 30 ms | 20 ms |
 | Startup | 30 ms | 10 ms | 5 ms |
 
@@ -296,15 +304,6 @@ export LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)
 
 # Build
 cargo build --release
-
-# With work-stealing executor
-cargo build --release --features work-stealing
-
-# With io_uring (Linux only)
-cargo build --release --features io-uring
-
-# With TLS/HTTPS support
-cargo build --release --features tls
 ```
 
 ### Running
@@ -331,6 +330,29 @@ cargo test
 | Value representation | 64-bit NaN-boxed words |
 | Module system | Native ES Modules (no CommonJS) |
 | Memory model | Rust-style ownership + borrow checking |
-| Async runtime | Custom (not tokio) for minimal overhead |
-| HTTP | Zero-copy parsing, io_uring on Linux |
-| Work-stealing | crossbeam-deque for lock-free queues |
+| Async runtime | Minimal core (epoll/kqueue reactor) |
+| Standard library | Minimal core; extended via Rolls |
+
+---
+
+## Project Structure
+
+```
+script/
+├── Cargo.toml                    # Minimal dependencies
+├── bootstrap/                    # Self-hosted compiler (~5,000 lines)
+├── src/
+│   ├── compiler/                 # Parser → Bytecode
+│   ├── ir/                       # SSA IR system
+│   ├── backend/                  # Cranelift JIT + LLVM AOT
+│   ├── runtime/
+│   │   ├── abi.rs                # NaN-boxed values
+│   │   ├── heap.rs               # Memory allocation
+│   │   ├── stubs.rs              # FFI bridge
+│   │   └── async/                # Core async primitives
+│   ├── vm/                       # Debug interpreter
+│   └── stdlib/                   # Minimal: console, ByteStream, fs
+├── docs/
+│   └── future/                   # Rolls & Unroll designs
+└── tests/
+```

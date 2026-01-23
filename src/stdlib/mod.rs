@@ -1,16 +1,20 @@
-use crate::vm::value::{HeapData, HeapObject, JsValue, Promise};
-use crate::vm::Frame;
+//! Minimal standard library for Script core
+//!
+//! Contains only essential primitives needed by the language:
+//! - console.log / console.error (debugging)
+//! - ByteStream (binary serialization for bootstrap compiler)
+//!
+//! Full standard library functionality (fs, path, json, math, date, etc.)
+//! will be provided by Rolls packages in the future.
+
+use crate::vm::value::{HeapData, HeapObject, JsValue};
 use crate::vm::VM;
 
-pub mod array;
-pub mod date;
-pub mod fs;
-pub mod json;
-pub mod math;
-pub mod path;
-pub mod string;
+// ============================================================================
+// Console Functions
+// ============================================================================
 
-pub fn native_log(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+pub fn native_log(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     for arg in args {
         match arg {
             JsValue::String(s) => print!("{}", s),
@@ -29,7 +33,7 @@ pub fn native_log(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     JsValue::Undefined
 }
 
-pub fn native_error(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+pub fn native_error(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     for arg in args {
         match arg {
             JsValue::String(s) => eprint!("{}", s),
@@ -48,6 +52,10 @@ pub fn native_error(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     JsValue::Undefined
 }
 
+// ============================================================================
+// Module System (minimal)
+// ============================================================================
+
 pub fn native_require(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     if let Some(JsValue::String(module_name)) = args.first() {
         if let Some(module) = vm.modules.get(module_name) {
@@ -59,18 +67,11 @@ pub fn native_require(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     JsValue::Undefined
 }
 
-pub fn native_set_timeout(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let (Some(JsValue::Number(ms)), Some(callback)) = (args.first(), args.get(1)) {
-        let ms = *ms as u64;
-        let callback = callback.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(ms));
-        });
-    }
-    JsValue::Undefined
-}
+// ============================================================================
+// File I/O (minimal - needed for bootstrap compiler output)
+// ============================================================================
 
-pub fn native_read_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+pub fn native_read_file(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     if let Some(JsValue::String(filename)) = args.first() {
         match std::fs::read_to_string(filename) {
             Ok(contents) => JsValue::String(contents),
@@ -84,7 +85,7 @@ pub fn native_read_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     }
 }
 
-pub fn native_write_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+pub fn native_write_file(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     if let (Some(JsValue::String(filename)), Some(JsValue::String(contents))) =
         (args.first(), args.get(1))
     {
@@ -123,7 +124,11 @@ pub fn native_write_binary_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     }
 }
 
-pub fn native_create_byte_stream(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+// ============================================================================
+// ByteStream Functions (needed for bootstrap compiler bytecode emission)
+// ============================================================================
+
+pub fn native_create_byte_stream(vm: &mut VM, _args: Vec<JsValue>) -> JsValue {
     let ptr = vm.heap.len();
     vm.heap.push(HeapObject {
         data: HeapData::ByteStream(Vec::new()),
@@ -268,7 +273,11 @@ pub fn native_byte_stream_to_array(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     JsValue::Undefined
 }
 
-pub fn native_string_from_char_code(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+// ============================================================================
+// String Utilities (minimal - needed for bootstrap compiler)
+// ============================================================================
+
+pub fn native_string_from_char_code(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     let mut result = String::new();
 
     for arg in args {
@@ -281,92 +290,4 @@ pub fn native_string_from_char_code(vm: &mut VM, args: Vec<JsValue>) -> JsValue 
     }
 
     JsValue::String(result)
-}
-
-// ============================================================================
-// Promise Native Functions
-// ============================================================================
-
-pub fn native_promise_constructor(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    // new Promise((resolve, reject) => { ... })
-    // For synchronous Promise, we just create and return a pending promise
-    // The executor is expected to be called synchronously before this returns
-    eprintln!(
-        "DEBUG: native_promise_constructor called with {} args",
-        args.len()
-    );
-
-    let promise = Promise::new();
-    eprintln!("DEBUG: created pending promise");
-
-    JsValue::Promise(promise)
-}
-
-pub fn native_promise_resolve(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    let value = args.get(0).cloned().unwrap_or(JsValue::Undefined);
-    let promise = Promise::with_value(value);
-    JsValue::Promise(promise)
-}
-
-pub fn native_promise_reject(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    let reason = args.get(0).cloned().unwrap_or(JsValue::Undefined);
-    let promise = Promise::new();
-    promise.set_value(reason, false);
-    JsValue::Promise(promise)
-}
-
-pub fn native_promise_then(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let (Some(JsValue::Promise(promise)), Some(on_fulfilled)) = (args.get(0), args.get(1)) {
-        let result_promise = promise.then(Some(on_fulfilled.clone()));
-        return JsValue::Promise(result_promise);
-    }
-    JsValue::Undefined
-}
-
-pub fn native_promise_catch(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let (Some(JsValue::Promise(promise)), Some(on_rejected)) = (args.get(0), args.get(1)) {
-        let result_promise = promise.catch(Some(on_rejected.clone()));
-        return JsValue::Promise(result_promise);
-    }
-    JsValue::Undefined
-}
-
-pub fn native_promise_all(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let Some(JsValue::Object(ptr)) = args.get(0) {
-        if let Some(HeapObject {
-            data: HeapData::Array(items),
-            ..
-        }) = vm.heap.get(*ptr)
-        {
-            let mut all_pending = true;
-            let mut results = Vec::new();
-
-            for item in items {
-                if let JsValue::Promise(p) = item {
-                    match p.get_state() {
-                        crate::vm::value::PromiseState::Fulfilled => {
-                            results.push(p.get_value().unwrap_or(JsValue::Undefined));
-                        }
-                        crate::vm::value::PromiseState::Rejected => {
-                            return JsValue::Promise(Promise::with_value(JsValue::Undefined));
-                        }
-                        crate::vm::value::PromiseState::Pending => {
-                            all_pending = false;
-                        }
-                    }
-                } else {
-                    results.push(item.clone());
-                }
-            }
-
-            if all_pending {
-                let result_array_ptr = vm.heap.len();
-                vm.heap.push(HeapObject {
-                    data: HeapData::Array(results),
-                });
-                return JsValue::Object(result_array_ptr);
-            }
-        }
-    }
-    JsValue::Undefined
 }
