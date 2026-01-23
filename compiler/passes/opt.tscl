@@ -1,0 +1,713 @@
+// ============================================================================
+// Optimization Passes for tscl Compiler
+// Dead Code Elimination, Constant Folding, CSE, Copy Propagation
+// ============================================================================
+
+require ../ir/mod;
+
+// ============================================================================
+// Dead Code Elimination
+// ============================================================================
+
+// Compute set of used values in function
+function computeUsedValues(func: IrFunction): { [valueId: number]: boolean } {
+    let used: { [valueId: number]: boolean } = {};
+
+    let i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        let j = 0;
+        while (j < block.ops.length) {
+            let op = block.ops[j];
+            // Add all arguments to used set
+            let k = 0;
+            while (k < op.args.length) {
+                used[op.args[k]] = true;
+                k = k + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    return used;
+}
+
+// Check if an operation has side effects
+function hasSideEffects(op: IrInstruction): boolean {
+    let opcode = op.opcode;
+    return opcode == IrOpCode.STORE ||
+           opcode == IrOpCode.STORE_LOCAL ||
+           opcode == IrOpCode.STORE_PROP ||
+           opcode == IrOpCode.STORE_ELEMENT ||
+           opcode == IrOpCode.CALL ||
+           opcode == IrOpCode.CALL_METHOD ||
+           opcode == IrOpCode.RETURN ||
+           opcode == IrOpCode.JUMP ||
+           opcode == IrOpCode.JUMP_IF_FALSE;
+}
+
+// Remove operations whose results are never used
+function deadCodeElimination(func: IrFunction): void {
+    let used = computeUsedValues(func);
+
+    let i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        let newOps: IrInstruction[] = [];
+        let j = 0;
+        while (j < block.ops.length) {
+            let op = block.ops[j];
+
+            // Keep operations with side effects
+            if (hasSideEffects(op)) {
+                newOps.push(op);
+            } else if (op.dest != null && used[op.dest]) {
+                // Keep if result is used
+                newOps.push(op);
+            } else if (op.dest == null) {
+                // Keep void operations
+                newOps.push(op);
+            }
+            // Otherwise, remove the operation
+
+            j = j + 1;
+        }
+        block.ops = newOps;
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Constant Folding
+// ============================================================================
+
+interface ConstantValue {
+    type: string;  // "number", "string", "boolean"
+    value: any;
+}
+
+// Fold constant expressions at compile time
+function constantFolding(func: IrFunction): void {
+    // Track known constant values
+    let constants: { [valueId: number]: ConstantValue } = {};
+
+    // First pass: collect constants
+    let i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        let j = 0;
+        while (j < block.ops.length) {
+            let op = block.ops[j];
+            if (op.opcode == IrOpCode.CONST && op.dest != null && op.immediate != null) {
+                let cval: ConstantValue = {
+                    type: typeof op.immediate,
+                    value: op.immediate
+                };
+                constants[op.dest] = cval;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    // Second pass: fold operations
+    i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        let j = 0;
+        while (j < block.ops.length) {
+            let op = block.ops[j];
+            let folded = foldInstruction(op, constants);
+            block.ops[j] = folded;
+
+            // Update constants if we folded to a const
+            if (folded.opcode == IrOpCode.CONST && folded.dest != null && folded.immediate != null) {
+                constants[folded.dest] = {
+                    type: typeof folded.immediate,
+                    value: folded.immediate
+                };
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+
+function foldInstruction(op: IrInstruction, constants: { [valueId: number]: ConstantValue }): IrInstruction {
+    // ADD with constant operands
+    if (op.opcode == IrOpCode.ADD && op.args.length >= 2 && op.dest != null) {
+        let a = constants[op.args[0]];
+        let b = constants[op.args[1]];
+        if (a != null && b != null && a.type == "number" && b.type == "number") {
+            return {
+                opcode: IrOpCode.CONST,
+                dest: op.dest,
+                args: [],
+                immediate: a.value + b.value,
+                label: null
+            };
+        }
+    }
+
+    // SUB with constant operands
+    if (op.opcode == IrOpCode.SUB && op.args.length >= 2 && op.dest != null) {
+        let a = constants[op.args[0]];
+        let b = constants[op.args[1]];
+        if (a != null && b != null && a.type == "number" && b.type == "number") {
+            return {
+                opcode: IrOpCode.CONST,
+                dest: op.dest,
+                args: [],
+                immediate: a.value - b.value,
+                label: null
+            };
+        }
+    }
+
+    // MUL with constant operands
+    if (op.opcode == IrOpCode.MUL && op.args.length >= 2 && op.dest != null) {
+        let a = constants[op.args[0]];
+        let b = constants[op.args[1]];
+        if (a != null && b != null && a.type == "number" && b.type == "number") {
+            return {
+                opcode: IrOpCode.CONST,
+                dest: op.dest,
+                args: [],
+                immediate: a.value * b.value,
+                label: null
+            };
+        }
+    }
+
+    // DIV with constant operands (check for division by zero)
+    if (op.opcode == IrOpCode.DIV && op.args.length >= 2 && op.dest != null) {
+        let a = constants[op.args[0]];
+        let b = constants[op.args[1]];
+        if (a != null && b != null && a.type == "number" && b.type == "number" && b.value != 0) {
+            return {
+                opcode: IrOpCode.CONST,
+                dest: op.dest,
+                args: [],
+                immediate: a.value / b.value,
+                label: null
+            };
+        }
+    }
+
+    // MOD with constant operands
+    if (op.opcode == IrOpCode.MOD && op.args.length >= 2 && op.dest != null) {
+        let a = constants[op.args[0]];
+        let b = constants[op.args[1]];
+        if (a != null && b != null && a.type == "number" && b.type == "number" && b.value != 0) {
+            return {
+                opcode: IrOpCode.CONST,
+                dest: op.dest,
+                args: [],
+                immediate: a.value % b.value,
+                label: null
+            };
+        }
+    }
+
+    // NEG with constant operand
+    if (op.opcode == IrOpCode.NEG && op.args.length >= 1 && op.dest != null) {
+        let a = constants[op.args[0]];
+        if (a != null && a.type == "number") {
+            return {
+                opcode: IrOpCode.CONST,
+                dest: op.dest,
+                args: [],
+                immediate: -a.value,
+                label: null
+            };
+        }
+    }
+
+    // NOT with constant boolean operand
+    if (op.opcode == IrOpCode.NOT && op.args.length >= 1 && op.dest != null) {
+        let a = constants[op.args[0]];
+        if (a != null && a.type == "boolean") {
+            return {
+                opcode: IrOpCode.CONST,
+                dest: op.dest,
+                args: [],
+                immediate: !a.value,
+                label: null
+            };
+        }
+    }
+
+    // LT comparison
+    if (op.opcode == IrOpCode.LT && op.args.length >= 2 && op.dest != null) {
+        let a = constants[op.args[0]];
+        let b = constants[op.args[1]];
+        if (a != null && b != null && a.type == "number" && b.type == "number") {
+            return {
+                opcode: IrOpCode.CONST,
+                dest: op.dest,
+                args: [],
+                immediate: a.value < b.value,
+                label: null
+            };
+        }
+    }
+
+    // GT comparison
+    if (op.opcode == IrOpCode.GT && op.args.length >= 2 && op.dest != null) {
+        let a = constants[op.args[0]];
+        let b = constants[op.args[1]];
+        if (a != null && b != null && a.type == "number" && b.type == "number") {
+            return {
+                opcode: IrOpCode.CONST,
+                dest: op.dest,
+                args: [],
+                immediate: a.value > b.value,
+                label: null
+            };
+        }
+    }
+
+    // LE comparison
+    if (op.opcode == IrOpCode.LE && op.args.length >= 2 && op.dest != null) {
+        let a = constants[op.args[0]];
+        let b = constants[op.args[1]];
+        if (a != null && b != null && a.type == "number" && b.type == "number") {
+            return {
+                opcode: IrOpCode.CONST,
+                dest: op.dest,
+                args: [],
+                immediate: a.value <= b.value,
+                label: null
+            };
+        }
+    }
+
+    // GE comparison
+    if (op.opcode == IrOpCode.GE && op.args.length >= 2 && op.dest != null) {
+        let a = constants[op.args[0]];
+        let b = constants[op.args[1]];
+        if (a != null && b != null && a.type == "number" && b.type == "number") {
+            return {
+                opcode: IrOpCode.CONST,
+                dest: op.dest,
+                args: [],
+                immediate: a.value >= b.value,
+                label: null
+            };
+        }
+    }
+
+    // EQ comparison
+    if (op.opcode == IrOpCode.EQ && op.args.length >= 2 && op.dest != null) {
+        let a = constants[op.args[0]];
+        let b = constants[op.args[1]];
+        if (a != null && b != null && a.type == b.type) {
+            return {
+                opcode: IrOpCode.CONST,
+                dest: op.dest,
+                args: [],
+                immediate: a.value == b.value,
+                label: null
+            };
+        }
+    }
+
+    // NE comparison
+    if (op.opcode == IrOpCode.NE && op.args.length >= 2 && op.dest != null) {
+        let a = constants[op.args[0]];
+        let b = constants[op.args[1]];
+        if (a != null && b != null && a.type == b.type) {
+            return {
+                opcode: IrOpCode.CONST,
+                dest: op.dest,
+                args: [],
+                immediate: a.value != b.value,
+                label: null
+            };
+        }
+    }
+
+    return op;
+}
+
+// ============================================================================
+// Common Subexpression Elimination
+// ============================================================================
+
+// Generate a key for identifying equivalent expressions
+function makeExprKey(op: IrInstruction): string | null {
+    if (op.opcode == IrOpCode.ADD && op.args.length >= 2) {
+        return "add:" + op.args[0] + ":" + op.args[1];
+    }
+    if (op.opcode == IrOpCode.SUB && op.args.length >= 2) {
+        return "sub:" + op.args[0] + ":" + op.args[1];
+    }
+    if (op.opcode == IrOpCode.MUL && op.args.length >= 2) {
+        return "mul:" + op.args[0] + ":" + op.args[1];
+    }
+    if (op.opcode == IrOpCode.DIV && op.args.length >= 2) {
+        return "div:" + op.args[0] + ":" + op.args[1];
+    }
+    if (op.opcode == IrOpCode.MOD && op.args.length >= 2) {
+        return "mod:" + op.args[0] + ":" + op.args[1];
+    }
+    if (op.opcode == IrOpCode.NEG && op.args.length >= 1) {
+        return "neg:" + op.args[0];
+    }
+    if (op.opcode == IrOpCode.NOT && op.args.length >= 1) {
+        return "not:" + op.args[0];
+    }
+    if (op.opcode == IrOpCode.LT && op.args.length >= 2) {
+        return "lt:" + op.args[0] + ":" + op.args[1];
+    }
+    if (op.opcode == IrOpCode.GT && op.args.length >= 2) {
+        return "gt:" + op.args[0] + ":" + op.args[1];
+    }
+    if (op.opcode == IrOpCode.LE && op.args.length >= 2) {
+        return "le:" + op.args[0] + ":" + op.args[1];
+    }
+    if (op.opcode == IrOpCode.GE && op.args.length >= 2) {
+        return "ge:" + op.args[0] + ":" + op.args[1];
+    }
+    if (op.opcode == IrOpCode.EQ && op.args.length >= 2) {
+        return "eq:" + op.args[0] + ":" + op.args[1];
+    }
+    if (op.opcode == IrOpCode.NE && op.args.length >= 2) {
+        return "ne:" + op.args[0] + ":" + op.args[1];
+    }
+    if (op.opcode == IrOpCode.LOAD_LOCAL && op.args.length >= 1) {
+        return "load_local:" + op.args[0];
+    }
+    return null;
+}
+
+// Create a COPY instruction
+function makeCopyInstruction(dest: number, src: number): IrInstruction {
+    return {
+        opcode: IrOpCode.LOAD_LOCAL,  // Use LOAD_LOCAL as copy (or add a dedicated COPY opcode)
+        dest: dest,
+        args: [src],
+        immediate: null,
+        label: null,
+        _isCopy: true
+    };
+}
+
+// Eliminate redundant computations
+function commonSubexpressionElimination(func: IrFunction): void {
+    let i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+
+        // Map from expression key to the value that computes it
+        let available: { [key: string]: number } = {};
+
+        let newOps: IrInstruction[] = [];
+        let j = 0;
+        while (j < block.ops.length) {
+            let op = block.ops[j];
+            let key = makeExprKey(op);
+
+            if (key != null && op.dest != null) {
+                let existing = available[key];
+                if (existing != null) {
+                    // Replace with copy
+                    let copyOp = makeCopyInstruction(op.dest, existing);
+                    newOps.push(copyOp);
+                } else {
+                    available[key] = op.dest;
+                    newOps.push(op);
+                }
+            } else {
+                // Invalidate expressions on side effects
+                if (hasSideEffects(op)) {
+                    if (op.opcode == IrOpCode.STORE_LOCAL ||
+                        op.opcode == IrOpCode.STORE ||
+                        op.opcode == IrOpCode.STORE_PROP ||
+                        op.opcode == IrOpCode.STORE_ELEMENT) {
+                        // Clear available expressions (conservative)
+                        available = {};
+                    }
+                }
+                newOps.push(op);
+            }
+            j = j + 1;
+        }
+
+        block.ops = newOps;
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Copy Propagation
+// ============================================================================
+
+// Replace uses of copied values with their source
+function copyPropagation(func: IrFunction): void {
+    // Build copy chains
+    let copies: { [valueId: number]: number } = {};
+
+    let i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        let j = 0;
+        while (j < block.ops.length) {
+            let op = block.ops[j];
+            if (op._isCopy && op.dest != null && op.args.length >= 1) {
+                // Follow chains
+                let root = op.args[0];
+                while (copies[root] != null) {
+                    root = copies[root];
+                }
+                copies[op.dest] = root;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    // Replace uses
+    i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        let j = 0;
+        while (j < block.ops.length) {
+            let op = block.ops[j];
+            let k = 0;
+            while (k < op.args.length) {
+                let arg = op.args[k];
+                if (copies[arg] != null) {
+                    op.args[k] = copies[arg];
+                }
+                k = k + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Branch Simplification
+// ============================================================================
+
+// Simplify branches with constant conditions
+function simplifyBranches(func: IrFunction): void {
+    // Collect constant values
+    let constants: { [valueId: number]: ConstantValue } = {};
+
+    let i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        let j = 0;
+        while (j < block.ops.length) {
+            let op = block.ops[j];
+            if (op.opcode == IrOpCode.CONST && op.dest != null && op.immediate != null) {
+                constants[op.dest] = {
+                    type: typeof op.immediate,
+                    value: op.immediate
+                };
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    // Simplify conditional jumps with constant conditions
+    i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        let j = 0;
+        while (j < block.ops.length) {
+            let op = block.ops[j];
+            if (op.opcode == IrOpCode.JUMP_IF_FALSE && op.args.length >= 1) {
+                let cond = constants[op.args[0]];
+                if (cond != null && cond.type == "boolean") {
+                    if (cond.value == true) {
+                        // Condition is true, remove the conditional jump (fall through)
+                        block.ops.splice(j, 1);
+                        j = j - 1;
+                    } else {
+                        // Condition is false, convert to unconditional jump
+                        op.opcode = IrOpCode.JUMP;
+                        op.args = [];
+                    }
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Unreachable Block Elimination
+// ============================================================================
+
+function removeUnreachableBlocks(func: IrFunction): void {
+    if (func.entry_block == null) {
+        return;
+    }
+
+    let reachable: { [label: string]: boolean } = {};
+    let worklist: string[] = [func.entry_block.label];
+
+    // Find all reachable blocks
+    while (worklist.length > 0) {
+        let label = worklist.shift();
+        if (reachable[label]) {
+            continue;
+        }
+        reachable[label] = true;
+
+        // Find the block
+        let i = 0;
+        while (i < func.blocks.length) {
+            if (func.blocks[i].label == label) {
+                let block = func.blocks[i];
+                let j = 0;
+                while (j < block.successors.length) {
+                    let succLabel = block.successors[j].label;
+                    if (!reachable[succLabel]) {
+                        worklist.push(succLabel);
+                    }
+                    j = j + 1;
+                }
+                break;
+            }
+            i = i + 1;
+        }
+    }
+
+    // Clear unreachable blocks
+    let i = 0;
+    while (i < func.blocks.length) {
+        if (!reachable[func.blocks[i].label]) {
+            func.blocks[i].ops = [];
+            func.blocks[i].successors = [];
+        }
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Strength Reduction
+// ============================================================================
+
+// Replace expensive operations with cheaper equivalents
+function strengthReduction(func: IrFunction): void {
+    let i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        let j = 0;
+        while (j < block.ops.length) {
+            let op = block.ops[j];
+
+            // Multiply by power of 2 → left shift
+            if (op.opcode == IrOpCode.MUL && op.args.length >= 2 && op.dest != null) {
+                // Check if second operand is constant power of 2
+                // (Would need to track constants to implement fully)
+            }
+
+            // Divide by power of 2 → right shift
+            if (op.opcode == IrOpCode.DIV && op.args.length >= 2 && op.dest != null) {
+                // Check if second operand is constant power of 2
+            }
+
+            // x * 0 → 0
+            // x * 1 → x
+            // x + 0 → x
+            // x - 0 → x
+            // (Would need constant tracking)
+
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Optimization Pipeline
+// ============================================================================
+
+// Run all optimizations on a function
+function optimizeFunction(func: IrFunction): void {
+    let maxIterations = 10;
+    let iteration = 0;
+
+    while (iteration < maxIterations) {
+        let beforeHash = hashFunction(func);
+
+        constantFolding(func);
+        copyPropagation(func);
+        deadCodeElimination(func);
+        commonSubexpressionElimination(func);
+        simplifyBranches(func);
+        removeUnreachableBlocks(func);
+        strengthReduction(func);
+
+        let afterHash = hashFunction(func);
+
+        // Stop if no changes
+        if (beforeHash == afterHash) {
+            break;
+        }
+
+        iteration = iteration + 1;
+    }
+}
+
+// Simple hash for detecting changes
+function hashFunction(func: IrFunction): number {
+    let hash = 0;
+    let i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        let j = 0;
+        while (j < block.ops.length) {
+            let op = block.ops[j];
+            hash = hash * 31 + op.opcode;
+            if (op.dest != null) {
+                hash = hash * 31 + op.dest;
+            }
+            let k = 0;
+            while (k < op.args.length) {
+                hash = hash * 31 + op.args[k];
+                k = k + 1;
+            }
+            hash = hash & 0x7FFFFFFF;  // Keep positive
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return hash;
+}
+
+// Run all optimizations on a module
+function optimizeModule(module: IrModule): void {
+    let i = 0;
+    while (i < module.functions.length) {
+        optimizeFunction(module.functions[i]);
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Export
+// ============================================================================
+
+let Optimizer = {
+    dce: deadCodeElimination,
+    constantFold: constantFolding,
+    cse: commonSubexpressionElimination,
+    copyProp: copyPropagation,
+    simplifyBranches: simplifyBranches,
+    removeUnreachable: removeUnreachableBlocks,
+    strengthReduction: strengthReduction,
+    optimizeFunction: optimizeFunction,
+    optimizeModule: optimizeModule
+};
+
+console.log("Optimizer pass loaded");

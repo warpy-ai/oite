@@ -324,6 +324,6 @@ cargo build --release
 ```
 
 **Learn more:**
-- [Script GitHub Repository](https://github.com/jucasoliveira/script)
+- [Script GitHub Repository](https://github.com/warpy-ai/script)
 - [Architecture Documentation](/docs/architecture)
 - [Development Status](/docs/development-status)

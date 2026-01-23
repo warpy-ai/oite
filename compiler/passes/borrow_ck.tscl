@@ -1,0 +1,848 @@
+// ============================================================================
+// Borrow Checker for tscl Compiler
+// Ownership and borrowing analysis with type information
+// ============================================================================
+
+require ../ir/mod;
+
+// ============================================================================
+// Variable Kind (Determines Ownership Semantics)
+// ============================================================================
+
+enum VarKind {
+    PRIMITIVE = 0,  // Numbers, Booleans (Copy semantics)
+    HEAP = 1,       // Objects, Arrays, Functions (Move semantics)
+    BORROW = 2,     // Immutable borrow (Ref<T>)
+    BORROW_MUT = 3  // Mutable borrow (MutRef<T>)
+}
+
+// ============================================================================
+// Variable State (Ownership State)
+// ============================================================================
+
+enum VarState {
+    OWNED = 0,           // Currently valid and owned
+    MOVED = 1,           // Data has been moved
+    CAPTURED = 2,        // Captured by closure/async
+    BORROWED = 3,        // Borrowed immutably
+    BORROWED_MUT = 4     // Borrowed mutably
+}
+
+// ============================================================================
+// Variable Information
+// ============================================================================
+
+interface VarInfo {
+    name: string;
+    irType: IrType;
+    kind: VarKind;
+    state: VarState;
+    immutBorrows: number;
+    mutBorrow: boolean;
+    defLocation: string;
+    movedLocation: string | null;
+}
+
+function createVarInfo(name: string, irType: IrType, location: string): VarInfo {
+    return {
+        name: name,
+        irType: irType,
+        kind: kindFromType(irType),
+        state: VarState.OWNED,
+        immutBorrows: 0,
+        mutBorrow: false,
+        defLocation: location,
+        movedLocation: null
+    };
+}
+
+function kindFromType(irType: IrType): VarKind {
+    if (irType == IrType.NUMBER || irType == IrType.BOOLEAN || irType == IrType.VOID) {
+        return VarKind.PRIMITIVE;
+    }
+    if (irType == IrType.STRING || irType == IrType.ARRAY ||
+        irType == IrType.OBJECT || irType == IrType.FUNCTION) {
+        return VarKind.HEAP;
+    }
+    // Default to HEAP for safety (conservative)
+    return VarKind.HEAP;
+}
+
+function isCopy(info: VarInfo): boolean {
+    return info.kind == VarKind.PRIMITIVE;
+}
+
+function isMove(info: VarInfo): boolean {
+    return info.kind == VarKind.HEAP;
+}
+
+// ============================================================================
+// Borrow Error Types
+// ============================================================================
+
+interface BorrowError {
+    kind: string;
+    message: string;
+    variable: string;
+    location: string;
+}
+
+function createBorrowError(kind: string, message: string, variable: string, location: string): BorrowError {
+    return {
+        kind: kind,
+        message: message,
+        variable: variable,
+        location: location
+    };
+}
+
+function formatBorrowError(error: BorrowError): string {
+    return "BORROW ERROR [" + error.kind + "]: " + error.message +
+           " (variable: " + error.variable + ", at: " + error.location + ")";
+}
+
+// ============================================================================
+// Borrow Checker
+// ============================================================================
+
+interface BorrowChecker {
+    symbols: { [name: string]: VarInfo };
+    errors: BorrowError[];
+    scopeDepth: number;
+    scopeStack: string[][];  // Each scope tracks variable names
+}
+
+function createBorrowChecker(): BorrowChecker {
+    return {
+        symbols: {},
+        errors: [],
+        scopeDepth: 0,
+        scopeStack: [[]]  // Start with global scope
+    };
+}
+
+// ============================================================================
+// Scope Management
+// ============================================================================
+
+function enterScope(checker: BorrowChecker): void {
+    checker.scopeDepth = checker.scopeDepth + 1;
+    checker.scopeStack.push([]);
+}
+
+function exitScope(checker: BorrowChecker): void {
+    let vars = checker.scopeStack.pop();
+    if (vars != null) {
+        let i = 0;
+        while (i < vars.length) {
+            delete checker.symbols[vars[i]];
+            i = i + 1;
+        }
+    }
+    if (checker.scopeDepth > 0) {
+        checker.scopeDepth = checker.scopeDepth - 1;
+    }
+}
+
+// ============================================================================
+// Variable Management
+// ============================================================================
+
+function defineVariable(checker: BorrowChecker, name: string, irType: IrType, location: string): void {
+    let info = createVarInfo(name, irType, location);
+    checker.symbols[name] = info;
+
+    // Track in current scope
+    let currentScope = checker.scopeStack[checker.scopeStack.length - 1];
+    if (currentScope != null) {
+        currentScope.push(name);
+    }
+}
+
+function lookupVariable(checker: BorrowChecker, name: string): VarInfo | null {
+    return checker.symbols[name];
+}
+
+// ============================================================================
+// Ownership Operations
+// ============================================================================
+
+// Process a variable use (potential move or copy)
+function processUse(checker: BorrowChecker, name: string, location: string): boolean {
+    let info = lookupVariable(checker, name);
+    if (info == null) {
+        return true;  // Unknown variable, let type checker handle it
+    }
+
+    // Check for use-after-move
+    if (info.state == VarState.MOVED) {
+        let error = createBorrowError(
+            "UseAfterMove",
+            "Use of moved variable '" + name + "'",
+            name,
+            location
+        );
+        checker.errors.push(error);
+        return false;
+    }
+
+    if (info.state == VarState.CAPTURED) {
+        let error = createBorrowError(
+            "UseAfterCapture",
+            "Variable '" + name + "' was captured by a closure and cannot be used",
+            name,
+            location
+        );
+        checker.errors.push(error);
+        return false;
+    }
+
+    // If it's a move type and not borrowed, this is a move
+    if (isMove(info) && info.immutBorrows == 0 && !info.mutBorrow) {
+        info.state = VarState.MOVED;
+        info.movedLocation = location;
+    }
+
+    return true;
+}
+
+// Process a borrow (immutable or mutable)
+function processBorrow(checker: BorrowChecker, name: string, mutable: boolean, location: string): boolean {
+    let info = lookupVariable(checker, name);
+    if (info == null) {
+        return true;  // Unknown variable
+    }
+
+    // Check for borrow of moved variable
+    if (info.state == VarState.MOVED) {
+        let error = createBorrowError(
+            "BorrowAfterMove",
+            "Cannot borrow moved variable '" + name + "'",
+            name,
+            location
+        );
+        checker.errors.push(error);
+        return false;
+    }
+
+    if (info.state == VarState.CAPTURED) {
+        let error = createBorrowError(
+            "BorrowAfterCapture",
+            "Cannot borrow '" + name + "' - it was captured by a closure",
+            name,
+            location
+        );
+        checker.errors.push(error);
+        return false;
+    }
+
+    if (mutable) {
+        // Mutable borrow: no other borrows allowed
+        if (info.immutBorrows > 0) {
+            let error = createBorrowError(
+                "BorrowConflict",
+                "Cannot borrow '" + name + "' as mutable while it is already borrowed immutably",
+                name,
+                location
+            );
+            checker.errors.push(error);
+            return false;
+        }
+        if (info.mutBorrow) {
+            let error = createBorrowError(
+                "DoubleMutableBorrow",
+                "Cannot borrow '" + name + "' as mutable more than once",
+                name,
+                location
+            );
+            checker.errors.push(error);
+            return false;
+        }
+        info.mutBorrow = true;
+        info.state = VarState.BORROWED_MUT;
+    } else {
+        // Immutable borrow: no mutable borrows allowed
+        if (info.mutBorrow) {
+            let error = createBorrowError(
+                "BorrowConflict",
+                "Cannot borrow '" + name + "' as immutable while it is mutably borrowed",
+                name,
+                location
+            );
+            checker.errors.push(error);
+            return false;
+        }
+        info.immutBorrows = info.immutBorrows + 1;
+        if (info.state != VarState.BORROWED) {
+            info.state = VarState.BORROWED;
+        }
+    }
+
+    return true;
+}
+
+// Release a borrow
+function releaseBorrow(checker: BorrowChecker, name: string, mutable: boolean): void {
+    let info = lookupVariable(checker, name);
+    if (info == null) {
+        return;
+    }
+
+    if (mutable) {
+        info.mutBorrow = false;
+        if (info.immutBorrows == 0) {
+            info.state = VarState.OWNED;
+        }
+    } else {
+        if (info.immutBorrows > 0) {
+            info.immutBorrows = info.immutBorrows - 1;
+        }
+        if (info.immutBorrows == 0 && !info.mutBorrow) {
+            info.state = VarState.OWNED;
+        }
+    }
+}
+
+// Process assignment (check if target is borrowed)
+function processAssignment(checker: BorrowChecker, name: string, location: string): boolean {
+    let info = lookupVariable(checker, name);
+    if (info == null) {
+        return true;
+    }
+
+    if (info.immutBorrows > 0 || info.mutBorrow) {
+        let error = createBorrowError(
+            "AssignWhileBorrowed",
+            "Cannot assign to '" + name + "' while it is borrowed",
+            name,
+            location
+        );
+        checker.errors.push(error);
+        return false;
+    }
+
+    return true;
+}
+
+// Process capture by closure
+function processCapture(checker: BorrowChecker, name: string, location: string): boolean {
+    let info = lookupVariable(checker, name);
+    if (info == null) {
+        return true;
+    }
+
+    // Check if already moved or captured
+    if (info.state == VarState.MOVED || info.state == VarState.CAPTURED) {
+        let error = createBorrowError(
+            "CaptureAfterMove",
+            "Variable '" + name + "' was already moved or captured",
+            name,
+            location
+        );
+        checker.errors.push(error);
+        return false;
+    }
+
+    // Check for active borrows
+    if (info.immutBorrows > 0 || info.mutBorrow) {
+        let error = createBorrowError(
+            "CaptureWhileBorrowed",
+            "Cannot capture '" + name + "' while it has active borrow(s)",
+            name,
+            location
+        );
+        checker.errors.push(error);
+        return false;
+    }
+
+    // Move into closure if it's a move type
+    if (isMove(info)) {
+        info.state = VarState.CAPTURED;
+    }
+
+    return true;
+}
+
+// ============================================================================
+// AST Analysis
+// ============================================================================
+
+function analyzeStatement(checker: BorrowChecker, stmt: any): boolean {
+    if (stmt == null) {
+        return true;
+    }
+
+    let stmtType = stmt.type;
+
+    if (stmtType == "VariableDeclaration") {
+        return analyzeVariableDeclaration(checker, stmt);
+    }
+
+    if (stmtType == "ExpressionStatement") {
+        return analyzeExpression(checker, stmt.expression);
+    }
+
+    if (stmtType == "BlockStatement") {
+        enterScope(checker);
+        let i = 0;
+        let ok = true;
+        while (i < stmt.body.length) {
+            if (!analyzeStatement(checker, stmt.body[i])) {
+                ok = false;
+            }
+            i = i + 1;
+        }
+        exitScope(checker);
+        return ok;
+    }
+
+    if (stmtType == "IfStatement") {
+        let ok = analyzeExpression(checker, stmt.test);
+        if (!analyzeStatement(checker, stmt.consequent)) {
+            ok = false;
+        }
+        if (stmt.alternate != null) {
+            if (!analyzeStatement(checker, stmt.alternate)) {
+                ok = false;
+            }
+        }
+        return ok;
+    }
+
+    if (stmtType == "WhileStatement" || stmtType == "DoWhileStatement") {
+        let ok = analyzeExpression(checker, stmt.test);
+        if (!analyzeStatement(checker, stmt.body)) {
+            ok = false;
+        }
+        return ok;
+    }
+
+    if (stmtType == "ForStatement") {
+        enterScope(checker);
+        let ok = true;
+        if (stmt.init != null) {
+            if (stmt.init.type == "VariableDeclaration") {
+                if (!analyzeVariableDeclaration(checker, stmt.init)) {
+                    ok = false;
+                }
+            } else {
+                if (!analyzeExpression(checker, stmt.init)) {
+                    ok = false;
+                }
+            }
+        }
+        if (stmt.test != null) {
+            if (!analyzeExpression(checker, stmt.test)) {
+                ok = false;
+            }
+        }
+        if (stmt.update != null) {
+            if (!analyzeExpression(checker, stmt.update)) {
+                ok = false;
+            }
+        }
+        if (!analyzeStatement(checker, stmt.body)) {
+            ok = false;
+        }
+        exitScope(checker);
+        return ok;
+    }
+
+    if (stmtType == "ReturnStatement") {
+        if (stmt.argument != null) {
+            return analyzeExpression(checker, stmt.argument);
+        }
+        return true;
+    }
+
+    if (stmtType == "FunctionDeclaration") {
+        return analyzeFunctionDeclaration(checker, stmt);
+    }
+
+    return true;
+}
+
+function analyzeVariableDeclaration(checker: BorrowChecker, decl: any): boolean {
+    let ok = true;
+    let i = 0;
+    while (i < decl.declarations.length) {
+        let d = decl.declarations[i];
+        let name = getIdentifierName(d.id);
+
+        // Analyze initializer first (may move values)
+        if (d.init != null) {
+            if (!analyzeExpression(checker, d.init)) {
+                ok = false;
+            }
+        }
+
+        // Determine type and register variable
+        let irType = inferIrType(d);
+        if (name != null) {
+            defineVariable(checker, name, irType, "decl");
+        }
+
+        i = i + 1;
+    }
+    return ok;
+}
+
+function analyzeExpression(checker: BorrowChecker, expr: any): boolean {
+    if (expr == null) {
+        return true;
+    }
+
+    let exprType = expr.type;
+
+    if (exprType == "Identifier") {
+        let name = expr.name;
+        return processUse(checker, name, "expr");
+    }
+
+    if (exprType == "MemberExpression") {
+        // Member access is an implicit borrow
+        if (expr.object.type == "Identifier") {
+            return processBorrow(checker, expr.object.name, false, "member");
+        }
+        return analyzeExpression(checker, expr.object);
+    }
+
+    if (exprType == "AssignmentExpression") {
+        // Check if assigning to a borrowed variable
+        if (expr.left.type == "Identifier") {
+            let name = expr.left.name;
+            if (!processAssignment(checker, name, "assign")) {
+                return false;
+            }
+        }
+        return analyzeExpression(checker, expr.right);
+    }
+
+    if (exprType == "BinaryExpression" || exprType == "LogicalExpression") {
+        let ok = analyzeExpression(checker, expr.left);
+        if (!analyzeExpression(checker, expr.right)) {
+            ok = false;
+        }
+        return ok;
+    }
+
+    if (exprType == "UnaryExpression" || exprType == "UpdateExpression") {
+        return analyzeExpression(checker, expr.argument);
+    }
+
+    if (exprType == "CallExpression") {
+        // Function arguments are implicit borrows
+        let ok = true;
+        let i = 0;
+        while (i < expr.arguments.length) {
+            let arg = expr.arguments[i];
+            if (arg.type == "Identifier") {
+                if (!processBorrow(checker, arg.name, false, "call")) {
+                    ok = false;
+                }
+            } else {
+                if (!analyzeExpression(checker, arg)) {
+                    ok = false;
+                }
+            }
+            i = i + 1;
+        }
+        if (!analyzeExpression(checker, expr.callee)) {
+            ok = false;
+        }
+        return ok;
+    }
+
+    if (exprType == "ArrayExpression") {
+        let ok = true;
+        let i = 0;
+        while (i < expr.elements.length) {
+            if (expr.elements[i] != null) {
+                if (!analyzeExpression(checker, expr.elements[i])) {
+                    ok = false;
+                }
+            }
+            i = i + 1;
+        }
+        return ok;
+    }
+
+    if (exprType == "ObjectExpression") {
+        let ok = true;
+        let i = 0;
+        while (i < expr.properties.length) {
+            let prop = expr.properties[i];
+            if (prop.value != null) {
+                if (!analyzeExpression(checker, prop.value)) {
+                    ok = false;
+                }
+            }
+            i = i + 1;
+        }
+        return ok;
+    }
+
+    if (exprType == "ArrowFunctionExpression" || exprType == "FunctionExpression") {
+        return analyzeClosureCaptures(checker, expr);
+    }
+
+    if (exprType == "ConditionalExpression") {
+        let ok = analyzeExpression(checker, expr.test);
+        if (!analyzeExpression(checker, expr.consequent)) {
+            ok = false;
+        }
+        if (!analyzeExpression(checker, expr.alternate)) {
+            ok = false;
+        }
+        return ok;
+    }
+
+    return true;
+}
+
+function analyzeFunctionDeclaration(checker: BorrowChecker, func: any): boolean {
+    // Create new scope for function body
+    enterScope(checker);
+
+    // Register parameters
+    let i = 0;
+    while (i < func.params.length) {
+        let paramName = getIdentifierName(func.params[i]);
+        if (paramName != null) {
+            defineVariable(checker, paramName, IrType.ANY, "param");
+        }
+        i = i + 1;
+    }
+
+    // Analyze body
+    let ok = true;
+    if (func.body != null) {
+        if (func.body.type == "BlockStatement") {
+            let j = 0;
+            while (j < func.body.body.length) {
+                if (!analyzeStatement(checker, func.body.body[j])) {
+                    ok = false;
+                }
+                j = j + 1;
+            }
+        } else {
+            // Expression body
+            if (!analyzeExpression(checker, func.body)) {
+                ok = false;
+            }
+        }
+    }
+
+    exitScope(checker);
+    return ok;
+}
+
+function analyzeClosureCaptures(checker: BorrowChecker, closure: any): boolean {
+    // Collect parameter names
+    let paramNames: { [name: string]: boolean } = {};
+    let i = 0;
+    while (i < closure.params.length) {
+        let name = getIdentifierName(closure.params[i]);
+        if (name != null) {
+            paramNames[name] = true;
+        }
+        i = i + 1;
+    }
+
+    // Scan for captured variables
+    let captured: string[] = [];
+    scanForCaptures(checker, closure.body, paramNames, captured);
+
+    // Process captures
+    let ok = true;
+    i = 0;
+    while (i < captured.length) {
+        if (!processCapture(checker, captured[i], "closure")) {
+            ok = false;
+        }
+        i = i + 1;
+    }
+
+    return ok;
+}
+
+function scanForCaptures(checker: BorrowChecker, node: any, localVars: { [name: string]: boolean }, captured: string[]): void {
+    if (node == null) {
+        return;
+    }
+
+    if (node.type == "Identifier") {
+        let name = node.name;
+        if (!localVars[name] && checker.symbols[name] != null) {
+            // Check if already captured
+            let found = false;
+            let i = 0;
+            while (i < captured.length) {
+                if (captured[i] == name) {
+                    found = true;
+                    break;
+                }
+                i = i + 1;
+            }
+            if (!found) {
+                captured.push(name);
+            }
+        }
+        return;
+    }
+
+    if (node.type == "BlockStatement") {
+        let i = 0;
+        while (i < node.body.length) {
+            scanForCaptures(checker, node.body[i], localVars, captured);
+            i = i + 1;
+        }
+        return;
+    }
+
+    if (node.type == "BinaryExpression" || node.type == "LogicalExpression") {
+        scanForCaptures(checker, node.left, localVars, captured);
+        scanForCaptures(checker, node.right, localVars, captured);
+        return;
+    }
+
+    if (node.type == "CallExpression") {
+        scanForCaptures(checker, node.callee, localVars, captured);
+        let i = 0;
+        while (i < node.arguments.length) {
+            scanForCaptures(checker, node.arguments[i], localVars, captured);
+            i = i + 1;
+        }
+        return;
+    }
+
+    if (node.type == "MemberExpression") {
+        scanForCaptures(checker, node.object, localVars, captured);
+        return;
+    }
+
+    if (node.type == "ReturnStatement" && node.argument != null) {
+        scanForCaptures(checker, node.argument, localVars, captured);
+        return;
+    }
+
+    if (node.type == "ExpressionStatement") {
+        scanForCaptures(checker, node.expression, localVars, captured);
+        return;
+    }
+
+    if (node.type == "VariableDeclaration") {
+        let i = 0;
+        while (i < node.declarations.length) {
+            if (node.declarations[i].init != null) {
+                scanForCaptures(checker, node.declarations[i].init, localVars, captured);
+            }
+            i = i + 1;
+        }
+        return;
+    }
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+function getIdentifierName(node: any): string | null {
+    if (node == null) {
+        return null;
+    }
+    if (node.type == "Identifier") {
+        return node.name;
+    }
+    return null;
+}
+
+function inferIrType(decl: any): IrType {
+    if (decl.init != null) {
+        let initType = decl.init.type;
+        if (initType == "Literal") {
+            let value = decl.init.value;
+            if (typeof value == "number") {
+                return IrType.NUMBER;
+            }
+            if (typeof value == "string") {
+                return IrType.STRING;
+            }
+            if (typeof value == "boolean") {
+                return IrType.BOOLEAN;
+            }
+        }
+        if (initType == "ArrayExpression") {
+            return IrType.ARRAY;
+        }
+        if (initType == "ObjectExpression") {
+            return IrType.OBJECT;
+        }
+        if (initType == "ArrowFunctionExpression" || initType == "FunctionExpression") {
+            return IrType.FUNCTION;
+        }
+    }
+    return IrType.ANY;
+}
+
+// ============================================================================
+// Public API
+// ============================================================================
+
+function checkFunction(func: IrFunction): BorrowError[] {
+    // For IR-based checking, we would analyze the IR instructions
+    // This is a simplified version that focuses on the AST
+    let checker = createBorrowChecker();
+    return checker.errors;
+}
+
+function checkModule(module: IrModule): BorrowError[] {
+    let allErrors: BorrowError[] = [];
+    let i = 0;
+    while (i < module.functions.length) {
+        let errors = checkFunction(module.functions[i]);
+        let j = 0;
+        while (j < errors.length) {
+            allErrors.push(errors[j]);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return allErrors;
+}
+
+function checkAst(ast: any): BorrowError[] {
+    let checker = createBorrowChecker();
+
+    if (ast.type == "Program") {
+        let i = 0;
+        while (i < ast.body.length) {
+            analyzeStatement(checker, ast.body[i]);
+            i = i + 1;
+        }
+    }
+
+    return checker.errors;
+}
+
+// ============================================================================
+// Export
+// ============================================================================
+
+let BorrowCheck = {
+    createChecker: createBorrowChecker,
+    defineVariable: defineVariable,
+    processUse: processUse,
+    processBorrow: processBorrow,
+    releaseBorrow: releaseBorrow,
+    processAssignment: processAssignment,
+    processCapture: processCapture,
+    checkFunction: checkFunction,
+    checkModule: checkModule,
+    checkAst: checkAst,
+    formatError: formatBorrowError,
+    VarKind: VarKind,
+    VarState: VarState
+};
+
+console.log("BorrowCheck pass loaded");

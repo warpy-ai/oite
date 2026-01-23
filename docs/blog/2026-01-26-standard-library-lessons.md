@@ -434,6 +434,6 @@ The 10 modules we built this week are just the beginning. As Script grows, so wi
 
 **Contribute to Script's standard library:**
 
-- [GitHub Repository](https://github.com/jucasoliveira/script)
+- [GitHub Repository](https://github.com/warpy-ai/script)
 - [Standard Library Documentation](/docs/standard-library)
 - [Contributing Guide](/docs/contributing)

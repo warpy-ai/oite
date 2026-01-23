@@ -1,0 +1,75 @@
+// ============================================================================
+// Compiler Passes for tscl
+// Type checking, optimization, and borrow checking
+// ============================================================================
+
+require ./typecheck;
+require ./opt;
+require ./borrow_ck;
+
+// ============================================================================
+// Pass Pipeline
+// ============================================================================
+
+// Run all passes on an IR module
+function runAllPasses(module: IrModule): { types: any, errors: any[] } {
+    // 1. Type checking and inference
+    TypeCheck.typecheckModule(module);
+
+    // 2. Optimization passes
+    Optimizer.optimizeModule(module);
+
+    // 3. Borrow checking
+    let borrowErrors = BorrowCheck.checkModule(module);
+
+    return {
+        types: null,  // Type info stored in IR
+        errors: borrowErrors
+    };
+}
+
+// Run type checking only
+function runTypeCheck(module: IrModule): void {
+    TypeCheck.typecheckModule(module);
+}
+
+// Run optimization only
+function runOptimize(module: IrModule): void {
+    Optimizer.optimizeModule(module);
+}
+
+// Run borrow checking only
+function runBorrowCheck(module: IrModule): any[] {
+    return BorrowCheck.checkModule(module);
+}
+
+// Run passes on AST (before IR lowering)
+function runAstPasses(ast: any): { errors: any[] } {
+    let borrowErrors = BorrowCheck.checkAst(ast);
+    return {
+        errors: borrowErrors
+    };
+}
+
+// ============================================================================
+// Export
+// ============================================================================
+
+let Passes = {
+    // Individual passes
+    TypeCheck: TypeCheck,
+    Optimizer: Optimizer,
+    BorrowCheck: BorrowCheck,
+
+    // Pipeline functions
+    runAll: runAllPasses,
+    typecheck: runTypeCheck,
+    optimize: runOptimize,
+    borrowCheck: runBorrowCheck,
+    checkAst: runAstPasses,
+
+    version: "0.1.0"
+};
+
+console.log("Compiler passes loaded");
+console.log("Available: TypeCheck, Optimizer, BorrowCheck");

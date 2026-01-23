@@ -183,6 +183,560 @@ function irBuilderCreateComparisonFunction(builder, name, op) {
 }
 
 // ============================================================================
+// AST to IR Lowering
+// ============================================================================
+
+// Lowering context for tracking variable bindings
+function createLoweringContext(builder) {
+    return {
+        builder: builder,
+        variables: {},  // name -> slot
+        nextSlot: 0
+    };
+}
+
+function contextDeclareVariable(ctx, name) {
+    let slot = ctx.nextSlot;
+    ctx.nextSlot = ctx.nextSlot + 1;
+    ctx.variables[name] = slot;
+    return slot;
+}
+
+function contextLookupVariable(ctx, name) {
+    if (ctx.variables[name] != null) {
+        return ctx.variables[name];
+    }
+    return -1;
+}
+
+// Lower a complete program to IR module
+function lowerProgramToIr(ast) {
+    let builder = createIrBuilder();
+
+    // First pass: lower all function declarations
+    let i = 0;
+    while (i < ast.body.length) {
+        let stmt = ast.body[i];
+        if (stmt.type == "FunctionDeclaration") {
+            lowerFunctionDeclarationFull(builder, stmt);
+        }
+        i = i + 1;
+    }
+
+    // Second pass: create main function for top-level code
+    let hasTopLevel = false;
+    i = 0;
+    while (i < ast.body.length) {
+        let stmt = ast.body[i];
+        if (stmt.type != "FunctionDeclaration") {
+            hasTopLevel = true;
+        }
+        i = i + 1;
+    }
+
+    if (hasTopLevel) {
+        irBuilderEnterFunction(builder, "main", IrType.VOID);
+        irBuilderCreateEntryBlock(builder);
+        let ctx = createLoweringContext(builder);
+
+        i = 0;
+        while (i < ast.body.length) {
+            let stmt = ast.body[i];
+            if (stmt.type != "FunctionDeclaration") {
+                lowerStatement(ctx, stmt);
+            }
+            i = i + 1;
+        }
+
+        irBuilderEmitReturnVoid(builder);
+    }
+
+    return irBuilderFinish(builder);
+}
+
+// Lower a function declaration
+function lowerFunctionDeclarationFull(builder, node) {
+    let returnType = IrType.ANY;
+    if (node.returnType != null) {
+        returnType = irTypeFromAnnotation(node.returnType);
+    }
+
+    irBuilderEnterFunction(builder, node.name, returnType);
+    irBuilderCreateEntryBlock(builder);
+
+    let ctx = createLoweringContext(builder);
+
+    // Add parameters
+    let j = 0;
+    while (j < node.params.length) {
+        let param = node.params[j];
+        let paramName = param;
+        if (typeof param === "object" && param.name != null) {
+            paramName = param.name;
+        }
+        let slot = irBuilderAddParam(builder, paramName);
+        ctx.variables[paramName] = slot;
+        ctx.nextSlot = slot + 1;
+        j = j + 1;
+    }
+
+    // Lower function body
+    if (node.body != null && node.body.type == "BlockStatement") {
+        lowerBlockStatement(ctx, node.body);
+    }
+
+    // Ensure function ends with return
+    let lastOp = irBuilderGetBlockOpCount(builder);
+    if (lastOp == 0 || !blockEndsWithReturn(builder)) {
+        irBuilderEmitReturnVoid(builder);
+    }
+}
+
+function blockEndsWithReturn(builder) {
+    if (builder.currentBlock == null) {
+        return false;
+    }
+    let ops = builder.currentBlock.ops;
+    if (ops.length == 0) {
+        return false;
+    }
+    let lastOp = ops[ops.length - 1];
+    return lastOp.opcode == IrOpCode.RETURN;
+}
+
+// Lower a block statement (list of statements)
+function lowerBlockStatement(ctx, node) {
+    let i = 0;
+    while (i < node.body.length) {
+        lowerStatement(ctx, node.body[i]);
+        i = i + 1;
+    }
+}
+
+// Lower a single statement
+function lowerStatement(ctx, stmt) {
+    if (stmt.type == "VariableDeclaration") {
+        lowerVariableDeclaration(ctx, stmt);
+    } else if (stmt.type == "ExpressionStatement") {
+        lowerExpression(ctx, stmt.expression);
+    } else if (stmt.type == "ReturnStatement") {
+        lowerReturnStatement(ctx, stmt);
+    } else if (stmt.type == "IfStatement") {
+        lowerIfStatement(ctx, stmt);
+    } else if (stmt.type == "WhileStatement") {
+        lowerWhileStatement(ctx, stmt);
+    } else if (stmt.type == "ForStatement") {
+        lowerForStatement(ctx, stmt);
+    } else if (stmt.type == "DoWhileStatement") {
+        lowerDoWhileStatement(ctx, stmt);
+    } else if (stmt.type == "BlockStatement") {
+        lowerBlockStatement(ctx, stmt);
+    } else if (stmt.type == "BreakStatement") {
+        // TODO: implement break with label tracking
+    } else if (stmt.type == "ContinueStatement") {
+        // TODO: implement continue with label tracking
+    } else if (stmt.type == "ThrowStatement") {
+        lowerThrowStatement(ctx, stmt);
+    } else if (stmt.type == "TryStatement") {
+        lowerTryStatement(ctx, stmt);
+    }
+}
+
+// Lower variable declaration
+function lowerVariableDeclaration(ctx, node) {
+    let declarations = node.declarations;
+    if (declarations == null) {
+        declarations = [node];
+    }
+
+    let i = 0;
+    while (i < declarations.length) {
+        let decl = declarations[i];
+        let name = decl.id;
+        if (typeof decl.id === "object" && decl.id.name != null) {
+            name = decl.id.name;
+        }
+
+        let slot = contextDeclareVariable(ctx, name);
+        ctx.builder.currentFunction.locals.push({
+            index: slot,
+            name: name,
+            type: IrType.ANY
+        });
+
+        if (decl.init != null) {
+            let valueReg = lowerExpression(ctx, decl.init);
+            irBuilderEmitStoreLocal(ctx.builder, slot, valueReg);
+        }
+        i = i + 1;
+    }
+}
+
+// Lower return statement
+function lowerReturnStatement(ctx, stmt) {
+    if (stmt.argument != null) {
+        let valueReg = lowerExpression(ctx, stmt.argument);
+        irBuilderEmitReturn(ctx.builder, valueReg);
+    } else {
+        irBuilderEmitReturnVoid(ctx.builder);
+    }
+}
+
+// Lower if statement
+function lowerIfStatement(ctx, stmt) {
+    let builder = ctx.builder;
+    let thenBlock = irBuilderAddBlock(builder, "if_then");
+    let elseBlock = irBuilderAddBlock(builder, "if_else");
+    let mergeBlock = irBuilderAddBlock(builder, "if_merge");
+
+    let currentBlock = builder.currentBlock;
+    irBuilderSetBlock(builder, currentBlock);
+
+    // Evaluate condition
+    let cond = lowerExpression(ctx, stmt.test);
+    irBuilderEmitJumpIfFalse(builder, cond, elseBlock);
+    irBuilderEmitJump(builder, thenBlock);
+
+    // Then branch
+    irBuilderSetBlock(builder, thenBlock);
+    if (stmt.consequent.type == "BlockStatement") {
+        lowerBlockStatement(ctx, stmt.consequent);
+    } else {
+        lowerStatement(ctx, stmt.consequent);
+    }
+    if (!blockEndsWithReturn(builder)) {
+        irBuilderEmitJump(builder, mergeBlock);
+    }
+
+    // Else branch
+    irBuilderSetBlock(builder, elseBlock);
+    if (stmt.alternate != null) {
+        if (stmt.alternate.type == "BlockStatement") {
+            lowerBlockStatement(ctx, stmt.alternate);
+        } else {
+            lowerStatement(ctx, stmt.alternate);
+        }
+    }
+    if (!blockEndsWithReturn(builder)) {
+        irBuilderEmitJump(builder, mergeBlock);
+    }
+
+    // Continue in merge block
+    irBuilderSetBlock(builder, mergeBlock);
+}
+
+// Lower while statement
+function lowerWhileStatement(ctx, stmt) {
+    let builder = ctx.builder;
+    let loopBlock = irBuilderAddBlock(builder, "while_cond");
+    let bodyBlock = irBuilderAddBlock(builder, "while_body");
+    let exitBlock = irBuilderAddBlock(builder, "while_exit");
+
+    // Jump to condition check
+    irBuilderEmitJump(builder, loopBlock);
+
+    // Condition check
+    irBuilderSetBlock(builder, loopBlock);
+    let cond = lowerExpression(ctx, stmt.test);
+    irBuilderEmitJumpIfFalse(builder, cond, exitBlock);
+    irBuilderEmitJump(builder, bodyBlock);
+
+    // Body
+    irBuilderSetBlock(builder, bodyBlock);
+    if (stmt.body.type == "BlockStatement") {
+        lowerBlockStatement(ctx, stmt.body);
+    } else {
+        lowerStatement(ctx, stmt.body);
+    }
+    irBuilderEmitJump(builder, loopBlock);
+
+    // Continue after loop
+    irBuilderSetBlock(builder, exitBlock);
+}
+
+// Lower for statement
+function lowerForStatement(ctx, stmt) {
+    let builder = ctx.builder;
+
+    // Initialize
+    if (stmt.init != null) {
+        if (stmt.init.type == "VariableDeclaration") {
+            lowerVariableDeclaration(ctx, stmt.init);
+        } else {
+            lowerExpression(ctx, stmt.init);
+        }
+    }
+
+    let loopBlock = irBuilderAddBlock(builder, "for_cond");
+    let bodyBlock = irBuilderAddBlock(builder, "for_body");
+    let updateBlock = irBuilderAddBlock(builder, "for_update");
+    let exitBlock = irBuilderAddBlock(builder, "for_exit");
+
+    // Jump to condition check
+    irBuilderEmitJump(builder, loopBlock);
+
+    // Condition check
+    irBuilderSetBlock(builder, loopBlock);
+    if (stmt.test != null) {
+        let cond = lowerExpression(ctx, stmt.test);
+        irBuilderEmitJumpIfFalse(builder, cond, exitBlock);
+    }
+    irBuilderEmitJump(builder, bodyBlock);
+
+    // Body
+    irBuilderSetBlock(builder, bodyBlock);
+    if (stmt.body.type == "BlockStatement") {
+        lowerBlockStatement(ctx, stmt.body);
+    } else {
+        lowerStatement(ctx, stmt.body);
+    }
+    irBuilderEmitJump(builder, updateBlock);
+
+    // Update
+    irBuilderSetBlock(builder, updateBlock);
+    if (stmt.update != null) {
+        lowerExpression(ctx, stmt.update);
+    }
+    irBuilderEmitJump(builder, loopBlock);
+
+    // Continue after loop
+    irBuilderSetBlock(builder, exitBlock);
+}
+
+// Lower do-while statement
+function lowerDoWhileStatement(ctx, stmt) {
+    let builder = ctx.builder;
+    let bodyBlock = irBuilderAddBlock(builder, "dowhile_body");
+    let condBlock = irBuilderAddBlock(builder, "dowhile_cond");
+    let exitBlock = irBuilderAddBlock(builder, "dowhile_exit");
+
+    // Jump to body (execute at least once)
+    irBuilderEmitJump(builder, bodyBlock);
+
+    // Body
+    irBuilderSetBlock(builder, bodyBlock);
+    if (stmt.body.type == "BlockStatement") {
+        lowerBlockStatement(ctx, stmt.body);
+    } else {
+        lowerStatement(ctx, stmt.body);
+    }
+    irBuilderEmitJump(builder, condBlock);
+
+    // Condition check
+    irBuilderSetBlock(builder, condBlock);
+    let cond = lowerExpression(ctx, stmt.test);
+    irBuilderEmitJumpIfFalse(builder, cond, exitBlock);
+    irBuilderEmitJump(builder, bodyBlock);
+
+    // Continue after loop
+    irBuilderSetBlock(builder, exitBlock);
+}
+
+// Lower throw statement
+function lowerThrowStatement(ctx, stmt) {
+    // TODO: proper exception handling
+    let valueReg = lowerExpression(ctx, stmt.argument);
+    // For now, just return the error value
+    irBuilderEmitReturn(ctx.builder, valueReg);
+}
+
+// Lower try statement
+function lowerTryStatement(ctx, stmt) {
+    // TODO: proper exception handling with catch/finally
+    // For now, just lower the try block
+    if (stmt.block != null) {
+        lowerBlockStatement(ctx, stmt.block);
+    }
+}
+
+// Lower an expression and return the register holding the result
+function lowerExpression(ctx, node) {
+    let builder = ctx.builder;
+
+    if (node.type == "Literal" || node.type == "NumericLiteral") {
+        return irBuilderEmitConst(builder, node.value);
+    }
+
+    if (node.type == "StringLiteral") {
+        return irBuilderEmitConstString(builder, node.value);
+    }
+
+    if (node.type == "BooleanLiteral") {
+        return irBuilderEmitConst(builder, node.value ? 1 : 0);
+    }
+
+    if (node.type == "Identifier") {
+        let slot = contextLookupVariable(ctx, node.name);
+        if (slot >= 0) {
+            return irBuilderEmitLoadLocal(builder, slot);
+        }
+        // Global/unknown variable - emit as constant for now
+        return irBuilderEmitConstString(builder, node.name);
+    }
+
+    if (node.type == "BinaryExpression") {
+        let left = lowerExpression(ctx, node.left);
+        let right = lowerExpression(ctx, node.right);
+        let opcode = getOpCodeForBinaryOp(node.operator);
+        return irBuilderEmitBinaryOp(builder, opcode, left, right);
+    }
+
+    if (node.type == "UnaryExpression") {
+        let arg = lowerExpression(ctx, node.argument);
+        if (node.operator == "-") {
+            return irBuilderEmitBinaryOp(builder, IrOpCode.NEG, arg, 0);
+        }
+        if (node.operator == "!") {
+            return irBuilderEmitBinaryOp(builder, IrOpCode.NOT, arg, 0);
+        }
+        return arg;
+    }
+
+    if (node.type == "AssignmentExpression") {
+        let valueReg = lowerExpression(ctx, node.right);
+
+        if (node.left.type == "Identifier") {
+            let slot = contextLookupVariable(ctx, node.left.name);
+            if (slot >= 0) {
+                irBuilderEmitStoreLocal(builder, slot, valueReg);
+            }
+        }
+        // TODO: handle member expressions, array access
+
+        return valueReg;
+    }
+
+    if (node.type == "UpdateExpression") {
+        // ++x or x++
+        if (node.argument.type == "Identifier") {
+            let slot = contextLookupVariable(ctx, node.argument.name);
+            if (slot >= 0) {
+                let currentVal = irBuilderEmitLoadLocal(builder, slot);
+                let one = irBuilderEmitConst(builder, 1);
+                let newVal;
+                if (node.operator == "++") {
+                    newVal = irBuilderEmitAdd(builder, currentVal, one);
+                } else {
+                    newVal = irBuilderEmitSub(builder, currentVal, one);
+                }
+                irBuilderEmitStoreLocal(builder, slot, newVal);
+
+                if (node.prefix) {
+                    return newVal;
+                } else {
+                    return currentVal;
+                }
+            }
+        }
+        return irBuilderEmitConst(builder, 0);
+    }
+
+    if (node.type == "CallExpression") {
+        // Lower arguments first
+        let argc = node.arguments.length;
+        let i = 0;
+        while (i < argc) {
+            lowerExpression(ctx, node.arguments[i]);
+            i = i + 1;
+        }
+
+        // Lower callee
+        let calleeReg = lowerExpression(ctx, node.callee);
+        return irBuilderEmitCall(builder, calleeReg, argc);
+    }
+
+    if (node.type == "MemberExpression") {
+        let objReg = lowerExpression(ctx, node.object);
+        // TODO: emit LOAD_PROP or LOAD_ELEMENT
+        return objReg;
+    }
+
+    if (node.type == "ConditionalExpression") {
+        // Ternary: test ? consequent : alternate
+        let testReg = lowerExpression(ctx, node.test);
+
+        let thenBlock = irBuilderAddBlock(builder, "ternary_then");
+        let elseBlock = irBuilderAddBlock(builder, "ternary_else");
+        let mergeBlock = irBuilderAddBlock(builder, "ternary_merge");
+
+        irBuilderEmitJumpIfFalse(builder, testReg, elseBlock);
+        irBuilderEmitJump(builder, thenBlock);
+
+        irBuilderSetBlock(builder, thenBlock);
+        let thenVal = lowerExpression(ctx, node.consequent);
+        irBuilderEmitJump(builder, mergeBlock);
+
+        irBuilderSetBlock(builder, elseBlock);
+        let elseVal = lowerExpression(ctx, node.alternate);
+        irBuilderEmitJump(builder, mergeBlock);
+
+        irBuilderSetBlock(builder, mergeBlock);
+        // TODO: emit phi node to merge values
+        return thenVal;
+    }
+
+    if (node.type == "ArrayExpression") {
+        // TODO: emit NEW_ARRAY and STORE_ELEMENT
+        let dest = allocateRegister(builder.ra);
+        emitIrOp(builder.currentBlock, IrOpCode.NEW_ARRAY, dest, [], node.elements.length);
+        return dest;
+    }
+
+    if (node.type == "ObjectExpression") {
+        // TODO: emit NEW_OBJECT and STORE_PROP
+        let dest = allocateRegister(builder.ra);
+        emitIrOp(builder.currentBlock, IrOpCode.NEW_OBJECT, dest, [], null);
+        return dest;
+    }
+
+    if (node.type == "ArrowFunctionExpression" || node.type == "FunctionExpression") {
+        // TODO: implement closures
+        return irBuilderEmitConst(builder, 0);
+    }
+
+    // Default: return zero
+    return irBuilderEmitConst(builder, 0);
+}
+
+// Map binary operators to IR opcodes
+function getOpCodeForBinaryOp(operator) {
+    if (operator == "+") return IrOpCode.ADD;
+    if (operator == "-") return IrOpCode.SUB;
+    if (operator == "*") return IrOpCode.MUL;
+    if (operator == "/") return IrOpCode.DIV;
+    if (operator == "%") return IrOpCode.MOD;
+    if (operator == "==") return IrOpCode.EQ;
+    if (operator == "===") return IrOpCode.EQ;
+    if (operator == "!=") return IrOpCode.NE;
+    if (operator == "!==") return IrOpCode.NE;
+    if (operator == "<") return IrOpCode.LT;
+    if (operator == ">") return IrOpCode.GT;
+    if (operator == "<=") return IrOpCode.LE;
+    if (operator == ">=") return IrOpCode.GE;
+    if (operator == "&&") return IrOpCode.AND;
+    if (operator == "||") return IrOpCode.OR;
+    return IrOpCode.ADD;
+}
+
+// Convert type annotation to IR type
+function irTypeFromAnnotation(annotation) {
+    if (annotation == null) {
+        return IrType.ANY;
+    }
+    let kind = annotation.typeKind;
+    if (kind == null) kind = annotation;
+    if (kind == "number") return IrType.NUMBER;
+    if (kind == "string") return IrType.STRING;
+    if (kind == "boolean") return IrType.BOOLEAN;
+    if (kind == "any") return IrType.ANY;
+    if (kind == "void") return IrType.VOID;
+    if (kind == "never") return IrType.NEVER;
+    if (kind == "object") return IrType.OBJECT;
+    if (kind == "function") return IrType.FUNCTION;
+    return IrType.ANY;
+}
+
+// ============================================================================
 // Module Building
 // ============================================================================
 

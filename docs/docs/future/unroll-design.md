@@ -132,7 +132,7 @@ version = "0.1.0"
 edition = "2025"
 license = "MIT"
 description = "My awesome app"
-repository = "https://github.com/user/my-app"
+repository = "https://github.com/warpy-ai/script"
 keywords = ["web", "server"]
 
 [dependencies]
@@ -323,10 +323,10 @@ unroll build --target aarch64-unknown-linux-gnu
 
 | Metric | Target |
 |--------|--------|
-| Cold start | <100ms |
-| Incremental build | <500ms |
-| LSP response | <50ms |
-| Dependency resolution | <1s (cached) |
+| Cold start | &lt;100ms |
+| Incremental build | &lt;500ms |
+| LSP response | &lt;50ms |
+| Dependency resolution | &lt;1s (cached) |
 
 ## Future Features
 

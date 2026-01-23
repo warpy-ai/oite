@@ -3,6 +3,7 @@
 // ============================================================================
 
 require ../ir/mod;
+require ../ir/builder;
 
 // ============================================================================
 // Code Generator State
@@ -21,7 +22,9 @@ function createCodegen() {
 // Bytecode Opcodes for Codegen
 // ============================================================================
 
+// Bytecode opcodes matching the VM expectations
 let CODEGEN_OP = {
+    HALT: 0,
     CONST: 1,
     LOAD: 2,
     STORE: 3,
@@ -47,7 +50,31 @@ let CODEGEN_OP = {
     CALL: 23,
     CALL_METHOD: 24,
     RETURN: 25,
-    HALT: 0
+    // Extended opcodes
+    PUSH: 26,
+    POP: 27,
+    DUP: 28,
+    NEW_OBJECT: 29,
+    NEW_ARRAY: 30,
+    GET_PROP: 31,
+    SET_PROP: 32,
+    LOAD_ELEMENT: 33,
+    STORE_ELEMENT: 34,
+    MAKE_CLOSURE: 35,
+    CONSTRUCT: 36,
+    LOAD_THIS: 37,
+    TYPEOF: 38,
+    INSTANCEOF: 39
+};
+
+// Type tags for PUSH instruction
+let TYPE_TAG = {
+    UNDEFINED: 0,
+    NULL: 1,
+    FALSE: 2,
+    TRUE: 3,
+    NUMBER: 4,
+    STRING: 5
 };
 
 // ============================================================================
@@ -153,16 +180,46 @@ function codegenInstruction(cg, inst, labelToOffset) {
     }
 
     if (inst.opcode == IrOpCode.JUMP) {
-        let targetOffset = labelToOffset[inst.args[0].label];
+        // Jump target is stored in inst.label
+        let targetLabel = inst.label;
+        let targetOffset = labelToOffset[targetLabel];
+        if (targetOffset == null) {
+            targetOffset = 0; // Will be patched later
+        }
         codegenJump(cg, bcOp, targetOffset);
         return;
     }
 
     if (inst.opcode == IrOpCode.JUMP_IF_FALSE) {
-        let targetOffset = labelToOffset[inst.args[1].label];
+        // Condition register is in args[0], target label is in inst.label
+        let targetLabel = inst.label;
+        let targetOffset = labelToOffset[targetLabel];
+        if (targetOffset == null) {
+            targetOffset = 0; // Will be patched later
+        }
         codegenOp(cg, bcOp);
-        codegenReg(cg, inst.args[0]);
+        if (inst.args.length > 0) {
+            codegenReg(cg, inst.args[0]);
+        }
         codegenU32(cg, targetOffset);
+        return;
+    }
+
+    if (inst.opcode == IrOpCode.LOAD_LOCAL) {
+        codegenOp(cg, bcOp);
+        codegenReg(cg, inst.dest);
+        if (inst.args.length > 0) {
+            codegenU32(cg, inst.args[0]); // slot number
+        }
+        return;
+    }
+
+    if (inst.opcode == IrOpCode.STORE_LOCAL) {
+        codegenOp(cg, bcOp);
+        if (inst.args.length >= 2) {
+            codegenU32(cg, inst.args[0]); // slot number
+            codegenReg(cg, inst.args[1]); // value register
+        }
         return;
     }
 
@@ -183,12 +240,67 @@ function codegenInstruction(cg, inst, labelToOffset) {
     }
 
     if (inst.opcode == IrOpCode.NEW_OBJECT) {
-        codegenOp(cg, CODEGEN_OP.LOAD);
+        codegenOp(cg, CODEGEN_OP.NEW_OBJECT);
+        if (inst.dest != null) {
+            codegenReg(cg, inst.dest);
+        }
         return;
     }
 
     if (inst.opcode == IrOpCode.NEW_ARRAY) {
-        codegenOp(cg, CODEGEN_OP.LOAD);
+        codegenOp(cg, CODEGEN_OP.NEW_ARRAY);
+        if (inst.dest != null) {
+            codegenReg(cg, inst.dest);
+        }
+        // Emit initial size if provided
+        if (inst.immediate != null) {
+            codegenU32(cg, inst.immediate);
+        } else {
+            codegenU32(cg, 0);
+        }
+        return;
+    }
+
+    if (inst.opcode == IrOpCode.LOAD_PROP) {
+        codegenOp(cg, CODEGEN_OP.GET_PROP);
+        if (inst.dest != null) {
+            codegenReg(cg, inst.dest);
+        }
+        if (inst.args.length > 0) {
+            codegenReg(cg, inst.args[0]); // object register
+        }
+        // Property name would be in immediate as string
+        return;
+    }
+
+    if (inst.opcode == IrOpCode.STORE_PROP) {
+        codegenOp(cg, CODEGEN_OP.SET_PROP);
+        if (inst.args.length >= 2) {
+            codegenReg(cg, inst.args[0]); // object register
+            codegenReg(cg, inst.args[1]); // value register
+        }
+        return;
+    }
+
+    if (inst.opcode == IrOpCode.LOAD_ELEMENT) {
+        codegenOp(cg, CODEGEN_OP.LOAD_ELEMENT);
+        if (inst.dest != null) {
+            codegenReg(cg, inst.dest);
+        }
+        if (inst.args.length >= 2) {
+            codegenReg(cg, inst.args[0]); // array register
+            codegenReg(cg, inst.args[1]); // index register
+        }
+        return;
+    }
+
+    if (inst.opcode == IrOpCode.STORE_ELEMENT) {
+        codegenOp(cg, CODEGEN_OP.STORE_ELEMENT);
+        if (inst.args.length >= 3) {
+            codegenReg(cg, inst.args[0]); // array register
+            codegenReg(cg, inst.args[1]); // index register
+            codegenReg(cg, inst.args[2]); // value register
+        }
         return;
     }
 

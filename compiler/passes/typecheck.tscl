@@ -1,0 +1,480 @@
+// ============================================================================
+// Type Checking Pass for tscl Compiler
+// Flow-sensitive type inference and operation specialization
+// ============================================================================
+
+require ../ir/mod;
+
+// ============================================================================
+// Type Checker Context
+// ============================================================================
+
+interface TypeChecker {
+    func: IrFunction;
+    worklist: string[];          // Block labels to process
+    inWorklist: { [label: string]: boolean };
+    types: { [valueId: number]: IrType };
+    changed: boolean;
+}
+
+function createTypeChecker(func: IrFunction): TypeChecker {
+    let checker: TypeChecker = {
+        func: func,
+        worklist: [],
+        inWorklist: {},
+        types: {},
+        changed: false
+    };
+
+    // Initialize types from function's known value types
+    // (Parameters and constants have known types)
+    return checker;
+}
+
+// ============================================================================
+// Type Operations
+// ============================================================================
+
+function getValueType(checker: TypeChecker, valueId: number): IrType {
+    let ty = checker.types[valueId];
+    if (ty == null) {
+        return IrType.ANY;
+    }
+    return ty;
+}
+
+function setValueType(checker: TypeChecker, valueId: number, ty: IrType): void {
+    let oldType = getValueType(checker, valueId);
+    if (oldType != ty) {
+        // Only narrow from Any to concrete, don't widen
+        if (oldType == IrType.ANY || ty == oldType) {
+            checker.types[valueId] = ty;
+            checker.changed = true;
+        }
+    }
+}
+
+// Compute the meet (least upper bound) of two types
+function typeMeet(a: IrType, b: IrType): IrType {
+    if (a == b) {
+        return a;
+    }
+    if (a == IrType.NEVER) {
+        return b;
+    }
+    if (b == IrType.NEVER) {
+        return a;
+    }
+    // Different concrete types → Any
+    return IrType.ANY;
+}
+
+// ============================================================================
+// Block Processing
+// ============================================================================
+
+function addToWorklist(checker: TypeChecker, blockLabel: string): void {
+    if (!checker.inWorklist[blockLabel]) {
+        checker.worklist.push(blockLabel);
+        checker.inWorklist[blockLabel] = true;
+    }
+}
+
+function getBlockByLabel(func: IrFunction, label: string): IrBlock | null {
+    let i = 0;
+    while (i < func.blocks.length) {
+        if (func.blocks[i].label == label) {
+            return func.blocks[i];
+        }
+        i = i + 1;
+    }
+    return null;
+}
+
+function processBlock(checker: TypeChecker, block: IrBlock): void {
+    let i = 0;
+    while (i < block.ops.length) {
+        inferInstruction(checker, block.ops[i]);
+        i = i + 1;
+    }
+
+    // If types changed, add successors to worklist
+    if (checker.changed) {
+        checker.changed = false;
+        let j = 0;
+        while (j < block.successors.length) {
+            addToWorklist(checker, block.successors[j].label);
+            j = j + 1;
+        }
+    }
+}
+
+// ============================================================================
+// Type Inference for Instructions
+// ============================================================================
+
+function inferInstruction(checker: TypeChecker, inst: IrInstruction): void {
+    let opcode = inst.opcode;
+
+    // Constants have known types
+    if (opcode == IrOpCode.CONST) {
+        if (inst.dest != null && inst.immediate != null) {
+            let ty = inferLiteralType(inst.immediate);
+            setValueType(checker, inst.dest, ty);
+        }
+        return;
+    }
+
+    // Arithmetic operations
+    if (opcode == IrOpCode.ADD) {
+        if (inst.dest != null && inst.args.length >= 2) {
+            let ta = getValueType(checker, inst.args[0]);
+            let tb = getValueType(checker, inst.args[1]);
+            let resultTy = IrType.ANY;
+
+            if (ta == IrType.NUMBER && tb == IrType.NUMBER) {
+                resultTy = IrType.NUMBER;
+            } else if (ta == IrType.STRING || tb == IrType.STRING) {
+                resultTy = IrType.STRING;  // String concatenation
+            }
+            setValueType(checker, inst.dest, resultTy);
+        }
+        return;
+    }
+
+    if (opcode == IrOpCode.SUB || opcode == IrOpCode.MUL ||
+        opcode == IrOpCode.DIV || opcode == IrOpCode.MOD) {
+        if (inst.dest != null && inst.args.length >= 2) {
+            let ta = getValueType(checker, inst.args[0]);
+            let tb = getValueType(checker, inst.args[1]);
+            let resultTy = IrType.ANY;
+
+            if (ta == IrType.NUMBER && tb == IrType.NUMBER) {
+                resultTy = IrType.NUMBER;
+            }
+            setValueType(checker, inst.dest, resultTy);
+        }
+        return;
+    }
+
+    // Negation
+    if (opcode == IrOpCode.NEG) {
+        if (inst.dest != null && inst.args.length >= 1) {
+            let ta = getValueType(checker, inst.args[0]);
+            let resultTy = IrType.ANY;
+            if (ta == IrType.NUMBER) {
+                resultTy = IrType.NUMBER;
+            }
+            setValueType(checker, inst.dest, resultTy);
+        }
+        return;
+    }
+
+    // Logical NOT always produces boolean
+    if (opcode == IrOpCode.NOT) {
+        if (inst.dest != null) {
+            setValueType(checker, inst.dest, IrType.BOOLEAN);
+        }
+        return;
+    }
+
+    // Comparison operations always produce boolean
+    if (opcode == IrOpCode.EQ || opcode == IrOpCode.NE ||
+        opcode == IrOpCode.LT || opcode == IrOpCode.GT ||
+        opcode == IrOpCode.LE || opcode == IrOpCode.GE) {
+        if (inst.dest != null) {
+            setValueType(checker, inst.dest, IrType.BOOLEAN);
+        }
+        return;
+    }
+
+    // And/Or return one of their operands
+    if (opcode == IrOpCode.AND || opcode == IrOpCode.OR) {
+        if (inst.dest != null && inst.args.length >= 2) {
+            let ta = getValueType(checker, inst.args[0]);
+            let tb = getValueType(checker, inst.args[1]);
+            let resultTy = IrType.ANY;
+            if (ta == tb) {
+                resultTy = ta;
+            }
+            setValueType(checker, inst.dest, resultTy);
+        }
+        return;
+    }
+
+    // Local/global loads get Any (unless we track local types)
+    if (opcode == IrOpCode.LOAD_LOCAL || opcode == IrOpCode.LOAD) {
+        if (inst.dest != null) {
+            setValueType(checker, inst.dest, IrType.ANY);
+        }
+        return;
+    }
+
+    // Property/element access returns Any
+    if (opcode == IrOpCode.LOAD_PROP || opcode == IrOpCode.LOAD_ELEMENT) {
+        if (inst.dest != null) {
+            setValueType(checker, inst.dest, IrType.ANY);
+        }
+        return;
+    }
+
+    // Object/array creation
+    if (opcode == IrOpCode.NEW_OBJECT) {
+        if (inst.dest != null) {
+            setValueType(checker, inst.dest, IrType.OBJECT);
+        }
+        return;
+    }
+
+    if (opcode == IrOpCode.NEW_ARRAY) {
+        if (inst.dest != null) {
+            setValueType(checker, inst.dest, IrType.ARRAY);
+        }
+        return;
+    }
+
+    // Length operation returns number
+    if (opcode == IrOpCode.LENGTH) {
+        if (inst.dest != null) {
+            setValueType(checker, inst.dest, IrType.NUMBER);
+        }
+        return;
+    }
+
+    // Function call returns Any (without interprocedural analysis)
+    if (opcode == IrOpCode.CALL || opcode == IrOpCode.CALL_METHOD) {
+        if (inst.dest != null) {
+            setValueType(checker, inst.dest, IrType.ANY);
+        }
+        return;
+    }
+
+    // Type conversion operations
+    if (opcode == IrOpCode.TO_NUMBER) {
+        if (inst.dest != null) {
+            setValueType(checker, inst.dest, IrType.NUMBER);
+        }
+        return;
+    }
+
+    if (opcode == IrOpCode.TO_STRING) {
+        if (inst.dest != null) {
+            setValueType(checker, inst.dest, IrType.STRING);
+        }
+        return;
+    }
+
+    if (opcode == IrOpCode.TO_BOOLEAN) {
+        if (inst.dest != null) {
+            setValueType(checker, inst.dest, IrType.BOOLEAN);
+        }
+        return;
+    }
+
+    // Phi nodes: meet of all incoming types
+    if (opcode == IrOpCode.PHI) {
+        if (inst.dest != null && inst.args.length > 0) {
+            let resultTy = IrType.NEVER;
+            let i = 0;
+            while (i < inst.args.length) {
+                let ty = getValueType(checker, inst.args[i]);
+                resultTy = typeMeet(resultTy, ty);
+                i = i + 1;
+            }
+            setValueType(checker, inst.dest, resultTy);
+        }
+        return;
+    }
+
+    // Store operations have no result type
+    // STORE, STORE_LOCAL, STORE_PROP, STORE_ELEMENT, RETURN, JUMP, JUMP_IF_FALSE
+}
+
+function inferLiteralType(value: any): IrType {
+    if (typeof value == "number") {
+        return IrType.NUMBER;
+    }
+    if (typeof value == "string") {
+        return IrType.STRING;
+    }
+    if (typeof value == "boolean") {
+        return IrType.BOOLEAN;
+    }
+    if (value == null) {
+        return IrType.ANY;
+    }
+    if (Array.isArray(value)) {
+        return IrType.ARRAY;
+    }
+    if (typeof value == "object") {
+        return IrType.OBJECT;
+    }
+    return IrType.ANY;
+}
+
+// ============================================================================
+// Main Type Inference Entry Point
+// ============================================================================
+
+function inferTypes(checker: TypeChecker): void {
+    // Initialize worklist with entry block
+    if (checker.func.entry_block != null) {
+        addToWorklist(checker, checker.func.entry_block.label);
+    }
+
+    // Process blocks until fixpoint
+    while (checker.worklist.length > 0) {
+        let label = checker.worklist.shift();
+        checker.inWorklist[label] = false;
+
+        let block = getBlockByLabel(checker.func, label);
+        if (block != null) {
+            processBlock(checker, block);
+        }
+    }
+}
+
+// ============================================================================
+// Operation Specialization
+// ============================================================================
+
+// Specialize dynamic operations based on inferred types
+function specializeOps(func: IrFunction, types: { [valueId: number]: IrType }): void {
+    let i = 0;
+    while (i < func.blocks.length) {
+        let block = func.blocks[i];
+        let j = 0;
+        while (j < block.ops.length) {
+            block.ops[j] = specializeInstruction(block.ops[j], types);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+
+function specializeInstruction(inst: IrInstruction, types: { [valueId: number]: IrType }): IrInstruction {
+    // Specialize ADD to AddNum when both operands are numbers
+    if (inst.opcode == IrOpCode.ADD && inst.args.length >= 2) {
+        let ta = types[inst.args[0]];
+        let tb = types[inst.args[1]];
+        if (ta == IrType.NUMBER && tb == IrType.NUMBER) {
+            // Mark as specialized (can use a flag or different opcode)
+            inst._specialized = true;
+            inst._specializedOp = "AddNum";
+        }
+    }
+
+    // Specialize SUB to SubNum
+    if (inst.opcode == IrOpCode.SUB && inst.args.length >= 2) {
+        let ta = types[inst.args[0]];
+        let tb = types[inst.args[1]];
+        if (ta == IrType.NUMBER && tb == IrType.NUMBER) {
+            inst._specialized = true;
+            inst._specializedOp = "SubNum";
+        }
+    }
+
+    // Specialize MUL to MulNum
+    if (inst.opcode == IrOpCode.MUL && inst.args.length >= 2) {
+        let ta = types[inst.args[0]];
+        let tb = types[inst.args[1]];
+        if (ta == IrType.NUMBER && tb == IrType.NUMBER) {
+            inst._specialized = true;
+            inst._specializedOp = "MulNum";
+        }
+    }
+
+    // Specialize DIV to DivNum
+    if (inst.opcode == IrOpCode.DIV && inst.args.length >= 2) {
+        let ta = types[inst.args[0]];
+        let tb = types[inst.args[1]];
+        if (ta == IrType.NUMBER && tb == IrType.NUMBER) {
+            inst._specialized = true;
+            inst._specializedOp = "DivNum";
+        }
+    }
+
+    // Specialize MOD to ModNum
+    if (inst.opcode == IrOpCode.MOD && inst.args.length >= 2) {
+        let ta = types[inst.args[0]];
+        let tb = types[inst.args[1]];
+        if (ta == IrType.NUMBER && tb == IrType.NUMBER) {
+            inst._specialized = true;
+            inst._specializedOp = "ModNum";
+        }
+    }
+
+    // Specialize NEG to NegNum
+    if (inst.opcode == IrOpCode.NEG && inst.args.length >= 1) {
+        let ta = types[inst.args[0]];
+        if (ta == IrType.NUMBER) {
+            inst._specialized = true;
+            inst._specializedOp = "NegNum";
+        }
+    }
+
+    return inst;
+}
+
+// ============================================================================
+// Public API
+// ============================================================================
+
+function typecheckFunction(func: IrFunction): { [valueId: number]: IrType } {
+    let checker = createTypeChecker(func);
+    inferTypes(checker);
+    specializeOps(func, checker.types);
+    return checker.types;
+}
+
+function typecheckModule(module: IrModule): void {
+    let i = 0;
+    while (i < module.functions.length) {
+        typecheckFunction(module.functions[i]);
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Type Checking Errors
+// ============================================================================
+
+interface TypeCheckError {
+    message: string;
+    location: string;
+    expected: IrType;
+    actual: IrType;
+}
+
+function createTypeError(message: string, location: string, expected: IrType, actual: IrType): TypeCheckError {
+    return {
+        message: message,
+        location: location,
+        expected: expected,
+        actual: actual
+    };
+}
+
+function formatTypeError(error: TypeCheckError): string {
+    return "Type error at " + error.location + ": " + error.message +
+           " (expected " + IrType[error.expected] + ", got " + IrType[error.actual] + ")";
+}
+
+// ============================================================================
+// Export
+// ============================================================================
+
+let TypeCheck = {
+    createChecker: createTypeChecker,
+    infer: inferTypes,
+    specialize: specializeOps,
+    typecheckFunction: typecheckFunction,
+    typecheckModule: typecheckModule,
+    getType: getValueType,
+    setType: setValueType,
+    typeMeet: typeMeet,
+    createError: createTypeError,
+    formatError: formatTypeError
+};
+
+console.log("TypeCheck pass loaded");

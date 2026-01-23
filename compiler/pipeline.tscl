@@ -1,0 +1,222 @@
+// ============================================================================
+// Compiler Pipeline for tscl
+// Unified compilation: Source → Lexer → Parser → IR → Bytecode
+// ============================================================================
+
+require ./lexer/mod;
+require ./parser/mod;
+require ./ir/mod;
+require ./ir/builder;
+require ./codegen/mod;
+require ./codegen/emitter;
+
+// ============================================================================
+// Compilation Pipeline (IR-based)
+// ============================================================================
+
+function compileToBytecodeViaIr(source) {
+    // Tokenize
+    let tokens = tokenize(source);
+    if (tokens == null) {
+        console.log("Error: Lexing failed");
+        return null;
+    }
+
+    // Parse
+    let ast = parseSource(source);
+    if (ast == null) {
+        console.log("Error: Parsing failed");
+        return null;
+    }
+
+    // Lower to IR
+    let irModule = lowerProgramToIr(ast);
+    if (irModule == null) {
+        console.log("Error: IR lowering failed");
+        return null;
+    }
+
+    // Verify IR
+    if (!verifyIrModule(irModule)) {
+        console.log("Error: IR verification failed");
+        return null;
+    }
+
+    // Generate bytecode
+    let result = codegenIrModule(irModule);
+    return result;
+}
+
+// ============================================================================
+// Compilation Pipeline (Direct)
+// ============================================================================
+
+function compileToBytecode(source) {
+    // Use direct AST → Bytecode path for VM compatibility
+    let ast = parseSource(source);
+    if (ast == null) {
+        console.log("Error: Parsing failed");
+        return null;
+    }
+
+    return Emitter.compileAst(ast);
+}
+
+// ============================================================================
+// Module Compilation
+// ============================================================================
+
+function compileModule(source) {
+    return compileToBytecode(source);
+}
+
+function compileFile(filePath) {
+    if (!fs.existsSync(filePath)) {
+        console.log("Error: File not found: " + filePath);
+        return null;
+    }
+    let source = fs.readFileSync(filePath, "utf8");
+    return compileToBytecode(source);
+}
+
+function saveBytecode(filePath, bytecode) {
+    let stream = bytecode;
+    if (typeof bytecode === "object" && bytecode.bytecode != null) {
+        stream = bytecode.bytecode;
+    }
+    let bytes = ByteStream.toArray(stream);
+    fs.writeBinaryFile(filePath, bytes);
+    return bytes.length;
+}
+
+function compileToFile(inputPath, outputPath) {
+    let bytecode = compileFile(inputPath);
+    if (bytecode == null) {
+        console.log("Error: Compilation failed for " + inputPath);
+        return null;
+    }
+    let bytesWritten = saveBytecode(outputPath, bytecode);
+    console.log("Compiled: " + inputPath + " -> " + outputPath + " (" + bytesWritten + " bytes)");
+    return bytecode;
+}
+
+// ============================================================================
+// IR Output
+// ============================================================================
+
+function compileToIr(source) {
+    let ast = parseSource(source);
+    if (ast == null) {
+        console.log("Error: Parsing failed");
+        return null;
+    }
+
+    let irModule = lowerProgramToIr(ast);
+    if (irModule == null) {
+        console.log("Error: IR lowering failed");
+        return null;
+    }
+
+    return irModule;
+}
+
+function compileToIrText(source) {
+    let irModule = compileToIr(source);
+    if (irModule == null) {
+        return null;
+    }
+    return serializeIrModule(irModule);
+}
+
+// ============================================================================
+// Hash Functions for Determinism Verification
+// ============================================================================
+
+function computeByteHash(bytes) {
+    let data = bytes;
+    if (typeof bytes === "object" && bytes.toArray != null) {
+        data = ByteStream.toArray(bytes);
+    } else if (typeof bytes === "object" && bytes.bytecode != null) {
+        data = ByteStream.toArray(bytes.bytecode);
+    }
+    let h = 0;
+    let len = data.length;
+    let i = 0;
+    while (i < len) {
+        h = ((h << 5) - h) + data[i];
+        h = h & 0xFFFFFFFF;
+        i = i + 1;
+    }
+    return h;
+}
+
+function computeStringHash(str) {
+    let h = 0;
+    let len = str.length;
+    let i = 0;
+    while (i < len) {
+        h = ((h << 5) - h) + str.charCodeAt(i);
+        h = h & 0xFFFFFFFF;
+        i = i + 1;
+    }
+    return h;
+}
+
+// ============================================================================
+// Performance Metrics
+// ============================================================================
+
+function measureCompilation(source) {
+    let metrics = {
+        lexerTime: 0,
+        parserTime: 0,
+        irTime: 0,
+        codegenTime: 0,
+        totalTime: 0,
+        bytecodeSize: 0
+    };
+
+    let t0 = Date.now();
+    let tokens = tokenize(source);
+    metrics.lexerTime = Date.now() - t0;
+
+    let t1 = Date.now();
+    let ast = parseSource(source);
+    metrics.parserTime = Date.now() - t1;
+
+    let t2 = Date.now();
+    let irModule = lowerProgramToIr(ast);
+    metrics.irTime = Date.now() - t2;
+
+    let t3 = Date.now();
+    let result = codegenIrModule(irModule);
+    metrics.codegenTime = Date.now() - t3;
+
+    metrics.totalTime = metrics.lexerTime + metrics.parserTime + metrics.irTime + metrics.codegenTime;
+    metrics.bytecodeSize = result.length;
+
+    return metrics;
+}
+
+// ============================================================================
+// Export
+// ============================================================================
+
+let Pipeline = {
+    compile: compileToBytecode,
+    compileViaIr: compileToBytecodeViaIr,
+    compileModule: compileModule,
+    compileFile: compileFile,
+    compileToFile: compileToFile,
+    compileToIr: compileToIr,
+    compileToIrText: compileToIrText,
+    saveBytecode: saveBytecode,
+    computeByteHash: computeByteHash,
+    computeStringHash: computeStringHash,
+    measureCompilation: measureCompilation,
+    version: "0.2.0",
+    pipeline: "lexer -> parser -> ir -> codegen"
+};
+
+console.log("Compiler Pipeline loaded");
+console.log("Version: " + Pipeline.version);

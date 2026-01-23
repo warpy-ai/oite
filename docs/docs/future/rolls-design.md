@@ -268,7 +268,7 @@ Key Functions:
 name = "http"
 version = "0.1.0"
 license = "Apache-2.0"
-repository = "https://github.com/example/rolls"
+repository = "https://github.com/warpy-ai/script"
 
 [dependencies]
 tls = { version = "0.1", optional = true }
@@ -310,9 +310,9 @@ await server.listen();
 | Metric | Target |
 |--------|--------|
 | HTTP hello-world | 250k req/s |
-| TLS handshake | <1ms |
+| TLS handshake | &lt;1ms |
 | WebSocket frame | 500k msg/s |
-| Work-stealing overhead | <5% vs single-thread |
+| Work-stealing overhead | &lt;5% vs single-thread |
 
 ## Future Considerations
 

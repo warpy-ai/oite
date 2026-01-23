@@ -11,7 +11,7 @@ Contributions are welcome! This guide will help you get started.
 1. **Fork the repository**
 2. **Clone your fork**:
    ```bash
-   git clone https://github.com/your-username/script.git
+   git clone https://github.com/warpy-ai/script.git
    cd script
    ```
 3. **Create a branch**:
