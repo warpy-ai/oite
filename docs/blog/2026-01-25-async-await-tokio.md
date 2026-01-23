@@ -443,6 +443,6 @@ EOF
 ```
 
 **Learn more:**
-- [Script GitHub Repository](https://github.com/jucasoliveira/script)
+- [Script GitHub Repository](https://github.com/warpy-ai/script)
 - [Async/Await Documentation](/docs/language-features#async-await)
 - [Tokio Documentation](https://tokio.rs/)

@@ -513,6 +513,6 @@ EOF
 ```
 
 **Learn more:**
-- [Script GitHub Repository](https://github.com/jucasoliveira/script)
+- [Script GitHub Repository](https://github.com/warpy-ai/script)
 - [Module System Documentation](/docs/language-features#modules)
 - [Standard Library](/docs/standard-library)

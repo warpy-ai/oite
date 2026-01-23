@@ -336,4 +336,4 @@ diff <(sha256sum app1) <(sha256sum app2)
 
 ---
 
-**Questions or issues?** Report at: https://github.com/anomalyco/tscl/issues
+**Questions or issues?** Report at: https://github.com/warpy-ai/script/issues

@@ -115,7 +115,7 @@ const config: Config = {
           className: 'navbar__item--cta',
         },
         {
-          href: 'https://github.com/your-username/script',
+          href: 'https://github.com/warpy-ai/script',
           label: 'GitHub',
           position: 'right',
         },
@@ -163,7 +163,7 @@ const config: Config = {
             },
             {
               label: 'GitHub',
-              href: 'https://github.com/your-username/script',
+              href: 'https://github.com/warpy-ai/script',
             },
           ],
         },

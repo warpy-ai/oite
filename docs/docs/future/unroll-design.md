@@ -132,7 +132,7 @@ version = "0.1.0"
 edition = "2025"
 license = "MIT"
 description = "My awesome app"
-repository = "https://github.com/user/my-app"
+repository = "https://github.com/warpy-ai/script"
 keywords = ["web", "server"]
 
 [dependencies]

@@ -268,7 +268,7 @@ Key Functions:
 name = "http"
 version = "0.1.0"
 license = "Apache-2.0"
-repository = "https://github.com/example/rolls"
+repository = "https://github.com/warpy-ai/script"
 
 [dependencies]
 tls = { version = "0.1", optional = true }
