@@ -20,6 +20,9 @@ pub mod worker;
 #[cfg(feature = "work-stealing")]
 pub mod work_stealing;
 
+#[cfg(feature = "tls")]
+pub mod tls;
+
 pub use reactor::{Reactor, ReactorHandle};
 
 #[cfg(all(target_os = "linux", feature = "io-uring"))]
@@ -32,6 +35,9 @@ pub use runtime_impl::Runtime;
 pub use work_stealing::WorkStealingExecutor;
 #[cfg(feature = "work-stealing")]
 pub use worker::Worker;
+
+#[cfg(feature = "tls")]
+pub use tls::{TlsStream, TlsClientConfig, TlsServerConfig, TlsAcceptor, TlsConnector};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Interest {

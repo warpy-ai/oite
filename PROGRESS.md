@@ -214,6 +214,8 @@ Building high-performance async runtime and HTTP stack.
 | HTTP/1 Parser | ✅ | Request/Response, headers, chunked encoding |
 | HTTP Server | ✅ | Routing, method handlers, path parameters |
 | Work-Stealing Executor | ✅ | Multi-threaded with `--features work-stealing` |
+| TLS Integration | ✅ | rustls with aws-lc-rs (`--features tls`) |
+| HTTPS Server | ✅ | HttpsServer with session resumption |
 
 #### Key Files
 | File | Lines | Purpose |
@@ -224,12 +226,12 @@ Building high-performance async runtime and HTTP stack.
 | `src/runtime/async/work_stealing.rs` | 260 | Work-stealing executor |
 | `src/runtime/async/worker.rs` | 120 | Worker thread implementation |
 | `src/runtime/async/io_uring.rs` | 330 | io_uring backend (Linux) |
+| `src/runtime/async/tls.rs` | 530 | TLS with rustls, session resumption |
 | `src/runtime/http/mod.rs` | 650 | HTTP parser |
-| `src/runtime/http/server.rs` | 340 | HTTP server with routing |
+| `src/runtime/http/server.rs` | 535 | HTTP/HTTPS server with routing |
 
 #### Planned
 - HTTP/2 support
-- TLS integration
 - WebSocket support
 - Database drivers (PostgreSQL, Redis, SQLite)
 - Connection pooling
@@ -300,6 +302,9 @@ cargo build --release --features work-stealing
 
 # With io_uring (Linux only)
 cargo build --release --features io-uring
+
+# With TLS/HTTPS support
+cargo build --release --features tls
 ```
 
 ### Running

@@ -15,6 +15,7 @@ default = ["vm_interop"]
 vm_interop = []
 io-uring = ["dep:io-uring"]
 work-stealing = ["dep:crossbeam-deque", "dep:parking"]
+tls = ["dep:rustls", "dep:webpki-roots", "dep:rustls-pemfile"]
 
 
 [dependencies]
@@ -62,6 +63,11 @@ chrono = "0.4"
 
 # Socket utilities (for io_uring connect)
 socket2 = "0.5"
+
+# TLS support (rustls with aws-lc-rs for Actix-level performance)
+rustls = { version = "0.23", optional = true, default-features = false, features = ["std", "tls12", "aws_lc_rs"] }
+webpki-roots = { version = "0.26", optional = true }
+rustls-pemfile = { version = "2.1", optional = true }
 
 # io_uring backend (Linux only)
 [target.'cfg(target_os = "linux")'.dependencies]
