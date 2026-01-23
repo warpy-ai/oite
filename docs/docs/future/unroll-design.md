@@ -323,10 +323,10 @@ unroll build --target aarch64-unknown-linux-gnu
 
 | Metric | Target |
 |--------|--------|
-| Cold start | <100ms |
-| Incremental build | <500ms |
-| LSP response | <50ms |
-| Dependency resolution | <1s (cached) |
+| Cold start | &lt;100ms |
+| Incremental build | &lt;500ms |
+| LSP response | &lt;50ms |
+| Dependency resolution | &lt;1s (cached) |
 
 ## Future Features
 

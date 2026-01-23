@@ -310,9 +310,9 @@ await server.listen();
 | Metric | Target |
 |--------|--------|
 | HTTP hello-world | 250k req/s |
-| TLS handshake | <1ms |
+| TLS handshake | &lt;1ms |
 | WebSocket frame | 500k msg/s |
-| Work-stealing overhead | <5% vs single-thread |
+| Work-stealing overhead | &lt;5% vs single-thread |
 
 ## Future Considerations
 
