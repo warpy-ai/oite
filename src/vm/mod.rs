@@ -8,8 +8,6 @@ pub mod property;
 pub mod stdlib_setup;
 
 pub use crate::compiler::Compiler;
-pub use crate::stdlib::string;
-pub use crate::stdlib::array;
 pub use crate::vm::opcodes::OpCode;
 pub use crate::vm::value::HeapData;
 pub use crate::vm::value::HeapObject;
@@ -1882,11 +1880,24 @@ impl VM {
 
                 match reciever {
                     // -- String methods --
+                    // Note: Full string method support moved to @rolls/string
+                    // Only basic length property is supported in core
                     JsValue::String(s) => {
-                        if let Some(result) = string::call_string_method(self, &s, &name, arg_count) {
-                            self.stack.push(result);
-                        } else {
-                            self.stack.push(JsValue::Undefined);
+                        match name.as_str() {
+                            "length" => {
+                                // Pop any args (shouldn't be any for length property)
+                                for _ in 0..arg_count {
+                                    self.stack.pop();
+                                }
+                                self.stack.push(JsValue::Number(s.len() as f64));
+                            }
+                            _ => {
+                                // Unsupported string method - pop args and return undefined
+                                for _ in 0..arg_count {
+                                    self.stack.pop();
+                                }
+                                self.stack.push(JsValue::Undefined);
+                            }
                         }
                         self.ip += 1;
                         return ExecResult::Continue;
@@ -1941,11 +1952,48 @@ impl VM {
                                 return ExecResult::Continue;
                             }
 
-                            // For all other array methods, use the helper function
-                            if let Some(result) = array::call_array_method(&mut self.stack, arr, &name, arg_count) {
-                                self.stack.push(result);
-                                self.ip += 1;
-                                return ExecResult::Continue;
+                            // For other array methods, provide basic support
+                            // Note: Full array method support moved to @rolls/array
+                            match name.as_str() {
+                                "length" => {
+                                    for _ in 0..arg_count {
+                                        self.stack.pop();
+                                    }
+                                    self.stack.push(JsValue::Number(arr.len() as f64));
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                "push" => {
+                                    let mut args = Vec::with_capacity(arg_count);
+                                    for _ in 0..arg_count {
+                                        args.push(self.stack.pop().expect("Missing argument"));
+                                    }
+                                    args.reverse();
+                                    for arg in args {
+                                        arr.push(arg);
+                                    }
+                                    self.stack.push(JsValue::Number(arr.len() as f64));
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                "pop" => {
+                                    for _ in 0..arg_count {
+                                        self.stack.pop();
+                                    }
+                                    let result = arr.pop().unwrap_or(JsValue::Undefined);
+                                    self.stack.push(result);
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                _ => {
+                                    // Unsupported array method - pop args and return undefined
+                                    for _ in 0..arg_count {
+                                        self.stack.pop();
+                                    }
+                                    self.stack.push(JsValue::Undefined);
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
                             }
                         }
 

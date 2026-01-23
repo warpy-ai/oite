@@ -225,12 +225,18 @@ let x = user.a;    // THIS SHOULD THROW AN ERROR";
 // TODO: Implement proper async callback execution in the VM event loop.
 
 // ==================== CLOSURE CAPTURING TESTS ====================
+// NOTE: Tests using setTimeout have been disabled because async functionality
+// (setTimeout, Promise) has been moved to the @rolls/async ecosystem.
+// These tests will be re-enabled in the Rolls repository.
 
 /// Test that closure captures work correctly with setTimeout.
 /// This is the "Stack Frame Paradox" scenario: the outer function's
 /// stack frame would normally be destroyed, but the captured variable
 /// is lifted to the heap.
+///
+/// DISABLED: Requires setTimeout which is in @rolls/async
 #[test]
+#[ignore = "setTimeout moved to @rolls/async"]
 fn test_closure_captures_variable_for_async() {
     let mut vm = VM::new();
     // This code creates a closure that captures `data` from outer scope.
@@ -260,7 +266,10 @@ fn test_closure_captures_variable_for_async() {
 
 /// Test that the borrow checker prevents use of a captured variable
 /// after it has been moved into a closure.
+///
+/// DISABLED: Requires setTimeout which is in @rolls/async
 #[test]
+#[ignore = "setTimeout moved to @rolls/async"]
 fn test_borrow_checker_prevents_use_after_capture() {
     let mut bc = BorrowChecker::new();
 

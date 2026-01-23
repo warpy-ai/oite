@@ -197,22 +197,47 @@ tscl₀ (Rust) ──compile──> tscl₁ (native)
 - **ABI Frozen:** `ABI_VERSION = 1`, stable runtime interface
 - **IR Frozen:** Deterministic serialization with `--emit-ir`
 - **Deterministic Builds:** Bit-for-bit reproducible with `--dist`
-- **Self-Hosted Compiler:** ~5,000 lines in `bootstrap/` directory
+- **Self-Hosted Compiler:** Two implementations in .tscl
 
-#### Bootstrap Compiler Structure
+#### Compiler Structure (Modular - `compiler/`)
+```
+compiler/
+├── main.tscl           # CLI entry point
+├── lexer/              # Tokenization module
+│   ├── mod.tscl
+│   ├── token.tscl
+│   └── error.tscl
+├── parser/             # AST generation module
+│   ├── mod.tscl
+│   ├── expr.tscl
+│   ├── stmt.tscl
+│   └── error.tscl
+├── ast/                # AST type definitions
+│   ├── mod.tscl
+│   └── types.tscl
+├── ir/                 # IR system
+│   ├── mod.tscl
+│   └── builder.tscl
+├── codegen/            # Code generation
+│   └── mod.tscl
+└── stdlib/             # Runtime declarations
+    └── builtins.tscl
+```
+
+#### Bootstrap Compiler (Flat - `bootstrap/`)
 ```
 bootstrap/
-├── main.tscl           # CLI entry point (273 lines)
-├── types.tscl          # Type definitions (357 lines)
-├── lexer.tscl          # Tokenization (335 lines)
-├── parser.tscl         # AST generation (1,432 lines)
-├── ir.tscl             # IR types (619 lines)
-├── ir_builder.tscl     # AST → IR (270 lines)
-├── codegen.tscl        # IR → Bytecode (315 lines)
-├── emitter.tscl        # Bytecode serialization (846 lines)
-├── pipeline.tscl       # Compilation orchestration (228 lines)
-├── stdlib.tscl         # Runtime declarations (248 lines)
-└── utils.tscl          # Helpers (22 lines)
+├── main.tscl           # CLI entry point
+├── types.tscl          # Type definitions
+├── lexer.tscl          # Tokenization
+├── parser.tscl         # AST generation
+├── ir.tscl             # IR types
+├── ir_builder.tscl     # AST → IR
+├── codegen.tscl        # IR → Bytecode
+├── emitter.tscl        # Bytecode serialization
+├── pipeline.tscl       # Compilation orchestration
+├── stdlib.tscl         # Runtime declarations
+└── utils.tscl          # Helpers
 ```
 
 #### CLI Flags
@@ -340,9 +365,10 @@ cargo test
 ```
 script/
 ├── Cargo.toml                    # Minimal dependencies
-├── bootstrap/                    # Self-hosted compiler (~5,000 lines)
+├── compiler/                     # Self-hosted compiler (modular .tscl)
+├── bootstrap/                    # Bootstrap compiler (flat .tscl files)
 ├── src/
-│   ├── compiler/                 # Parser → Bytecode
+│   ├── compiler/                 # Rust: Parser → Bytecode
 │   ├── ir/                       # SSA IR system
 │   ├── backend/                  # Cranelift JIT + LLVM AOT
 │   ├── runtime/

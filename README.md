@@ -369,18 +369,16 @@ script/
 ├── Cargo.toml                    # Minimal dependencies
 ├── README.md                     # This file
 ├── PROGRESS.md                   # Development status
-├── bootstrap/                    # Self-hosted compiler
+├── compiler/                     # Self-hosted compiler (modular)
 │   ├── main.tscl                 # CLI entry point
-│   ├── lexer.tscl                # Tokenization
-│   ├── parser.tscl               # AST generation
-│   ├── ir.tscl                   # IR types
-│   ├── ir_builder.tscl           # AST → IR
-│   ├── codegen.tscl              # IR → Bytecode
-│   ├── emitter.tscl              # Bytecode serialization
-│   ├── pipeline.tscl             # Compilation orchestration
-│   ├── stdlib.tscl               # Runtime declarations
-│   ├── types.tscl                # Type definitions
-│   └── utils.tscl                # Helpers
+│   ├── lexer/                    # Tokenization module
+│   ├── parser/                   # AST generation module
+│   ├── ast/                      # AST type definitions
+│   ├── ir/                       # IR system module
+│   ├── codegen/                  # Code generation module
+│   └── stdlib/                   # Runtime declarations
+├── bootstrap/                    # Bootstrap compiler (flat files)
+│   └── *.tscl                    # 11 files (~5,000 lines)
 ├── src/
 │   ├── main.rs                   # Entry point
 │   ├── lib.rs                    # Library target
