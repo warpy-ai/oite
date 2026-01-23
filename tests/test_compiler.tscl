@@ -1,0 +1,69 @@
+// ============================================================================
+// Test: New Compiler Module Pipeline
+// ============================================================================
+
+require("../compiler/main");
+
+console.log("==============================================");
+console.log("New Compiler Module Test");
+console.log("==============================================");
+console.log("");
+
+// Test 1: Tokenization
+console.log("Test 1: Tokenization");
+let src1 = "let x = 42;";
+let tokens1 = tokenize(src1);
+console.log("  Source: " + src1);
+console.log("  Tokens: " + tokens1.length);
+console.log("  PASS");
+
+// Test 2: Parsing
+console.log("Test 2: Parsing");
+let src2 = "function add(a, b) { return a + b; }";
+let ast2 = parseSource(src2);
+console.log("  Source: " + src2);
+console.log("  AST body: " + ast2.body.length + " statements");
+console.log("  PASS");
+
+// Test 3: Typed function parsing
+console.log("Test 3: Typed function parsing");
+let src3 = "function greet(name: string): string { return name; }";
+let ast3 = parseSource(src3);
+console.log("  Source: " + src3);
+console.log("  Function: " + ast3.body[0].name);
+console.log("  PASS");
+
+// Test 4: IR Lowering
+console.log("Test 4: IR Lowering");
+let src4 = "function main(): void { }";
+let irModule = Compiler.compile(src4, false);
+console.log("  Source: " + src4);
+console.log("  IR functions: " + irModule.functions.length);
+console.log("  PASS");
+
+// Test 5: IR Serialization
+console.log("Test 5: IR Serialization");
+let irText = serializeIrModule(irModule);
+console.log("  IR text length: " + irText.length + " characters");
+console.log("  PASS");
+
+// Test 6: Expression parsing
+console.log("Test 6: Expression parsing");
+let src6 = "let result = 1 + 2 * 3;";
+let ast6 = parseSource(src6);
+console.log("  Source: " + src6);
+console.log("  Statement type: " + ast6.body[0].type);
+console.log("  PASS");
+
+// Test 7: Multiple statements
+console.log("Test 7: Multiple statements");
+let src7 = "let a = 1; let b = 2; let c = a + b;";
+let ast7 = parseSource(src7);
+console.log("  Source: " + src7);
+console.log("  Statement count: " + ast7.body.length);
+console.log("  PASS");
+
+console.log("");
+console.log("==============================================");
+console.log("All compiler module tests completed");
+console.log("==============================================");

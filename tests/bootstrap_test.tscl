@@ -1,12 +1,92 @@
-// Test with different arguments
-console.log("Test 1: 'x'");
-let r1 = parseSource("x");
-console.log("Result:", r1 != null);
+// ============================================================================
+// Bootstrap Parser Tests
+// Tests basic parsing functionality
+// ============================================================================
 
-console.log("Test 2: 'let x = 1'");
-let r2 = parseSource("let x = 1");
-console.log("Result:", r2 != null);
+console.log("==============================================");
+console.log("Bootstrap Parser Test Suite");
+console.log("==============================================");
 
-console.log("Test 3: 'let x = 1;'");
-let r3 = parseSource("let x = 1;");
-console.log("Result:", r3 != null);
+let passed = 0;
+let failed = 0;
+
+function test(name: string, result: boolean): void {
+    if (result) {
+        console.log("PASS: " + name);
+        passed = passed + 1;
+    } else {
+        console.log("FAIL: " + name);
+        failed = failed + 1;
+    }
+}
+
+console.log("");
+console.log("--- Tokenization Tests ---");
+
+let t1 = tokenize("x");
+test("Single identifier tokenizes", t1 != null);
+
+let t2 = tokenize("let x = 1;");
+test("Variable declaration tokenizes", t2 != null);
+
+let t3 = tokenize("function foo() { return 42; }");
+test("Function declaration tokenizes", t3 != null);
+
+console.log("");
+console.log("--- Parsing Tests ---");
+
+let a1 = parseSource("x;");
+test("Single identifier parses to Program", a1 != null);
+
+let a2 = parseSource("let x = 1;");
+test("Variable declaration parses", a2 != null);
+
+let a3 = parseSource("let x = 1; let y = 2;");
+test("Multiple declarations parse", a3 != null);
+
+let a4 = parseSource("function add(a, b) { return a + b; }");
+test("Function with params parses", a4 != null);
+
+console.log("");
+console.log("--- Type Annotation Tests ---");
+
+let a8 = parseSource("let num: number = 42;");
+test("Variable with type annotation parses", a8 != null);
+
+let a9 = parseSource("function add(a: number, b: number): number { return a + b; }");
+test("Function with typed params and return type parses", a9 != null);
+
+let a10 = parseSource("const greeting: string = 'Hello';");
+test("Const with type annotation parses", a10 != null);
+
+console.log("");
+console.log("--- Expression Parsing Tests ---");
+
+let a11 = parseSource("x + y;");
+test("Binary expression parses", a11 != null);
+
+let a12 = parseSource("x * y + z;");
+test("Chained binary expressions parse", a12 != null);
+
+let a13 = parseSource("obj.prop;");
+test("Member expression parses", a13 != null);
+
+let a14 = parseSource("arr[0];");
+test("Computed member expression parses", a14 != null);
+
+let a15 = parseSource("foo(arg1, arg2);");
+test("Function call parses", a15 != null);
+
+let a16 = parseSource("obj.method();");
+test("Method call parses", a16 != null);
+
+console.log("");
+console.log("==============================================");
+console.log("Test Results: " + passed + " passed, " + failed + " failed");
+console.log("==============================================");
+
+if (failed > 0) {
+    console.log("Some tests failed!");
+} else {
+    console.log("All tests passed!");
+}

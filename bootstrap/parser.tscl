@@ -161,7 +161,7 @@ function parseTypedParam(parser: Parser): TypedParam | null {
         parserAdvance(parser);
 
         let typeAnnotation: TypeAnnotation | null = null;
-        if (match(parser, TOKEN.OPERATOR, ":")) {
+        if (match(parser, TOKEN.DELIMITER, ":")) {
             typeAnnotation = parseTypeAnnotation(parser);
         }
 
@@ -257,7 +257,7 @@ function parseVariableDeclaration(parser: Parser): VariableDeclaration | null {
     parserAdvance(parser);
 
     let typeAnnotation: TypeAnnotation | null = null;
-    if (match(parser, TOKEN.OPERATOR, ":")) {
+    if (match(parser, TOKEN.DELIMITER, ":")) {
         typeAnnotation = parseTypeAnnotation(parser);
     }
 
@@ -302,7 +302,7 @@ function parseFunctionDeclaration(parser: Parser): FunctionDeclaration | null {
                 param = peekValue(parser);
                 parserAdvance(parser);
 
-                if (match(parser, TOKEN.OPERATOR, ":")) {
+                if (match(parser, TOKEN.DELIMITER, ":")) {
                     let typeAnn: TypeAnnotation | null = parseTypeAnnotation(parser);
                     param = {
                         name: param,
@@ -329,7 +329,7 @@ function parseFunctionDeclaration(parser: Parser): FunctionDeclaration | null {
     expect(parser, TOKEN.DELIMITER, ")");
 
     let returnType: TypeAnnotation | null = null;
-    if (match(parser, TOKEN.OPERATOR, ":")) {
+    if (match(parser, TOKEN.DELIMITER, ":")) {
         returnType = parseTypeAnnotation(parser);
     }
 
@@ -1248,7 +1248,7 @@ function parseFunctionExpression(parser: Parser): FunctionExpression | null {
                 param = peekValue(parser);
                 parserAdvance(parser);
 
-                if (match(parser, TOKEN.OPERATOR, ":")) {
+                if (match(parser, TOKEN.DELIMITER, ":")) {
                     let typeAnn: TypeAnnotation | null = parseTypeAnnotation(parser);
                     param = {
                         name: param,
@@ -1275,7 +1275,7 @@ function parseFunctionExpression(parser: Parser): FunctionExpression | null {
     expect(parser, TOKEN.DELIMITER, ")");
 
     let returnType: TypeAnnotation | null = null;
-    if (match(parser, TOKEN.OPERATOR, ":")) {
+    if (match(parser, TOKEN.DELIMITER, ":")) {
         returnType = parseTypeAnnotation(parser);
     }
 

@@ -1,3 +1,273 @@
-// Debug test - check what bytecode is generated
-console.log("Debug test");
-return 0;
+// ============================================================================
+// Bootstrap Compiler CLI Entry Point
+// Usage: tscl bootstrap/main.tscl <input.tscl> [output.tscb]
+// ============================================================================
+
+require ./types;
+require ./lexer;
+require ./parser;
+require ./ir;
+require ./ir_builder;
+require ./codegen;
+require ./pipeline;
+
+// ============================================================================
+// CLI Helpers
+// ============================================================================
+
+function printUsage(): void {
+    console.log("tscl Bootstrap Compiler v0.1.0");
+    console.log("");
+    console.log("Usage:");
+    console.log("  tscl bootstrap/main.tscl <input.tscl> [output.tscb]");
+    console.log("");
+    console.log("Arguments:");
+    console.log("  input.tscl    Source file to compile");
+    console.log("  output.tscb   Output bytecode file (default: input with .tscb extension)");
+    console.log("");
+    console.log("Examples:");
+    console.log("  tscl bootstrap/main.tscl myprogram.tscl");
+    console.log("  tscl bootstrap/main.tscl myprogram.tscl output.tscb");
+    console.log("");
+    console.log("Options:");
+    console.log("  --help, -h    Show this help message");
+    console.log("  --version     Show version information");
+    console.log("  --ast         Print AST (for debugging)");
+    console.log("  --tokens      Print tokens (for debugging)");
+    console.log("  --ir          Print IR (for debugging)");
+}
+
+function printVersion(): void {
+    console.log("tscl Bootstrap Compiler v0.1.0");
+    console.log("Pipeline: lexer -> parser -> ir -> codegen");
+}
+
+function getOutputPath(inputPath: string): string {
+    // Replace .tscl extension with .tscb, or append .tscb
+    if (inputPath.endsWith(".tscl")) {
+        return inputPath.slice(0, inputPath.length - 5) + ".tscb";
+    }
+    return inputPath + ".tscb";
+}
+
+// ============================================================================
+// Debug Output Functions
+// ============================================================================
+
+function printTokens(tokens: Array<Token>): void {
+    console.log("=== Tokens ===");
+    let i: number = 0;
+    while (i < tokens.length) {
+        let token: Token = tokens[i];
+        console.log("[" + i + "] " + token.type + ": " + token.value + " (line " + token.line + ", col " + token.col + ")");
+        i = i + 1;
+    }
+    console.log("=== End Tokens ===");
+}
+
+function printAst(ast: Program): void {
+    console.log("=== AST ===");
+    console.log(JSON.stringify(ast, null, 2));
+    console.log("=== End AST ===");
+}
+
+function printIr(module: IrModule): void {
+    console.log("=== IR Module ===");
+    console.log("Functions: " + module.functions.length);
+    let i: number = 0;
+    while (i < module.functions.length) {
+        let func: IrFunction = module.functions[i];
+        console.log("  [" + i + "] " + func.name + " (params: " + func.params.length + ", blocks: " + func.blocks.length + ")");
+        i = i + 1;
+    }
+    console.log("=== End IR ===");
+}
+
+// ============================================================================
+// Main Compilation Function
+// ============================================================================
+
+function compileWithOptions(inputPath: string, outputPath: string, options: { showTokens: boolean, showAst: boolean, showIr: boolean }): boolean {
+    // Check input file exists
+    if (!fs.existsSync(inputPath)) {
+        console.log("Error: Input file not found: " + inputPath);
+        return false;
+    }
+
+    // Read source
+    let source: string = fs.readFileSync(inputPath, "utf8");
+    console.log("Compiling: " + inputPath);
+    console.log("Source size: " + source.length + " bytes");
+
+    // Tokenize
+    let tokens: Array<Token> = tokenize(source);
+    if (tokens == null) {
+        console.log("Error: Lexing failed");
+        return false;
+    }
+    console.log("Tokens: " + tokens.length);
+
+    if (options.showTokens) {
+        printTokens(tokens);
+    }
+
+    // Parse
+    let ast: Program = parseSource(source);
+    if (ast == null) {
+        console.log("Error: Parsing failed");
+        return false;
+    }
+    console.log("AST nodes: " + ast.body.length + " top-level statements");
+
+    if (options.showAst) {
+        printAst(ast);
+    }
+
+    // Lower to IR
+    let module: IrModule = lowerProgramToIr(ast);
+    if (module == null) {
+        console.log("Error: IR lowering failed");
+        return false;
+    }
+    console.log("IR functions: " + module.functions.length);
+
+    if (options.showIr) {
+        printIr(module);
+    }
+
+    // Generate bytecode
+    let result: { bytecode: ByteStream, length: number } = codegenIrModule(module);
+    if (result == null) {
+        console.log("Error: Codegen failed");
+        return false;
+    }
+    console.log("Bytecode size: " + result.length + " bytes");
+
+    // Compute hash for determinism verification
+    let hash: number = computeBytecodeHash(result);
+    console.log("Bytecode hash: " + hash);
+
+    // Write output
+    let bytes: Array<number> = ByteStream.toArray(result.bytecode);
+    fs.writeBinaryFile(outputPath, bytes);
+    console.log("Output written: " + outputPath);
+
+    return true;
+}
+
+// ============================================================================
+// Argument Parsing
+// ============================================================================
+
+function parseArgs(args: Array<string>): { inputPath: string | null, outputPath: string | null, showHelp: boolean, showVersion: boolean, showTokens: boolean, showAst: boolean, showIr: boolean, error: string | null } {
+    let result: { inputPath: string | null, outputPath: string | null, showHelp: boolean, showVersion: boolean, showTokens: boolean, showAst: boolean, showIr: boolean, error: string | null } = {
+        inputPath: null,
+        outputPath: null,
+        showHelp: false,
+        showVersion: false,
+        showTokens: false,
+        showAst: false,
+        showIr: false,
+        error: null
+    };
+
+    let i: number = 0;
+    let positionalCount: number = 0;
+
+    while (i < args.length) {
+        let arg: string = args[i];
+
+        if (arg == "--help" || arg == "-h") {
+            result.showHelp = true;
+        } else if (arg == "--version") {
+            result.showVersion = true;
+        } else if (arg == "--tokens") {
+            result.showTokens = true;
+        } else if (arg == "--ast") {
+            result.showAst = true;
+        } else if (arg == "--ir") {
+            result.showIr = true;
+        } else if (arg.startsWith("-")) {
+            result.error = "Unknown option: " + arg;
+            return result;
+        } else {
+            // Positional argument
+            if (positionalCount == 0) {
+                result.inputPath = arg;
+            } else if (positionalCount == 1) {
+                result.outputPath = arg;
+            } else {
+                result.error = "Too many arguments";
+                return result;
+            }
+            positionalCount = positionalCount + 1;
+        }
+
+        i = i + 1;
+    }
+
+    return result;
+}
+
+// ============================================================================
+// Main Entry Point
+// ============================================================================
+
+function main(args: Array<string>): number {
+    let parsed = parseArgs(args);
+
+    if (parsed.error != null) {
+        console.log("Error: " + parsed.error);
+        printUsage();
+        return 1;
+    }
+
+    if (parsed.showHelp) {
+        printUsage();
+        return 0;
+    }
+
+    if (parsed.showVersion) {
+        printVersion();
+        return 0;
+    }
+
+    if (parsed.inputPath == null) {
+        console.log("Error: No input file specified");
+        printUsage();
+        return 1;
+    }
+
+    let inputPath: string = parsed.inputPath;
+    let outputPath: string = parsed.outputPath;
+    if (outputPath == null) {
+        outputPath = getOutputPath(inputPath);
+    }
+
+    let options: { showTokens: boolean, showAst: boolean, showIr: boolean } = {
+        showTokens: parsed.showTokens,
+        showAst: parsed.showAst,
+        showIr: parsed.showIr
+    };
+
+    let success: boolean = compileWithOptions(inputPath, outputPath, options);
+
+    if (success) {
+        console.log("Compilation successful!");
+        return 0;
+    } else {
+        console.log("Compilation failed!");
+        return 1;
+    }
+}
+
+// Run main with script arguments
+// The runtime provides __args__ as the command-line arguments after the script name
+let exitCode: number = 0;
+if (typeof __args__ !== "undefined") {
+    exitCode = main(__args__);
+} else {
+    // Fallback for testing - no args provided
+    console.log("Bootstrap Compiler loaded. Use --help for usage information.");
+    exitCode = 0;
+}

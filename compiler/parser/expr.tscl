@@ -58,7 +58,7 @@ function parseAssignment(parser) {
 }
 
 function parseConditional(parser) {
-    let test = parseBinary(0);
+    let test = parseBinary(parser, 0);
     if (test == null) return null;
     if (match(parser, "OPERATOR", "??")) {
         let consequent = parseAssignment(parser);
@@ -85,8 +85,8 @@ function parseConditional(parser) {
     return test;
 }
 
-function parseBinary(minPrec) {
-    let left = parseUnary();
+function parseBinary(parser, minPrec) {
+    let left = parseUnary(parser);
     if (left == null) return null;
     while (true) {
         let op = peekValue(parser);
@@ -94,7 +94,7 @@ function parseBinary(minPrec) {
         if (prec == null || prec < minPrec) break;
         parserAdvance(parser);
         let nextPrec = prec + 1;
-        let right = parseBinary(nextPrec);
+        let right = parseBinary(parser, nextPrec);
         if (right == null) return left;
         left = {
             type: "BinaryExpression",
@@ -106,11 +106,11 @@ function parseBinary(minPrec) {
     return left;
 }
 
-function parseUnary() {
+function parseUnary(parser) {
     let op = peekValue(parser);
     if (op == "!" || op == "-" || op == "+" || op == "~" || op == "typeof" || op == "void" || op == "delete") {
         parserAdvance(parser);
-        let arg = parseUnary();
+        let arg = parseUnary(parser);
         return {
             type: "UnaryExpression",
             operator: op,
@@ -118,22 +118,30 @@ function parseUnary() {
             prefix: true
         };
     }
-    return parsePostfix();
+    return parsePostfix(parser);
 }
 
-function parsePostfix() {
-    let expr = parsePrimary();
+function parsePostfix(parser) {
+    let expr = parsePrimary(parser);
     if (expr == null) return null;
     while (true) {
-        if (match(parser, "OPERATOR", "++") || match(parser, "OPERATOR", "--")) {
-            return {
+        if (match(parser, "OPERATOR", "++")) {
+            expr = {
                 type: "UpdateExpression",
-                operator: "++" || "--",
+                operator: "++",
                 argument: expr,
                 prefix: false
             };
+        } else if (match(parser, "OPERATOR", "--")) {
+            expr = {
+                type: "UpdateExpression",
+                operator: "--",
+                argument: expr,
+                prefix: false
+            };
+        } else {
+            break;
         }
-        break;
     }
     return expr;
 }
@@ -193,7 +201,7 @@ function parsePrimary() {
             if (next != null && (next.type == "KEYWORD" && next.value == "function")) {
                 return parseFunctionExpression(parser, true);
             }
-            if (next != null && next.type == "OPERATOR" && next.value == "(")) {
+            if (next != null && next.type == "DELIMITER" && next.value == "(") {
                 return parseAsyncExpression(parser);
             }
             if (next != null && next.type == "IDENTIFIER") {
@@ -340,7 +348,7 @@ function parseAsyncExpression(parser) {
 }
 
 function parseArrowBody(parser) {
-    if (peekType(parser) == "DELIMITER", "{") {
+    if (peekType(parser) == "DELIMITER" && peekValue(parser) == "{") {
         return parseBlockStatement(parser);
     }
     return parseExpression(parser);

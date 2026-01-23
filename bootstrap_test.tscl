@@ -1,6 +1,0 @@
-// Test that tokenize is available
-if (tokenize != null) {
-    console.log("tokenize exists");
-} else {
-    console.log("tokenize is null or undefined");
-}

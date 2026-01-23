@@ -103,6 +103,117 @@ interface RegisterAllocator {
 }
 
 // ============================================================================
+// Register Allocator Functions
+// ============================================================================
+
+function createRegisterAllocator(): RegisterAllocator {
+    return {
+        next_reg: 0,
+        max_regs: 0
+    };
+}
+
+function resetRegisterAllocator(ra: RegisterAllocator): void {
+    ra.next_reg = 0;
+    ra.max_regs = 0;
+}
+
+function allocateRegister(ra: RegisterAllocator): number {
+    let reg = ra.next_reg;
+    ra.next_reg = ra.next_reg + 1;
+    if (ra.next_reg > ra.max_regs) {
+        ra.max_regs = ra.next_reg;
+    }
+    return reg;
+}
+
+function getMaxRegisters(ra: RegisterAllocator): number {
+    return ra.max_regs;
+}
+
+// ============================================================================
+// IR Block Construction
+// ============================================================================
+
+function createIrBlock(label: string): IrBlock {
+    return {
+        label: label,
+        ops: [],
+        predecessors: [],
+        successors: []
+    };
+}
+
+// ============================================================================
+// IR Instruction Emission
+// ============================================================================
+
+function emitIrOp(block: IrBlock, opcode: IrOpCode, dest: number | null, args: number[], immediate: IrValue | null): void {
+    let inst: IrInstruction = {
+        opcode: opcode,
+        dest: dest,
+        args: args,
+        immediate: immediate,
+        label: null
+    };
+    block.ops.push(inst);
+}
+
+function emitConst(block: IrBlock, dest: number, value: IrValue): void {
+    emitIrOp(block, IrOpCode.CONST, dest, [], value);
+}
+
+function emitBinaryOp(block: IrBlock, opcode: IrOpCode, dest: number, left: number, right: number): void {
+    emitIrOp(block, opcode, dest, [left, right], null);
+}
+
+function emitLoadLocal(block: IrBlock, dest: number, slot: number): void {
+    emitIrOp(block, IrOpCode.LOAD_LOCAL, dest, [slot], null);
+}
+
+function emitStoreLocal(block: IrBlock, slot: number, value: number): void {
+    emitIrOp(block, IrOpCode.STORE_LOCAL, null, [slot, value], null);
+}
+
+function emitJump(block: IrBlock, targetBlock: IrBlock): void {
+    let inst: IrInstruction = {
+        opcode: IrOpCode.JUMP,
+        dest: null,
+        args: [],
+        immediate: null,
+        label: targetBlock.label
+    };
+    block.ops.push(inst);
+    block.successors.push(targetBlock);
+    targetBlock.predecessors.push(block);
+}
+
+function emitJumpIfFalse(block: IrBlock, cond: number, targetBlock: IrBlock): void {
+    let inst: IrInstruction = {
+        opcode: IrOpCode.JUMP_IF_FALSE,
+        dest: null,
+        args: [cond],
+        immediate: null,
+        label: targetBlock.label
+    };
+    block.ops.push(inst);
+    block.successors.push(targetBlock);
+    targetBlock.predecessors.push(block);
+}
+
+function emitReturn(block: IrBlock, value: number | null): void {
+    if (value != null) {
+        emitIrOp(block, IrOpCode.RETURN, null, [value], null);
+    } else {
+        emitIrOp(block, IrOpCode.RETURN, null, [], null);
+    }
+}
+
+function emitCall(block: IrBlock, dest: number, funcReg: number, argc: number): void {
+    emitIrOp(block, IrOpCode.CALL, dest, [funcReg, argc], null);
+}
+
+// ============================================================================
 // IR Verification
 // ============================================================================
 

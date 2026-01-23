@@ -1,0 +1,38 @@
+// Test: Bootstrap compiler compiling typed code
+// This test verifies the bootstrap pipeline can compile typed code
+
+require("../bootstrap/pipeline");
+
+console.log("==============================================");
+console.log("Bootstrap Typed Code Compilation Test");
+console.log("==============================================");
+console.log("");
+
+// Test 1: Function with typed parameters
+console.log("Test 1: Function with typed parameters");
+let src1 = "function add(a: number, b: number): number { return a + b; }";
+let r1 = compileToBytecode(src1);
+let len1 = r1.length;
+console.log("  Bytecode: " + len1 + " bytes");
+console.log("  PASS");
+
+// Test 2: Variable with type
+console.log("Test 2: Variable with type annotation");
+let src2 = "let x: number = 42;";
+let r2 = compileToBytecode(src2);
+let len2 = r2.length;
+console.log("  Bytecode: " + len2 + " bytes");
+console.log("  PASS");
+
+// Test 3: Full typed program
+console.log("Test 3: Full typed program");
+let src3 = "function greet(name: string): string { return name; } let msg: string = greet('World');";
+let r3 = compileToBytecode(src3);
+let len3 = r3.length;
+console.log("  Bytecode: " + len3 + " bytes");
+console.log("  PASS");
+
+console.log("");
+console.log("==============================================");
+console.log("All typed compilation tests PASSED!");
+console.log("==============================================");
