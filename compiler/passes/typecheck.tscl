@@ -3,7 +3,8 @@
 // Flow-sensitive type inference and operation specialization
 // ============================================================================
 
-require ../ir/mod;
+// Dependencies loaded by runtime (require ../ syntax not supported)
+// require ../ir/mod;
 
 // ============================================================================
 // Type Checker Context

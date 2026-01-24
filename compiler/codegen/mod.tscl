@@ -2,8 +2,9 @@
 // IR to Bytecode Codegen for tscl Compiler
 // ============================================================================
 
-require ../ir/mod;
-require ../ir/builder;
+// Dependencies loaded by runtime (require ../ syntax not supported)
+// require ../ir/mod;
+// require ../ir/builder;
 
 // ============================================================================
 // Code Generator State

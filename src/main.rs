@@ -34,6 +34,30 @@ const BOOTSTRAP_FILES: &[&str] = &[
     "bootstrap/pipeline.tscl",
 ];
 
+/// Modular compiler files (loaded in dependency order)
+const MODULAR_COMPILER_FILES: &[&str] = &[
+    // Level 1: No dependencies
+    "compiler/lexer/token.tscl",
+    "compiler/ast/types.tscl",
+    "compiler/ir/mod.tscl",
+    // Level 2: Depends on level 1
+    "compiler/lexer/mod.tscl",
+    "compiler/parser/expr.tscl",
+    "compiler/parser/stmt.tscl",
+    "compiler/ir/builder.tscl",
+    "compiler/passes/typecheck.tscl",
+    "compiler/passes/opt.tscl",
+    "compiler/passes/borrow_ck.tscl",
+    // Level 3: Depends on level 2
+    "compiler/parser/mod.tscl",
+    "compiler/passes/mod.tscl",
+    "compiler/codegen/mod.tscl",
+    // Level 4: Depends on level 3
+    "compiler/codegen/emitter.tscl",
+    // Level 5: Top-level pipeline
+    "compiler/pipeline.tscl",
+];
+
 /// Helper to load and run a script file
 fn load_and_run_script(
     vm: &mut VM,
@@ -227,6 +251,7 @@ fn main() {
 
     // 2. Check if this is a bootstrap file that needs the compiler modules
     let is_bootstrap = filename.contains("bootstrap/") || filename.contains("tests/");
+    let is_modular_compiler = filename.contains("compiler/") && !filename.contains("bootstrap/");
 
     if is_bootstrap {
         println!("Loading bootstrap compiler modules...");
@@ -238,6 +263,24 @@ fn main() {
                 }
             } else {
                 eprintln!("Warning: Bootstrap file not found: {}", bootstrap_file);
+            }
+        }
+    }
+
+    if is_modular_compiler {
+        println!("Loading modular compiler modules...");
+        for modular_file in MODULAR_COMPILER_FILES {
+            // Skip the main file being run if it's in the list
+            if modular_file == &filename {
+                continue;
+            }
+            if Path::new(modular_file).exists() {
+                if let Err(e) = load_and_run_script(&mut vm, &mut compiler, modular_file, true) {
+                    eprintln!("{}", e);
+                    return;
+                }
+            } else {
+                eprintln!("Warning: Modular compiler file not found: {}", modular_file);
             }
         }
     }

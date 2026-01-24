@@ -2,8 +2,9 @@
 // Statement Parsers for tscl Compiler
 // ============================================================================
 
-require ../ast/types;
-require ../lexer/token;
+// Dependencies loaded by runtime (require ../ syntax not supported)
+// require ../ast/types;
+// require ../lexer/token;
 
 // ============================================================================
 // Parser State

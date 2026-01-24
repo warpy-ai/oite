@@ -3,7 +3,8 @@
 // Ownership and borrowing analysis with type information
 // ============================================================================
 
-require ../ir/mod;
+// Dependencies loaded by runtime (require ../ syntax not supported)
+// require ../ir/mod;
 
 // ============================================================================
 // Variable Kind (Determines Ownership Semantics)
