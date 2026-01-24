@@ -911,6 +911,22 @@ fn translate_op(
                 "Bitwise operations not yet implemented in Cranelift backend".to_string(),
             ));
         }
+
+        // TypeOf - returns type string (not yet implemented)
+        IrOp::TypeOf(dst, _val) => {
+            // TODO: Implement typeof by calling a runtime stub
+            let undefined = translate_literal(builder, &Literal::Undefined);
+            ctx.values.insert(*dst, undefined);
+        }
+
+        // DeleteProp - deletes property from object (not yet implemented)
+        IrOp::DeleteProp(dst, _obj, _prop) => {
+            // TODO: Implement delete by calling a runtime stub
+            // For now, return true (delete always "succeeds")
+            let one = builder.ins().iconst(types::I8, 1);
+            let true_val = bool_to_tscl_value(builder, one);
+            ctx.values.insert(*dst, true_val);
+        }
     }
 
     Ok(())

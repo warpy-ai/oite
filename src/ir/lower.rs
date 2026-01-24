@@ -449,6 +449,20 @@ impl Lowerer {
                 self.push(dst);
             }
 
+            OpCode::TypeOf => {
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::String);
+                self.emit(IrOp::TypeOf(dst, a));
+                self.push(dst);
+            }
+
+            OpCode::Delete(prop_name) => {
+                let obj = self.pop()?;
+                let dst = self.alloc_value(IrType::Boolean);
+                self.emit(IrOp::DeleteProp(dst, obj, prop_name.clone()));
+                self.push(dst);
+            }
+
             // Comparison operations
             OpCode::Eq | OpCode::EqEq => {
                 let b = self.pop()?;

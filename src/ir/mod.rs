@@ -498,6 +498,10 @@ pub enum IrOp {
     ToBool(ValueId, ValueId),
     /// Convert to number: dst = ToNumber(val)
     ToNum(ValueId, ValueId),
+    /// TypeOf operator: dst = typeof(val) as string
+    TypeOf(ValueId, ValueId),
+    /// Delete property: dst = delete obj.prop (returns bool)
+    DeleteProp(ValueId, ValueId, String),
 
     // === Phi Functions (SSA merge points) ===
     /// Phi function: dst = phi([(block1, val1), (block2, val2), ...])
@@ -606,7 +610,10 @@ impl IrOp {
             | IrOp::CallMono(d, _, _)
             // Move operations
             | IrOp::Move(d, _)
-            | IrOp::Clone(d, _) => Some(*d),
+            | IrOp::Clone(d, _)
+            // Type operations
+            | IrOp::TypeOf(d, _)
+            | IrOp::DeleteProp(d, _, _) => Some(*d),
 
             IrOp::StoreLocal(_, _)
             | IrOp::StoreGlobal(_, _)
@@ -681,6 +688,8 @@ impl IrOp {
             
             IrOp::GetProp(_, obj, _) => vec![*obj],
             IrOp::SetProp(obj, _, val) => vec![*obj, *val],
+            IrOp::TypeOf(_, val) => vec![*val],
+            IrOp::DeleteProp(_, obj, _) => vec![*obj],
             IrOp::GetElement(_, obj, key) => vec![*obj, *key],
             IrOp::SetElement(obj, key, val) => vec![*obj, *key, *val],
             IrOp::ArrayPush(arr, val) => vec![*arr, *val],
@@ -1244,6 +1253,9 @@ impl fmt::Display for IrOp {
             // Move operations
             IrOp::Move(d, s) => write!(f, "{} = move {}", d, s),
             IrOp::Clone(d, s) => write!(f, "{} = clone {}", d, s),
+            // Type operations
+            IrOp::TypeOf(d, v) => write!(f, "{} = typeof {}", d, v),
+            IrOp::DeleteProp(d, obj, prop) => write!(f, "{} = delete {}.{}", d, obj, prop),
         }
     }
 }

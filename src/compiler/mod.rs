@@ -1180,15 +1180,62 @@ impl Codegen {
                     BinaryOp::LogicalAnd => self.instructions.push(OpCode::And),
                     BinaryOp::LogicalOr => self.instructions.push(OpCode::Or),
                     BinaryOp::InstanceOf => self.instructions.push(OpCode::InstanceOf),
+                    // Bitwise operators
+                    BinaryOp::BitAnd => self.instructions.push(OpCode::BitAnd),
+                    BinaryOp::BitOr => self.instructions.push(OpCode::BitOr),
+                    BinaryOp::BitXor => self.instructions.push(OpCode::Xor),
+                    BinaryOp::LShift => self.instructions.push(OpCode::ShiftLeft),
+                    BinaryOp::RShift => self.instructions.push(OpCode::ShiftRight),
+                    BinaryOp::ZeroFillRShift => self.instructions.push(OpCode::ShiftRightUnsigned),
+                    BinaryOp::Exp => self.instructions.push(OpCode::Pow),
                     _ => println!("Warning: Operator {:?} not supported", bin.op),
                 }
             }
             Expr::Unary(unary) => {
-                self.gen_expr(&unary.arg);
                 match unary.op {
-                    UnaryOp::Bang => self.instructions.push(OpCode::Not),
-                    UnaryOp::Minus => self.instructions.push(OpCode::Neg),
-                    _ => println!("Warning: Unary operator {:?} not supported", unary.op),
+                    UnaryOp::TypeOf => {
+                        self.gen_expr(&unary.arg);
+                        self.instructions.push(OpCode::TypeOf);
+                    }
+                    UnaryOp::Delete => {
+                        // delete operator - handle member expressions specially
+                        if let Expr::Member(member) = unary.arg.as_ref() {
+                            self.gen_expr(&member.obj);
+                            if let MemberProp::Ident(id) = &member.prop {
+                                self.instructions
+                                    .push(OpCode::Delete(id.sym.to_string()));
+                            } else {
+                                // Computed property - evaluate and discard, return true
+                                self.instructions.push(OpCode::Pop);
+                                self.instructions.push(OpCode::Push(JsValue::Boolean(true)));
+                            }
+                        } else {
+                            // delete on non-member always returns true (but evaluates the expr)
+                            self.gen_expr(&unary.arg);
+                            self.instructions.push(OpCode::Pop);
+                            self.instructions.push(OpCode::Push(JsValue::Boolean(true)));
+                        }
+                    }
+                    _ => {
+                        self.gen_expr(&unary.arg);
+                        match unary.op {
+                            UnaryOp::Bang => self.instructions.push(OpCode::Not),
+                            UnaryOp::Minus => self.instructions.push(OpCode::Neg),
+                            UnaryOp::Plus => {} // +x is a no-op for numbers
+                            UnaryOp::Tilde => {
+                                // Bitwise NOT: ~x = -(x+1) approximately, or convert to i32 and flip bits
+                                // For now, implement as: push -1, xor
+                                self.instructions.push(OpCode::Push(JsValue::Number(-1.0)));
+                                self.instructions.push(OpCode::Xor);
+                            }
+                            UnaryOp::Void => {
+                                // void expr - evaluate and discard, push undefined
+                                self.instructions.push(OpCode::Pop);
+                                self.instructions.push(OpCode::Push(JsValue::Undefined));
+                            }
+                            _ => println!("Warning: Unary operator {:?} not supported", unary.op),
+                        }
+                    }
                 }
             }
             Expr::Array(arr_lit) => {

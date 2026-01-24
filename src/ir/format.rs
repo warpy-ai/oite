@@ -235,6 +235,10 @@ fn serialize_op(output: &mut String, op: &IrOp) {
         }
         IrOp::Move(d, s) => output.push_str(&format!("{} = move {}", d, s)),
         IrOp::Clone(d, s) => output.push_str(&format!("{} = clone {}", d, s)),
+        IrOp::TypeOf(d, v) => output.push_str(&format!("{} = typeof {}", d, v)),
+        IrOp::DeleteProp(d, obj, prop) => {
+            output.push_str(&format!("{} = delete {}.{}", d, obj, prop))
+        }
     }
 }
 

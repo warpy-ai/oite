@@ -1242,6 +1242,41 @@ impl VM {
                 }
             }
 
+            OpCode::TypeOf => {
+                let val = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let type_str = match val {
+                    JsValue::Number(_) => "number",
+                    JsValue::String(_) => "string",
+                    JsValue::Boolean(_) => "boolean",
+                    JsValue::Object(_) => "object",
+                    JsValue::Function { .. } => "function",
+                    JsValue::NativeFunction(_) => "function",
+                    JsValue::Null => "object", // typeof null === "object" in JS
+                    JsValue::Undefined => "undefined",
+                    JsValue::Accessor(_, _) => "function",
+                    JsValue::Promise(_) => "object",
+                };
+                self.stack.push(JsValue::String(type_str.to_string()));
+            }
+
+            OpCode::Delete(ref prop_name) => {
+                let obj_val = self.stack.pop().unwrap_or(JsValue::Undefined);
+                if let JsValue::Object(obj_id) = obj_val {
+                    if obj_id < self.heap.len() {
+                        if let HeapData::Object(ref mut props) = self.heap[obj_id].data {
+                            props.remove(prop_name);
+                            self.stack.push(JsValue::Boolean(true));
+                        } else {
+                            self.stack.push(JsValue::Boolean(false));
+                        }
+                    } else {
+                        self.stack.push(JsValue::Boolean(false));
+                    }
+                } else {
+                    self.stack.push(JsValue::Boolean(false));
+                }
+            }
+
             OpCode::Sub => {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
                     (self.stack.pop(), self.stack.pop())

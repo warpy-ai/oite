@@ -484,7 +484,9 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
         | IrOp::Move(_, a)
         | IrOp::Clone(_, a)
         | IrOp::StructGetField(_, a, _)
-        | IrOp::StructGetFieldNamed(_, a, _) => {
+        | IrOp::StructGetFieldNamed(_, a, _)
+        | IrOp::TypeOf(_, a)
+        | IrOp::DeleteProp(_, a, _) => {
             resolve(a);
         }
 
