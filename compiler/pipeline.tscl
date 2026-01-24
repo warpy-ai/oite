@@ -7,6 +7,7 @@ require ./lexer/mod;
 require ./parser/mod;
 require ./ir/mod;
 require ./ir/builder;
+require ./passes/mod;
 require ./codegen/mod;
 require ./codegen/emitter;
 
@@ -45,6 +46,109 @@ function compileToBytecodeViaIr(source) {
     // Generate bytecode
     let result = codegenIrModule(irModule);
     return result;
+}
+
+// ============================================================================
+// Compilation Pipeline with Full Optimization
+// ============================================================================
+
+function compileWithOptimization(source, options) {
+    // Default options
+    let verbose = options != null && options.verbose == true;
+    let skipBorrowCheck = options != null && options.skipBorrowCheck == true;
+
+    // Parse
+    if (verbose) console.log("[Pipeline] Parsing...");
+    let ast = parseSource(source);
+    if (ast == null) {
+        console.log("Error: Parsing failed");
+        return null;
+    }
+    if (verbose) console.log("[Pipeline] AST: " + ast.body.length + " statements");
+
+    // Borrow check on AST first (if enabled)
+    if (!skipBorrowCheck) {
+        if (verbose) console.log("[Pipeline] Running AST borrow check...");
+        let astResult = Passes.checkAst(ast);
+        if (astResult.errors.length > 0) {
+            console.log("Borrow check errors:");
+            let i = 0;
+            while (i < astResult.errors.length) {
+                console.log("  " + BorrowCheck.formatError(astResult.errors[i]));
+                i = i + 1;
+            }
+            return null;
+        }
+        if (verbose) console.log("[Pipeline] AST borrow check passed");
+    }
+
+    // Lower to IR
+    if (verbose) console.log("[Pipeline] Lowering to IR...");
+    let irModule = lowerProgramToIr(ast);
+    if (irModule == null) {
+        console.log("Error: IR lowering failed");
+        return null;
+    }
+    if (verbose) console.log("[Pipeline] IR: " + irModule.functions.length + " functions");
+
+    // Verify IR
+    if (verbose) console.log("[Pipeline] Verifying IR...");
+    if (!verifyIrModule(irModule)) {
+        console.log("Error: IR verification failed");
+        return null;
+    }
+
+    // Type checking and specialization
+    if (verbose) console.log("[Pipeline] Running type inference...");
+    Passes.typecheck(irModule);
+    if (verbose) console.log("[Pipeline] Type inference complete");
+
+    // Optimization passes
+    if (verbose) console.log("[Pipeline] Running optimizer...");
+    Passes.optimize(irModule);
+    if (verbose) console.log("[Pipeline] Optimization complete");
+
+    // Generate bytecode
+    if (verbose) console.log("[Pipeline] Generating bytecode...");
+    let result = codegenIrModule(irModule);
+    if (verbose) console.log("[Pipeline] Bytecode: " + result.length + " bytes");
+
+    return result;
+}
+
+// Compile with verbose output
+function compileVerbose(source) {
+    return compileWithOptimization(source, { verbose: true });
+}
+
+// Get IR after optimization (for debugging)
+function compileToOptimizedIr(source) {
+    let ast = parseSource(source);
+    if (ast == null) {
+        console.log("Error: Parsing failed");
+        return null;
+    }
+
+    let irModule = lowerProgramToIr(ast);
+    if (irModule == null) {
+        console.log("Error: IR lowering failed");
+        return null;
+    }
+
+    // Run passes
+    Passes.typecheck(irModule);
+    Passes.optimize(irModule);
+
+    return irModule;
+}
+
+// Get IR text after optimization
+function compileToOptimizedIrText(source) {
+    let irModule = compileToOptimizedIr(source);
+    if (irModule == null) {
+        return null;
+    }
+    return serializeIrModule(irModule);
 }
 
 // ============================================================================
@@ -198,25 +302,88 @@ function measureCompilation(source) {
     return metrics;
 }
 
+// Measure full pipeline with optimization passes
+function measureOptimizedCompilation(source) {
+    let metrics = {
+        lexerTime: 0,
+        parserTime: 0,
+        irTime: 0,
+        typecheckTime: 0,
+        optimizeTime: 0,
+        codegenTime: 0,
+        totalTime: 0,
+        bytecodeSize: 0
+    };
+
+    let t0 = Date.now();
+    let tokens = tokenize(source);
+    metrics.lexerTime = Date.now() - t0;
+
+    let t1 = Date.now();
+    let ast = parseSource(source);
+    metrics.parserTime = Date.now() - t1;
+
+    let t2 = Date.now();
+    let irModule = lowerProgramToIr(ast);
+    metrics.irTime = Date.now() - t2;
+
+    let t3 = Date.now();
+    Passes.typecheck(irModule);
+    metrics.typecheckTime = Date.now() - t3;
+
+    let t4 = Date.now();
+    Passes.optimize(irModule);
+    metrics.optimizeTime = Date.now() - t4;
+
+    let t5 = Date.now();
+    let result = codegenIrModule(irModule);
+    metrics.codegenTime = Date.now() - t5;
+
+    metrics.totalTime = metrics.lexerTime + metrics.parserTime + metrics.irTime +
+                        metrics.typecheckTime + metrics.optimizeTime + metrics.codegenTime;
+    metrics.bytecodeSize = result.length;
+
+    return metrics;
+}
+
 // ============================================================================
 // Export
 // ============================================================================
 
 let Pipeline = {
+    // Main compilation functions
     compile: compileToBytecode,
     compileViaIr: compileToBytecodeViaIr,
+    compileWithOptimization: compileWithOptimization,
+    compileVerbose: compileVerbose,
+
+    // Module/file compilation
     compileModule: compileModule,
     compileFile: compileFile,
     compileToFile: compileToFile,
+
+    // IR output
     compileToIr: compileToIr,
     compileToIrText: compileToIrText,
+    compileToOptimizedIr: compileToOptimizedIr,
+    compileToOptimizedIrText: compileToOptimizedIrText,
+
+    // Utilities
     saveBytecode: saveBytecode,
     computeByteHash: computeByteHash,
     computeStringHash: computeStringHash,
+
+    // Performance metrics
     measureCompilation: measureCompilation,
-    version: "0.2.0",
-    pipeline: "lexer -> parser -> ir -> codegen"
+    measureOptimizedCompilation: measureOptimizedCompilation,
+
+    // Passes access
+    Passes: Passes,
+
+    version: "0.3.0",
+    pipeline: "lexer -> parser -> ir -> typecheck -> optimize -> codegen"
 };
 
 console.log("Compiler Pipeline loaded");
 console.log("Version: " + Pipeline.version);
+console.log("Pipeline: " + Pipeline.pipeline);
