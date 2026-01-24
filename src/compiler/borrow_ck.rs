@@ -600,6 +600,12 @@ impl BorrowChecker {
 
     fn process_capture(&mut self, name: &str) -> Result<(), String> {
         if let Some(info) = self.symbols.get_mut(name) {
+            // Global/module-level variables are exempt from capture-move semantics.
+            // They're designed to be accessed from anywhere (e.g., module exports like Emitter).
+            if info.is_global() {
+                return Ok(());
+            }
+
             // Check if already moved
             if info.state == VarState::Moved || info.state == VarState::CapturedByAsync {
                 return Err(format!(
