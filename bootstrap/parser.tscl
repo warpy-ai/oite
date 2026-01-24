@@ -100,12 +100,183 @@ function parseTypeAnnotation(parser: Parser): TypeAnnotation | null {
     if (baseType == null) {
         return null;
     }
+
+    // Check for union types (A | B | C)
+    if (check(parser, TOKEN.OPERATOR, "|")) {
+        let unionTypes: Array<TypeAnnotation> = [baseType];
+        while (match(parser, TOKEN.OPERATOR, "|")) {
+            let nextType: TypeAnnotation | null = parseBaseType(parser);
+            if (nextType != null) {
+                unionTypes.push(nextType);
+            }
+        }
+        return {
+            type: "TypeAnnotation",
+            typeKind: "union",
+            isArray: false,
+            elementType: null,
+            unionTypes: unionTypes,
+            genericParams: null
+        };
+    }
+
+    // Check for array shorthand (T[])
+    if (match(parser, TOKEN.DELIMITER, "[")) {
+        expect(parser, TOKEN.DELIMITER, "]");
+        return {
+            type: "TypeAnnotation",
+            typeKind: "Array",
+            isArray: true,
+            elementType: baseType,
+            unionTypes: null,
+            genericParams: null
+        };
+    }
+
     return baseType;
 }
 
 function parseBaseType(parser: Parser): TypeAnnotation | null {
     let typeVal: TOKEN | string = peekType(parser);
     let value: string = peekValue(parser);
+
+    // Handle object types: { x: number, y: string } or { [key: string]: any }
+    if (typeVal == TOKEN.DELIMITER && value == "{") {
+        parserAdvance(parser);
+        let properties: Array<{ name: string, type: TypeAnnotation }> = [];
+        let indexType: TypeAnnotation | null = null;
+        let indexValueType: TypeAnnotation | null = null;
+
+        while (!check(parser, TOKEN.DELIMITER, "}") && !isAtEnd(parser)) {
+            // Check for indexed type: [key: string]
+            if (check(parser, TOKEN.DELIMITER, "[")) {
+                parserAdvance(parser);
+                parserAdvance(parser); // skip key name
+                expect(parser, TOKEN.DELIMITER, ":");
+                indexType = parseTypeAnnotation(parser);
+                expect(parser, TOKEN.DELIMITER, "]");
+                expect(parser, TOKEN.DELIMITER, ":");
+                indexValueType = parseTypeAnnotation(parser);
+            } else {
+                // Regular property
+                let propName: string = peekValue(parser);
+                parserAdvance(parser);
+
+                // Handle optional properties (name?)
+                if (check(parser, TOKEN.OPERATOR, "?")) {
+                    parserAdvance(parser);
+                }
+
+                // Handle method signatures: name(): Type or name(params): Type
+                if (check(parser, TOKEN.DELIMITER, "(")) {
+                    // Skip method signature for now - just consume until closing paren
+                    parserAdvance(parser);
+                    let parenDepth: number = 1;
+                    while (parenDepth > 0 && !isAtEnd(parser)) {
+                        if (check(parser, TOKEN.DELIMITER, "(")) {
+                            parenDepth = parenDepth + 1;
+                        }
+                        if (check(parser, TOKEN.DELIMITER, ")")) {
+                            parenDepth = parenDepth - 1;
+                        }
+                        parserAdvance(parser);
+                    }
+                    // Check for return type
+                    if (check(parser, TOKEN.DELIMITER, ":")) {
+                        parserAdvance(parser);
+                        let returnType: TypeAnnotation | null = parseTypeAnnotation(parser);
+                        properties.push({ name: propName, type: returnType });
+                    }
+                } else if (match(parser, TOKEN.DELIMITER, ":")) {
+                    let propType: TypeAnnotation | null = parseTypeAnnotation(parser);
+                    if (propType != null) {
+                        properties.push({ name: propName, type: propType });
+                    }
+                }
+            }
+
+            // Skip comma or semicolon
+            if (check(parser, TOKEN.DELIMITER, ",") || check(parser, TOKEN.DELIMITER, ";")) {
+                parserAdvance(parser);
+            }
+        }
+        expect(parser, TOKEN.DELIMITER, "}");
+
+        return {
+            type: "TypeAnnotation",
+            typeKind: "object",
+            isArray: false,
+            elementType: null,
+            unionTypes: null,
+            genericParams: null,
+            properties: properties,
+            indexType: indexType,
+            indexValueType: indexValueType
+        };
+    }
+
+    // Handle function types: (param: Type) => ReturnType
+    if (typeVal == TOKEN.DELIMITER && value == "(") {
+        parserAdvance(parser); // consume '('
+
+        let funcParams: Array<{ name: string, type: TypeAnnotation | null }> = [];
+        while (!check(parser, TOKEN.DELIMITER, ")") && !isAtEnd(parser)) {
+            // Parse parameter name (can be identifier or keyword)
+            if (check(parser, TOKEN.IDENTIFIER, null) || check(parser, TOKEN.KEYWORD, null)) {
+                let paramName: string = peekValue(parser);
+                parserAdvance(parser);
+
+                let paramType: TypeAnnotation | null = null;
+                if (match(parser, TOKEN.DELIMITER, ":")) {
+                    paramType = parseTypeAnnotation(parser);
+                }
+
+                funcParams.push({ name: paramName, type: paramType });
+            }
+
+            if (!match(parser, TOKEN.DELIMITER, ",")) {
+                break;
+            }
+        }
+
+        expect(parser, TOKEN.DELIMITER, ")");
+
+        // Expect => for function types
+        if (match(parser, TOKEN.OPERATOR, "=>")) {
+            let returnType: TypeAnnotation | null = parseTypeAnnotation(parser);
+            return {
+                type: "TypeAnnotation",
+                typeKind: "function",
+                isArray: false,
+                elementType: null,
+                unionTypes: null,
+                genericParams: null,
+                funcParams: funcParams,
+                returnType: returnType
+            };
+        }
+
+        // If no =>, this might be a parenthesized type - just return the first param's type
+        if (funcParams.length == 1 && funcParams[0].type != null) {
+            return funcParams[0].type;
+        }
+
+        return null;
+    }
+
+    // Handle string literal types: "foo" | "bar"
+    if (typeVal == TOKEN.STRING) {
+        parserAdvance(parser);
+        return {
+            type: "TypeAnnotation",
+            typeKind: "literal",
+            literalValue: value,
+            isArray: false,
+            elementType: null,
+            unionTypes: null,
+            genericParams: null
+        };
+    }
 
     if (typeVal == TOKEN.KEYWORD) {
         if (value == "number" || value == "string" || value == "boolean" ||
@@ -130,7 +301,7 @@ function parseBaseType(parser: Parser): TypeAnnotation | null {
 
         if (match(parser, TOKEN.OPERATOR, "<")) {
             genericParams = [];
-            while (!check(parser, TOKEN.DELIMITER, ">") && !isAtEnd(parser)) {
+            while (!check(parser, TOKEN.OPERATOR, ">") && !isAtEnd(parser)) {
                 let param: TypeAnnotation | null = parseTypeAnnotation(parser);
                 if (param != null) {
                     genericParams.push(param);
@@ -139,7 +310,7 @@ function parseBaseType(parser: Parser): TypeAnnotation | null {
                     break;
                 }
             }
-            expect(parser, TOKEN.DELIMITER, ">");
+            expect(parser, TOKEN.OPERATOR, ">");
         }
 
         return {
@@ -206,6 +377,14 @@ function parseProgram(parser: Parser): Program {
 function parseStatement(parser: Parser): Statement | null {
     let typeVal: TOKEN | string = peekType(parser);
 
+    // Handle block statements
+    if (typeVal == TOKEN.DELIMITER) {
+        let delimValue: string = peekValue(parser);
+        if (delimValue == "{") {
+            return parseBlockStatement(parser);
+        }
+    }
+
     if (typeVal == TOKEN.KEYWORD) {
         let value: string = peekValue(parser);
 
@@ -239,6 +418,24 @@ function parseStatement(parser: Parser): Statement | null {
         if (value == "export") {
             return parseExportDeclaration(parser);
         }
+        // TypeScript declarations
+        // 'type' is a contextual keyword - only treat as type alias if followed by identifier
+        if (value == "type") {
+            // Check if next token is an identifier (the type alias name)
+            if (parser.pos + 1 < parser.tokens.length) {
+                let nextToken: Token = parser.tokens[parser.pos + 1];
+                if (nextToken.type == TOKEN.IDENTIFIER) {
+                    return parseTypeAliasDeclaration(parser);
+                }
+            }
+            // Otherwise fall through to expression statement
+        }
+        if (value == "interface") {
+            return parseInterfaceDeclaration(parser);
+        }
+        if (value == "enum") {
+            return parseEnumDeclaration(parser);
+        }
     }
 
     return parseExpressionStatement(parser);
@@ -248,7 +445,8 @@ function parseVariableDeclaration(parser: Parser): VariableDeclaration | null {
     let kind: string = peekValue(parser);
     parserAdvance(parser);
 
-    if (!check(parser, TOKEN.IDENTIFIER, null)) {
+    // Accept both identifiers and keywords as variable names
+    if (!check(parser, TOKEN.IDENTIFIER, null) && !check(parser, TOKEN.KEYWORD, null)) {
         console.log("Expected variable name");
         return null;
     }
@@ -280,13 +478,14 @@ function parseVariableDeclaration(parser: Parser): VariableDeclaration | null {
 function parseFunctionDeclaration(parser: Parser): FunctionDeclaration | null {
     parserAdvance(parser);
 
-    if (!check(parser, TOKEN.IDENTIFIER, null) && !check(parser, TOKEN.DELIMITER, "(")) {
+    // Accept both identifiers and keywords as function names
+    if (!check(parser, TOKEN.IDENTIFIER, null) && !check(parser, TOKEN.KEYWORD, null) && !check(parser, TOKEN.DELIMITER, "(")) {
         console.log("Expected function name or (");
         return null;
     }
 
     let name: string = "";
-    if (check(parser, TOKEN.IDENTIFIER, null)) {
+    if (check(parser, TOKEN.IDENTIFIER, null) || check(parser, TOKEN.KEYWORD, null)) {
         name = peekValue(parser);
         parserAdvance(parser);
     }
@@ -298,7 +497,8 @@ function parseFunctionDeclaration(parser: Parser): FunctionDeclaration | null {
         while (true) {
             let param: string | TypedParam | null = null;
 
-            if (check(parser, TOKEN.IDENTIFIER, null)) {
+            // Accept both identifiers and keywords as parameter names
+            if (check(parser, TOKEN.IDENTIFIER, null) || check(parser, TOKEN.KEYWORD, null)) {
                 param = peekValue(parser);
                 parserAdvance(parser);
 
@@ -649,6 +849,198 @@ function parseExportDeclaration(parser: Parser): Statement | null {
     }
 
     return null;
+}
+
+// ============================================================================
+// TypeScript Declaration Parsers
+// ============================================================================
+
+function parseTypeAliasDeclaration(parser: Parser): Statement | null {
+    parserAdvance(parser); // consume 'type'
+
+    if (!check(parser, TOKEN.IDENTIFIER, null)) {
+        console.log("Expected type alias name");
+        return null;
+    }
+
+    let name: string = peekValue(parser);
+    parserAdvance(parser);
+
+    // Check for generic parameters <T, U>
+    let genericParams: Array<string> = [];
+    if (match(parser, TOKEN.OPERATOR, "<")) {
+        while (!check(parser, TOKEN.OPERATOR, ">") && !isAtEnd(parser)) {
+            if (check(parser, TOKEN.IDENTIFIER, null)) {
+                genericParams.push(peekValue(parser));
+                parserAdvance(parser);
+            }
+            if (!match(parser, TOKEN.DELIMITER, ",")) {
+                break;
+            }
+        }
+        expect(parser, TOKEN.OPERATOR, ">");
+    }
+
+    expect(parser, TOKEN.OPERATOR, "=");
+
+    let typeValue: TypeAnnotation | null = parseTypeAnnotation(parser);
+
+    // Optional semicolon
+    match(parser, TOKEN.DELIMITER, ";");
+
+    return {
+        type: "TypeAliasDeclaration",
+        name: name,
+        genericParams: genericParams,
+        typeValue: typeValue
+    };
+}
+
+function parseInterfaceDeclaration(parser: Parser): Statement | null {
+    parserAdvance(parser); // consume 'interface'
+
+    if (!check(parser, TOKEN.IDENTIFIER, null)) {
+        console.log("Expected interface name");
+        return null;
+    }
+
+    let name: string = peekValue(parser);
+    parserAdvance(parser);
+
+    // Check for generic parameters <T, U>
+    let genericParams: Array<string> = [];
+    if (match(parser, TOKEN.OPERATOR, "<")) {
+        while (!check(parser, TOKEN.OPERATOR, ">") && !isAtEnd(parser)) {
+            if (check(parser, TOKEN.IDENTIFIER, null)) {
+                genericParams.push(peekValue(parser));
+                parserAdvance(parser);
+            }
+            if (!match(parser, TOKEN.DELIMITER, ",")) {
+                break;
+            }
+        }
+        expect(parser, TOKEN.OPERATOR, ">");
+    }
+
+    // Check for extends
+    let extendsTypes: Array<string> = [];
+    if (check(parser, TOKEN.KEYWORD, "extends")) {
+        parserAdvance(parser);
+        while (!check(parser, TOKEN.DELIMITER, "{") && !isAtEnd(parser)) {
+            if (check(parser, TOKEN.IDENTIFIER, null)) {
+                extendsTypes.push(peekValue(parser));
+                parserAdvance(parser);
+            }
+            if (!match(parser, TOKEN.DELIMITER, ",")) {
+                break;
+            }
+        }
+    }
+
+    expect(parser, TOKEN.DELIMITER, "{");
+
+    // Parse interface body (properties and methods)
+    let members: Array<{ name: string, type: TypeAnnotation | null, optional: boolean }> = [];
+    while (!check(parser, TOKEN.DELIMITER, "}") && !isAtEnd(parser)) {
+        if (check(parser, TOKEN.IDENTIFIER, null) || check(parser, TOKEN.KEYWORD, null)) {
+            let propName: string = peekValue(parser);
+            parserAdvance(parser);
+
+            let optional: boolean = false;
+            if (check(parser, TOKEN.OPERATOR, "?")) {
+                optional = true;
+                parserAdvance(parser);
+            }
+
+            // Handle method signature: name(params): Type
+            if (check(parser, TOKEN.DELIMITER, "(")) {
+                // Skip method parameters
+                parserAdvance(parser);
+                let parenDepth: number = 1;
+                while (parenDepth > 0 && !isAtEnd(parser)) {
+                    if (check(parser, TOKEN.DELIMITER, "(")) {
+                        parenDepth = parenDepth + 1;
+                    }
+                    if (check(parser, TOKEN.DELIMITER, ")")) {
+                        parenDepth = parenDepth - 1;
+                    }
+                    parserAdvance(parser);
+                }
+
+                // Parse return type if present
+                let returnType: TypeAnnotation | null = null;
+                if (match(parser, TOKEN.DELIMITER, ":")) {
+                    returnType = parseTypeAnnotation(parser);
+                }
+
+                members.push({ name: propName, type: returnType, optional: optional });
+            } else if (match(parser, TOKEN.DELIMITER, ":")) {
+                let propType: TypeAnnotation | null = parseTypeAnnotation(parser);
+                members.push({ name: propName, type: propType, optional: optional });
+            }
+
+            // Skip semicolon or comma
+            if (check(parser, TOKEN.DELIMITER, ";") || check(parser, TOKEN.DELIMITER, ",")) {
+                parserAdvance(parser);
+            }
+        } else {
+            // Skip unknown tokens
+            parserAdvance(parser);
+        }
+    }
+
+    expect(parser, TOKEN.DELIMITER, "}");
+
+    return {
+        type: "InterfaceDeclaration",
+        name: name,
+        genericParams: genericParams,
+        extends: extendsTypes,
+        members: members
+    };
+}
+
+function parseEnumDeclaration(parser: Parser): Statement | null {
+    parserAdvance(parser); // consume 'enum'
+
+    if (!check(parser, TOKEN.IDENTIFIER, null)) {
+        console.log("Expected enum name");
+        return null;
+    }
+
+    let name: string = peekValue(parser);
+    parserAdvance(parser);
+
+    expect(parser, TOKEN.DELIMITER, "{");
+
+    // Parse enum members
+    let members: Array<{ name: string, value: Expression | null }> = [];
+    while (!check(parser, TOKEN.DELIMITER, "}") && !isAtEnd(parser)) {
+        if (check(parser, TOKEN.IDENTIFIER, null)) {
+            let memberName: string = peekValue(parser);
+            parserAdvance(parser);
+
+            let memberValue: Expression | null = null;
+            if (match(parser, TOKEN.OPERATOR, "=")) {
+                memberValue = parseExpression(parser);
+            }
+
+            members.push({ name: memberName, value: memberValue });
+
+            // Skip comma
+            match(parser, TOKEN.DELIMITER, ",");
+        } else {
+            parserAdvance(parser);
+        }
+    }
+
+    expect(parser, TOKEN.DELIMITER, "}");
+
+    return {
+        type: "EnumDeclaration",
+        name: name,
+        members: members
+    };
 }
 
 // ============================================================================
@@ -1012,6 +1404,22 @@ function parseUnary(parser: Parser): Expression | null {
         };
     }
 
+    // Handle typeof keyword as unary operator
+    if (check(parser, TOKEN.KEYWORD, "typeof")) {
+        parserAdvance(parser);
+
+        let argument: Expression | null = parseUnary(parser);
+        if (argument == null) {
+            return null;
+        }
+
+        return {
+            type: "UnaryExpression",
+            operator: "typeof",
+            argument: argument
+        };
+    }
+
     return parsePostfix(parser);
 }
 
@@ -1021,6 +1429,7 @@ function parsePostfix(parser: Parser): Expression | null {
         return null;
     }
 
+    // Handle postfix ++/--
     if (check(parser, TOKEN.OPERATOR, "++") || check(parser, TOKEN.OPERATOR, "--")) {
         let operator: string = peekValue(parser);
         parserAdvance(parser);
@@ -1030,6 +1439,15 @@ function parsePostfix(parser: Parser): Expression | null {
             operator: operator,
             argument: expr
         };
+    }
+
+    // Handle TypeScript 'as' type assertions (expr as Type)
+    // Type assertions are erased at runtime, so we just parse and discard the type
+    while (check(parser, TOKEN.KEYWORD, "as")) {
+        parserAdvance(parser); // consume 'as'
+        // Parse and discard the type annotation
+        let typeAnnotation: TypeAnnotation | null = parseTypeAnnotation(parser);
+        // The expression remains unchanged (type assertions have no runtime effect)
     }
 
     return expr;
@@ -1045,7 +1463,8 @@ function parseCallMember(parser: Parser): Expression | null {
         if (check(parser, TOKEN.DELIMITER, ".")) {
             parserAdvance(parser);
 
-            if (check(parser, TOKEN.IDENTIFIER, null)) {
+            // Accept both identifiers and keywords as property names
+            if (check(parser, TOKEN.IDENTIFIER, null) || check(parser, TOKEN.KEYWORD, null)) {
                 let property: Identifier = {
                     type: "Identifier",
                     name: peekValue(parser)
@@ -1162,6 +1581,12 @@ function parsePrimary(parser: Parser): Expression | null {
         if (value == "if") {
             return parseConditionalExpression(parser);
         }
+        // Treat other keywords as identifiers (e.g., 'module', 'type' used as variable names)
+        parserAdvance(parser);
+        return {
+            type: "Identifier",
+            name: value
+        };
     }
 
     if (typeVal == TOKEN.IDENTIFIER) {
@@ -1244,7 +1669,8 @@ function parseFunctionExpression(parser: Parser): FunctionExpression | null {
         while (true) {
             let param: string | TypedParam | null = null;
 
-            if (check(parser, TOKEN.IDENTIFIER, null)) {
+            // Accept both identifiers and keywords as parameter names
+            if (check(parser, TOKEN.IDENTIFIER, null) || check(parser, TOKEN.KEYWORD, null)) {
                 param = peekValue(parser);
                 parserAdvance(parser);
 
@@ -1376,6 +1802,14 @@ function parseObjectExpression(parser: Parser): ObjectExpression | null {
             let computedKey: boolean = false;
 
             if (check(parser, TOKEN.IDENTIFIER, null)) {
+                keyName = peekValue(parser);
+                key = {
+                    type: "Identifier",
+                    name: keyName
+                };
+                parserAdvance(parser);
+            } else if (check(parser, TOKEN.KEYWORD, null)) {
+                // Keywords can be used as property names in object literals
                 keyName = peekValue(parser);
                 key = {
                     type: "Identifier",

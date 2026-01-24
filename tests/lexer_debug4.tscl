@@ -1,0 +1,23 @@
+// Lexer debug - single use variables only
+console.log("=== Lexer Debug 4 ===");
+
+// Test the tokenize function step by step
+let src = "42";
+console.log("Source: " + src);
+
+// Create lexer manually
+let lex = createLexer(src);
+console.log("Lexer created");
+console.log("Lexer pos: " + lex.pos);
+console.log("Lexer source length: " + lex.source.length);
+
+// Test lexerPeek
+let peekResult = lexerPeek(lex);
+console.log("lexerPeek result: " + peekResult);
+console.log("Expected 52 for char '4'");
+
+// Check if isDigit would match
+let digitCheck = isDigit(52);
+console.log("isDigit(52): " + digitCheck);
+
+console.log("=== Done ===");

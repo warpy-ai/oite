@@ -262,9 +262,9 @@ function getOpCodeForUnaryOp(op) {
 // Token Factory
 // ============================================================================
 
-function makeToken(type, value, line, col) {
+function makeToken(tokenType, value, line, col) {
     return {
-        type: type,
+        type: tokenType,
         value: value,
         line: line,
         col: col

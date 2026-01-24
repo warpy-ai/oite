@@ -1,0 +1,17 @@
+// Test the bootstrap compiler pipeline
+console.log("=== Compiler Pipeline Test ===");
+
+// Test tokenize
+let tokens = tokenize("let x = 42;");
+console.log("Tokens: " + tokens.length);
+
+// Test parseSource
+let ast = parseSource("let x = 42;");
+console.log("AST type: " + ast.type);
+console.log("AST body length: " + ast.body.length);
+
+// Test compileToBytecode
+let result = compileToBytecode("let x = 42;");
+console.log("Bytecode length: " + result.length);
+
+console.log("=== Done ===");

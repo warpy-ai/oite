@@ -1880,8 +1880,7 @@ impl VM {
 
                 match reciever {
                     // -- String methods --
-                    // Note: Full string method support moved to @rolls/string
-                    // Only basic length property is supported in core
+                    // Core string methods needed for bootstrap compiler
                     JsValue::String(s) => {
                         match name.as_str() {
                             "length" => {
@@ -1889,7 +1888,69 @@ impl VM {
                                 for _ in 0..arg_count {
                                     self.stack.pop();
                                 }
-                                self.stack.push(JsValue::Number(s.len() as f64));
+                                self.stack.push(JsValue::Number(s.chars().count() as f64));
+                            }
+                            "charCodeAt" => {
+                                // Get char code at index
+                                let index = if arg_count > 0 {
+                                    match self.stack.pop() {
+                                        Some(JsValue::Number(n)) => n as usize,
+                                        _ => 0,
+                                    }
+                                } else {
+                                    0
+                                };
+                                // Pop remaining args if any
+                                for _ in 1..arg_count {
+                                    self.stack.pop();
+                                }
+                                let result = s
+                                    .chars()
+                                    .nth(index)
+                                    .map(|c| JsValue::Number(c as u32 as f64))
+                                    .unwrap_or(JsValue::Number(f64::NAN));
+                                self.stack.push(result);
+                            }
+                            "slice" => {
+                                // Get start and end indices
+                                let mut args = Vec::with_capacity(arg_count);
+                                for _ in 0..arg_count {
+                                    args.push(self.stack.pop().expect("Missing argument"));
+                                }
+                                args.reverse();
+
+                                let len = s.chars().count() as i64;
+                                let start = args
+                                    .first()
+                                    .and_then(|v| match v {
+                                        JsValue::Number(n) => {
+                                            let n = *n as i64;
+                                            if n < 0 {
+                                                Some((len + n).max(0) as usize)
+                                            } else {
+                                                Some(n as usize)
+                                            }
+                                        }
+                                        _ => None,
+                                    })
+                                    .unwrap_or(0);
+                                let end = args
+                                    .get(1)
+                                    .and_then(|v| match v {
+                                        JsValue::Number(n) => {
+                                            let n = *n as i64;
+                                            if n < 0 {
+                                                Some((len + n).max(0) as usize)
+                                            } else {
+                                                Some(n as usize)
+                                            }
+                                        }
+                                        _ => None,
+                                    })
+                                    .unwrap_or(len as usize);
+
+                                let result: String = s.chars().skip(start).take(end.saturating_sub(start)).collect();
+                                self.stack.push(JsValue::String(result));
                             }
                             _ => {
                                 // Unsupported string method - pop args and return undefined

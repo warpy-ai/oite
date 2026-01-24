@@ -1,6 +1,6 @@
 // ============================================================================
 // Bootstrap Compiler Pipeline
-// Unified compilation: Source → Lexer → Parser → IR → Bytecode
+// Unified compilation: Source -> Lexer -> Parser -> IR -> Bytecode
 // ============================================================================
 
 require ./lexer;

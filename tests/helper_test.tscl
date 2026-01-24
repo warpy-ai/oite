@@ -1,0 +1,22 @@
+// Test helper functions
+console.log("=== Helper Function Test ===");
+
+// Test isDigit
+let code1 = 48; // '0'
+let code2 = 57; // '9'
+let code3 = 65; // 'A'
+
+console.log("Testing isDigit(48): " + isDigit(code1));
+console.log("Testing isDigit(57): " + isDigit(code2));
+console.log("Testing isDigit(65): " + isDigit(code3));
+
+// Test isAlpha
+let codeA = 65; // 'A'
+let codeZ = 90; // 'Z'
+let code0 = 48; // '0'
+
+console.log("Testing isAlpha(65): " + isAlpha(codeA));
+console.log("Testing isAlpha(90): " + isAlpha(codeZ));
+console.log("Testing isAlpha(48): " + isAlpha(code0));
+
+console.log("=== Done ===");

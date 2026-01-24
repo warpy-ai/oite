@@ -1,0 +1,13 @@
+// Detailed lexer debug
+console.log("=== Detailed Lexer Debug ===");
+
+// Test tokenize directly
+let tokens = tokenize("42");
+console.log("Tokens from tokenize('42'): " + tokens.length);
+
+if (tokens.length > 0) {
+    console.log("Token 0 type: " + tokens[0].type);
+    console.log("Token 0 value: " + tokens[0].value);
+}
+
+console.log("=== Done ===");

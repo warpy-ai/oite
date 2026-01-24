@@ -1,0 +1,13 @@
+// Lexer debug - avoiding all variable reuse
+console.log("=== Lexer Debug 5 ===");
+
+// Create lexer directly inline
+let lex = createLexer("42");
+console.log("Lexer created");
+
+// Test lexerPeek
+let peekResult = lexerPeek(lex);
+console.log("lexerPeek result: " + peekResult);
+console.log("Expected 52 for char '4'");
+
+console.log("=== Done ===");

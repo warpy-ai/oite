@@ -1,0 +1,10 @@
+// Simple compile test
+console.log("=== Simple Compile ===");
+
+console.log("Code: function add(a, b) { return a + b; }");
+
+let result = compileToBytecode("function add(a, b) { return a + b; }");
+console.log("Done compiling");
+console.log("Bytecode length: " + result.length);
+
+console.log("=== Done ===");

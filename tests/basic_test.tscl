@@ -1,0 +1,17 @@
+// Basic test - no compiler usage
+console.log("=== Basic Test ===");
+
+let x = 42;
+console.log("x = " + x);
+
+let y = x + 10;
+console.log("y = " + y);
+
+function add(a, b) {
+    return a + b;
+}
+
+let sum = add(5, 3);
+console.log("sum = " + sum);
+
+console.log("=== Done ===");
