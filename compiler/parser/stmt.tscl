@@ -60,7 +60,10 @@ function expect(parser, type, value) {
     if (tok != null && tok.type == type && (value == null || tok.value == value)) {
         return parserAdvance(parser);
     }
-    console.log("Parse error: expected", type, value, "but got", tok);
+    // Error recovery: skip the unexpected token to prevent infinite loops
+    if (tok != null) {
+        parserAdvance(parser);
+    }
     return null;
 }
 
@@ -365,9 +368,15 @@ function parseBlockStatement(parser) {
     expect(parser, "DELIMITER", "{");
     let body = [];
     while (!match(parser, "DELIMITER", "}")) {
+        if (peekType(parser) == "EOF") break;
+        let startPos = parser.pos;
         let stmt = parseStatement(parser);
         if (stmt != null) {
             body.push(stmt);
+        }
+        // Error recovery: if no progress was made, skip token to prevent infinite loop
+        if (parser.pos == startPos) {
+            parserAdvance(parser);
         }
     }
     return {

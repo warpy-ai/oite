@@ -1,0 +1,297 @@
+// ============================================================================
+// Modular Compiler Pipeline Tests
+// Tests the full compilation pipeline through the Pipeline object
+// ============================================================================
+
+console.log("======================================================================");
+console.log("MODULAR COMPILER PIPELINE TESTS");
+console.log("======================================================================");
+
+let passed = 0;
+let failed = 0;
+
+// Helper to increment pass count
+function pass(msg) {
+    console.log("  PASS - " + msg);
+}
+
+function fail(msg) {
+    console.log("  FAIL - " + msg);
+}
+
+// ============================================================================
+// Test 1: Basic Tokenization
+// ============================================================================
+console.log("");
+console.log("TEST 1: Basic Tokenization");
+
+if (tokenize("let x = 42;") != null) {
+    pass("tokenization works");
+    passed = passed + 1;
+} else {
+    fail("tokenization failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 2: Basic Parsing
+// ============================================================================
+console.log("");
+console.log("TEST 2: Basic Parsing");
+
+if (parseSource("let x = 42;") != null) {
+    pass("parsing works");
+    passed = passed + 1;
+} else {
+    fail("parsing failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 3: Function Parsing
+// ============================================================================
+console.log("");
+console.log("TEST 3: Function Parsing");
+
+if (parseSource("function add(a, b) { return a + b; }") != null) {
+    pass("function parsing works");
+    passed = passed + 1;
+} else {
+    fail("function parsing failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 4: IR Lowering
+// ============================================================================
+console.log("");
+console.log("TEST 4: IR Lowering");
+
+if (lowerProgramToIr(parseSource("let x = 10;")) != null) {
+    pass("IR lowering works");
+    passed = passed + 1;
+} else {
+    fail("IR lowering failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 5: IR Verification
+// ============================================================================
+console.log("");
+console.log("TEST 5: IR Verification");
+
+if (verifyIrModule(lowerProgramToIr(parseSource("function test() { return 42; }"))) == true) {
+    pass("IR verification works");
+    passed = passed + 1;
+} else {
+    fail("IR verification failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 6: Code Generation
+// ============================================================================
+console.log("");
+console.log("TEST 6: Code Generation");
+
+if (codegenIrModule(lowerProgramToIr(parseSource("let x = 1;"))) != null) {
+    pass("code generation works");
+    passed = passed + 1;
+} else {
+    fail("code generation failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 7: Full IR Pipeline
+// ============================================================================
+console.log("");
+console.log("TEST 7: Full IR Pipeline");
+
+// Test the full chain: parse -> lower -> verify -> codegen
+let src7 = "let x = 42;";
+let ast7 = parseSource(src7);
+let ir7 = lowerProgramToIr(ast7);
+let verified7 = verifyIrModule(ir7);
+let code7 = codegenIrModule(ir7);
+if (code7 != null && verified7 == true) {
+    pass("full IR pipeline works");
+    passed = passed + 1;
+} else {
+    fail("full IR pipeline failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 8: Function Codegen
+// ============================================================================
+console.log("");
+console.log("TEST 8: Function Codegen");
+
+if (codegenIrModule(lowerProgramToIr(parseSource("function add(a, b) { return a + b; }"))) != null) {
+    pass("function codegen works");
+    passed = passed + 1;
+} else {
+    fail("function codegen failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 9: Recursive Function
+// ============================================================================
+console.log("");
+console.log("TEST 9: Recursive Function");
+
+if (codegenIrModule(lowerProgramToIr(parseSource("function fact(n) { if (n <= 1) { return 1; } return n * fact(n - 1); }"))) != null) {
+    pass("recursive function works");
+    passed = passed + 1;
+} else {
+    fail("recursive function failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 10: Multiple Statements
+// ============================================================================
+console.log("");
+console.log("TEST 10: Multiple Statements");
+
+if (codegenIrModule(lowerProgramToIr(parseSource("let a = 1; let b = 2; let c = a + b;"))) != null) {
+    pass("multiple statements work");
+    passed = passed + 1;
+} else {
+    fail("multiple statements failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 11: Nested Expressions
+// ============================================================================
+console.log("");
+console.log("TEST 11: Nested Expressions");
+
+if (codegenIrModule(lowerProgramToIr(parseSource("let x = (1 + 2) * (3 + 4);"))) != null) {
+    pass("nested expressions work");
+    passed = passed + 1;
+} else {
+    fail("nested expressions failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 12: Complex Expression
+// ============================================================================
+console.log("");
+console.log("TEST 12: Complex Expression");
+
+if (parseSource("let r = (1 + 2) * (3 - 4) / 5;") != null) {
+    pass("complex expression parsing works");
+    passed = passed + 1;
+} else {
+    fail("complex expression parsing failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 13: Control Flow
+// ============================================================================
+console.log("");
+console.log("TEST 13: Control Flow");
+
+if (parseSource("function test(x) { if (x > 0) { return x; } return 0; }") != null) {
+    pass("control flow parsing works");
+    passed = passed + 1;
+} else {
+    fail("control flow parsing failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 14: While Loop
+// ============================================================================
+console.log("");
+console.log("TEST 14: While Loop");
+
+if (parseSource("let i = 0; while (i < 10) { i = i + 1; }") != null) {
+    pass("while loop parsing works");
+    passed = passed + 1;
+} else {
+    fail("while loop parsing failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 15: Array Literal
+// ============================================================================
+console.log("");
+console.log("TEST 15: Array Literal");
+
+if (parseSource("let arr = [1, 2, 3];") != null) {
+    pass("array parsing works");
+    passed = passed + 1;
+} else {
+    fail("array parsing failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 16: Object Literal
+// ============================================================================
+console.log("");
+console.log("TEST 16: Object Literal");
+
+if (parseSource("let obj = { x: 1, y: 2 };") != null) {
+    pass("object parsing works");
+    passed = passed + 1;
+} else {
+    fail("object parsing failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 17: String Literals
+// ============================================================================
+console.log("");
+console.log("TEST 17: String Literals");
+
+if (codegenIrModule(lowerProgramToIr(parseSource("let s = \"hello\";"))) != null) {
+    pass("string literals work");
+    passed = passed + 1;
+} else {
+    fail("string literals failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Test 18: Boolean Expressions
+// ============================================================================
+console.log("");
+console.log("TEST 18: Boolean Expressions");
+
+if (codegenIrModule(lowerProgramToIr(parseSource("let b = true; let c = false; let d = b && c;"))) != null) {
+    pass("boolean expressions work");
+    passed = passed + 1;
+} else {
+    fail("boolean expressions failed");
+    failed = failed + 1;
+}
+
+// ============================================================================
+// Summary
+// ============================================================================
+console.log("");
+console.log("======================================================================");
+console.log("TEST SUMMARY");
+console.log("======================================================================");
+console.log("  Passed: " + passed);
+console.log("  Failed: " + failed);
+console.log("  Total:  " + (passed + failed));
+console.log("");
+
+if (failed == 0) {
+    console.log("ALL TESTS PASSED!");
+} else {
+    console.log("SOME TESTS FAILED");
+}
+console.log("======================================================================");

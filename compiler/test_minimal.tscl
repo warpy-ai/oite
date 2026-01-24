@@ -1,0 +1,7 @@
+// Minimal test - just check if Pipeline is available
+
+console.log("Starting minimal test...");
+
+console.log("Pipeline version: " + Pipeline.version);
+
+console.log("Test complete");
