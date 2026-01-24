@@ -9,63 +9,65 @@ require ./mod;
 // Bytecode Opcodes (VM compatible)
 // ============================================================================
 
-// Opcodes matching bootstrap/types.tscl exactly
+// Opcodes matching src/loader/decoder.rs exactly
 let OP = {
-    HALT: 0,
+    // Core opcodes (0-17)
+    LOAD_THIS: 0,
     PUSH: 1,
-    POP: 2,
-    DUP: 3,
-    LOAD: 4,
-    STORE: 5,
-    LOAD_LOCAL: 6,
-    STORE_LOCAL: 7,
-    LOAD_THIS: 8,
-    LOAD_ELEMENT: 9,
-    STORE_ELEMENT: 10,
-    GET_PROP: 11,
-    SET_PROP: 12,
-    NEW_OBJECT: 13,
-    NEW_ARRAY: 14,
-    CALL: 15,
-    CALL_METHOD: 16,
-    CONSTRUCT: 17,
-    RETURN: 18,
-    JUMP: 19,
-    JUMP_IF_FALSE: 20,
-    MAKE_CLOSURE: 21,
-    // Arithmetic (extended opcodes for PUSH instruction with type tags)
-    ADD: 22,
-    SUB: 23,
-    MUL: 24,
-    DIV: 25,
-    MOD: 26,
-    NEG: 27,
-    // Comparison
-    LT: 28,
-    LE: 29,
-    GT: 30,
-    GE: 31,
-    EQ: 32,
-    NE: 33,
-    STRICT_EQ: 34,
-    STRICT_NE: 35,
-    // Logical
-    AND: 36,
-    OR: 37,
-    NOT: 38,
-    // Bitwise
-    BIT_AND: 39,
-    BIT_OR: 40,
-    BIT_XOR: 41,
-    BIT_NOT: 42,
-    BIT_SHL: 43,
-    BIT_SHR: 44,
-    BIT_USHR: 45,
-    // Other
-    EXP: 46,
-    UNARY_PLUS: 47,
-    TYPEOF: 48,
-    INSTANCEOF: 49
+    ADD: 2,
+    SUB: 3,
+    MUL: 4,
+    DIV: 5,
+    PRINT: 6,
+    POP: 7,
+    STORE: 8,
+    LOAD: 9,
+    DROP: 10,
+    CALL: 11,
+    RETURN: 12,
+    JUMP: 13,
+    NEW_OBJECT: 14,
+    SET_PROP: 15,
+    GET_PROP: 16,
+    DUP: 17,
+    // Comparison (18-25)
+    STRICT_EQ: 18,    // ===
+    EQ: 19,           // ==
+    STRICT_NE: 20,    // !==
+    NE: 21,           // !=
+    LT: 22,           // <
+    LE: 23,           // <=
+    GT: 24,           // >
+    GE: 25,           // >=
+    // Arithmetic/Logical (26-30)
+    MOD: 26,          // %
+    AND: 27,          // &&
+    OR: 28,           // ||
+    NOT: 29,          // !
+    NEG: 30,          // unary -
+    // Arrays/Elements (31-33)
+    NEW_ARRAY: 31,
+    STORE_ELEMENT: 32,
+    LOAD_ELEMENT: 33,
+    // Control flow (34)
+    JUMP_IF_FALSE: 34,
+    // Extended binary ops (37-53)
+    EXP: 37,          // **
+    BIT_SHL: 46,      // <<
+    BIT_SHR: 47,      // >>
+    BIT_USHR: 48,     // >>>
+    BIT_AND: 49,      // &
+    BIT_XOR: 50,      // ^
+    BIT_OR: 51,       // |
+    // Advanced opcodes (54-59)
+    CALL_METHOD: 54,
+    REQUIRE: 55,
+    MAKE_CLOSURE: 56,
+    CONSTRUCT: 57,
+    STORE_LOCAL: 58,
+    LOAD_LOCAL: 59,
+    // Halt (255)
+    HALT: 255
 };
 
 // Type tags matching bootstrap/types.tscl

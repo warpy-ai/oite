@@ -768,12 +768,12 @@ impl Codegen {
             }
             Stmt::Expr(expr_stmt) => {
                 self.gen_expr(&expr_stmt.expr);
-                // Expression statements (e.g. `foo();`) should discard their result in JS.
-                // Keep values on the stack only when inside a function, since the last
-                // expression can become the implicit return value in our VM.
-                if !self.in_function {
-                    self.instructions.push(OpCode::Pop);
-                }
+                // Expression statements (e.g. `foo();`) should always discard their result in JS.
+                // This is critical for proper stack management - without this Pop, values from
+                // expression statements (like assignments) accumulate on the stack and corrupt
+                // the stack state when calling functions from within object literals or other
+                // expressions that expect the stack to be clean.
+                self.instructions.push(OpCode::Pop);
             }
             // Inside gen_stmt match block
             Stmt::While(while_stmt) => {

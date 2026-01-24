@@ -215,11 +215,13 @@ function readToken(lexer: Lexer): Token {
     }
 
     if (isDigit(c)) {
+        advance(lexer);  // Consume the first digit before calling readNumber
         let value = readNumber(lexer, c);
         return { type: TOKEN.NUMBER, value: value, line: line, col: col };
     }
 
     if (isAlpha(c) || c == "_" || c == "$") {
+        advance(lexer);  // Consume the first char before calling readIdentifier
         let value = readIdentifier(lexer, c);
         if (isKeyword(value)) {
             return { type: TOKEN.KEYWORD, value: value, line: line, col: col };
