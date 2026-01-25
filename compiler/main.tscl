@@ -11,6 +11,7 @@ require ./codegen/mod;
 require ./codegen/emitter;
 require ./passes/mod;
 require ./stdlib/builtins;
+require ./backend/llvm/mod;
 
 // ============================================================================
 // Command Line Interface
@@ -38,7 +39,7 @@ function parseArgs(args: string[]): CliArgs {
     let i = 0;
     while (i < args.length) {
         let arg = args[i];
-        if (arg == "run" || arg == "build" || arg == "ir" || arg == "ast" || arg == "check") {
+        if (arg == "run" || arg == "build" || arg == "ir" || arg == "ast" || arg == "check" || arg == "llvm") {
             result.command = arg;
         } else if (arg == "-o" || arg == "--output") {
             i = i + 1;
@@ -67,9 +68,10 @@ function printUsage() {
     console.log("");
     console.log("Commands:");
     console.log("  run <file>      Run the file");
-    console.log("  build <file>    Compile to native binary");
+    console.log("  build <file>    Compile to bytecode");
+    console.log("  llvm <file>     Generate LLVM IR (.ll file)");
     console.log("  check <file>    Type check and borrow check");
-    console.log("  ir <file>       Output IR");
+    console.log("  ir <file>       Output tscl IR");
     console.log("  ast <file>      Output AST");
     console.log("");
     console.log("Options:");
@@ -218,6 +220,37 @@ function main(args: string[]) {
         return;
     }
 
+    if (parsed.command == "llvm") {
+        logVerbose(parsed.verbose, "Compiling to LLVM IR...");
+
+        let irModule = compileSource(source, parsed.verbose);
+        if (irModule == null) {
+            console.log("Compilation failed");
+            return;
+        }
+
+        logVerbose(parsed.verbose, "Generating LLVM IR...");
+        let llvmIr = emitLlvmModule(irModule);
+
+        let outputFile = parsed.outputFile;
+        if (outputFile == "") {
+            // Replace .tscl extension with .ll, or append .ll
+            if (parsed.inputFile.indexOf(".tscl") > 0) {
+                outputFile = parsed.inputFile.substring(0, parsed.inputFile.indexOf(".tscl")) + ".ll";
+            } else {
+                outputFile = parsed.inputFile + ".ll";
+            }
+        }
+
+        fs.writeFileSync(outputFile, llvmIr);
+        console.log("Generated: " + outputFile);
+        console.log("");
+        console.log("To compile to native binary:");
+        console.log("  llc -filetype=obj " + outputFile + " -o output.o");
+        console.log("  clang output.o -o output");
+        return;
+    }
+
     if (parsed.command == "build") {
         logVerbose(parsed.verbose, "Compiling to bytecode...");
 
@@ -276,18 +309,26 @@ let Compiler = {
         if (ast == null) return null;
         return Emitter.compileAst(ast);
     },
+    compileToLlvm: function(source) {
+        let ast = parseSource(source);
+        if (ast == null) return null;
+        let irModule = lowerProgramToIr(ast);
+        if (irModule == null) return null;
+        return emitLlvmModule(irModule);
+    },
     parse: parseSource,
     tokenize: tokenize,
     lowerToIr: lowerProgramToIr,
     verifyIr: verifyIrModule,
     serializeIr: serializeIrModule,
     codegenIr: codegenIrModule,
+    emitLlvm: emitLlvmModule,
     Emitter: Emitter,
     Passes: Passes,
     TypeCheck: TypeCheck,
     Optimizer: Optimizer,
     BorrowCheck: BorrowCheck,
-    version: "0.3.0"
+    version: "0.4.0"
 };
 
 console.log("tscl compiler loaded (v" + Compiler.version + ")");

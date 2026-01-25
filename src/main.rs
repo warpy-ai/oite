@@ -54,7 +54,11 @@ const MODULAR_COMPILER_FILES: &[&str] = &[
     "compiler/codegen/mod.tscl",
     // Level 4: Depends on level 3
     "compiler/codegen/emitter.tscl",
-    // Level 5: Top-level pipeline
+    // Level 5: Backend modules
+    "compiler/backend/llvm/runtime.tscl",
+    "compiler/backend/llvm/types.tscl",
+    "compiler/backend/llvm/mod.tscl",
+    // Level 6: Top-level pipeline
     "compiler/pipeline.tscl",
 ];
 

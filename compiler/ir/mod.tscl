@@ -209,8 +209,29 @@ function emitReturn(block: IrBlock, value: number | null): void {
     }
 }
 
-function emitCall(block: IrBlock, dest: number, funcReg: number, argc: number): void {
-    emitIrOp(block, IrOpCode.CALL, dest, [funcReg, argc], null);
+function emitCall(block: IrBlock, dest: number, funcReg: number, argRegs: number[]): void {
+    // Store [funcReg, argc, arg0, arg1, ...]
+    let args: number[] = [funcReg, argRegs.length];
+    let i = 0;
+    while (i < argRegs.length) {
+        args.push(argRegs[i]);
+        i = i + 1;
+    }
+    emitIrOp(block, IrOpCode.CALL, dest, args, null);
+}
+
+function emitMethodCall(block: IrBlock, dest: number, objName: string, methodName: string, argRegs: number[]): void {
+    // Store argument value IDs and method name as immediate
+    // args contains [argc, arg0, arg1, ...]
+    let args: number[] = [argRegs.length];
+    let i = 0;
+    while (i < argRegs.length) {
+        args.push(argRegs[i]);
+        i = i + 1;
+    }
+    // Use immediate to store "objName.methodName"
+    let methodPath = objName + "." + methodName;
+    emitIrOp(block, IrOpCode.CALL_METHOD, dest, args, methodPath);
 }
 
 // ============================================================================

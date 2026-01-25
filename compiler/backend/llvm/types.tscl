@@ -1,0 +1,77 @@
+// ============================================================================
+// LLVM Type Mappings for tscl
+// ============================================================================
+
+// NaN-boxing constants (64-bit)
+// These are the tag values used for NaN-boxed special values
+let QNAN_BASE = 0x7FFC000000000000;  // Quiet NaN base
+let TAG_BOOLEAN = 0x0001000000000000;
+let TAG_NULL = 0x0002000000000000;
+let TAG_UNDEFINED = 0x0003000000000000;
+let TAG_OBJECT = 0x0004000000000000;
+let TAG_STRING = 0x0005000000000000;
+let TAG_SYMBOL = 0x0006000000000000;
+let TAG_FUNCTION = 0x0007000000000000;
+
+// Pre-computed NaN-boxed constants
+let UNDEFINED_VALUE = 9221120237041090561;  // QNAN_BASE | TAG_UNDEFINED
+let NULL_VALUE = 9221120237041090560;       // QNAN_BASE | TAG_NULL
+let TRUE_VALUE = 9221120237041090561;       // QNAN_BASE | TAG_BOOLEAN | 1
+let FALSE_VALUE = 9221120237041090560;      // QNAN_BASE | TAG_BOOLEAN | 0
+let BOOLEAN_BASE = 9221120237041090560;     // QNAN_BASE | TAG_BOOLEAN
+
+// Get LLVM type string for tscl IR type
+function getLlvmType(irType: number): string {
+    // All values are i64 (NaN-boxed)
+    return "i64";
+}
+
+// Get LLVM function type string
+function getLlvmFunctionType(paramCount: number): string {
+    let result = "i64 (";
+    let i = 0;
+    while (i < paramCount) {
+        if (i > 0) {
+            result = result + ", ";
+        }
+        result = result + "i64";
+        i = i + 1;
+    }
+    result = result + ")";
+    return result;
+}
+
+// Get LLVM function pointer type string
+function getLlvmFunctionPtrType(paramCount: number): string {
+    return getLlvmFunctionType(paramCount) + "*";
+}
+
+// Format a number constant as LLVM IR
+// Numbers are stored as NaN-boxed doubles (bitcast double to i64)
+function formatNumberConstant(value: number): string {
+    // For simplicity, emit as hex constant of the bitcast double
+    // This works because LLVM will interpret it as an i64
+    // We'll use a runtime helper to box numbers properly
+    return "i64 " + String(value);
+}
+
+// Format a boolean constant as LLVM IR
+function formatBooleanConstant(value: boolean): string {
+    if (value) {
+        return "i64 " + String(BOOLEAN_BASE + 1);
+    } else {
+        return "i64 " + String(BOOLEAN_BASE);
+    }
+}
+
+// Format undefined constant as LLVM IR
+function formatUndefinedConstant(): string {
+    return "i64 " + String(UNDEFINED_VALUE);
+}
+
+// Format null constant as LLVM IR
+function formatNullConstant(): string {
+    return "i64 " + String(NULL_VALUE);
+}
+
+console.log("LLVM types module loaded");

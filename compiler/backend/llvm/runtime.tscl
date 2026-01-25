@@ -1,0 +1,312 @@
+// ============================================================================
+// LLVM Runtime Stub Declarations
+// ============================================================================
+// Generates LLVM IR declarations for runtime stubs
+
+// Get all runtime stub declarations as LLVM IR text
+function getRuntimeDeclarations(): string {
+    let lines: string[] = [];
+
+    // Target triple (arm64 for Apple Silicon)
+    lines.push("target triple = \"arm64-apple-darwin\"");
+    lines.push("");
+
+    // Declare libc printf for console.log
+    lines.push("; libc functions");
+    lines.push("declare i32 @printf(i8*, ...)");
+    lines.push("");
+
+    // Arithmetic operations (NaN-boxed doubles)
+    lines.push("; Arithmetic stubs");
+    lines.push("declare i64 @tscl_add_any(i64, i64)");
+    lines.push("declare i64 @tscl_sub_any(i64, i64)");
+    lines.push("declare i64 @tscl_mul_any(i64, i64)");
+    lines.push("declare i64 @tscl_div_any(i64, i64)");
+    lines.push("declare i64 @tscl_mod_any(i64, i64)");
+    lines.push("declare i64 @tscl_neg(i64)");
+    lines.push("declare i64 @tscl_not(i64)");
+    lines.push("");
+
+    // Comparison operations
+    lines.push("; Comparison stubs");
+    lines.push("declare i64 @tscl_lt_any(i64, i64)");
+    lines.push("declare i64 @tscl_le_any(i64, i64)");
+    lines.push("declare i64 @tscl_gt_any(i64, i64)");
+    lines.push("declare i64 @tscl_ge_any(i64, i64)");
+    lines.push("declare i64 @tscl_eq_any(i64, i64)");
+    lines.push("declare i64 @tscl_ne_any(i64, i64)");
+    lines.push("declare i64 @tscl_eq_strict(i64, i64)");
+    lines.push("declare i64 @tscl_ne_strict(i64, i64)");
+    lines.push("");
+
+    // Object operations
+    lines.push("; Object stubs");
+    lines.push("declare i64 @tscl_alloc_object()");
+    lines.push("declare i64 @tscl_get_prop(i64, i64)");
+    lines.push("declare void @tscl_set_prop(i64, i64, i64)");
+    lines.push("");
+
+    // Array operations
+    lines.push("; Array stubs");
+    lines.push("declare i64 @tscl_alloc_array(i64)");
+    lines.push("declare i64 @tscl_get_element(i64, i64)");
+    lines.push("declare void @tscl_set_element(i64, i64, i64)");
+    lines.push("declare i64 @tscl_array_length(i64)");
+    lines.push("");
+
+    // String operations
+    lines.push("; String stubs");
+    lines.push("declare i64 @tscl_alloc_string(i8*, i64)");
+    lines.push("declare i64 @tscl_string_concat(i64, i64)");
+    lines.push("");
+
+    // Function operations
+    lines.push("; Function stubs");
+    lines.push("declare i64 @tscl_call(i64, i64, i8*)");
+    lines.push("declare i64 @tscl_make_closure(i64, i64)");
+    lines.push("");
+
+    // Console
+    lines.push("; Console stubs");
+    lines.push("declare i64 @tscl_console_log(i64)");
+    lines.push("");
+
+    // Type conversion
+    lines.push("; Type conversion stubs");
+    lines.push("declare i64 @tscl_to_boolean(i64)");
+    lines.push("declare i64 @tscl_to_number(i64)");
+    lines.push("declare i64 @tscl_to_string(i64)");
+    lines.push("declare i64 @tscl_is_truthy(i64)");
+    lines.push("");
+
+    let result = "";
+    let i = 0;
+    while (i < lines.length) {
+        result = result + lines[i] + "\n";
+        i = i + 1;
+    }
+    return result;
+}
+
+// Get runtime stub definitions as LLVM IR text (inline implementations)
+function getRuntimeDefinitions(): string {
+    let lines: string[] = [];
+
+    // Format string constants
+    lines.push("; String constants");
+    lines.push("@.fmt_num = private unnamed_addr constant [4 x i8] c\"%g\\0A\\00\"");
+    lines.push("");
+
+    // tscl_console_log implementation - prints a NaN-boxed number
+    lines.push("; tscl_console_log - prints value to stdout");
+    lines.push("define i64 @tscl_console_log(i64 %value) {");
+    lines.push("entry:");
+    lines.push("  %dval = bitcast i64 %value to double");
+    lines.push("  %fmt = getelementptr [4 x i8], [4 x i8]* @.fmt_num, i64 0, i64 0");
+    lines.push("  call i32 (i8*, ...) @printf(i8* %fmt, double %dval)");
+    lines.push("  ret i64 9221120237041090561");  // undefined constant
+    lines.push("}");
+    lines.push("");
+
+    // tscl_add_any - add two NaN-boxed numbers
+    lines.push("; tscl_add_any - add two numbers");
+    lines.push("define i64 @tscl_add_any(i64 %a, i64 %b) {");
+    lines.push("entry:");
+    lines.push("  %a_fp = bitcast i64 %a to double");
+    lines.push("  %b_fp = bitcast i64 %b to double");
+    lines.push("  %result_fp = fadd double %a_fp, %b_fp");
+    lines.push("  %result = bitcast double %result_fp to i64");
+    lines.push("  ret i64 %result");
+    lines.push("}");
+    lines.push("");
+
+    // tscl_sub_any - subtract two NaN-boxed numbers
+    lines.push("; tscl_sub_any - subtract two numbers");
+    lines.push("define i64 @tscl_sub_any(i64 %a, i64 %b) {");
+    lines.push("entry:");
+    lines.push("  %a_fp = bitcast i64 %a to double");
+    lines.push("  %b_fp = bitcast i64 %b to double");
+    lines.push("  %result_fp = fsub double %a_fp, %b_fp");
+    lines.push("  %result = bitcast double %result_fp to i64");
+    lines.push("  ret i64 %result");
+    lines.push("}");
+    lines.push("");
+
+    // tscl_mul_any - multiply two NaN-boxed numbers
+    lines.push("; tscl_mul_any - multiply two numbers");
+    lines.push("define i64 @tscl_mul_any(i64 %a, i64 %b) {");
+    lines.push("entry:");
+    lines.push("  %a_fp = bitcast i64 %a to double");
+    lines.push("  %b_fp = bitcast i64 %b to double");
+    lines.push("  %result_fp = fmul double %a_fp, %b_fp");
+    lines.push("  %result = bitcast double %result_fp to i64");
+    lines.push("  ret i64 %result");
+    lines.push("}");
+    lines.push("");
+
+    // tscl_div_any - divide two NaN-boxed numbers
+    lines.push("; tscl_div_any - divide two numbers");
+    lines.push("define i64 @tscl_div_any(i64 %a, i64 %b) {");
+    lines.push("entry:");
+    lines.push("  %a_fp = bitcast i64 %a to double");
+    lines.push("  %b_fp = bitcast i64 %b to double");
+    lines.push("  %result_fp = fdiv double %a_fp, %b_fp");
+    lines.push("  %result = bitcast double %result_fp to i64");
+    lines.push("  ret i64 %result");
+    lines.push("}");
+    lines.push("");
+
+    // tscl_mod_any - modulo two NaN-boxed numbers
+    lines.push("; tscl_mod_any - modulo two numbers");
+    lines.push("define i64 @tscl_mod_any(i64 %a, i64 %b) {");
+    lines.push("entry:");
+    lines.push("  %a_fp = bitcast i64 %a to double");
+    lines.push("  %b_fp = bitcast i64 %b to double");
+    lines.push("  %result_fp = frem double %a_fp, %b_fp");
+    lines.push("  %result = bitcast double %result_fp to i64");
+    lines.push("  ret i64 %result");
+    lines.push("}");
+    lines.push("");
+
+    // tscl_neg - negate a NaN-boxed number
+    lines.push("; tscl_neg - negate a number");
+    lines.push("define i64 @tscl_neg(i64 %a) {");
+    lines.push("entry:");
+    lines.push("  %a_fp = bitcast i64 %a to double");
+    lines.push("  %result_fp = fsub double 0.0, %a_fp");
+    lines.push("  %result = bitcast double %result_fp to i64");
+    lines.push("  ret i64 %result");
+    lines.push("}");
+    lines.push("");
+
+    // tscl_lt_any - less than comparison
+    lines.push("; tscl_lt_any - less than comparison");
+    lines.push("define i64 @tscl_lt_any(i64 %a, i64 %b) {");
+    lines.push("entry:");
+    lines.push("  %a_fp = bitcast i64 %a to double");
+    lines.push("  %b_fp = bitcast i64 %b to double");
+    lines.push("  %cmp = fcmp olt double %a_fp, %b_fp");
+    lines.push("  %cmp_ext = zext i1 %cmp to i64");
+    lines.push("  %result = or i64 9221120237041090560, %cmp_ext");  // boolean tag
+    lines.push("  ret i64 %result");
+    lines.push("}");
+    lines.push("");
+
+    // tscl_le_any - less than or equal comparison
+    lines.push("; tscl_le_any - less than or equal comparison");
+    lines.push("define i64 @tscl_le_any(i64 %a, i64 %b) {");
+    lines.push("entry:");
+    lines.push("  %a_fp = bitcast i64 %a to double");
+    lines.push("  %b_fp = bitcast i64 %b to double");
+    lines.push("  %cmp = fcmp ole double %a_fp, %b_fp");
+    lines.push("  %cmp_ext = zext i1 %cmp to i64");
+    lines.push("  %result = or i64 9221120237041090560, %cmp_ext");
+    lines.push("  ret i64 %result");
+    lines.push("}");
+    lines.push("");
+
+    // tscl_gt_any - greater than comparison
+    lines.push("; tscl_gt_any - greater than comparison");
+    lines.push("define i64 @tscl_gt_any(i64 %a, i64 %b) {");
+    lines.push("entry:");
+    lines.push("  %a_fp = bitcast i64 %a to double");
+    lines.push("  %b_fp = bitcast i64 %b to double");
+    lines.push("  %cmp = fcmp ogt double %a_fp, %b_fp");
+    lines.push("  %cmp_ext = zext i1 %cmp to i64");
+    lines.push("  %result = or i64 9221120237041090560, %cmp_ext");
+    lines.push("  ret i64 %result");
+    lines.push("}");
+    lines.push("");
+
+    // tscl_ge_any - greater than or equal comparison
+    lines.push("; tscl_ge_any - greater than or equal comparison");
+    lines.push("define i64 @tscl_ge_any(i64 %a, i64 %b) {");
+    lines.push("entry:");
+    lines.push("  %a_fp = bitcast i64 %a to double");
+    lines.push("  %b_fp = bitcast i64 %b to double");
+    lines.push("  %cmp = fcmp oge double %a_fp, %b_fp");
+    lines.push("  %cmp_ext = zext i1 %cmp to i64");
+    lines.push("  %result = or i64 9221120237041090560, %cmp_ext");
+    lines.push("  ret i64 %result");
+    lines.push("}");
+    lines.push("");
+
+    // tscl_eq_any - equality comparison
+    lines.push("; tscl_eq_any - equality comparison");
+    lines.push("define i64 @tscl_eq_any(i64 %a, i64 %b) {");
+    lines.push("entry:");
+    lines.push("  %a_fp = bitcast i64 %a to double");
+    lines.push("  %b_fp = bitcast i64 %b to double");
+    lines.push("  %cmp = fcmp oeq double %a_fp, %b_fp");
+    lines.push("  %cmp_ext = zext i1 %cmp to i64");
+    lines.push("  %result = or i64 9221120237041090560, %cmp_ext");
+    lines.push("  ret i64 %result");
+    lines.push("}");
+    lines.push("");
+
+    // tscl_ne_any - not equal comparison
+    lines.push("; tscl_ne_any - not equal comparison");
+    lines.push("define i64 @tscl_ne_any(i64 %a, i64 %b) {");
+    lines.push("entry:");
+    lines.push("  %a_fp = bitcast i64 %a to double");
+    lines.push("  %b_fp = bitcast i64 %b to double");
+    lines.push("  %cmp = fcmp one double %a_fp, %b_fp");
+    lines.push("  %cmp_ext = zext i1 %cmp to i64");
+    lines.push("  %result = or i64 9221120237041090560, %cmp_ext");
+    lines.push("  ret i64 %result");
+    lines.push("}");
+    lines.push("");
+
+    // tscl_is_truthy - check if value is truthy
+    lines.push("; tscl_is_truthy - check if value is truthy");
+    lines.push("define i1 @tscl_is_truthy(i64 %value) {");
+    lines.push("entry:");
+    lines.push("  ; For numbers, check if non-zero");
+    lines.push("  %masked = and i64 %value, 1");
+    lines.push("  %is_true = icmp ne i64 %masked, 0");
+    lines.push("  ret i1 %is_true");
+    lines.push("}");
+    lines.push("");
+
+    // Stub implementations for object/array operations (return undefined)
+    lines.push("; Stub implementations");
+    lines.push("define i64 @tscl_alloc_object() {");
+    lines.push("  ret i64 9221120237041090561");
+    lines.push("}");
+    lines.push("");
+
+    lines.push("define i64 @tscl_alloc_array(i64 %cap) {");
+    lines.push("  ret i64 9221120237041090561");
+    lines.push("}");
+    lines.push("");
+
+    lines.push("define i64 @tscl_get_prop(i64 %obj, i64 %key) {");
+    lines.push("  ret i64 9221120237041090561");
+    lines.push("}");
+    lines.push("");
+
+    lines.push("define void @tscl_set_prop(i64 %obj, i64 %key, i64 %val) {");
+    lines.push("  ret void");
+    lines.push("}");
+    lines.push("");
+
+    lines.push("define i64 @tscl_get_element(i64 %arr, i64 %idx) {");
+    lines.push("  ret i64 9221120237041090561");
+    lines.push("}");
+    lines.push("");
+
+    lines.push("define void @tscl_set_element(i64 %arr, i64 %idx, i64 %val) {");
+    lines.push("  ret void");
+    lines.push("}");
+    lines.push("");
+
+    let result = "";
+    let i = 0;
+    while (i < lines.length) {
+        result = result + lines[i] + "\n";
+        i = i + 1;
+    }
+    return result;
+}
+
+console.log("LLVM runtime module loaded");

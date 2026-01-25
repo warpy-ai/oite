@@ -105,12 +105,30 @@ function irBuilderEmitDiv(builder, left, right) {
 
 function irBuilderEmitLoadLocal(builder, slot) {
     let dest = allocateRegister(builder.ra);
-    emitLoadLocal(builder.currentBlock, dest, slot);
+    // Inline emit to avoid cross-module reference passing issue
+    let block = builder.currentBlock;
+    let inst = {
+        opcode: IrOpCode.LOAD_LOCAL,
+        dest: dest,
+        args: [slot],
+        immediate: null,
+        label: null
+    };
+    block.ops.push(inst);
     return dest;
 }
 
 function irBuilderEmitStoreLocal(builder, slot, value) {
-    emitStoreLocal(builder.currentBlock, slot, value);
+    // Inline emit to avoid cross-module reference passing issue
+    let block = builder.currentBlock;
+    let inst = {
+        opcode: IrOpCode.STORE_LOCAL,
+        dest: null,
+        args: [slot, value],
+        immediate: null,
+        label: null
+    };
+    block.ops.push(inst);
 }
 
 function irBuilderEmitJump(builder, targetBlock) {
@@ -129,9 +147,15 @@ function irBuilderEmitReturnVoid(builder) {
     emitReturn(builder.currentBlock, null);
 }
 
-function irBuilderEmitCall(builder, funcReg, argc) {
+function irBuilderEmitCall(builder, funcReg, argRegs) {
     let dest = allocateRegister(builder.ra);
-    emitCall(builder.currentBlock, dest, funcReg, argc);
+    emitCall(builder.currentBlock, dest, funcReg, argRegs);
+    return dest;
+}
+
+function irBuilderEmitMethodCall(builder, objName, methodName, argRegs) {
+    let dest = allocateRegister(builder.ra);
+    emitMethodCall(builder.currentBlock, dest, objName, methodName, argRegs);
     return dest;
 }
 
@@ -407,9 +431,24 @@ function lowerVariableDeclaration(ctx, node) {
     let i = 0;
     while (i < declarations.length) {
         let decl = declarations[i];
-        let name = decl.id;
-        if (typeof decl.id === "object" && decl.id.name != null) {
-            name = decl.id.name;
+        let name = null;
+
+        // Extract variable name - handle different parser structures
+        // 1. Parser may use node.name directly (our parser)
+        // 2. Parser may use node.id as string
+        // 3. Parser may use node.id.name (ESTree-style)
+        if (decl.name != null && decl.name != "") {
+            name = decl.name;
+        } else if (decl.id != null) {
+            if (decl.id.name != null) {
+                name = decl.id.name;
+            } else {
+                name = String(decl.id);
+            }
+        }
+
+        if (name == null || name == "" || name == "undefined" || name == "null") {
+            name = "__anon_var_" + String(ctx.nextSlot);
         }
 
         let slot = contextDeclareVariable(ctx, name);
@@ -807,17 +846,38 @@ function lowerExpression(ctx, node) {
     }
 
     if (node.type == "CallExpression") {
-        // Lower arguments first
-        let argc = node.arguments.length;
+        // Lower arguments first and collect their registers
+        let argRegs: number[] = [];
         let i = 0;
-        while (i < argc) {
-            lowerExpression(ctx, node.arguments[i]);
+        while (i < node.arguments.length) {
+            let argReg = lowerExpression(ctx, node.arguments[i]);
+            argRegs.push(argReg);
             i = i + 1;
+        }
+
+        // Check for console.log pattern
+        if (node.callee.type == "MemberExpression") {
+            let objNode = node.callee.object;
+            let propNode = node.callee.property;
+            let objName = null;
+            let propName = null;
+
+            if (objNode.type == "Identifier") {
+                objName = objNode.name;
+            }
+            if (propNode.type == "Identifier") {
+                propName = propNode.name;
+            }
+
+            // Detect console.log
+            if (objName == "console" && propName == "log") {
+                return irBuilderEmitMethodCall(builder, "console", "log", argRegs);
+            }
         }
 
         // Lower callee
         let calleeReg = lowerExpression(ctx, node.callee);
-        return irBuilderEmitCall(builder, calleeReg, argc);
+        return irBuilderEmitCall(builder, calleeReg, argRegs);
     }
 
     if (node.type == "MemberExpression") {
