@@ -153,6 +153,28 @@ function irBuilderEmitCall(builder, funcReg, argRegs) {
     return dest;
 }
 
+function irBuilderEmitDirectCall(builder, funcName, argRegs) {
+    let dest = allocateRegister(builder.ra);
+    // For direct calls, store function name in immediate field
+    // args = [argc, arg0, arg1, ...]
+    let block = builder.currentBlock;
+    let args = [argRegs.length];
+    let i = 0;
+    while (i < argRegs.length) {
+        args.push(argRegs[i]);
+        i = i + 1;
+    }
+    let inst = {
+        opcode: IrOpCode.CALL,
+        dest: dest,
+        args: args,
+        immediate: funcName,
+        label: null
+    };
+    block.ops.push(inst);
+    return dest;
+}
+
 function irBuilderEmitMethodCall(builder, objName, methodName, argRegs) {
     let dest = allocateRegister(builder.ra);
     emitMethodCall(builder.currentBlock, dest, objName, methodName, argRegs);
@@ -898,7 +920,17 @@ function lowerExpression(ctx, node) {
             }
         }
 
-        // Lower callee
+        // Check if callee is a simple function name (Identifier not in local scope)
+        if (node.callee.type == "Identifier") {
+            let funcName = node.callee.name;
+            let slot = contextLookupVariable(ctx, funcName);
+            // If not a local variable, assume it's a function name
+            if (slot < 0) {
+                return irBuilderEmitDirectCall(builder, funcName, argRegs);
+            }
+        }
+
+        // Lower callee for indirect calls
         let calleeReg = lowerExpression(ctx, node.callee);
         return irBuilderEmitCall(builder, calleeReg, argRegs);
     }

@@ -349,6 +349,15 @@ function emitLlvmFunction(emitter: LlvmEmitter, func: IrFunction): void {
         j = j + 1;
     }
 
+    // Store parameters into their local slots
+    let p = 0;
+    while (p < func.params.length) {
+        let paramReg = "%p" + String(p);
+        let slotReg = "%local" + String(p);
+        emit(emitter, "  store i64 " + paramReg + ", i64* " + slotReg);
+        p = p + 1;
+    }
+
     // Jump to first block
     if (func.blocks.length > 0) {
         emit(emitter, "  br label %" + func.entry_block.label);
@@ -711,9 +720,30 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
     // CALL
     if (opcode == 26) {  // IrOpCode.CALL
         let dest = inst.dest;
+        let resultReg = allocReg(emitter);
+
+        // Check if this is a direct call (function name in immediate)
+        if (inst.immediate != null && typeof inst.immediate == "string") {
+            // Direct call: args = [argc, arg0, arg1, ...]
+            let funcName = inst.immediate;
+            let argc = inst.args[0];
+            let args = "";
+            let i = 1;
+            while (i < inst.args.length) {
+                if (i > 1) {
+                    args = args + ", ";
+                }
+                args = args + "i64 " + getRegForValue(emitter, inst.args[i]);
+                i = i + 1;
+            }
+            emit(emitter, "  " + resultReg + " = call i64 @" + funcName + "(" + args + ")");
+            setRegForValue(emitter, dest, resultReg);
+            return;
+        }
+
+        // Indirect call: args = [funcReg, argc, arg0, arg1, ...]
         let funcReg = getRegForValue(emitter, inst.args[0]);
         let argc = inst.args[1];
-        let resultReg = allocReg(emitter);
         // Build call with arguments
         let args = "";
         let i = 2;
@@ -724,7 +754,7 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
             args = args + "i64 " + getRegForValue(emitter, inst.args[i]);
             i = i + 1;
         }
-        // For now, call the function pointer directly (simple case)
+        // Call through function pointer
         emit(emitter, "  " + resultReg + " = call i64 " + funcReg + "(" + args + ")");
         setRegForValue(emitter, dest, resultReg);
         return;
