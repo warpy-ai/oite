@@ -279,7 +279,24 @@ bootstrap/
 
 #### Modular Compiler (Target - `compiler/`)
 
-Future production compiler, modular structure (~3,500 lines, growing):
+Production compiler in modular structure (~3,500 lines, growing).
+
+**CLI Commands:** All working on Rust VM:
+
+| Command | Status | Description |
+|---------|--------|-------------|
+| `ast <file>` | ✅ | Output JSON AST |
+| `ir <file>` | ✅ | Output SSA IR |
+| `check <file>` | ✅ | Type check + borrow check |
+| `build <file>` | ✅ | Compile to bytecode |
+| `run <file>` | ✅ | Generate bytecode for VM |
+
+**Recent Fixes:**
+- IR opcode serialization (ADD/SUB/MUL/DIV display correctly)
+- Function name collision (`getOpCodeForBinaryOp` renamed to `getIrOpCodeForBinaryOp` in IR builder)
+- VM fall-through bug workaround (explicit `return` statements)
+
+**Architecture:**
 
 ```
 compiler/

@@ -272,6 +272,62 @@ function verifyIrBlock(block: IrBlock): boolean {
 // IR Serialization (Deterministic)
 // ============================================================================
 
+// Helper to get opcode name (VM doesn't support reverse enum lookup)
+// Using explicit numeric comparisons due to VM enum resolution issues
+function getOpCodeName(opcode: IrOpCode): string {
+    if (opcode == 0) return "CONST";
+    if (opcode == 1) return "ADD";
+    if (opcode == 2) return "SUB";
+    if (opcode == 3) return "MUL";
+    if (opcode == 4) return "DIV";
+    if (opcode == 5) return "MOD";
+    if (opcode == 6) return "NEG";
+    if (opcode == 7) return "NOT";
+    if (opcode == 8) return "EQ";
+    if (opcode == 9) return "NE";
+    if (opcode == 10) return "LT";
+    if (opcode == 11) return "GT";
+    if (opcode == 12) return "LE";
+    if (opcode == 13) return "GE";
+    if (opcode == 14) return "AND";
+    if (opcode == 15) return "OR";
+    if (opcode == 16) return "LOAD";
+    if (opcode == 17) return "STORE";
+    if (opcode == 18) return "LOAD_LOCAL";
+    if (opcode == 19) return "STORE_LOCAL";
+    if (opcode == 20) return "LOAD_PROP";
+    if (opcode == 21) return "STORE_PROP";
+    if (opcode == 22) return "LOAD_ELEMENT";
+    if (opcode == 23) return "STORE_ELEMENT";
+    if (opcode == 24) return "JUMP";
+    if (opcode == 25) return "JUMP_IF_FALSE";
+    if (opcode == 26) return "CALL";
+    if (opcode == 27) return "CALL_METHOD";
+    if (opcode == 28) return "RETURN";
+    if (opcode == 29) return "PHI";
+    if (opcode == 30) return "NEW_OBJECT";
+    if (opcode == 31) return "NEW_ARRAY";
+    if (opcode == 32) return "LENGTH";
+    if (opcode == 33) return "TO_NUMBER";
+    if (opcode == 34) return "TO_STRING";
+    if (opcode == 35) return "TO_BOOLEAN";
+    return "UNKNOWN(" + opcode + ")";
+}
+
+// Helper to get type name (VM doesn't support reverse enum lookup)
+function getTypeName(ty: IrType): string {
+    if (ty == IrType.NUMBER) return "number";
+    if (ty == IrType.STRING) return "string";
+    if (ty == IrType.BOOLEAN) return "boolean";
+    if (ty == IrType.OBJECT) return "object";
+    if (ty == IrType.ARRAY) return "array";
+    if (ty == IrType.FUNCTION) return "function";
+    if (ty == IrType.ANY) return "any";
+    if (ty == IrType.NEVER) return "never";
+    if (ty == IrType.VOID) return "void";
+    return "unknown";
+}
+
 function serializeIrModule(module: IrModule): string {
     let lines: string[] = [];
     lines.push("; ============================================================");
@@ -299,12 +355,12 @@ function serializeIrModule(module: IrModule): string {
 
 function serializeIrFunction(func: IrFunction): string {
     let lines: string[] = [];
-    lines.push("fn " + func.name + "(" + func.params.join(", ") + ") -> " + IrType[func.return_type] + " {");
+    lines.push("fn " + func.name + "(" + func.params.join(", ") + ") -> " + getTypeName(func.return_type) + " {");
 
     let i = 0;
     while (i < func.locals.length) {
         let loc = func.locals[i];
-        lines.push("    local $" + loc.index + ": " + loc.name + ": " + IrType[loc.type]);
+        lines.push("    local $" + loc.index + ": " + loc.name + ": " + getTypeName(loc.type));
         i = i + 1;
     }
     lines.push("");
@@ -343,7 +399,7 @@ function serializeIrBlock(block: IrBlock): string {
 }
 
 function serializeIrInstruction(inst: IrInstruction): string {
-    let opName = IrOpCode[inst.opcode];
+    let opName = getOpCodeName(inst.opcode);
     if (inst.dest != null) {
         if (inst.args.length > 0) {
             let args = "";
