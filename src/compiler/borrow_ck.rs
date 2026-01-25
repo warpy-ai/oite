@@ -58,10 +58,12 @@ pub struct VarInfo {
     pub def_span: Span,
     /// Location where the variable was moved (if moved).
     pub moved_span: Option<Span>,
+    /// Scope depth where variable was defined (0 = global/module level).
+    pub scope_depth: usize,
 }
 
 impl VarInfo {
-    pub fn from_type(ty: Type, span: Span) -> Self {
+    pub fn from_type(ty: Type, span: Span, scope_depth: usize) -> Self {
         let kind = Self::kind_from_type(&ty);
         Self {
             ty,
@@ -71,7 +73,13 @@ impl VarInfo {
             mut_borrow: false,
             def_span: span,
             moved_span: None,
+            scope_depth,
         }
+    }
+
+    /// Check if this variable is at global/module scope.
+    pub fn is_global(&self) -> bool {
+        self.scope_depth == 0
     }
 
     fn kind_from_type(ty: &Type) -> VarKind {
@@ -161,7 +169,7 @@ impl BorrowChecker {
 
     /// Define a new variable.
     pub fn define(&mut self, name: String, ty: Type, span: Span) {
-        let info = VarInfo::from_type(ty, span);
+        let info = VarInfo::from_type(ty, span, self.scope_depth);
         self.symbols.insert(name.clone(), info);
         if let Some(scope) = self.scope_stack.last_mut() {
             scope.insert(name);
@@ -439,7 +447,8 @@ impl BorrowChecker {
             }
 
             // If it's a move type and not already borrowed, this is a move
-            if info.is_move() && info.immut_borrows == 0 && !info.mut_borrow {
+            // But don't move global/module-level variables - they should be reusable
+            if info.is_move() && info.immut_borrows == 0 && !info.mut_borrow && !info.is_global() {
                 info.state = VarState::Moved;
                 info.moved_span = Some(Span::default());
             }
@@ -591,6 +600,12 @@ impl BorrowChecker {
 
     fn process_capture(&mut self, name: &str) -> Result<(), String> {
         if let Some(info) = self.symbols.get_mut(name) {
+            // Global/module-level variables are exempt from capture-move semantics.
+            // They're designed to be accessed from anywhere (e.g., module exports like Emitter).
+            if info.is_global() {
+                return Ok(());
+            }
+
             // Check if already moved
             if info.state == VarState::Moved || info.state == VarState::CapturedByAsync {
                 return Err(format!(
@@ -767,6 +782,9 @@ mod tests {
     #[test]
     fn test_heap_move() {
         let mut checker = BorrowChecker::new();
+        // Enter a scope so variable is not at global level (scope_depth > 0)
+        // Global variables don't get moved to allow multiple uses
+        checker.enter_scope();
         checker.define(
             "arr".to_string(),
             Type::Array(Box::new(Type::Number)),
@@ -800,5 +818,26 @@ mod tests {
         // Multiple immutable borrows are OK
         assert!(checker.process_borrow("x", false).is_ok());
         assert!(checker.process_borrow("x", false).is_ok());
+    }
+
+    #[test]
+    fn test_global_variables_not_moved() {
+        let mut checker = BorrowChecker::new();
+        // Variables at global scope (scope_depth 0) should NOT be moved
+        // This allows module-level constants and builtins to be reused
+        checker.define(
+            "Pipeline".to_string(),
+            Type::Any, // Module objects are typically Any type
+            Span::default(),
+        );
+
+        // First use should work
+        assert!(checker.process_use("Pipeline").is_ok());
+
+        // Second use should ALSO work (not moved because it's global)
+        assert!(checker.process_use("Pipeline").is_ok());
+
+        // Borrowing should also work
+        assert!(checker.process_borrow("Pipeline", false).is_ok());
     }
 }

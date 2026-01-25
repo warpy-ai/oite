@@ -3,7 +3,8 @@
 // Ownership and borrowing analysis with type information
 // ============================================================================
 
-require ../ir/mod;
+// Dependencies loaded by runtime (require ../ syntax not supported)
+// require ../ir/mod;
 
 // ============================================================================
 // Variable Kind (Determines Ownership Semantics)
@@ -464,26 +465,23 @@ function analyzeStatement(checker: BorrowChecker, stmt: any): boolean {
 
 function analyzeVariableDeclaration(checker: BorrowChecker, decl: any): boolean {
     let ok = true;
-    let i = 0;
-    while (i < decl.declarations.length) {
-        let d = decl.declarations[i];
-        let name = getIdentifierName(d.id);
 
+    // Handle parser's single-variable format: {name, init, kind}
+    // (different from ESTree's {declarations: [{id, init}], kind})
+    let name = decl.name;
+    if (name != null) {
         // Analyze initializer first (may move values)
-        if (d.init != null) {
-            if (!analyzeExpression(checker, d.init)) {
+        if (decl.init != null) {
+            if (!analyzeExpression(checker, decl.init)) {
                 ok = false;
             }
         }
 
         // Determine type and register variable
-        let irType = inferIrType(d);
-        if (name != null) {
-            defineVariable(checker, name, irType, "decl");
-        }
-
-        i = i + 1;
+        let irType = inferIrType(decl);
+        defineVariable(checker, name, irType, "decl");
     }
+
     return ok;
 }
 

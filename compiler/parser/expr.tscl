@@ -2,8 +2,9 @@
 // Expression Parsers for tscl Compiler
 // ============================================================================
 
-require ../ast/types;
-require ../lexer/token;
+// Dependencies loaded by runtime (require ../ syntax not supported)
+// require ../ast/types;
+// require ../lexer/token;
 
 // ============================================================================
 // Expression Parsing (Recursive Descent)
@@ -125,28 +126,80 @@ function parsePostfix(parser) {
     let expr = parsePrimary(parser);
     if (expr == null) return null;
     while (true) {
-        if (match(parser, "OPERATOR", "++")) {
+        // Handle member access: expr.property
+        if (match(parser, "DELIMITER", ".")) {
+            let propTok = parserPeek(parser);
+            if (propTok != null && (propTok.type == "IDENTIFIER" || propTok.type == "KEYWORD")) {
+                parserAdvance(parser);
+                expr = {
+                    type: "MemberExpression",
+                    object: expr,
+                    property: { type: "Identifier", name: propTok.value },
+                    computed: false,
+                    optional: false
+                };
+            } else {
+                break;
+            }
+        }
+        // Handle computed member access: expr[index]
+        else if (match(parser, "DELIMITER", "[")) {
+            let index = parseExpression(parser);
+            expect(parser, "DELIMITER", "]");
+            expr = {
+                type: "MemberExpression",
+                object: expr,
+                property: index,
+                computed: true,
+                optional: false
+            };
+        }
+        // Handle call expression: expr(args)
+        else if (match(parser, "DELIMITER", "(")) {
+            let args = [];
+            while (!match(parser, "DELIMITER", ")")) {
+                if (peekType(parser) == "EOF") break;
+                let arg = parseExpression(parser);
+                if (arg != null) {
+                    args.push(arg);
+                }
+                if (!match(parser, "DELIMITER", ",")) {
+                    match(parser, "DELIMITER", ")");
+                    break;
+                }
+            }
+            expr = {
+                type: "CallExpression",
+                callee: expr,
+                arguments: args
+            };
+        }
+        // Handle postfix ++
+        else if (match(parser, "OPERATOR", "++")) {
             expr = {
                 type: "UpdateExpression",
                 operator: "++",
                 argument: expr,
                 prefix: false
             };
-        } else if (match(parser, "OPERATOR", "--")) {
+        }
+        // Handle postfix --
+        else if (match(parser, "OPERATOR", "--")) {
             expr = {
                 type: "UpdateExpression",
                 operator: "--",
                 argument: expr,
                 prefix: false
             };
-        } else {
+        }
+        else {
             break;
         }
     }
     return expr;
 }
 
-function parsePrimary() {
+function parsePrimary(parser) {
     let tok = parserPeek(parser);
     if (tok == null) return null;
 
@@ -418,28 +471,6 @@ function parseNewExpression(parser) {
     }
     return {
         type: "NewExpression",
-        callee: callee,
-        arguments: args
-    };
-}
-
-function parseCallExpression(parser, baseExpr) {
-    let callee = baseExpr;
-    if (callee.type == "MemberExpression") {
-        let computed = callee.computed;
-        let optional = callee.optional;
-        callee = callee.object;
-    }
-    let args = [];
-    if (match(parser, "DELIMITER", "(")) {
-        while (!match(parser, "DELIMITER", ")")) {
-            let arg = parseExpression(parser);
-            args.push(arg);
-            match(parser, "DELIMITER", ",");
-        }
-    }
-    return {
-        type: "CallExpression",
         callee: callee,
         arguments: args
     };

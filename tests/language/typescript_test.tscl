@@ -1,0 +1,28 @@
+// Test TypeScript parsing
+console.log("=== TypeScript Parsing Test ===");
+
+// Test 1: Type alias
+let r1 = compileToBytecode("type MyType = string;");
+console.log("Type alias: " + r1.length + " bytes");
+
+// Test 2: Union type
+let r2 = compileToBytecode("let x: string | number = 5;");
+console.log("Union type: " + r2.length + " bytes");
+
+// Test 3: Interface
+let r3 = compileToBytecode("interface Point { x: number; y: number; }");
+console.log("Interface: " + r3.length + " bytes");
+
+// Test 4: Enum
+let r4 = compileToBytecode("enum Color { Red = 0, Green = 1, Blue = 2 }");
+console.log("Enum: " + r4.length + " bytes");
+
+// Test 5: Generic type
+let r5 = compileToBytecode("let arr: Array<number> = [];");
+console.log("Generic type: " + r5.length + " bytes");
+
+// Test 6: Function with types
+let r6 = compileToBytecode("function add(a: number, b: number): number { return a + b; }");
+console.log("Typed function: " + r6.length + " bytes");
+
+console.log("=== Done ===");

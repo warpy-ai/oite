@@ -539,6 +539,11 @@ impl VM {
         stdlib_setup::setup_stdlib(self);
     }
 
+    /// Set script command-line arguments as __args__ global variable.
+    pub fn set_script_args(&mut self, args: Vec<String>) {
+        stdlib_setup::set_script_args(self, args);
+    }
+
     pub fn register_native(&mut self, func: NativeFn) -> usize {
         let idx = self.native_functions.len();
         self.native_functions.push(func);
@@ -1106,8 +1111,61 @@ impl VM {
                         let result = func(self, args);
                         self.stack.push(result);
                     }
+                    JsValue::Object(ptr) => {
+                        // Check if object has a __call__ property (callable object like String)
+                        if let Some(HeapObject {
+                            data: HeapData::Object(props),
+                        }) = self.heap.get(ptr)
+                        {
+                            if let Some(JsValue::NativeFunction(idx)) = props.get("__call__") {
+                                let idx = *idx;
+                                args.reverse();
+                                let func = self.native_functions[idx];
+                                let result = func(self, args);
+                                self.stack.push(result);
+                            } else if let Some(JsValue::Function { address, env }) = props.get("__call__") {
+                                let address = *address;
+                                let env = *env;
+                                for arg in &args {
+                                    self.stack.push(arg.clone());
+                                }
+                                let mut frame = Frame {
+                                    return_address: self.ip + 1,
+                                    locals: HashMap::new(),
+                                    indexed_locals: Vec::new(),
+                                    this_context: JsValue::Object(ptr),
+                                    new_target: None,
+                                    super_called: false,
+                                    resume_ip: None,
+                                };
+                                if let Some(HeapObject {
+                                    data: HeapData::Object(env_props),
+                                }) = env.and_then(|ptr| self.heap.get(ptr))
+                                {
+                                    for (name, value) in env_props {
+                                        frame.locals.insert(name.clone(), value.clone());
+                                    }
+                                }
+                                self.call_stack.push(frame);
+                                self.ip = address;
+                                return ExecResult::ContinueNoIpInc;
+                            } else {
+                                panic!("Object is not callable (no __call__ property): Object({})", ptr);
+                            }
+                        } else {
+                            panic!("Object reference invalid: Object({})", ptr);
+                        }
+                    }
                     other => {
-                        panic!("Target is not callable: {:?}", other);
+                        // Print the last few instructions for context
+                        let start = if self.ip > 5 { self.ip - 5 } else { 0 };
+                        let end = (self.ip + 3).min(self.program.len());
+                        eprintln!("Context around ip={}:", self.ip);
+                        for i in start..end {
+                            let marker = if i == self.ip { ">>>" } else { "   " };
+                            eprintln!("{} {}: {:?}", marker, i, self.program.get(i));
+                        }
+                        panic!("Target is not callable: {:?} at ip={}, call_stack_depth={}", other, self.ip, self.call_stack.len());
                     }
                 }
             }
@@ -1239,6 +1297,41 @@ impl VM {
                 match val {
                     JsValue::Number(n) => self.stack.push(JsValue::Number(-n)),
                     _ => self.stack.push(JsValue::Number(f64::NAN)),
+                }
+            }
+
+            OpCode::TypeOf => {
+                let val = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let type_str = match val {
+                    JsValue::Number(_) => "number",
+                    JsValue::String(_) => "string",
+                    JsValue::Boolean(_) => "boolean",
+                    JsValue::Object(_) => "object",
+                    JsValue::Function { .. } => "function",
+                    JsValue::NativeFunction(_) => "function",
+                    JsValue::Null => "object", // typeof null === "object" in JS
+                    JsValue::Undefined => "undefined",
+                    JsValue::Accessor(_, _) => "function",
+                    JsValue::Promise(_) => "object",
+                };
+                self.stack.push(JsValue::String(type_str.to_string()));
+            }
+
+            OpCode::Delete(ref prop_name) => {
+                let obj_val = self.stack.pop().unwrap_or(JsValue::Undefined);
+                if let JsValue::Object(obj_id) = obj_val {
+                    if obj_id < self.heap.len() {
+                        if let HeapData::Object(ref mut props) = self.heap[obj_id].data {
+                            props.remove(prop_name);
+                            self.stack.push(JsValue::Boolean(true));
+                        } else {
+                            self.stack.push(JsValue::Boolean(false));
+                        }
+                    } else {
+                        self.stack.push(JsValue::Boolean(false));
+                    }
+                } else {
+                    self.stack.push(JsValue::Boolean(false));
                 }
             }
 
@@ -1880,8 +1973,7 @@ impl VM {
 
                 match reciever {
                     // -- String methods --
-                    // Note: Full string method support moved to @rolls/string
-                    // Only basic length property is supported in core
+                    // Core string methods needed for bootstrap compiler
                     JsValue::String(s) => {
                         match name.as_str() {
                             "length" => {
@@ -1889,7 +1981,69 @@ impl VM {
                                 for _ in 0..arg_count {
                                     self.stack.pop();
                                 }
-                                self.stack.push(JsValue::Number(s.len() as f64));
+                                self.stack.push(JsValue::Number(s.chars().count() as f64));
+                            }
+                            "charCodeAt" => {
+                                // Get char code at index
+                                let index = if arg_count > 0 {
+                                    match self.stack.pop() {
+                                        Some(JsValue::Number(n)) => n as usize,
+                                        _ => 0,
+                                    }
+                                } else {
+                                    0
+                                };
+                                // Pop remaining args if any
+                                for _ in 1..arg_count {
+                                    self.stack.pop();
+                                }
+                                let result = s
+                                    .chars()
+                                    .nth(index)
+                                    .map(|c| JsValue::Number(c as u32 as f64))
+                                    .unwrap_or(JsValue::Number(f64::NAN));
+                                self.stack.push(result);
+                            }
+                            "slice" => {
+                                // Get start and end indices
+                                let mut args = Vec::with_capacity(arg_count);
+                                for _ in 0..arg_count {
+                                    args.push(self.stack.pop().expect("Missing argument"));
+                                }
+                                args.reverse();
+
+                                let len = s.chars().count() as i64;
+                                let start = args
+                                    .first()
+                                    .and_then(|v| match v {
+                                        JsValue::Number(n) => {
+                                            let n = *n as i64;
+                                            if n < 0 {
+                                                Some((len + n).max(0) as usize)
+                                            } else {
+                                                Some(n as usize)
+                                            }
+                                        }
+                                        _ => None,
+                                    })
+                                    .unwrap_or(0);
+                                let end = args
+                                    .get(1)
+                                    .and_then(|v| match v {
+                                        JsValue::Number(n) => {
+                                            let n = *n as i64;
+                                            if n < 0 {
+                                                Some((len + n).max(0) as usize)
+                                            } else {
+                                                Some(n as usize)
+                                            }
+                                        }
+                                        _ => None,
+                                    })
+                                    .unwrap_or(len as usize);
+
+                                let result: String = s.chars().skip(start).take(end.saturating_sub(start)).collect();
+                                self.stack.push(JsValue::String(result));
                             }
                             _ => {
                                 // Unsupported string method - pop args and return undefined
@@ -1982,6 +2136,63 @@ impl VM {
                                     }
                                     let result = arr.pop().unwrap_or(JsValue::Undefined);
                                     self.stack.push(result);
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                "shift" => {
+                                    for _ in 0..arg_count {
+                                        self.stack.pop();
+                                    }
+                                    let result = if !arr.is_empty() {
+                                        arr.remove(0)
+                                    } else {
+                                        JsValue::Undefined
+                                    };
+                                    self.stack.push(result);
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                "unshift" => {
+                                    let mut args = Vec::with_capacity(arg_count);
+                                    for _ in 0..arg_count {
+                                        args.push(self.stack.pop().expect("Missing argument"));
+                                    }
+                                    args.reverse();
+                                    for (i, arg) in args.into_iter().enumerate() {
+                                        arr.insert(i, arg);
+                                    }
+                                    self.stack.push(JsValue::Number(arr.len() as f64));
+                                    self.ip += 1;
+                                    return ExecResult::Continue;
+                                }
+                                "join" => {
+                                    // Get separator (default to ",")
+                                    let separator = if arg_count > 0 {
+                                        match self.stack.pop() {
+                                            Some(JsValue::String(s)) => s,
+                                            Some(JsValue::Number(n)) => n.to_string(),
+                                            _ => ",".to_string(),
+                                        }
+                                    } else {
+                                        ",".to_string()
+                                    };
+                                    // Pop any remaining args
+                                    for _ in 1..arg_count {
+                                        self.stack.pop();
+                                    }
+                                    // Join array elements into string
+                                    let parts: Vec<String> = arr
+                                        .iter()
+                                        .map(|v| match v {
+                                            JsValue::String(s) => s.clone(),
+                                            JsValue::Number(n) => n.to_string(),
+                                            JsValue::Boolean(b) => b.to_string(),
+                                            JsValue::Null => "null".to_string(),
+                                            JsValue::Undefined => "undefined".to_string(),
+                                            _ => "".to_string(),
+                                        })
+                                        .collect();
+                                    self.stack.push(JsValue::String(parts.join(&separator)));
                                     self.ip += 1;
                                     return ExecResult::Continue;
                                 }

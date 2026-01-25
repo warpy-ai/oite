@@ -98,7 +98,16 @@ function isKeyword(value: string): boolean {
            value == "default" || value == "async" || value == "await" ||
            value == "yield" || value == "try" || value == "catch" ||
            value == "finally" || value == "throw" || value == "instanceof" ||
-           value == "from" || value == "as";
+           value == "typeof" || value == "from" || value == "as" ||
+           // TypeScript keywords
+           value == "type" || value == "interface" || value == "enum" ||
+           value == "implements" || value == "private" || value == "public" ||
+           value == "protected" || value == "readonly" || value == "abstract" ||
+           value == "declare" || value == "namespace" || value == "module" ||
+           // Type keywords (for annotations)
+           value == "number" || value == "string" || value == "boolean" ||
+           value == "any" || value == "void" || value == "never" ||
+           value == "undefined" || value == "unknown" || value == "object";
 }
 
 function scanIdentifierOrKeyword(lexer: Lexer): Token {
@@ -121,6 +130,21 @@ function scanNumber(lexer: Lexer): Token {
     let startLine: number = lexer.line;
     let startCol: number = lexer.col;
     let start: number = lexer.pos;
+
+    // Check for hex number (0x or 0X)
+    if (lexerPeek(lexer) == 48) { // '0'
+        lexerAdvance(lexer);
+        if (lexerPeek(lexer) == 120 || lexerPeek(lexer) == 88) { // 'x' or 'X'
+            lexerAdvance(lexer);
+            // Scan hex digits
+            while (lexer.pos < lexer.source.length && isHexDigit(lexerPeek(lexer))) {
+                lexerAdvance(lexer);
+            }
+            let value: string = lexer.source.slice(start, lexer.pos);
+            return makeToken(TOKEN.NUMBER, value, startLine, startCol);
+        }
+        // Not a hex number, continue with decimal
+    }
 
     while (lexer.pos < lexer.source.length && isDigit(lexerPeek(lexer))) {
         lexerAdvance(lexer);
@@ -242,6 +266,9 @@ function tokenize(source: string): Array<Token> {
                     value = "===";
                     lexerAdvance(lexer);
                 }
+            } else if (lexerPeek(lexer) == 62) { // =>
+                value = "=>";
+                lexerAdvance(lexer);
             }
         } else if (code == 38) { // &
             if (lexerPeek(lexer) == 38) { // &&
@@ -266,10 +293,16 @@ function tokenize(source: string): Array<Token> {
             if (lexerPeek(lexer) == 61) { // <=
                 value = "<=";
                 lexerAdvance(lexer);
+            } else if (lexerPeek(lexer) == 60) { // <<
+                value = "<<";
+                lexerAdvance(lexer);
             }
         } else if (code == 62) { // >
             if (lexerPeek(lexer) == 61) { // >=
                 value = ">=";
+                lexerAdvance(lexer);
+            } else if (lexerPeek(lexer) == 62) { // >>
+                value = ">>";
                 lexerAdvance(lexer);
             }
         } else if (code == 43) { // +

@@ -339,6 +339,16 @@ impl<'a> TypeChecker<'a> {
             | IrOp::Pow(dst, _, _) => {
                 self.set_type(*dst, IrType::Number);
             }
+
+            // TypeOf always produces a string
+            IrOp::TypeOf(dst, _) => {
+                self.set_type(*dst, IrType::String);
+            }
+
+            // DeleteProp always produces a boolean
+            IrOp::DeleteProp(dst, _, _) => {
+                self.set_type(*dst, IrType::Boolean);
+            }
         }
     }
 }

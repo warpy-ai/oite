@@ -105,9 +105,32 @@ function readString(lexer: Lexer, quote: string): string {
     return value;
 }
 
+function isHexDigit(c: string): boolean {
+    if (c == null || c == "") return false;
+    let code = c.charCodeAt(0);
+    return (code >= 48 && code <= 57) ||  // 0-9
+           (code >= 65 && code <= 70) ||  // A-F
+           (code >= 97 && code <= 102);   // a-f
+}
+
 function readNumber(lexer: Lexer, start: string): string {
     let value = start;
     let c = peekChar(lexer);
+
+    // Check for hex number: 0x or 0X
+    if (start == "0" && (c == "x" || c == "X")) {
+        value = value + c;
+        advance(lexer);
+        c = peekChar(lexer);
+        while (c != "" && isHexDigit(c)) {
+            value = value + c;
+            advance(lexer);
+            c = peekChar(lexer);
+        }
+        return value;
+    }
+
+    // Regular decimal number
     while (c != "" && (isDigit(c) || c == "." || c == "e" || c == "E" || c == "+" || c == "-")) {
         if (c == "e" || c == "E" || c == "+" || c == "-") {
             if (value.indexOf("e") == -1 && value.indexOf("E") == -1) {
@@ -192,11 +215,13 @@ function readToken(lexer: Lexer): Token {
     }
 
     if (isDigit(c)) {
+        advance(lexer);  // Consume the first digit before calling readNumber
         let value = readNumber(lexer, c);
         return { type: TOKEN.NUMBER, value: value, line: line, col: col };
     }
 
     if (isAlpha(c) || c == "_" || c == "$") {
+        advance(lexer);  // Consume the first char before calling readIdentifier
         let value = readIdentifier(lexer, c);
         if (isKeyword(value)) {
             return { type: TOKEN.KEYWORD, value: value, line: line, col: col };

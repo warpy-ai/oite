@@ -1,0 +1,20 @@
+// Test bootstrap compiler with more complex code
+console.log("=== Compiler Test 2 ===");
+
+let code1 = "function add(a, b) { return a + b; }";
+let result1 = compileToBytecode(code1);
+console.log("Function bytecode: " + result1.length + " bytes");
+
+let code2 = "let x = 10; let y = 20; let z = x + y;";
+let result2 = compileToBytecode(code2);
+console.log("Multi-var bytecode: " + result2.length + " bytes");
+
+let code3 = "if (true) { let a = 1; } else { let b = 2; }";
+let result3 = compileToBytecode(code3);
+console.log("If-else bytecode: " + result3.length + " bytes");
+
+let code4 = "let i = 0; while (i < 10) { i = i + 1; }";
+let result4 = compileToBytecode(code4);
+console.log("While bytecode: " + result4.length + " bytes");
+
+console.log("=== Done ===");

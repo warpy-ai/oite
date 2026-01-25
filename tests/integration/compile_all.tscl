@@ -1,0 +1,20 @@
+// Test compiling different constructs
+console.log("=== Compile All ===");
+
+// Test 1: Function
+let r1 = compileToBytecode("function add(a, b) { return a + b; }");
+console.log("Function: " + r1.length + " bytes");
+
+// Test 2: Variables
+let r2 = compileToBytecode("let x = 10; let y = 20; let z = x + y;");
+console.log("Variables: " + r2.length + " bytes");
+
+// Test 3: If-else
+let r3 = compileToBytecode("if (true) { let a = 1; } else { let b = 2; }");
+console.log("If-else: " + r3.length + " bytes");
+
+// Test 4: While loop
+let r4 = compileToBytecode("let i = 0; while (i < 10) { i = i + 1; }");
+console.log("While: " + r4.length + " bytes");
+
+console.log("=== Done ===");

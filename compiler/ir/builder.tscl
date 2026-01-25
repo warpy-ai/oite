@@ -577,7 +577,7 @@ function lowerExpression(ctx, node) {
     if (node.type == "BinaryExpression") {
         let left = lowerExpression(ctx, node.left);
         let right = lowerExpression(ctx, node.right);
-        let opcode = getOpCodeForBinaryOp(node.operator);
+        let opcode = getIrOpCodeForBinaryOp(node.operator);
         return irBuilderEmitBinaryOp(builder, opcode, left, right);
     }
 
@@ -699,7 +699,7 @@ function lowerExpression(ctx, node) {
 }
 
 // Map binary operators to IR opcodes
-function getOpCodeForBinaryOp(operator) {
+function getIrOpCodeForBinaryOp(operator) {
     if (operator == "+") return IrOpCode.ADD;
     if (operator == "-") return IrOpCode.SUB;
     if (operator == "*") return IrOpCode.MUL;

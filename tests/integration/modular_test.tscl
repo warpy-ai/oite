@@ -1,0 +1,36 @@
+// Test file for modular compiler TypeScript support
+
+// Type alias
+type StringOrNumber = string | number;
+
+// Interface
+interface Point {
+    x: number;
+    y: number;
+}
+
+// Enum
+enum Color {
+    RED = 0,
+    GREEN = 1,
+    BLUE = 2
+}
+
+// Function with type annotations
+function add(a: number, b: number): number {
+    return a + b;
+}
+
+// Variable with type annotation
+let value: number = 42;
+let hex: number = 0xFF;
+
+// Array type
+let items: Array<number> = [1, 2, 3];
+
+// Function type
+let callback: (x: number) => number = function(x: number): number {
+    return x * 2;
+};
+
+console.log("Test passed!");

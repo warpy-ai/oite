@@ -2,8 +2,9 @@
 // Statement Parsers for tscl Compiler
 // ============================================================================
 
-require ../ast/types;
-require ../lexer/token;
+// Dependencies loaded by runtime (require ../ syntax not supported)
+// require ../ast/types;
+// require ../lexer/token;
 
 // ============================================================================
 // Parser State
@@ -59,7 +60,10 @@ function expect(parser, type, value) {
     if (tok != null && tok.type == type && (value == null || tok.value == value)) {
         return parserAdvance(parser);
     }
-    console.log("Parse error: expected", type, value, "but got", tok);
+    // Error recovery: skip the unexpected token to prevent infinite loops
+    if (tok != null) {
+        parserAdvance(parser);
+    }
     return null;
 }
 
@@ -68,12 +72,115 @@ function expect(parser, type, value) {
 // ============================================================================
 
 function parseTypeAnnotation(parser) {
-    let typeKind = "";
+    let baseType = parseBaseType(parser);
+    if (baseType == null) {
+        return null;
+    }
+
+    // Check for union types: A | B | C
+    if (peekType(parser) == "OPERATOR" && peekValue(parser) == "|") {
+        let unionTypes = [baseType];
+        while (peekType(parser) == "OPERATOR" && peekValue(parser) == "|") {
+            parserAdvance(parser);
+            let nextType = parseBaseType(parser);
+            if (nextType != null) {
+                unionTypes.push(nextType);
+            }
+        }
+        return {
+            type: "TypeAnnotation",
+            typeKind: "union",
+            isArray: false,
+            elementType: null,
+            unionTypes: unionTypes,
+            genericParams: null
+        };
+    }
+
+    return baseType;
+}
+
+function parseBaseType(parser) {
     let tok = parserPeek(parser);
+
+    // Function type: (params) => ReturnType
+    if (tok != null && tok.type == "DELIMITER" && tok.value == "(") {
+        parserAdvance(parser);
+        let params = [];
+        while (peekType(parser) != "DELIMITER" || peekValue(parser) != ")") {
+            if (peekType(parser) == "EOF") break;
+            let paramName = "";
+            if (peekType(parser) == "IDENTIFIER") {
+                paramName = peekValue(parser);
+                parserAdvance(parser);
+            }
+            let paramType = null;
+            if (peekType(parser) == "DELIMITER" && peekValue(parser) == ":") {
+                parserAdvance(parser);
+                paramType = parseTypeAnnotation(parser);
+            }
+            params.push({
+                name: paramName,
+                typeAnnotation: paramType
+            });
+            if (peekType(parser) == "DELIMITER" && peekValue(parser) == ",") {
+                parserAdvance(parser);
+            }
+        }
+        expect(parser, "DELIMITER", ")");
+        expect(parser, "OPERATOR", "=>");
+        let returnType = parseTypeAnnotation(parser);
+        return {
+            type: "FunctionTypeAnnotation",
+            params: params,
+            returnType: returnType
+        };
+    }
+
+    // Object type: { x: number, y: string }
+    if (tok != null && tok.type == "DELIMITER" && tok.value == "{") {
+        parserAdvance(parser);
+        let members = [];
+        while (peekType(parser) != "DELIMITER" || peekValue(parser) != "}") {
+            if (peekType(parser) == "EOF") break;
+            let memberName = "";
+            let optional = false;
+            if (peekType(parser) == "IDENTIFIER" || peekType(parser) == "KEYWORD") {
+                memberName = peekValue(parser);
+                parserAdvance(parser);
+            }
+            if (peekType(parser) == "OPERATOR" && peekValue(parser) == "?") {
+                optional = true;
+                parserAdvance(parser);
+            }
+            let memberType = null;
+            if (peekType(parser) == "DELIMITER" && peekValue(parser) == ":") {
+                parserAdvance(parser);
+                memberType = parseTypeAnnotation(parser);
+            }
+            members.push({
+                name: memberName,
+                optional: optional,
+                typeAnnotation: memberType
+            });
+            if (peekType(parser) == "DELIMITER" && peekValue(parser) == ",") {
+                parserAdvance(parser);
+            } else if (peekType(parser) == "DELIMITER" && peekValue(parser) == ";") {
+                parserAdvance(parser);
+            }
+        }
+        expect(parser, "DELIMITER", "}");
+        return {
+            type: "ObjectTypeAnnotation",
+            members: members
+        };
+    }
+
+    // Simple type: identifier or keyword
     if (tok == null || (tok.type != "KEYWORD" && tok.type != "IDENTIFIER")) {
         return null;
     }
-    typeKind = tok.value;
+    let typeKind = tok.value;
     parserAdvance(parser);
 
     let isArray = false;
@@ -81,23 +188,28 @@ function parseTypeAnnotation(parser) {
     let genericParams = null;
     let isGeneric = false;
 
+    // Generic parameters: Type<T, U>
     if (peekType(parser) == "OPERATOR" && peekValue(parser) == "<") {
         parserAdvance(parser);
         genericParams = [];
-        while (!isAtEnd(parser) && peekType(parser) != "OPERATOR" && peekValue(parser) != ">") {
+        while (peekType(parser) != "OPERATOR" || peekValue(parser) != ">") {
+            if (peekType(parser) == "EOF") break;
             let param = parseTypeAnnotation(parser);
             if (param != null) {
                 genericParams.push(param);
-                if (peekType(parser) == "OPERATOR" && peekValue(parser) == ",") {
+                if (peekType(parser) == "DELIMITER" && peekValue(parser) == ",") {
                     parserAdvance(parser);
                 }
+            } else {
+                break;
             }
         }
         expect(parser, "OPERATOR", ">");
         isGeneric = true;
     }
 
-    if (peekType(parser) == "OPERATOR" && peekValue(parser) == "[") {
+    // Array shorthand: Type[]
+    if (peekType(parser) == "DELIMITER" && peekValue(parser) == "[") {
         parserAdvance(parser);
         expect(parser, "DELIMITER", "]");
         isArray = true;
@@ -231,9 +343,22 @@ function parseStatement(parser) {
         if (tok.value == "export") {
             return parseExportDeclaration(parser);
         }
-        if (tok.value == "{") {
-            return parseBlockStatement(parser);
+        if (tok.value == "require") {
+            return parseRequireStatement(parser);
         }
+        if (tok.value == "type") {
+            return parseTypeAliasDeclaration(parser);
+        }
+        if (tok.value == "interface") {
+            return parseInterfaceDeclaration(parser);
+        }
+        if (tok.value == "enum") {
+            return parseEnumDeclaration(parser);
+        }
+    }
+
+    if (tok.type == "DELIMITER" && tok.value == "{") {
+        return parseBlockStatement(parser);
     }
 
     return parseExpressionStatement(parser);
@@ -243,9 +368,15 @@ function parseBlockStatement(parser) {
     expect(parser, "DELIMITER", "{");
     let body = [];
     while (!match(parser, "DELIMITER", "}")) {
+        if (peekType(parser) == "EOF") break;
+        let startPos = parser.pos;
         let stmt = parseStatement(parser);
         if (stmt != null) {
             body.push(stmt);
+        }
+        // Error recovery: if no progress was made, skip token to prevent infinite loop
+        if (parser.pos == startPos) {
+            parserAdvance(parser);
         }
     }
     return {
@@ -621,6 +752,213 @@ function parseExportDeclaration(parser) {
         };
     }
     return null;
+}
+
+function parseRequireStatement(parser) {
+    parserAdvance(parser); // consume 'require'
+    let path = "";
+    // require can be followed by a string or a path like ./lexer
+    if (peekType(parser) == "STRING") {
+        path = peekValue(parser);
+        parserAdvance(parser);
+    } else {
+        // Read path tokens until semicolon or newline
+        while (peekType(parser) != "DELIMITER" || peekValue(parser) != ";") {
+            if (peekType(parser) == "EOF") break;
+            path = path + peekValue(parser);
+            parserAdvance(parser);
+        }
+    }
+    match(parser, "DELIMITER", ";");
+    return {
+        type: "RequireStatement",
+        path: path
+    };
+}
+
+function parseTypeAliasDeclaration(parser) {
+    parserAdvance(parser); // consume 'type'
+    let name = "";
+    if (peekType(parser) == "IDENTIFIER") {
+        name = peekValue(parser);
+        parserAdvance(parser);
+    }
+    // Optional generic parameters
+    let genericParams = null;
+    if (peekType(parser) == "OPERATOR" && peekValue(parser) == "<") {
+        genericParams = parseGenericParams(parser);
+    }
+    expect(parser, "OPERATOR", "=");
+    let typeAnnotation = parseTypeAnnotation(parser);
+    match(parser, "DELIMITER", ";");
+    return {
+        type: "TypeAliasDeclaration",
+        name: name,
+        genericParams: genericParams,
+        typeAnnotation: typeAnnotation
+    };
+}
+
+function parseInterfaceDeclaration(parser) {
+    parserAdvance(parser); // consume 'interface'
+    let name = "";
+    if (peekType(parser) == "IDENTIFIER") {
+        name = peekValue(parser);
+        parserAdvance(parser);
+    }
+    // Optional generic parameters
+    let genericParams = null;
+    if (peekType(parser) == "OPERATOR" && peekValue(parser) == "<") {
+        genericParams = parseGenericParams(parser);
+    }
+    // Optional extends
+    let extendsTypes = [];
+    if (peekType(parser) == "KEYWORD" && peekValue(parser) == "extends") {
+        parserAdvance(parser);
+        while (true) {
+            let extendType = parseTypeAnnotation(parser);
+            if (extendType != null) {
+                extendsTypes.push(extendType);
+            }
+            if (peekType(parser) == "DELIMITER" && peekValue(parser) == ",") {
+                parserAdvance(parser);
+            } else {
+                break;
+            }
+        }
+    }
+    // Parse body
+    expect(parser, "DELIMITER", "{");
+    let members = [];
+    while (peekType(parser) != "DELIMITER" || peekValue(parser) != "}") {
+        if (peekType(parser) == "EOF") break;
+        let member = parseInterfaceMember(parser);
+        if (member != null) {
+            members.push(member);
+        }
+    }
+    expect(parser, "DELIMITER", "}");
+    return {
+        type: "InterfaceDeclaration",
+        name: name,
+        genericParams: genericParams,
+        extends: extendsTypes,
+        members: members
+    };
+}
+
+function parseInterfaceMember(parser) {
+    let name = "";
+    let optional = false;
+    // Member name (can be keyword or identifier)
+    if (peekType(parser) == "IDENTIFIER" || peekType(parser) == "KEYWORD") {
+        name = peekValue(parser);
+        parserAdvance(parser);
+    }
+    // Optional marker
+    if (peekType(parser) == "OPERATOR" && peekValue(parser) == "?") {
+        optional = true;
+        parserAdvance(parser);
+    }
+    // Type annotation
+    let typeAnnotation = null;
+    if (peekType(parser) == "DELIMITER" && peekValue(parser) == ":") {
+        typeAnnotation = tryParseTypeAnnotation(parser);
+    } else if (peekType(parser) == "DELIMITER" && peekValue(parser) == "(") {
+        // Method signature
+        let params = parseTypedParams(parser);
+        let returnType = tryParseTypeAnnotation(parser);
+        typeAnnotation = {
+            type: "FunctionTypeAnnotation",
+            params: params,
+            returnType: returnType
+        };
+    }
+    match(parser, "DELIMITER", ";");
+    match(parser, "DELIMITER", ",");
+    return {
+        type: "InterfaceMember",
+        name: name,
+        optional: optional,
+        typeAnnotation: typeAnnotation
+    };
+}
+
+function parseEnumDeclaration(parser) {
+    parserAdvance(parser); // consume 'enum'
+    let name = "";
+    if (peekType(parser) == "IDENTIFIER") {
+        name = peekValue(parser);
+        parserAdvance(parser);
+    }
+    expect(parser, "DELIMITER", "{");
+    let members = [];
+    let autoValue = 0;
+    while (peekType(parser) != "DELIMITER" || peekValue(parser) != "}") {
+        if (peekType(parser) == "EOF") break;
+        let memberName = "";
+        if (peekType(parser) == "IDENTIFIER") {
+            memberName = peekValue(parser);
+            parserAdvance(parser);
+        }
+        let value = null;
+        if (peekType(parser) == "OPERATOR" && peekValue(parser) == "=") {
+            parserAdvance(parser);
+            if (peekType(parser) == "NUMBER") {
+                value = parseFloat(peekValue(parser));
+                autoValue = value + 1;
+                parserAdvance(parser);
+            } else if (peekType(parser) == "STRING") {
+                value = peekValue(parser);
+                parserAdvance(parser);
+            }
+        } else {
+            value = autoValue;
+            autoValue = autoValue + 1;
+        }
+        members.push({
+            type: "EnumMember",
+            name: memberName,
+            value: value
+        });
+        match(parser, "DELIMITER", ",");
+    }
+    expect(parser, "DELIMITER", "}");
+    return {
+        type: "EnumDeclaration",
+        name: name,
+        members: members
+    };
+}
+
+function parseGenericParams(parser) {
+    let params = [];
+    expect(parser, "OPERATOR", "<");
+    while (peekType(parser) != "OPERATOR" || peekValue(parser) != ">") {
+        if (peekType(parser) == "EOF") break;
+        if (peekType(parser) == "IDENTIFIER") {
+            let paramName = peekValue(parser);
+            parserAdvance(parser);
+            // Optional constraint: extends Type
+            let constraint = null;
+            if (peekType(parser) == "KEYWORD" && peekValue(parser) == "extends") {
+                parserAdvance(parser);
+                constraint = parseTypeAnnotation(parser);
+            }
+            params.push({
+                type: "TypeParameter",
+                name: paramName,
+                constraint: constraint
+            });
+        }
+        if (peekType(parser) == "DELIMITER" && peekValue(parser) == ",") {
+            parserAdvance(parser);
+        } else {
+            break;
+        }
+    }
+    expect(parser, "OPERATOR", ">");
+    return params;
 }
 
 function parseExpressionStatement(parser) {

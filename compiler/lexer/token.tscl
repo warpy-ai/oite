@@ -60,7 +60,22 @@ enum KEYWORD {
     IN = "in",
     OF = "of",
     DELETE = "delete",
-    VOID = "void"
+    VOID = "void",
+    // TypeScript keywords
+    TYPE = "type",
+    INTERFACE = "interface",
+    ENUM = "enum",
+    IMPLEMENTS = "implements",
+    PRIVATE = "private",
+    PUBLIC = "public",
+    PROTECTED = "protected",
+    READONLY = "readonly",
+    ABSTRACT = "abstract",
+    DECLARE = "declare",
+    NAMESPACE = "namespace",
+    MODULE = "module",
+    // Script-specific
+    REQUIRE = "require"
 }
 
 // ============================================================================
@@ -142,11 +157,20 @@ interface Token {
 
 function isKeyword(value: string): boolean {
     let keywords = [
+        // Control flow
         "if", "else", "for", "while", "do", "break", "continue", "return",
+        // Declarations
         "function", "var", "let", "const", "true", "false", "null", "undefined",
         "NaN", "try", "catch", "finally", "throw", "class", "extends", "super",
         "new", "this", "import", "export", "from", "as", "default", "async",
-        "await", "typeof", "instanceof", "in", "of", "delete", "void"
+        "await", "typeof", "instanceof", "in", "of", "delete", "void",
+        // TypeScript keywords
+        "type", "interface", "enum", "implements", "private", "public",
+        "protected", "readonly", "abstract", "declare", "namespace", "module",
+        // Type keywords (for annotations)
+        "number", "string", "boolean", "any", "never", "unknown", "object",
+        // Script-specific
+        "require"
     ];
     let i = 0;
     while (i < keywords.length) {

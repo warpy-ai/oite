@@ -3,7 +3,8 @@
 // Flow-sensitive type inference and operation specialization
 // ============================================================================
 
-require ../ir/mod;
+// Dependencies loaded by runtime (require ../ syntax not supported)
+// require ../ir/mod;
 
 // ============================================================================
 // Type Checker Context
@@ -115,6 +116,11 @@ function processBlock(checker: TypeChecker, block: IrBlock): void {
 
 function inferInstruction(checker: TypeChecker, inst: IrInstruction): void {
     let opcode = inst.opcode;
+
+    // RETURN and other control flow ops have no type inference needed
+    if (opcode == IrOpCode.RETURN || opcode == IrOpCode.JUMP || opcode == IrOpCode.JUMP_IF_FALSE) {
+        return;
+    }
 
     // Constants have known types
     if (opcode == IrOpCode.CONST) {

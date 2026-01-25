@@ -194,10 +194,12 @@ function main(args: string[]) {
         logVerbose(parsed.verbose, "  Optimization passed");
 
         // Verify IR
+        console.log("  Verifying IR...");
         if (!verifyIrModule(irModule)) {
             console.log("IR verification failed");
             return;
         }
+        console.log("  IR verified");
 
         console.log("Check passed: " + parsed.inputFile);
         return;
@@ -263,6 +265,7 @@ function main(args: string[]) {
 
     console.log("Bytecode generated (" + result.length + " bytes)");
     console.log("To run, use the VM: ./target/release/script --run-binary <file.bc>");
+    return;
 }
 
 // Export for external use
@@ -288,4 +291,13 @@ let Compiler = {
 };
 
 console.log("tscl compiler loaded (v" + Compiler.version + ")");
-console.log("Commands: ast, ir, check, build, run");
+
+// ============================================================================
+// Auto-invoke main() with command-line arguments
+// ============================================================================
+
+// The runtime provides __args__ as command-line arguments after the script name
+if (typeof __args__ !== "undefined" && __args__.length > 0) {
+    main(__args__);
+}
+// Note: we don't show usage for no-args case since the compiler is typically invoked with args

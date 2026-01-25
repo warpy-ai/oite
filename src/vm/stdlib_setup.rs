@@ -15,6 +15,7 @@ pub fn setup_stdlib(vm: &mut VM) {
     setup_bytestream(vm);
     setup_string(vm);
     setup_fs(vm);
+    setup_json(vm);
     setup_globals(vm);
 }
 
@@ -93,29 +94,48 @@ fn setup_bytestream(vm: &mut VM) {
 }
 
 fn setup_string(vm: &mut VM) {
-    use crate::stdlib::native_string_from_char_code;
+    use crate::stdlib::{native_string_constructor, native_string_from_char_code};
 
+    // Register the String constructor as a callable function
+    let string_constructor_idx = vm.register_native(native_string_constructor);
     let string_from_char_code_idx = vm.register_native(native_string_from_char_code);
+
+    // Create String as an object with methods
     let string_ptr = vm.heap.len();
     let mut string_props = std::collections::HashMap::new();
     string_props.insert(
         "fromCharCode".to_string(),
         JsValue::NativeFunction(string_from_char_code_idx),
     );
+    // Store the constructor function for when String is called
+    string_props.insert(
+        "__call__".to_string(),
+        JsValue::NativeFunction(string_constructor_idx),
+    );
     vm.heap.push(HeapObject {
         data: HeapData::Object(string_props),
     });
+
+    // Store the String object in globals
     vm.call_stack[0]
         .locals
         .insert("String".into(), JsValue::Object(string_ptr));
+
+    // Also register a direct String function for calling String(value)
+    vm.call_stack[0]
+        .locals
+        .insert("__String__".into(), JsValue::NativeFunction(string_constructor_idx));
 }
 
 fn setup_fs(vm: &mut VM) {
-    use crate::stdlib::{native_read_file, native_write_binary_file, native_write_file};
+    use crate::stdlib::{
+        native_exists_sync, native_read_file, native_write_binary_file, native_write_file,
+    };
 
     let fs_read_file_idx = vm.register_native(native_read_file);
     let fs_write_file_idx = vm.register_native(native_write_file);
     let fs_write_binary_file_idx = vm.register_native(native_write_binary_file);
+    let fs_exists_sync_idx = vm.register_native(native_exists_sync);
 
     let fs_ptr = vm.heap.len();
     let mut fs_props = std::collections::HashMap::new();
@@ -131,11 +151,42 @@ fn setup_fs(vm: &mut VM) {
         "writeBinaryFile".to_string(),
         JsValue::NativeFunction(fs_write_binary_file_idx),
     );
+    fs_props.insert(
+        "existsSync".to_string(),
+        JsValue::NativeFunction(fs_exists_sync_idx),
+    );
     vm.heap.push(HeapObject {
         data: HeapData::Object(fs_props),
     });
 
+    // Also add fs to global scope for direct access (fs.existsSync, fs.readFileSync, etc.)
+    vm.call_stack[0]
+        .locals
+        .insert("fs".into(), JsValue::Object(fs_ptr));
+
     vm.modules.insert("fs".to_string(), JsValue::Object(fs_ptr));
+}
+
+fn setup_json(vm: &mut VM) {
+    use crate::stdlib::{native_json_parse, native_json_stringify};
+
+    let stringify_idx = vm.register_native(native_json_stringify);
+    let parse_idx = vm.register_native(native_json_parse);
+
+    let json_ptr = vm.heap.len();
+    let mut json_props = std::collections::HashMap::new();
+    json_props.insert(
+        "stringify".to_string(),
+        JsValue::NativeFunction(stringify_idx),
+    );
+    json_props.insert("parse".to_string(), JsValue::NativeFunction(parse_idx));
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(json_props),
+    });
+
+    vm.call_stack[0]
+        .locals
+        .insert("JSON".into(), JsValue::Object(json_ptr));
 }
 
 fn setup_globals(vm: &mut VM) {
@@ -144,4 +195,22 @@ fn setup_globals(vm: &mut VM) {
     vm.call_stack[0]
         .locals
         .insert("require".into(), JsValue::NativeFunction(require_idx));
+}
+
+/// Set script arguments as __args__ global variable.
+/// Arguments are provided as strings and converted to a JS array.
+pub fn set_script_args(vm: &mut VM, args: Vec<String>) {
+    // Convert args to JsValue strings
+    let js_args: Vec<JsValue> = args.into_iter().map(JsValue::String).collect();
+
+    // Create array on heap (arrays are stored as Object pointing to HeapData::Array)
+    let array_ptr = vm.heap.len();
+    vm.heap.push(HeapObject {
+        data: HeapData::Array(js_args),
+    });
+
+    // Set __args__ global (arrays use JsValue::Object pointing to array heap data)
+    vm.call_stack[0]
+        .locals
+        .insert("__args__".into(), JsValue::Object(array_ptr));
 }

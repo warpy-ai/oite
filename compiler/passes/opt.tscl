@@ -3,7 +3,8 @@
 // Dead Code Elimination, Constant Folding, CSE, Copy Propagation
 // ============================================================================
 
-require ../ir/mod;
+// Dependencies loaded by runtime (require ../ syntax not supported)
+// require ../ir/mod;
 
 // ============================================================================
 // Dead Code Elimination
@@ -590,6 +591,7 @@ function removeUnreachableBlocks(func: IrFunction): void {
         }
         i = i + 1;
     }
+    return;
 }
 
 // ============================================================================

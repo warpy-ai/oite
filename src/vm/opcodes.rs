@@ -42,6 +42,8 @@ pub enum OpCode {
     Or,              // ||
     Not,             // ! (logical not)
     Neg,             // - (unary negation)
+    TypeOf,          // typeof operator - returns type string
+    Delete(String),  // delete operator - removes property from object
     NewArray(usize), // Creates array of size N
     StoreElement,    // Pops index, value, and array_ptr -> arr[idx] = val
     LoadElement,     // Pops index and array_ptr -> pushes arr[idx]

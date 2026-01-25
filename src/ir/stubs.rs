@@ -260,6 +260,10 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         // Move/Clone operations
         IrOp::Move(_, _) => CompileStrategy::Inline(InlineOp::Copy), // Move is just ownership transfer
         IrOp::Clone(_, _) => CompileStrategy::StubCall(stubs::ALLOC_OBJECT), // Clone needs allocation
+
+        // Type operations
+        IrOp::TypeOf(_, _) => CompileStrategy::StubCall(stubs::CALL), // Runtime type check
+        IrOp::DeleteProp(_, _, _) => CompileStrategy::StubCall(stubs::SET_PROP), // Delete property
     }
 }
 

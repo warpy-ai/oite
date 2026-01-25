@@ -1,0 +1,78 @@
+// ============================================================================
+// Compiler Verification Tests
+// ============================================================================
+
+console.log("==============================================");
+console.log("Compiler Verification Test");
+console.log("==============================================");
+
+// Test 1: Tokenize a simple expression
+console.log("");
+console.log("Test 1: Tokenization");
+let tokens1 = tokenize("let x = 42;");
+console.log("  Token count: " + tokens1.length);
+if (tokens1.length > 0) {
+    console.log("  PASS");
+} else {
+    console.log("  FAIL");
+}
+
+// Test 2: Parse a simple declaration
+console.log("");
+console.log("Test 2: Parse variable declaration");
+let ast2 = parseSource("let y = 100;");
+if (ast2 != null) {
+    console.log("  Statement count: " + ast2.body.length);
+    console.log("  PASS");
+} else {
+    console.log("  FAIL");
+}
+
+// Test 3: Parse a function
+console.log("");
+console.log("Test 3: Parse function");
+let ast3 = parseSource("function foo() { return 1; }");
+if (ast3 != null) {
+    console.log("  Statement count: " + ast3.body.length);
+    console.log("  PASS");
+} else {
+    console.log("  FAIL");
+}
+
+// Test 4: IR lowering
+console.log("");
+console.log("Test 4: IR lowering");
+let ast4 = parseSource("function bar() { let z = 5; return z; }");
+if (ast4 != null) {
+    let ir4 = lowerProgramToIr(ast4);
+    if (ir4 != null) {
+        console.log("  IR function count: " + ir4.functions.length);
+        console.log("  PASS");
+    } else {
+        console.log("  FAIL: IR lowering failed");
+    }
+} else {
+    console.log("  FAIL: Parse failed");
+}
+
+// Test 5: Bytecode generation via emitter
+console.log("");
+console.log("Test 5: Bytecode generation");
+let ast5 = parseSource("let num = 42;");
+if (ast5 != null) {
+    let bc5 = emitProgram(ast5);
+    if (bc5 != null) {
+        let len5 = ByteStream.length(bc5);
+        console.log("  Bytecode size: " + len5 + " bytes");
+        console.log("  PASS");
+    } else {
+        console.log("  FAIL: Bytecode generation failed");
+    }
+} else {
+    console.log("  FAIL: Parse failed");
+}
+
+console.log("");
+console.log("==============================================");
+console.log("Verification complete");
+console.log("==============================================");

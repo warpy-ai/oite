@@ -1,0 +1,13 @@
+// Test self-compilation - compile a bootstrap module
+console.log("=== Self-Compilation Test ===");
+
+// Read a bootstrap module file
+let source = File.readSync("bootstrap/types.tscl");
+console.log("Read types.tscl");
+
+// Try to compile it
+let result = compileToBytecode(source);
+console.log("Compilation complete");
+console.log("Bytecode length: " + result.length);
+
+console.log("=== Done ===");

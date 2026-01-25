@@ -1,0 +1,19 @@
+// Test charCodeAt on different contexts
+console.log("=== charCodeAt test ===");
+
+// Test 1: Direct variable
+let str1 = "42";
+let code1 = str1.charCodeAt(0);
+console.log("Direct variable - charCodeAt(0): " + code1);
+
+// Test 2: Object property
+let obj = { data: "42" };
+let code2 = obj.data.charCodeAt(0);
+console.log("Object property - charCodeAt(0): " + code2);
+
+// Test 3: Extract to local variable first
+let extracted = obj.data;
+let code3 = extracted.charCodeAt(0);
+console.log("Extracted to local - charCodeAt(0): " + code3);
+
+console.log("=== Done ===");

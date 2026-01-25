@@ -1,0 +1,42 @@
+// Test the bootstrap compiler's TypeScript support
+// The bootstrap compiler is automatically loaded for tests/ files
+
+console.log("=== Testing Bootstrap Compiler TypeScript Support ===");
+
+// Test 1: Simple variable with type annotation
+console.log("Test 1: let x: number = 42;");
+let result1 = compileToBytecode("let x: number = 42;");
+console.log("  Result: " + (result1 != null ? "SUCCESS" : "FAILED"));
+
+// Test 2: Function with type annotations
+console.log("Test 2: function add(a: number, b: number): number { return a + b; }");
+let result2 = compileToBytecode("function add(a: number, b: number): number { return a + b; }");
+console.log("  Result: " + (result2 != null ? "SUCCESS" : "FAILED"));
+
+// Test 3: Interface declaration - tokenize test
+console.log("Test 3: interface Point { x: number; y: number; }");
+let tokens3 = tokenize("interface Point { x: number; y: number; }");
+console.log("  Tokens: " + tokens3.length);
+
+// Test 4: Type alias with union - tokenize test
+console.log("Test 4: type StringOrNumber = string | number;");
+let tokens4 = tokenize("type StringOrNumber = string | number;");
+console.log("  Tokens: " + tokens4.length);
+
+// Test 5: Enum declaration - tokenize test
+console.log("Test 5: enum Color { RED = 0, GREEN = 1, BLUE = 2 }");
+let tokens5 = tokenize("enum Color { RED = 0, GREEN = 1, BLUE = 2 }");
+console.log("  Tokens: " + tokens5.length);
+
+// Test 6: Hex numbers - tokenize test
+console.log("Test 6: let hex = 0xFF;");
+let tokens6 = tokenize("let hex = 0xFF;");
+console.log("  Tokens: " + tokens6.length);
+let i = 0;
+while (i < tokens6.length) {
+    let tok = tokens6[i];
+    console.log("    " + tok.type + ": " + tok.value);
+    i = i + 1;
+}
+
+console.log("=== Done ===");

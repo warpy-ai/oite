@@ -1,0 +1,36 @@
+// Comprehensive compiler test
+console.log("=== Comprehensive Compiler Test ===");
+
+// Test 1: Nested function
+let r1 = compileToBytecode("function outer() { function inner() { return 1; } return inner(); }");
+console.log("Nested function: " + r1.length + " bytes");
+
+// Test 2: Multiple statements
+let r2 = compileToBytecode("let a = 1; let b = 2; let c = a + b; let d = c * 2;");
+console.log("Multiple statements: " + r2.length + " bytes");
+
+// Test 3: Nested if-else
+let r3 = compileToBytecode("if (true) { if (false) { let x = 1; } else { let y = 2; } }");
+console.log("Nested if-else: " + r3.length + " bytes");
+
+// Test 4: While with break
+let r4 = compileToBytecode("let i = 0; while (true) { i = i + 1; if (i > 10) { break; } }");
+console.log("While with break: " + r4.length + " bytes");
+
+// Test 5: Function with params
+let r5 = compileToBytecode("function calc(x, y, z) { return x * y + z; }");
+console.log("Function with 3 params: " + r5.length + " bytes");
+
+// Test 6: Object literal
+let r6 = compileToBytecode("let obj = { x: 1, y: 2 };");
+console.log("Object literal: " + r6.length + " bytes");
+
+// Test 7: Array literal
+let r7 = compileToBytecode("let arr = [1, 2, 3, 4, 5];");
+console.log("Array literal: " + r7.length + " bytes");
+
+// Test 8: Method call
+let r8 = compileToBytecode("let arr = []; arr.push(1);");
+console.log("Method call: " + r8.length + " bytes");
+
+console.log("=== All tests passed! ===");

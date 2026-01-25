@@ -101,6 +101,14 @@ pub fn native_write_file(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     }
 }
 
+pub fn native_exists_sync(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let Some(JsValue::String(path)) = args.first() {
+        JsValue::Boolean(std::path::Path::new(path).exists())
+    } else {
+        JsValue::Boolean(false)
+    }
+}
+
 pub fn native_write_binary_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     if let (Some(JsValue::String(filename)), Some(JsValue::Object(ptr))) =
         (args.first(), args.get(1))
@@ -277,6 +285,50 @@ pub fn native_byte_stream_to_array(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
 // String Utilities (minimal - needed for bootstrap compiler)
 // ============================================================================
 
+/// String constructor - converts any value to a string
+pub fn native_string_constructor(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if args.is_empty() {
+        return JsValue::String(String::new());
+    }
+    let value = &args[0];
+    let result = match value {
+        JsValue::String(s) => s.clone(),
+        JsValue::Number(n) => n.to_string(),
+        JsValue::Boolean(b) => b.to_string(),
+        JsValue::Null => "null".to_string(),
+        JsValue::Undefined => "undefined".to_string(),
+        JsValue::Object(ptr) => {
+            if let Some(HeapObject { data }) = vm.heap.get(*ptr) {
+                match data {
+                    HeapData::Array(arr) => {
+                        let parts: Vec<String> = arr
+                            .iter()
+                            .map(|v| match v {
+                                JsValue::String(s) => s.clone(),
+                                JsValue::Number(n) => n.to_string(),
+                                JsValue::Boolean(b) => b.to_string(),
+                                JsValue::Null => "null".to_string(),
+                                JsValue::Undefined => "".to_string(),
+                                _ => String::new(),
+                            })
+                            .collect();
+                        parts.join(",")
+                    }
+                    HeapData::Object(_) => "[object Object]".to_string(),
+                    HeapData::ByteStream(_) => "[object ByteStream]".to_string(),
+                }
+            } else {
+                "[object Object]".to_string()
+            }
+        }
+        JsValue::Function { .. } => "function".to_string(),
+        JsValue::NativeFunction(_) => "function".to_string(),
+        JsValue::Promise(_) => "[object Promise]".to_string(),
+        JsValue::Accessor(_, _) => "".to_string(),
+    };
+    JsValue::String(result)
+}
+
 pub fn native_string_from_char_code(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     let mut result = String::new();
 
@@ -290,4 +342,124 @@ pub fn native_string_from_char_code(_vm: &mut VM, args: Vec<JsValue>) -> JsValue
     }
 
     JsValue::String(result)
+}
+
+// ============================================================================
+// JSON Functions (minimal - needed for compiler AST output)
+// ============================================================================
+
+fn json_stringify_value(vm: &VM, value: &JsValue, indent: usize, pretty: bool) -> String {
+    let indent_str = if pretty {
+        "  ".repeat(indent)
+    } else {
+        String::new()
+    };
+    let next_indent = if pretty {
+        "  ".repeat(indent + 1)
+    } else {
+        String::new()
+    };
+    let newline = if pretty { "\n" } else { "" };
+    let space = if pretty { " " } else { "" };
+
+    match value {
+        JsValue::Null => "null".to_string(),
+        JsValue::Undefined => "null".to_string(), // undefined becomes null in JSON
+        JsValue::Boolean(b) => b.to_string(),
+        JsValue::Number(n) => {
+            if n.is_nan() {
+                "null".to_string()
+            } else if n.is_infinite() {
+                "null".to_string()
+            } else {
+                n.to_string()
+            }
+        }
+        JsValue::String(s) => {
+            // Escape special characters
+            let escaped: String = s
+                .chars()
+                .map(|c| match c {
+                    '"' => "\\\"".to_string(),
+                    '\\' => "\\\\".to_string(),
+                    '\n' => "\\n".to_string(),
+                    '\r' => "\\r".to_string(),
+                    '\t' => "\\t".to_string(),
+                    c if c.is_control() => format!("\\u{:04x}", c as u32),
+                    c => c.to_string(),
+                })
+                .collect();
+            format!("\"{}\"", escaped)
+        }
+        JsValue::Object(ptr) => {
+            if let Some(HeapObject { data }) = vm.heap.get(*ptr) {
+                match data {
+                    HeapData::Array(arr) => {
+                        if arr.is_empty() {
+                            "[]".to_string()
+                        } else {
+                            let items: Vec<String> = arr
+                                .iter()
+                                .map(|v| {
+                                    format!(
+                                        "{}{}",
+                                        next_indent,
+                                        json_stringify_value(vm, v, indent + 1, pretty)
+                                    )
+                                })
+                                .collect();
+                            format!("[{}{}{}{}]", newline, items.join(&format!(",{}", newline)), newline, indent_str)
+                        }
+                    }
+                    HeapData::Object(props) => {
+                        if props.is_empty() {
+                            "{}".to_string()
+                        } else {
+                            let mut items: Vec<String> = props
+                                .iter()
+                                .map(|(k, v)| {
+                                    format!(
+                                        "{}\"{}\":{}{}",
+                                        next_indent,
+                                        k,
+                                        space,
+                                        json_stringify_value(vm, v, indent + 1, pretty)
+                                    )
+                                })
+                                .collect();
+                            items.sort(); // Sort for consistent output
+                            format!("{{{}{}{}{}}}", newline, items.join(&format!(",{}", newline)), newline, indent_str)
+                        }
+                    }
+                    _ => "null".to_string(),
+                }
+            } else {
+                "null".to_string()
+            }
+        }
+        JsValue::Function { .. } => "null".to_string(), // Functions become null in JSON
+        JsValue::NativeFunction(_) => "null".to_string(),
+        JsValue::Accessor(_, _) => "null".to_string(),
+        JsValue::Promise(_) => "null".to_string(),
+    }
+}
+
+pub fn native_json_stringify(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let Some(value) = args.first() {
+        // Check for indent parameter (second arg is replacer, third is indent)
+        let indent = args.get(2).and_then(|v| match v {
+            JsValue::Number(n) if *n > 0.0 => Some(*n as usize),
+            _ => None,
+        });
+        let pretty = indent.is_some();
+        JsValue::String(json_stringify_value(vm, value, 0, pretty))
+    } else {
+        JsValue::Undefined
+    }
+}
+
+pub fn native_json_parse(_vm: &mut VM, _args: Vec<JsValue>) -> JsValue {
+    // JSON.parse is complex to implement; return undefined for now
+    // The modular compiler doesn't need parse, just stringify
+    JsValue::Undefined
 }
