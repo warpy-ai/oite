@@ -32,6 +32,46 @@ function createLlvmEmitter(): LlvmEmitter {
     };
 }
 
+// Register a string constant and return its global name
+function registerStringConstant(emitter: LlvmEmitter, value: string): string {
+    // Check if string already exists
+    let i = 0;
+    while (i < emitter.stringConstants.length) {
+        if (emitter.stringConstants[i].value == value) {
+            return "@.str." + String(emitter.stringConstants[i].id);
+        }
+        i = i + 1;
+    }
+    // Add new string constant
+    let id = emitter.stringConstants.length;
+    emitter.stringConstants.push({ value: value, id: id });
+    return "@.str." + String(id);
+}
+
+// Escape a string for LLVM IR (convert to C-style escapes)
+function escapeStringForLlvm(str: string): string {
+    let result = "";
+    let i = 0;
+    while (i < str.length) {
+        let c = str[i];
+        if (c == "\\") {
+            result = result + "\\5C";
+        } else if (c == "\"") {
+            result = result + "\\22";
+        } else if (c == "\n") {
+            result = result + "\\0A";
+        } else if (c == "\r") {
+            result = result + "\\0D";
+        } else if (c == "\t") {
+            result = result + "\\09";
+        } else {
+            result = result + c;
+        }
+        i = i + 1;
+    }
+    return result;
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -94,8 +134,46 @@ function formatDouble(value: number): string {
 // Module Emission
 // ============================================================================
 
+// Pre-scan IR to collect all string constants
+function collectStringConstants(emitter: LlvmEmitter, irModule: IrModule): void {
+    let i = 0;
+    while (i < irModule.functions.length) {
+        let func = irModule.functions[i];
+        let j = 0;
+        while (j < func.blocks.length) {
+            let block = func.blocks[j];
+            let k = 0;
+            while (k < block.ops.length) {
+                let inst = block.ops[k];
+                // Check for CONST with string value
+                if (inst.opcode == 0 && typeof inst.immediate == "string") {
+                    registerStringConstant(emitter, inst.immediate);
+                }
+                k = k + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+
+// Emit all collected string constants
+function emitStringConstants(emitter: LlvmEmitter): void {
+    let i = 0;
+    while (i < emitter.stringConstants.length) {
+        let sc = emitter.stringConstants[i];
+        let escaped = escapeStringForLlvm(sc.value);
+        let len = sc.value.length + 1;  // +1 for null terminator
+        emit(emitter, "@.str." + String(sc.id) + " = private unnamed_addr constant [" + String(len) + " x i8] c\"" + escaped + "\\00\"");
+        i = i + 1;
+    }
+}
+
 function emitLlvmModule(irModule: IrModule): string {
     let emitter = createLlvmEmitter();
+
+    // Pre-scan to collect string constants
+    collectStringConstants(emitter, irModule);
 
     // Emit header
     emit(emitter, "; ============================================================");
@@ -107,14 +185,22 @@ function emitLlvmModule(irModule: IrModule): string {
     emit(emitter, "target triple = \"arm64-apple-darwin\"");
     emit(emitter, "");
 
-    // Emit runtime declarations (libc printf)
+    // Emit runtime declarations (libc functions)
     emit(emitter, "; External declarations");
     emit(emitter, "declare i32 @printf(i8*, ...)");
+    emit(emitter, "declare i32 @sprintf(i8*, i8*, ...)");
+    emit(emitter, "declare i8* @malloc(i64)");
+    emit(emitter, "declare i64 @strlen(i8*)");
+    emit(emitter, "declare i8* @strcpy(i8*, i8*)");
+    emit(emitter, "declare i8* @strcat(i8*, i8*)");
     emit(emitter, "");
 
     // Emit string constants
     emit(emitter, "; String constants");
     emit(emitter, "@.fmt_num = private unnamed_addr constant [4 x i8] c\"%g\\0A\\00\"");
+    emit(emitter, "@.fmt_str = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\"");
+    emit(emitter, "@.fmt_num2str = private unnamed_addr constant [3 x i8] c\"%g\\00\"");  // for number-to-string
+    emitStringConstants(emitter);
     emit(emitter, "");
 
     // Emit runtime function definitions (inline)
@@ -151,24 +237,95 @@ function emitRuntimeFunctions(emitter: LlvmEmitter): void {
     emit(emitter, "; ============================================================");
     emit(emitter, "");
 
-    // tscl_console_log
+    // tscl_console_log - handles both numbers and strings
+    // String tag: 0xFFFCxxxxxxxxxxxx (high 16 bits = 0xFFFC = 65532)
+    // Numbers: IEEE 754 doubles
     emit(emitter, "define i64 @tscl_console_log(i64 %value) {");
     emit(emitter, "entry:");
+    emit(emitter, "  ; Check if value is a string (high bits = 0xFFFC)");
+    emit(emitter, "  %high = lshr i64 %value, 48");
+    emit(emitter, "  %is_str = icmp eq i64 %high, 65532");  // 0xFFFC = 65532
+    emit(emitter, "  br i1 %is_str, label %print_str, label %print_num");
+    emit(emitter, "print_str:");
+    emit(emitter, "  ; Extract pointer (mask off the tag)");
+    emit(emitter, "  %ptr_int = and i64 %value, 281474976710655");  // 0x0000FFFFFFFFFFFF
+    emit(emitter, "  %ptr = inttoptr i64 %ptr_int to i8*");
+    emit(emitter, "  %fmt_s = getelementptr [4 x i8], [4 x i8]* @.fmt_str, i64 0, i64 0");
+    emit(emitter, "  call i32 (i8*, ...) @printf(i8* %fmt_s, i8* %ptr)");
+    emit(emitter, "  br label %done");
+    emit(emitter, "print_num:");
     emit(emitter, "  %dval = bitcast i64 %value to double");
-    emit(emitter, "  %fmt = getelementptr [4 x i8], [4 x i8]* @.fmt_num, i64 0, i64 0");
-    emit(emitter, "  call i32 (i8*, ...) @printf(i8* %fmt, double %dval)");
+    emit(emitter, "  %fmt_n = getelementptr [4 x i8], [4 x i8]* @.fmt_num, i64 0, i64 0");
+    emit(emitter, "  call i32 (i8*, ...) @printf(i8* %fmt_n, double %dval)");
+    emit(emitter, "  br label %done");
+    emit(emitter, "done:");
     emit(emitter, "  ret i64 9221120237041090561");
     emit(emitter, "}");
     emit(emitter, "");
 
-    // tscl_add_any
+    // tscl_num_to_str - convert a number to a string
+    emit(emitter, "define i8* @tscl_num_to_str(i64 %num) {");
+    emit(emitter, "entry:");
+    emit(emitter, "  %buf = call i8* @malloc(i64 32)");  // 32 bytes should be enough for any double
+    emit(emitter, "  %dval = bitcast i64 %num to double");
+    emit(emitter, "  %fmt = getelementptr [3 x i8], [3 x i8]* @.fmt_num2str, i64 0, i64 0");
+    emit(emitter, "  call i32 (i8*, i8*, ...) @sprintf(i8* %buf, i8* %fmt, double %dval)");
+    emit(emitter, "  ret i8* %buf");
+    emit(emitter, "}");
+    emit(emitter, "");
+
+    // tscl_add_any - handles both number addition and string concatenation
     emit(emitter, "define i64 @tscl_add_any(i64 %a, i64 %b) {");
     emit(emitter, "entry:");
+    emit(emitter, "  ; Check if either operand is a string (high 16 bits = 0xFFFC = 65532)");
+    emit(emitter, "  %a_high = lshr i64 %a, 48");
+    emit(emitter, "  %b_high = lshr i64 %b, 48");
+    emit(emitter, "  %a_is_str = icmp eq i64 %a_high, 65532");
+    emit(emitter, "  %b_is_str = icmp eq i64 %b_high, 65532");
+    emit(emitter, "  %either_str = or i1 %a_is_str, %b_is_str");
+    emit(emitter, "  br i1 %either_str, label %check_types, label %do_add");
+    emit(emitter, "do_add:");
     emit(emitter, "  %a_fp = bitcast i64 %a to double");
     emit(emitter, "  %b_fp = bitcast i64 %b to double");
     emit(emitter, "  %result_fp = fadd double %a_fp, %b_fp");
-    emit(emitter, "  %result = bitcast double %result_fp to i64");
-    emit(emitter, "  ret i64 %result");
+    emit(emitter, "  %result_num = bitcast double %result_fp to i64");
+    emit(emitter, "  ret i64 %result_num");
+    emit(emitter, "check_types:");
+    emit(emitter, "  ; Get string pointer for a (convert if needed)");
+    emit(emitter, "  br i1 %a_is_str, label %a_already_str, label %convert_a");
+    emit(emitter, "a_already_str:");
+    emit(emitter, "  %a_ptr_int1 = and i64 %a, 281474976710655");
+    emit(emitter, "  %a_ptr1 = inttoptr i64 %a_ptr_int1 to i8*");
+    emit(emitter, "  br label %got_a_ptr");
+    emit(emitter, "convert_a:");
+    emit(emitter, "  %a_ptr2 = call i8* @tscl_num_to_str(i64 %a)");
+    emit(emitter, "  br label %got_a_ptr");
+    emit(emitter, "got_a_ptr:");
+    emit(emitter, "  %a_ptr = phi i8* [%a_ptr1, %a_already_str], [%a_ptr2, %convert_a]");
+    emit(emitter, "  ; Get string pointer for b (convert if needed)");
+    emit(emitter, "  br i1 %b_is_str, label %b_already_str, label %convert_b");
+    emit(emitter, "b_already_str:");
+    emit(emitter, "  %b_ptr_int1 = and i64 %b, 281474976710655");
+    emit(emitter, "  %b_ptr1 = inttoptr i64 %b_ptr_int1 to i8*");
+    emit(emitter, "  br label %got_b_ptr");
+    emit(emitter, "convert_b:");
+    emit(emitter, "  %b_ptr2 = call i8* @tscl_num_to_str(i64 %b)");
+    emit(emitter, "  br label %got_b_ptr");
+    emit(emitter, "got_b_ptr:");
+    emit(emitter, "  %b_ptr = phi i8* [%b_ptr1, %b_already_str], [%b_ptr2, %convert_b]");
+    emit(emitter, "  ; Concatenate the strings");
+    emit(emitter, "  %a_len = call i64 @strlen(i8* %a_ptr)");
+    emit(emitter, "  %b_len = call i64 @strlen(i8* %b_ptr)");
+    emit(emitter, "  %total_len = add i64 %a_len, %b_len");
+    emit(emitter, "  %alloc_len = add i64 %total_len, 1");
+    emit(emitter, "  %new_buf = call i8* @malloc(i64 %alloc_len)");
+    emit(emitter, "  call i8* @strcpy(i8* %new_buf, i8* %a_ptr)");
+    emit(emitter, "  call i8* @strcat(i8* %new_buf, i8* %b_ptr)");
+    emit(emitter, "  ; Tag the result as a string");
+    emit(emitter, "  %new_int = ptrtoint i8* %new_buf to i64");
+    emit(emitter, "  %new_masked = and i64 %new_int, 281474976710655");
+    emit(emitter, "  %result_str = or i64 %new_masked, 18445618173802708992");
+    emit(emitter, "  ret i64 %result_str");
     emit(emitter, "}");
     emit(emitter, "");
 
@@ -454,8 +611,26 @@ function emitLlvmInstruction(emitter: LlvmEmitter, inst: IrInstruction): void {
             // Undefined constant
             emit(emitter, "  " + reg + " = add i64 0, 9221120237041090561");
             setRegForValue(emitter, dest, reg);
+        } else if (typeof value == "string") {
+            // String constant - get pointer to the global string
+            let strGlobal = registerStringConstant(emitter, value);
+            let len = value.length + 1;
+            let ptrReg = allocReg(emitter);
+            // Get pointer to first character
+            emit(emitter, "  " + ptrReg + " = getelementptr [" + String(len) + " x i8], [" + String(len) + " x i8]* " + strGlobal + ", i64 0, i64 0");
+            // Convert pointer to i64 and tag it as string
+            // We use negative NaN: 0xFFFC prefix (sign=1, exp=7FF, quiet=1, type=string)
+            // 0xFFFC000000000000 = 18445618173802708992
+            // Pointer goes in low 48 bits, tag in high 16
+            let intReg = allocReg(emitter);
+            emit(emitter, "  " + intReg + " = ptrtoint i8* " + ptrReg + " to i64");
+            // Mask to 48 bits and add tag
+            let maskedReg = allocReg(emitter);
+            emit(emitter, "  " + maskedReg + " = and i64 " + intReg + ", 281474976710655");  // 0x0000FFFFFFFFFFFF
+            emit(emitter, "  " + reg + " = or i64 " + maskedReg + ", 18445618173802708992");
+            setRegForValue(emitter, dest, reg);
         } else {
-            // String or other - just use undefined for now
+            // Unknown type - use undefined
             emit(emitter, "  " + reg + " = add i64 0, 9221120237041090561");
             setRegForValue(emitter, dest, reg);
         }

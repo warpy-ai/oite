@@ -108,8 +108,14 @@ function parseBinary(parser, minPrec) {
 }
 
 function parseUnary(parser) {
-    let op = peekValue(parser);
-    if (op == "!" || op == "-" || op == "+" || op == "~" || op == "typeof" || op == "void" || op == "delete") {
+    let tok = parserPeek(parser);
+    if (tok == null) return parsePostfix(parser);
+    let op = tok.value;
+    let isOperator = tok.type == "OPERATOR";
+    let isKeyword = tok.type == "KEYWORD";
+    // Only treat as unary if it's an OPERATOR token (!, -, +, ~) or KEYWORD (typeof, void, delete)
+    if ((isOperator && (op == "!" || op == "-" || op == "+" || op == "~")) ||
+        (isKeyword && (op == "typeof" || op == "void" || op == "delete"))) {
         parserAdvance(parser);
         let arg = parseUnary(parser);
         return {
