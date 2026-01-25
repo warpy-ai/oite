@@ -94,8 +94,8 @@ const config: Config = {
         docs: {
           sidebarPath: "./sidebars.ts",
           editUrl: "https://github.com/warpy-ai/script/tree/main/docs",
-          showLastUpdateTime: true,
-          showLastUpdateAuthor: true,
+          showLastUpdateTime: false,
+          showLastUpdateAuthor: false,
         },
         blog: {
           showReadingTime: true,
@@ -119,7 +119,7 @@ const config: Config = {
           customCss: "./src/css/custom.css",
         },
         sitemap: {
-          lastmod: "date",
+          lastmod: null,
           changefreq: "weekly",
           priority: 0.5,
           ignorePatterns: ["/tags/**"],
