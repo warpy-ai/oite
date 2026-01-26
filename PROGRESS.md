@@ -185,7 +185,7 @@ Script core includes only essential primitives:
 
 ---
 
-### Phase 4: Self-Hosting Compiler 🚧
+### Phase 4: Self-Hosting Compiler ✅
 
 Fully self-hosted compiler (`scriptc`) written in Script with TypeScript support.
 

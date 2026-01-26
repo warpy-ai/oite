@@ -75,9 +75,13 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ matrix.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ matrix.target }}-cargo-
+            ${{ matrix.os }}-${{ matrix.target }}-cargo-
+
+      - name: Clean target for x86_64 cross-compilation
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: rm -rf target/x86_64-apple-darwin
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
