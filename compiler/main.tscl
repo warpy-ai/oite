@@ -328,7 +328,7 @@ let Compiler = {
     TypeCheck: TypeCheck,
     Optimizer: Optimizer,
     BorrowCheck: BorrowCheck,
-    version: "0.4.0"
+    version: "0.5.0"
 };
 
 console.log("tscl compiler loaded (v" + Compiler.version + ")");

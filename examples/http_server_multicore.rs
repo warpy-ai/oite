@@ -285,10 +285,10 @@ impl Worker {
                         }
                     }
 
-                    if ev & EPOLLOUT as u32 != 0 || conn.write_len > 0 {
-                        if conn.write_all().is_err() {
-                            should_close = true;
-                        }
+                    if (ev & EPOLLOUT as u32 != 0 || conn.write_len > 0)
+                        && conn.write_all().is_err()
+                    {
+                        should_close = true;
                     }
 
                     if ev & (EPOLLRDHUP | EPOLLERR | EPOLLHUP) as u32 != 0 {
