@@ -14,17 +14,20 @@
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
-use std::net::{TcpStream, SocketAddr};
+use std::net::{SocketAddr, TcpStream};
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 
 #[cfg(target_os = "macos")]
-use libc::{kevent, kqueue, EVFILT_READ, EVFILT_WRITE, EV_ADD, EV_ENABLE, EV_CLEAR, EV_DELETE};
+use libc::{EV_ADD, EV_CLEAR, EV_DELETE, EV_ENABLE, EVFILT_READ, EVFILT_WRITE, kevent, kqueue};
 
 #[cfg(target_os = "linux")]
-use libc::{epoll_create1, epoll_ctl, epoll_wait, epoll_event, EPOLLIN, EPOLLOUT, EPOLLET, EPOLLRDHUP, EPOLLERR, EPOLLHUP, EPOLL_CLOEXEC};
+use libc::{
+    EPOLL_CLOEXEC, EPOLLERR, EPOLLET, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLRDHUP, epoll_create1,
+    epoll_ctl, epoll_event, epoll_wait,
+};
 
 const HTTP_RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\n\
 Content-Type: text/plain\r\n\
@@ -75,7 +78,10 @@ impl Connection {
             }
             match self.stream.read(&mut self.read_buf[self.read_pos..]) {
                 Ok(0) => return Err(io::Error::new(io::ErrorKind::ConnectionReset, "EOF")),
-                Ok(n) => { self.read_pos += n; total += n; }
+                Ok(n) => {
+                    self.read_pos += n;
+                    total += n;
+                }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) => return Err(e),
             }
@@ -109,7 +115,10 @@ impl Connection {
 
     fn write_all(&mut self) -> io::Result<bool> {
         while self.write_pos < self.write_len {
-            match self.stream.write(&self.write_buf[self.write_pos..self.write_len]) {
+            match self
+                .stream
+                .write(&self.write_buf[self.write_pos..self.write_len])
+            {
                 Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero, "write zero")),
                 Ok(n) => self.write_pos += n,
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(false),
@@ -125,7 +134,8 @@ impl Connection {
 
 fn find_header_end(data: &[u8]) -> Option<usize> {
     for i in 0..data.len().saturating_sub(3) {
-        if data[i] == b'\r' && data[i+1] == b'\n' && data[i+2] == b'\r' && data[i+3] == b'\n' {
+        if data[i] == b'\r' && data[i + 1] == b'\n' && data[i + 2] == b'\r' && data[i + 3] == b'\n'
+        {
             return Some(i);
         }
     }
@@ -134,7 +144,10 @@ fn find_header_end(data: &[u8]) -> Option<usize> {
 
 /// Create a listener with SO_REUSEPORT enabled
 fn create_reuseport_listener(addr: &SocketAddr) -> io::Result<RawFd> {
-    use libc::{socket, setsockopt, bind, listen, sockaddr_in, AF_INET, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR, SO_REUSEPORT};
+    use libc::{
+        AF_INET, SO_REUSEADDR, SO_REUSEPORT, SOCK_STREAM, SOL_SOCKET, bind, listen, setsockopt,
+        sockaddr_in, socket,
+    };
 
     unsafe {
         let fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -144,13 +157,27 @@ fn create_reuseport_listener(addr: &SocketAddr) -> io::Result<RawFd> {
 
         // Enable SO_REUSEADDR
         let one: i32 = 1;
-        if setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one as *const i32 as *const _, 4) < 0 {
+        if setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_REUSEADDR,
+            &one as *const i32 as *const _,
+            4,
+        ) < 0
+        {
             libc::close(fd);
             return Err(io::Error::last_os_error());
         }
 
         // Enable SO_REUSEPORT - allows multiple processes/threads to bind to same port
-        if setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one as *const i32 as *const _, 4) < 0 {
+        if setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_REUSEPORT,
+            &one as *const i32 as *const _,
+            4,
+        ) < 0
+        {
             libc::close(fd);
             return Err(io::Error::last_os_error());
         }
@@ -164,7 +191,12 @@ fn create_reuseport_listener(addr: &SocketAddr) -> io::Result<RawFd> {
             sin_zero: [0; 8],
         };
 
-        if bind(fd, &sockaddr as *const sockaddr_in as *const _, std::mem::size_of::<sockaddr_in>() as u32) < 0 {
+        if bind(
+            fd,
+            &sockaddr as *const sockaddr_in as *const _,
+            std::mem::size_of::<sockaddr_in>() as u32,
+        ) < 0
+        {
             libc::close(fd);
             return Err(io::Error::last_os_error());
         }
@@ -222,7 +254,9 @@ impl Worker {
 
         let kq = unsafe { kqueue() };
         if kq < 0 {
-            unsafe { libc::close(listener_fd); }
+            unsafe {
+                libc::close(listener_fd);
+            }
             return;
         }
 
@@ -233,12 +267,24 @@ impl Worker {
         let mut events: Vec<libc::kevent> = vec![unsafe { std::mem::zeroed() }; MAX_EVENTS];
 
         while !self.shutdown.load(Ordering::Relaxed) {
-            let timeout = libc::timespec { tv_sec: 1, tv_nsec: 0 };
+            let timeout = libc::timespec {
+                tv_sec: 1,
+                tv_nsec: 0,
+            };
             let n = unsafe {
-                kevent(kq, std::ptr::null(), 0, events.as_mut_ptr(), MAX_EVENTS as i32, &timeout)
+                kevent(
+                    kq,
+                    std::ptr::null(),
+                    0,
+                    events.as_mut_ptr(),
+                    MAX_EVENTS as i32,
+                    &timeout,
+                )
             };
 
-            if n < 0 { continue; }
+            if n < 0 {
+                continue;
+            }
 
             for i in 0..n as usize {
                 let fd = events[i].ident as RawFd;
@@ -264,13 +310,17 @@ impl Worker {
 
                     if filter == EVFILT_READ as i16 {
                         match conn.read_all() {
-                            Ok(_) => { conn.process_requests(&self.count); }
+                            Ok(_) => {
+                                conn.process_requests(&self.count);
+                            }
                             Err(_) => should_close = true,
                         }
                     }
 
                     if filter == EVFILT_WRITE as i16 || conn.write_len > 0 {
-                        if conn.write_all().is_err() { should_close = true; }
+                        if conn.write_all().is_err() {
+                            should_close = true;
+                        }
                     }
 
                     if should_close {
@@ -299,7 +349,9 @@ impl Worker {
 
         let epoll_fd = unsafe { epoll_create1(EPOLL_CLOEXEC) };
         if epoll_fd < 0 {
-            unsafe { libc::close(listener_fd); }
+            unsafe {
+                libc::close(listener_fd);
+            }
             return;
         }
 
@@ -311,7 +363,9 @@ impl Worker {
 
         while !self.shutdown.load(Ordering::Relaxed) {
             let n = unsafe { epoll_wait(epoll_fd, events.as_mut_ptr(), MAX_EVENTS as i32, 1000) };
-            if n < 0 { continue; }
+            if n < 0 {
+                continue;
+            }
 
             for i in 0..n as usize {
                 let fd = events[i].u64 as RawFd;
@@ -336,13 +390,17 @@ impl Worker {
 
                     if ev & EPOLLIN as u32 != 0 {
                         match conn.read_all() {
-                            Ok(_) => { conn.process_requests(&self.count); }
+                            Ok(_) => {
+                                conn.process_requests(&self.count);
+                            }
                             Err(_) => should_close = true,
                         }
                     }
 
                     if ev & EPOLLOUT as u32 != 0 || conn.write_len > 0 {
-                        if conn.write_all().is_err() { should_close = true; }
+                        if conn.write_all().is_err() {
+                            should_close = true;
+                        }
                     }
 
                     if ev & (EPOLLRDHUP | EPOLLERR | EPOLLHUP) as u32 != 0 {
@@ -367,33 +425,87 @@ impl Worker {
 #[cfg(target_os = "macos")]
 fn register_kqueue(kq: RawFd, fd: RawFd, filter: i16) -> io::Result<()> {
     let event = libc::kevent {
-        ident: fd as usize, filter,
+        ident: fd as usize,
+        filter,
         flags: EV_ADD | EV_ENABLE | EV_CLEAR,
-        fflags: 0, data: 0, udata: std::ptr::null_mut(),
+        fflags: 0,
+        data: 0,
+        udata: std::ptr::null_mut(),
     };
     if unsafe { kevent(kq, &event, 1, std::ptr::null_mut(), 0, std::ptr::null()) } < 0 {
         Err(io::Error::last_os_error())
-    } else { Ok(()) }
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "macos")]
 fn register_kqueue_rw(kq: RawFd, fd: RawFd) -> io::Result<()> {
     let events = [
-        libc::kevent { ident: fd as usize, filter: EVFILT_READ, flags: EV_ADD | EV_ENABLE | EV_CLEAR, fflags: 0, data: 0, udata: std::ptr::null_mut() },
-        libc::kevent { ident: fd as usize, filter: EVFILT_WRITE, flags: EV_ADD | EV_ENABLE | EV_CLEAR, fflags: 0, data: 0, udata: std::ptr::null_mut() },
+        libc::kevent {
+            ident: fd as usize,
+            filter: EVFILT_READ,
+            flags: EV_ADD | EV_ENABLE | EV_CLEAR,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
+        libc::kevent {
+            ident: fd as usize,
+            filter: EVFILT_WRITE,
+            flags: EV_ADD | EV_ENABLE | EV_CLEAR,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
     ];
-    if unsafe { kevent(kq, events.as_ptr(), 2, std::ptr::null_mut(), 0, std::ptr::null()) } < 0 {
+    if unsafe {
+        kevent(
+            kq,
+            events.as_ptr(),
+            2,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+        )
+    } < 0
+    {
         Err(io::Error::last_os_error())
-    } else { Ok(()) }
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "macos")]
 fn deregister_kqueue(kq: RawFd, fd: RawFd) {
     let events = [
-        libc::kevent { ident: fd as usize, filter: EVFILT_READ, flags: EV_DELETE, fflags: 0, data: 0, udata: std::ptr::null_mut() },
-        libc::kevent { ident: fd as usize, filter: EVFILT_WRITE, flags: EV_DELETE, fflags: 0, data: 0, udata: std::ptr::null_mut() },
+        libc::kevent {
+            ident: fd as usize,
+            filter: EVFILT_READ,
+            flags: EV_DELETE,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
+        libc::kevent {
+            ident: fd as usize,
+            filter: EVFILT_WRITE,
+            flags: EV_DELETE,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
     ];
-    unsafe { kevent(kq, events.as_ptr(), 2, std::ptr::null_mut(), 0, std::ptr::null()); }
+    unsafe {
+        kevent(
+            kq,
+            events.as_ptr(),
+            2,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+        );
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -404,7 +516,9 @@ fn register_epoll(epoll_fd: RawFd, fd: RawFd, events: u32) -> io::Result<()> {
     };
     if unsafe { epoll_ctl(epoll_fd, libc::EPOLL_CTL_ADD, fd, &mut event) } < 0 {
         Err(io::Error::last_os_error())
-    } else { Ok(()) }
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -415,16 +529,22 @@ fn register_epoll_rw(epoll_fd: RawFd, fd: RawFd) -> io::Result<()> {
     };
     if unsafe { epoll_ctl(epoll_fd, libc::EPOLL_CTL_ADD, fd, &mut event) } < 0 {
         Err(io::Error::last_os_error())
-    } else { Ok(()) }
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "linux")]
 fn deregister_epoll(epoll_fd: RawFd, fd: RawFd) {
-    unsafe { epoll_ctl(epoll_fd, libc::EPOLL_CTL_DEL, fd, std::ptr::null_mut()); }
+    unsafe {
+        epoll_ctl(epoll_fd, libc::EPOLL_CTL_DEL, fd, std::ptr::null_mut());
+    }
 }
 
 fn main() -> io::Result<()> {
-    let num_workers = thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let num_workers = thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
 
     println!("==============================================");
     println!("  SO_REUSEPORT HTTP Server ({} workers)", num_workers);
@@ -466,7 +586,10 @@ fn main() -> io::Result<()> {
             let rps = (current - last) / 5;
             let elapsed = start.elapsed().as_secs().max(1);
             let avg = current / elapsed;
-            println!("[Stats] Total: {} | Last 5s: {} req/s | Avg: {} req/s", current, rps, avg);
+            println!(
+                "[Stats] Total: {} | Last 5s: {} req/s | Avg: {} req/s",
+                current, rps, avg
+            );
             last = current;
         }
     });

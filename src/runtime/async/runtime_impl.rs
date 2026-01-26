@@ -3,8 +3,8 @@ use std::io;
 use std::os::unix::io::RawFd;
 use std::pin::Pin;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
 };
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread;

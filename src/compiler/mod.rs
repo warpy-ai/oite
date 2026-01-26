@@ -504,7 +504,11 @@ impl Codegen {
                     // Get the member name
                     let member_name = match &member.id {
                         swc_ecma_ast::TsEnumMemberId::Ident(ident) => ident.sym.to_string(),
-                        swc_ecma_ast::TsEnumMemberId::Str(s) => s.value.as_str().expect("Invalid string enum member").to_string(),
+                        swc_ecma_ast::TsEnumMemberId::Str(s) => s
+                            .value
+                            .as_str()
+                            .expect("Invalid string enum member")
+                            .to_string(),
                     };
 
                     // Push the value
@@ -515,8 +519,13 @@ impl Codegen {
                         }
                         None => {
                             // Auto-incrementing number for unvalued variants
-                            let idx = enum_decl.members.iter().position(|m| m.id == member.id).unwrap_or(0);
-                            self.instructions.push(OpCode::Push(JsValue::Number(idx as f64)));
+                            let idx = enum_decl
+                                .members
+                                .iter()
+                                .position(|m| m.id == member.id)
+                                .unwrap_or(0);
+                            self.instructions
+                                .push(OpCode::Push(JsValue::Number(idx as f64)));
                         }
                     }
 
@@ -593,7 +602,7 @@ impl Codegen {
             }
         }
         let stmts = &fn_decl.body.as_ref().unwrap().stmts;
-        
+
         let mut last_instr_was_return = false;
         for s in stmts {
             let before = self.instructions.len();
@@ -605,10 +614,10 @@ impl Codegen {
                 }
             }
         }
-        
+
         self.in_function = false;
         self.in_async_function = false;
-        
+
         // If the last statement wasn't a return, we need to handle implicit return
         if !last_instr_was_return {
             if stmts.is_empty() {
@@ -616,10 +625,13 @@ impl Codegen {
                 self.instructions.push(OpCode::Push(JsValue::Undefined));
                 // For async functions, wrap in Promise.resolve()
                 if is_async {
-                    self.instructions.push(OpCode::Push(JsValue::String("Promise".to_string())));
+                    self.instructions
+                        .push(OpCode::Push(JsValue::String("Promise".to_string())));
                     self.instructions.push(OpCode::Load("Promise".to_string()));
-                    self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
-                    self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                    self.instructions
+                        .push(OpCode::Push(JsValue::String("resolve".to_string())));
+                    self.instructions
+                        .push(OpCode::GetProp("resolve".to_string()));
                     // Stack: [undefined, Promise, PromiseObj, resolveFn]
                     // Pop PromiseObj and Promise, keeping resolveFn and undefined
                     self.instructions.push(OpCode::Pop);
@@ -634,10 +646,13 @@ impl Codegen {
                 // The last expression's result is on the stack, need to return it
                 // For async functions, wrap in Promise.resolve()
                 if is_async {
-                    self.instructions.push(OpCode::Push(JsValue::String("Promise".to_string())));
+                    self.instructions
+                        .push(OpCode::Push(JsValue::String("Promise".to_string())));
                     self.instructions.push(OpCode::Load("Promise".to_string()));
-                    self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
-                    self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                    self.instructions
+                        .push(OpCode::Push(JsValue::String("resolve".to_string())));
+                    self.instructions
+                        .push(OpCode::GetProp("resolve".to_string()));
                     // Stack: [returnValue, Promise, PromiseObj, resolveFn]
                     // Pop PromiseObj and Promise, keeping resolveFn
                     self.instructions.push(OpCode::Pop);
@@ -683,10 +698,13 @@ impl Codegen {
                 }
                 // For async functions, wrap the return value in Promise.resolve()
                 if self.in_async_function {
-                    self.instructions.push(OpCode::Push(JsValue::String("Promise".to_string())));
+                    self.instructions
+                        .push(OpCode::Push(JsValue::String("Promise".to_string())));
                     self.instructions.push(OpCode::Load("Promise".to_string()));
-                    self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
-                    self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                    self.instructions
+                        .push(OpCode::Push(JsValue::String("resolve".to_string())));
+                    self.instructions
+                        .push(OpCode::GetProp("resolve".to_string()));
                     self.instructions.push(OpCode::Swap);
                     self.instructions.push(OpCode::Call(1));
                 }
@@ -733,7 +751,11 @@ impl Codegen {
                     // Get the member name
                     let member_name = match &member.id {
                         swc_ecma_ast::TsEnumMemberId::Ident(ident) => ident.sym.to_string(),
-                        swc_ecma_ast::TsEnumMemberId::Str(s) => s.value.as_str().expect("Invalid string enum member").to_string(),
+                        swc_ecma_ast::TsEnumMemberId::Str(s) => s
+                            .value
+                            .as_str()
+                            .expect("Invalid string enum member")
+                            .to_string(),
                     };
 
                     // Push the value
@@ -744,8 +766,13 @@ impl Codegen {
                         }
                         None => {
                             // Auto-incrementing number for unvalued variants
-                            let idx = enum_decl.members.iter().position(|m| m.id == member.id).unwrap_or(0);
-                            self.instructions.push(OpCode::Push(JsValue::Number(idx as f64)));
+                            let idx = enum_decl
+                                .members
+                                .iter()
+                                .position(|m| m.id == member.id)
+                                .unwrap_or(0);
+                            self.instructions
+                                .push(OpCode::Push(JsValue::Number(idx as f64)));
                         }
                     }
 
@@ -947,7 +974,7 @@ impl Codegen {
                 if let Some(body) = &fn_expr.function.body {
                     let stmts = &body.stmts;
                     let mut last_instr_was_return = false;
-                    
+
                     for s in stmts {
                         let before = self.instructions.len();
                         self.gen_stmt(s);
@@ -957,17 +984,20 @@ impl Codegen {
                             }
                         }
                     }
-                    
+
                     // For async functions with no return statement at the end, wrap the result
                     if is_async && !last_instr_was_return {
                         if stmts.is_empty() {
                             self.instructions.push(OpCode::Push(JsValue::Undefined));
                         }
                         // Wrap in Promise.resolve() and add Return
-                        self.instructions.push(OpCode::Push(JsValue::String("Promise".to_string())));
+                        self.instructions
+                            .push(OpCode::Push(JsValue::String("Promise".to_string())));
                         self.instructions.push(OpCode::Load("Promise".to_string()));
-                        self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
-                        self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                        self.instructions
+                            .push(OpCode::Push(JsValue::String("resolve".to_string())));
+                        self.instructions
+                            .push(OpCode::GetProp("resolve".to_string()));
                         // Stack: [returnValue, Promise, PromiseObj, resolveFn]
                         // Pop PromiseObj and Promise, keeping resolveFn
                         self.instructions.push(OpCode::Pop);
@@ -982,10 +1012,13 @@ impl Codegen {
                     self.instructions.push(OpCode::Push(JsValue::Undefined));
                     // For async functions with no body, wrap undefined in Promise.resolve()
                     if is_async {
-                        self.instructions.push(OpCode::Push(JsValue::String("Promise".to_string())));
+                        self.instructions
+                            .push(OpCode::Push(JsValue::String("Promise".to_string())));
                         self.instructions.push(OpCode::Load("Promise".to_string()));
-                        self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
-                        self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                        self.instructions
+                            .push(OpCode::Push(JsValue::String("resolve".to_string())));
+                        self.instructions
+                            .push(OpCode::GetProp("resolve".to_string()));
                         // Stack: [undefined, Promise, PromiseObj, resolveFn]
                         // Pop PromiseObj and Promise, keeping resolveFn
                         self.instructions.push(OpCode::Pop);
@@ -1078,10 +1111,13 @@ impl Codegen {
                         self.gen_expr(e);
                         // For async arrows, wrap the return value in Promise.resolve()
                         if arrow.is_async {
-                            self.instructions.push(OpCode::Push(JsValue::String("Promise".to_string())));
+                            self.instructions
+                                .push(OpCode::Push(JsValue::String("Promise".to_string())));
                             self.instructions.push(OpCode::Load("Promise".to_string()));
-                            self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
-                            self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                            self.instructions
+                                .push(OpCode::Push(JsValue::String("resolve".to_string())));
+                            self.instructions
+                                .push(OpCode::GetProp("resolve".to_string()));
                             // Stack: [returnValue, Promise, PromiseObj, resolveFn]
                             // Pop PromiseObj and Promise, keeping resolveFn
                             self.instructions.push(OpCode::Pop);
@@ -1096,7 +1132,7 @@ impl Codegen {
                     BlockStmtOrExpr::BlockStmt(block) => {
                         let stmts = &block.stmts;
                         let mut last_instr_was_return = false;
-                        
+
                         for s in stmts {
                             let before = self.instructions.len();
                             self.gen_stmt(s);
@@ -1106,17 +1142,20 @@ impl Codegen {
                                 }
                             }
                         }
-                        
+
                         if stmts.is_empty() {
                             self.instructions.push(OpCode::Push(JsValue::Undefined));
                         }
-                        
+
                         // For async arrows with no return statement at the end, wrap the result
                         if arrow.is_async && !last_instr_was_return {
-                            self.instructions.push(OpCode::Push(JsValue::String("Promise".to_string())));
+                            self.instructions
+                                .push(OpCode::Push(JsValue::String("Promise".to_string())));
                             self.instructions.push(OpCode::Load("Promise".to_string()));
-                            self.instructions.push(OpCode::Push(JsValue::String("resolve".to_string())));
-                            self.instructions.push(OpCode::GetProp("resolve".to_string()));
+                            self.instructions
+                                .push(OpCode::Push(JsValue::String("resolve".to_string())));
+                            self.instructions
+                                .push(OpCode::GetProp("resolve".to_string()));
                             // Stack: [returnValue, Promise, PromiseObj, resolveFn]
                             // Pop PromiseObj and Promise, keeping resolveFn
                             self.instructions.push(OpCode::Pop);
@@ -1126,7 +1165,7 @@ impl Codegen {
                             self.instructions.push(OpCode::Swap);
                             self.instructions.push(OpCode::Call(1));
                         }
-                        
+
                         if !last_instr_was_return {
                             self.instructions.push(OpCode::Return);
                         }
@@ -1202,8 +1241,7 @@ impl Codegen {
                         if let Expr::Member(member) = unary.arg.as_ref() {
                             self.gen_expr(&member.obj);
                             if let MemberProp::Ident(id) = &member.prop {
-                                self.instructions
-                                    .push(OpCode::Delete(id.sym.to_string()));
+                                self.instructions.push(OpCode::Delete(id.sym.to_string()));
                             } else {
                                 // Computed property - evaluate and discard, return true
                                 self.instructions.push(OpCode::Pop);

@@ -28,8 +28,8 @@ fn main() -> std::io::Result<()> {
     use std::io::{BufReader, Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::path::Path;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     println!("==============================================");
     println!("  HTTPS Benchmark Server");

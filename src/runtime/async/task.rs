@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Waker, Wake};
-use std::future::Future;
+use std::task::{Context, Poll, Wake, Waker};
 use std::time::Instant;
 
 // Task state constants for thread-safe state management
@@ -99,20 +99,22 @@ impl Task {
     #[cfg(feature = "work-stealing")]
     pub fn poll_threadsafe(self: &Arc<Self>) -> bool {
         // Try to transition from SCHEDULED to RUNNING
-        if self.state.compare_exchange(
-            TASK_SCHEDULED,
-            TASK_RUNNING,
-            Ordering::AcqRel,
-            Ordering::Relaxed,
-        ).is_err() {
+        if self
+            .state
+            .compare_exchange(
+                TASK_SCHEDULED,
+                TASK_RUNNING,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .is_err()
+        {
             // Already running or completed
             return false;
         }
 
         // Create a waker that will reschedule this task
-        let task_waker = TaskWaker {
-            task: self.clone(),
-        };
+        let task_waker = TaskWaker { task: self.clone() };
         let waker = Waker::from(Arc::new(task_waker));
         let mut cx = Context::from_waker(&waker);
 
@@ -149,12 +151,17 @@ impl Wake for TaskWaker {
 
     fn wake_by_ref(self: &Arc<Self>) {
         // Try to transition from IDLE to SCHEDULED
-        if self.task.state.compare_exchange(
-            TASK_IDLE,
-            TASK_SCHEDULED,
-            Ordering::AcqRel,
-            Ordering::Relaxed,
-        ).is_ok() {
+        if self
+            .task
+            .state
+            .compare_exchange(
+                TASK_IDLE,
+                TASK_SCHEDULED,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+        {
             // Successfully scheduled, push to injector and wake a worker
             if let Some(ref injector) = self.task.injector {
                 injector.push(self.task.clone());

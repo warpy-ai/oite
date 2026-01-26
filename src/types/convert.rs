@@ -10,7 +10,7 @@ use swc_ecma_ast::{
 
 use super::error::{Span, TypeError};
 use super::registry::TypeRegistry;
-use super::{fresh_type_var_id, FunctionType, ObjectType, Type, TypeVarId};
+use super::{FunctionType, ObjectType, Type, TypeVarId, fresh_type_var_id};
 use std::collections::HashMap;
 
 /// Type converter context.

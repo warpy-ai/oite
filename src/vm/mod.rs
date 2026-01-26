@@ -1,32 +1,32 @@
 /// Maximum call stack depth to prevent stack overflow in deeply recursive code
 pub const MAX_CALL_STACK_DEPTH: usize = 1000;
 
-pub mod opcodes;
-pub mod value;
 pub mod module_cache;
+pub mod opcodes;
 pub mod property;
 pub mod stdlib_setup;
+pub mod value;
 
 pub use crate::compiler::Compiler;
+pub use crate::vm::module_cache::CachedModule;
+pub use crate::vm::module_cache::ModuleCache;
 pub use crate::vm::opcodes::OpCode;
+pub use crate::vm::value::AsyncContext;
+pub use crate::vm::value::ContinuationCallback;
 pub use crate::vm::value::HeapData;
 pub use crate::vm::value::HeapObject;
 pub use crate::vm::value::JsValue;
 pub use crate::vm::value::NativeFn;
 pub use crate::vm::value::Promise;
 pub use crate::vm::value::PromiseState;
-pub use crate::vm::value::AsyncContext;
-pub use crate::vm::value::ContinuationCallback;
-pub use crate::vm::module_cache::CachedModule;
-pub use crate::vm::module_cache::ModuleCache;
 pub use sha2::{Digest, Sha256};
 pub use std::collections::{HashMap, VecDeque};
 pub use std::fs;
 pub use std::path::{Path, PathBuf};
 pub use std::sync::{Arc, Mutex};
 pub use std::time::{Duration, Instant, SystemTime};
-pub use swc_common::{input::StringInput, BytePos, FileName};
-pub use swc_ecma_parser::{lexer::Lexer, Parser, Syntax, TsSyntax};
+pub use swc_common::{BytePos, FileName, input::StringInput};
+pub use swc_ecma_parser::{Parser, Syntax, TsSyntax, lexer::Lexer};
 pub use tokio::runtime::Runtime;
 pub use tokio::sync::mpsc;
 
@@ -81,7 +81,8 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
                                             exports.insert(export_name, JsValue::Undefined);
                                         }
                                         swc_ecma_ast::ExportSpecifier::Default(_) => {
-                                            exports.insert("default".to_string(), JsValue::Undefined);
+                                            exports
+                                                .insert("default".to_string(), JsValue::Undefined);
                                         }
                                         swc_ecma_ast::ExportSpecifier::Namespace(ns) => {
                                             let atom = ns.name.atom();
@@ -110,7 +111,8 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
                                             exports.insert(export_name, JsValue::Undefined);
                                         }
                                         swc_ecma_ast::ExportSpecifier::Default(_) => {
-                                            exports.insert("default".to_string(), JsValue::Undefined);
+                                            exports
+                                                .insert("default".to_string(), JsValue::Undefined);
                                         }
                                         swc_ecma_ast::ExportSpecifier::Namespace(ns) => {
                                             let atom = ns.name.atom();
@@ -134,17 +136,24 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
                             use swc_ecma_ast::Decl::*;
                             match &decl.decl {
                                 Fn(fn_decl) => {
-                                    exports.insert(fn_decl.ident.sym.to_string(), JsValue::Undefined);
+                                    exports
+                                        .insert(fn_decl.ident.sym.to_string(), JsValue::Undefined);
                                 }
                                 Var(var_decl) => {
                                     for declarator in &var_decl.decls {
                                         if let swc_ecma_ast::Pat::Ident(ident) = &declarator.name {
-                                            exports.insert(ident.id.sym.to_string(), JsValue::Undefined);
+                                            exports.insert(
+                                                ident.id.sym.to_string(),
+                                                JsValue::Undefined,
+                                            );
                                         }
                                     }
                                 }
                                 Class(class_decl) => {
-                                    exports.insert(class_decl.ident.sym.to_string(), JsValue::Undefined);
+                                    exports.insert(
+                                        class_decl.ident.sym.to_string(),
+                                        JsValue::Undefined,
+                                    );
                                 }
                                 _ => {}
                             }
@@ -157,7 +166,8 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
                             swc_ecma_ast::Decl::Var(var_decl) => {
                                 for declarator in &var_decl.decls {
                                     if let swc_ecma_ast::Pat::Ident(ident) = &declarator.name {
-                                        exports.insert(ident.id.sym.to_string(), JsValue::Undefined);
+                                        exports
+                                            .insert(ident.id.sym.to_string(), JsValue::Undefined);
                                     }
                                 }
                             }
@@ -165,7 +175,8 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
                                 exports.insert(fn_decl.ident.sym.to_string(), JsValue::Undefined);
                             }
                             swc_ecma_ast::Decl::Class(class_decl) => {
-                                exports.insert(class_decl.ident.sym.to_string(), JsValue::Undefined);
+                                exports
+                                    .insert(class_decl.ident.sym.to_string(), JsValue::Undefined);
                             }
                             _ => {}
                         }
@@ -259,7 +270,7 @@ impl VM {
         Self {
             stack: Vec::new(),
             call_stack: vec![Frame {
-                return_address: usize::MAX,  // Set to MAX so global return stops execution
+                return_address: usize::MAX, // Set to MAX so global return stops execution
                 locals: HashMap::new(),
                 indexed_locals: Vec::new(),
                 this_context: JsValue::Undefined,
@@ -370,7 +381,9 @@ impl VM {
     pub fn get_module_cache_info(&self, path: &PathBuf) -> Option<(String, String)> {
         self.module_cache.get(path).map(|cached| {
             (
-                cached.load_time.elapsed()
+                cached
+                    .load_time
+                    .elapsed()
                     .map(|d| format!("{:?}", d))
                     .unwrap_or_else(|_| "unknown".to_string()),
                 cached.hash.clone(),
@@ -1123,7 +1136,9 @@ impl VM {
                                 let func = self.native_functions[idx];
                                 let result = func(self, args);
                                 self.stack.push(result);
-                            } else if let Some(JsValue::Function { address, env }) = props.get("__call__") {
+                            } else if let Some(JsValue::Function { address, env }) =
+                                props.get("__call__")
+                            {
                                 let address = *address;
                                 let env = *env;
                                 for arg in &args {
@@ -1150,7 +1165,10 @@ impl VM {
                                 self.ip = address;
                                 return ExecResult::ContinueNoIpInc;
                             } else {
-                                panic!("Object is not callable (no __call__ property): Object({})", ptr);
+                                panic!(
+                                    "Object is not callable (no __call__ property): Object({})",
+                                    ptr
+                                );
                             }
                         } else {
                             panic!("Object reference invalid: Object({})", ptr);
@@ -1165,7 +1183,12 @@ impl VM {
                             let marker = if i == self.ip { ">>>" } else { "   " };
                             eprintln!("{} {}: {:?}", marker, i, self.program.get(i));
                         }
-                        panic!("Target is not callable: {:?} at ip={}, call_stack_depth={}", other, self.ip, self.call_stack.len());
+                        panic!(
+                            "Target is not callable: {:?} at ip={}, call_stack_depth={}",
+                            other,
+                            self.ip,
+                            self.call_stack.len()
+                        );
                     }
                 }
             }
@@ -1359,7 +1382,8 @@ impl VM {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
                     (self.stack.pop(), self.stack.pop())
                 {
-                    self.stack.push(JsValue::Number((a as i64 & b as i64) as f64));
+                    self.stack
+                        .push(JsValue::Number((a as i64 & b as i64) as f64));
                 } else {
                     self.stack.push(JsValue::Undefined);
                 }
@@ -1369,7 +1393,8 @@ impl VM {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
                     (self.stack.pop(), self.stack.pop())
                 {
-                    self.stack.push(JsValue::Number((a as i64 | b as i64) as f64));
+                    self.stack
+                        .push(JsValue::Number((a as i64 | b as i64) as f64));
                 } else {
                     self.stack.push(JsValue::Undefined);
                 }
@@ -1379,7 +1404,8 @@ impl VM {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
                     (self.stack.pop(), self.stack.pop())
                 {
-                    self.stack.push(JsValue::Number((a as i64 ^ b as i64) as f64));
+                    self.stack
+                        .push(JsValue::Number((a as i64 ^ b as i64) as f64));
                 } else {
                     self.stack.push(JsValue::Undefined);
                 }
@@ -1389,7 +1415,8 @@ impl VM {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
                     (self.stack.pop(), self.stack.pop())
                 {
-                    self.stack.push(JsValue::Number(((a as i64) << (b as i64)) as f64));
+                    self.stack
+                        .push(JsValue::Number(((a as i64) << (b as i64)) as f64));
                 } else {
                     self.stack.push(JsValue::Undefined);
                 }
@@ -1399,7 +1426,8 @@ impl VM {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
                     (self.stack.pop(), self.stack.pop())
                 {
-                    self.stack.push(JsValue::Number(((a as i64) >> (b as i64)) as f64));
+                    self.stack
+                        .push(JsValue::Number(((a as i64) >> (b as i64)) as f64));
                 } else {
                     self.stack.push(JsValue::Undefined);
                 }
@@ -1409,7 +1437,8 @@ impl VM {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
                     (self.stack.pop(), self.stack.pop())
                 {
-                    self.stack.push(JsValue::Number((((a as u64) >> (b as u64)) as u64) as f64));
+                    self.stack
+                        .push(JsValue::Number((((a as u64) >> (b as u64)) as u64) as f64));
                 } else {
                     self.stack.push(JsValue::Undefined);
                 }
@@ -1758,7 +1787,9 @@ impl VM {
                                     // For Promise-like objects, we treat the object itself as the constructor
                                     // and call a special constructor handler
                                     // For now, we'll panic with a helpful message
-                                    eprintln!("Warning: 'new' on object without constructor - treating as constructor object");
+                                    eprintln!(
+                                        "Warning: 'new' on object without constructor - treating as constructor object"
+                                    );
                                     // Create a placeholder that will be handled specially
                                     (0usize, None, proto, constructor_val.clone())
                                 }
@@ -1846,7 +1877,11 @@ impl VM {
                         eprintln!("DEBUG: Construct - created promise");
 
                         // If we have an executor function, call it synchronously
-                        if let JsValue::Function { address: exec_addr, env } = executor {
+                        if let JsValue::Function {
+                            address: exec_addr,
+                            env,
+                        } = executor
+                        {
                             eprintln!("DEBUG: Construct - calling executor at {}", exec_addr);
 
                             // Set the current promise so resolve/reject can access it
@@ -1884,8 +1919,13 @@ impl VM {
                             };
 
                             // Set up locals: resolve and reject
-                            exec_frame.locals.insert("resolve".to_string(), JsValue::NativeFunction(resolve_idx));
-                            exec_frame.locals.insert("reject".to_string(), JsValue::NativeFunction(reject_idx));
+                            exec_frame.locals.insert(
+                                "resolve".to_string(),
+                                JsValue::NativeFunction(resolve_idx),
+                            );
+                            exec_frame
+                                .locals
+                                .insert("reject".to_string(), JsValue::NativeFunction(reject_idx));
 
                             // Load captured environment
                             if let Some(env_ptr) = env {
@@ -2042,7 +2082,11 @@ impl VM {
                                     })
                                     .unwrap_or(len as usize);
 
-                                let result: String = s.chars().skip(start).take(end.saturating_sub(start)).collect();
+                                let result: String = s
+                                    .chars()
+                                    .skip(start)
+                                    .take(end.saturating_sub(start))
+                                    .collect();
                                 self.stack.push(JsValue::String(result));
                             }
                             _ => {
@@ -2084,7 +2128,8 @@ impl VM {
                                         _ => None,
                                     })
                                     .unwrap_or(0);
-                                let items_to_insert: Vec<JsValue> = args.into_iter().skip(2).collect();
+                                let items_to_insert: Vec<JsValue> =
+                                    args.into_iter().skip(2).collect();
 
                                 let deleted: Vec<JsValue> = if start < arr.len() {
                                     let end = (start + delete_count).min(arr.len());
@@ -3014,7 +3059,7 @@ impl VM {
                 // Poll the promise synchronously (simplified implementation)
                 let state = promise.get_state();
                 eprintln!("DEBUG Await: promise state = {:?}", state);
-                
+
                 match state {
                     PromiseState::Fulfilled => {
                         let value = promise.get_value().unwrap_or(JsValue::Undefined);

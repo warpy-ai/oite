@@ -7,8 +7,8 @@
 //! - require (module loading)
 //! - fs (minimal file I/O for bootstrap compiler)
 
-use crate::vm::value::{HeapData, HeapObject, JsValue};
 use crate::vm::VM;
+use crate::vm::value::{HeapData, HeapObject, JsValue};
 
 pub fn setup_stdlib(vm: &mut VM) {
     setup_console(vm);
@@ -37,9 +37,8 @@ fn setup_console(vm: &mut VM) {
 fn setup_bytestream(vm: &mut VM) {
     use crate::stdlib::{
         native_byte_stream_length, native_byte_stream_patch_u32, native_byte_stream_to_array,
-        native_byte_stream_write_f64, native_byte_stream_write_string,
-        native_byte_stream_write_u32, native_byte_stream_write_u8, native_byte_stream_write_varint,
-        native_create_byte_stream,
+        native_byte_stream_write_f64, native_byte_stream_write_string, native_byte_stream_write_u8,
+        native_byte_stream_write_u32, native_byte_stream_write_varint, native_create_byte_stream,
     };
 
     let create_byte_stream_idx = vm.register_native(native_create_byte_stream);
@@ -122,9 +121,10 @@ fn setup_string(vm: &mut VM) {
         .insert("String".into(), JsValue::Object(string_ptr));
 
     // Also register a direct String function for calling String(value)
-    vm.call_stack[0]
-        .locals
-        .insert("__String__".into(), JsValue::NativeFunction(string_constructor_idx));
+    vm.call_stack[0].locals.insert(
+        "__String__".into(),
+        JsValue::NativeFunction(string_constructor_idx),
+    );
 }
 
 fn setup_fs(vm: &mut VM) {

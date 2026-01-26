@@ -685,7 +685,7 @@ impl IrOp {
             IrOp::NewObject(_) | IrOp::NewArray(_) => vec![],
             // Struct new
             IrOp::StructNew(_, _) => vec![],
-            
+
             IrOp::GetProp(_, obj, _) => vec![*obj],
             IrOp::SetProp(obj, _, val) => vec![*obj, *val],
             IrOp::TypeOf(_, val) => vec![*val],

@@ -14,17 +14,20 @@
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
-use std::net::{TcpListener, TcpStream, SocketAddr};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
 
 #[cfg(target_os = "macos")]
-use libc::{kevent, kqueue, EVFILT_READ, EVFILT_WRITE, EV_ADD, EV_ENABLE, EV_CLEAR, EV_DELETE};
+use libc::{EV_ADD, EV_CLEAR, EV_DELETE, EV_ENABLE, EVFILT_READ, EVFILT_WRITE, kevent, kqueue};
 
 #[cfg(target_os = "linux")]
-use libc::{epoll_create1, epoll_ctl, epoll_wait, epoll_event, EPOLLIN, EPOLLOUT, EPOLLET, EPOLLRDHUP, EPOLLERR, EPOLLHUP, EPOLL_CLOEXEC};
+use libc::{
+    EPOLL_CLOEXEC, EPOLLERR, EPOLLET, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLRDHUP, epoll_create1,
+    epoll_ctl, epoll_event, epoll_wait,
+};
 
 const HTTP_RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\n\
 Content-Type: text/plain\r\n\
@@ -75,7 +78,10 @@ impl Connection {
             }
             match self.stream.read(&mut self.read_buf[self.read_pos..]) {
                 Ok(0) => return Err(io::Error::new(io::ErrorKind::ConnectionReset, "EOF")),
-                Ok(n) => { self.read_pos += n; total += n; }
+                Ok(n) => {
+                    self.read_pos += n;
+                    total += n;
+                }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) => return Err(e),
             }
@@ -109,7 +115,10 @@ impl Connection {
 
     fn write_all(&mut self) -> io::Result<bool> {
         while self.write_pos < self.write_len {
-            match self.stream.write(&self.write_buf[self.write_pos..self.write_len]) {
+            match self
+                .stream
+                .write(&self.write_buf[self.write_pos..self.write_len])
+            {
                 Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero, "write zero")),
                 Ok(n) => self.write_pos += n,
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(false),
@@ -125,7 +134,8 @@ impl Connection {
 
 fn find_header_end(data: &[u8]) -> Option<usize> {
     for i in 0..data.len().saturating_sub(3) {
-        if data[i] == b'\r' && data[i+1] == b'\n' && data[i+2] == b'\r' && data[i+3] == b'\n' {
+        if data[i] == b'\r' && data[i + 1] == b'\n' && data[i + 2] == b'\r' && data[i + 3] == b'\n'
+        {
             return Some(i);
         }
     }
@@ -144,11 +154,15 @@ impl Worker {
     #[cfg(target_os = "macos")]
     fn run(self) {
         let kq = unsafe { kqueue() };
-        if kq < 0 { return; }
+        if kq < 0 {
+            return;
+        }
 
         // Create a pipe for wakeup when new connections arrive
         let mut pipe_fds = [0i32; 2];
-        unsafe { libc::pipe(pipe_fds.as_mut_ptr()); }
+        unsafe {
+            libc::pipe(pipe_fds.as_mut_ptr());
+        }
         let wake_read = pipe_fds[0];
         let wake_write = pipe_fds[1];
         unsafe {
@@ -170,12 +184,24 @@ impl Worker {
                 }
             }
 
-            let timeout = libc::timespec { tv_sec: 0, tv_nsec: 10_000_000 }; // 10ms
+            let timeout = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 10_000_000,
+            }; // 10ms
             let n = unsafe {
-                kevent(kq, std::ptr::null(), 0, events.as_mut_ptr(), MAX_EVENTS as i32, &timeout)
+                kevent(
+                    kq,
+                    std::ptr::null(),
+                    0,
+                    events.as_mut_ptr(),
+                    MAX_EVENTS as i32,
+                    &timeout,
+                )
             };
 
-            if n < 0 { continue; }
+            if n < 0 {
+                continue;
+            }
 
             for i in 0..n as usize {
                 let fd = events[i].ident as RawFd;
@@ -193,13 +219,17 @@ impl Worker {
 
                     if filter == EVFILT_READ as i16 {
                         match conn.read_all() {
-                            Ok(_) => { conn.process_requests(&self.count); }
+                            Ok(_) => {
+                                conn.process_requests(&self.count);
+                            }
                             Err(_) => should_close = true,
                         }
                     }
 
                     if filter == EVFILT_WRITE as i16 || conn.write_len > 0 {
-                        if conn.write_all().is_err() { should_close = true; }
+                        if conn.write_all().is_err() {
+                            should_close = true;
+                        }
                     }
 
                     if should_close {
@@ -220,7 +250,9 @@ impl Worker {
     #[cfg(target_os = "linux")]
     fn run(self) {
         let epoll_fd = unsafe { epoll_create1(EPOLL_CLOEXEC) };
-        if epoll_fd < 0 { return; }
+        if epoll_fd < 0 {
+            return;
+        }
 
         let mut connections: HashMap<RawFd, Connection> = HashMap::new();
         let mut events: Vec<epoll_event> = vec![unsafe { std::mem::zeroed() }; MAX_EVENTS];
@@ -235,7 +267,9 @@ impl Worker {
             }
 
             let n = unsafe { epoll_wait(epoll_fd, events.as_mut_ptr(), MAX_EVENTS as i32, 10) };
-            if n < 0 { continue; }
+            if n < 0 {
+                continue;
+            }
 
             for i in 0..n as usize {
                 let fd = events[i].u64 as RawFd;
@@ -246,13 +280,17 @@ impl Worker {
 
                     if ev & EPOLLIN as u32 != 0 {
                         match conn.read_all() {
-                            Ok(_) => { conn.process_requests(&self.count); }
+                            Ok(_) => {
+                                conn.process_requests(&self.count);
+                            }
                             Err(_) => should_close = true,
                         }
                     }
 
                     if ev & EPOLLOUT as u32 != 0 || conn.write_len > 0 {
-                        if conn.write_all().is_err() { should_close = true; }
+                        if conn.write_all().is_err() {
+                            should_close = true;
+                        }
                     }
 
                     if ev & (EPOLLRDHUP | EPOLLERR | EPOLLHUP) as u32 != 0 {
@@ -267,40 +305,96 @@ impl Worker {
             }
         }
 
-        unsafe { libc::close(epoll_fd); }
+        unsafe {
+            libc::close(epoll_fd);
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
 fn register_kqueue(kq: RawFd, fd: RawFd, filter: i16) -> io::Result<()> {
     let event = libc::kevent {
-        ident: fd as usize, filter,
+        ident: fd as usize,
+        filter,
         flags: EV_ADD | EV_ENABLE | EV_CLEAR,
-        fflags: 0, data: 0, udata: std::ptr::null_mut(),
+        fflags: 0,
+        data: 0,
+        udata: std::ptr::null_mut(),
     };
     if unsafe { kevent(kq, &event, 1, std::ptr::null_mut(), 0, std::ptr::null()) } < 0 {
         Err(io::Error::last_os_error())
-    } else { Ok(()) }
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "macos")]
 fn register_kqueue_rw(kq: RawFd, fd: RawFd) -> io::Result<()> {
     let events = [
-        libc::kevent { ident: fd as usize, filter: EVFILT_READ, flags: EV_ADD | EV_ENABLE | EV_CLEAR, fflags: 0, data: 0, udata: std::ptr::null_mut() },
-        libc::kevent { ident: fd as usize, filter: EVFILT_WRITE, flags: EV_ADD | EV_ENABLE | EV_CLEAR, fflags: 0, data: 0, udata: std::ptr::null_mut() },
+        libc::kevent {
+            ident: fd as usize,
+            filter: EVFILT_READ,
+            flags: EV_ADD | EV_ENABLE | EV_CLEAR,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
+        libc::kevent {
+            ident: fd as usize,
+            filter: EVFILT_WRITE,
+            flags: EV_ADD | EV_ENABLE | EV_CLEAR,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
     ];
-    if unsafe { kevent(kq, events.as_ptr(), 2, std::ptr::null_mut(), 0, std::ptr::null()) } < 0 {
+    if unsafe {
+        kevent(
+            kq,
+            events.as_ptr(),
+            2,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+        )
+    } < 0
+    {
         Err(io::Error::last_os_error())
-    } else { Ok(()) }
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "macos")]
 fn deregister_kqueue(kq: RawFd, fd: RawFd) {
     let events = [
-        libc::kevent { ident: fd as usize, filter: EVFILT_READ, flags: EV_DELETE, fflags: 0, data: 0, udata: std::ptr::null_mut() },
-        libc::kevent { ident: fd as usize, filter: EVFILT_WRITE, flags: EV_DELETE, fflags: 0, data: 0, udata: std::ptr::null_mut() },
+        libc::kevent {
+            ident: fd as usize,
+            filter: EVFILT_READ,
+            flags: EV_DELETE,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
+        libc::kevent {
+            ident: fd as usize,
+            filter: EVFILT_WRITE,
+            flags: EV_DELETE,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
     ];
-    unsafe { kevent(kq, events.as_ptr(), 2, std::ptr::null_mut(), 0, std::ptr::null()); }
+    unsafe {
+        kevent(
+            kq,
+            events.as_ptr(),
+            2,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+        );
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -311,16 +405,22 @@ fn register_epoll_rw(epoll_fd: RawFd, fd: RawFd) -> io::Result<()> {
     };
     if unsafe { epoll_ctl(epoll_fd, libc::EPOLL_CTL_ADD, fd, &mut event) } < 0 {
         Err(io::Error::last_os_error())
-    } else { Ok(()) }
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "linux")]
 fn deregister_epoll(epoll_fd: RawFd, fd: RawFd) {
-    unsafe { epoll_ctl(epoll_fd, libc::EPOLL_CTL_DEL, fd, std::ptr::null_mut()); }
+    unsafe {
+        epoll_ctl(epoll_fd, libc::EPOLL_CTL_DEL, fd, std::ptr::null_mut());
+    }
 }
 
 fn main() -> io::Result<()> {
-    let num_workers = thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let num_workers = thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
 
     println!("==============================================");
     println!("  Multi-Core HTTP Server ({} workers)", num_workers);
@@ -369,7 +469,10 @@ fn main() -> io::Result<()> {
             let rps = (current - last) / 5;
             let elapsed = start.elapsed().as_secs().max(1);
             let avg = current / elapsed;
-            println!("[Stats] Total: {} | Last 5s: {} req/s | Avg: {} req/s", current, rps, avg);
+            println!(
+                "[Stats] Total: {} | Last 5s: {} req/s | Avg: {} req/s",
+                current, rps, avg
+            );
             last = current;
         }
     });

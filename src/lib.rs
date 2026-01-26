@@ -8,6 +8,8 @@
 #[cfg(feature = "vm_interop")]
 pub mod backend;
 #[cfg(feature = "vm_interop")]
+pub mod build;
+#[cfg(feature = "vm_interop")]
 pub mod compiler;
 #[cfg(feature = "vm_interop")]
 pub mod ir;
@@ -19,8 +21,6 @@ pub mod stdlib;
 pub mod types;
 #[cfg(feature = "vm_interop")]
 pub mod vm;
-#[cfg(feature = "vm_interop")]
-pub mod build;
 
 // Runtime is always included (it's needed for staticlib)
 pub mod runtime;

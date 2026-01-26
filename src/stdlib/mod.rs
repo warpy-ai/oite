@@ -7,8 +7,8 @@
 //! Full standard library functionality (fs, path, json, math, date, etc.)
 //! will be provided by Rolls packages in the future.
 
-use crate::vm::value::{HeapData, HeapObject, JsValue};
 use crate::vm::VM;
+use crate::vm::value::{HeapData, HeapObject, JsValue};
 
 // ============================================================================
 // Console Functions
@@ -423,7 +423,13 @@ fn json_stringify_value(vm: &VM, value: &JsValue, indent: usize, pretty: bool) -
                                     )
                                 })
                                 .collect();
-                            format!("[{}{}{}{}]", newline, items.join(&format!(",{}", newline)), newline, indent_str)
+                            format!(
+                                "[{}{}{}{}]",
+                                newline,
+                                items.join(&format!(",{}", newline)),
+                                newline,
+                                indent_str
+                            )
                         }
                     }
                     HeapData::Object(props) => {
@@ -443,7 +449,13 @@ fn json_stringify_value(vm: &VM, value: &JsValue, indent: usize, pretty: bool) -
                                 })
                                 .collect();
                             items.sort(); // Sort for consistent output
-                            format!("{{{}{}{}{}}}", newline, items.join(&format!(",{}", newline)), newline, indent_str)
+                            format!(
+                                "{{{}{}{}{}}}",
+                                newline,
+                                items.join(&format!(",{}", newline)),
+                                newline,
+                                indent_str
+                            )
                         }
                     }
                     _ => "null".to_string(),

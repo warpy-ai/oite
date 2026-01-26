@@ -15,14 +15,14 @@
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
-use std::net::{TcpListener, TcpStream, SocketAddr};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
 
 #[cfg(target_os = "macos")]
-use libc::{kevent, kqueue, EVFILT_READ, EVFILT_WRITE, EV_ADD, EV_ENABLE, EV_CLEAR, EV_DELETE};
+use libc::{EV_ADD, EV_CLEAR, EV_DELETE, EV_ENABLE, EVFILT_READ, EVFILT_WRITE, kevent, kqueue};
 
 const HTTP_RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\n\
 Content-Type: text/plain\r\n\
@@ -98,7 +98,10 @@ impl Connection {
             }
             match self.stream.read(&mut self.read_buf[self.read_pos..]) {
                 Ok(0) => return Err(io::Error::new(io::ErrorKind::ConnectionReset, "EOF")),
-                Ok(n) => { self.read_pos += n; total += n; }
+                Ok(n) => {
+                    self.read_pos += n;
+                    total += n;
+                }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) => return Err(e),
             }
@@ -139,7 +142,10 @@ impl Connection {
     #[inline]
     fn write_all(&mut self) -> io::Result<bool> {
         while self.write_pos < self.write_len {
-            match self.stream.write(&self.write_buf[self.write_pos..self.write_len]) {
+            match self
+                .stream
+                .write(&self.write_buf[self.write_pos..self.write_len])
+            {
                 Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero, "write zero")),
                 Ok(n) => self.write_pos += n,
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(false),
@@ -159,7 +165,9 @@ impl Connection {
 fn find_header_end_fast(data: &[u8]) -> Option<usize> {
     // Use chunks for better optimization
     let len = data.len();
-    if len < 4 { return None; }
+    if len < 4 {
+        return None;
+    }
 
     let mut i = 0;
     while i <= len - 4 {
@@ -185,7 +193,9 @@ impl Worker {
     #[cfg(target_os = "macos")]
     fn run(self) {
         let kq = unsafe { kqueue() };
-        if kq < 0 { return; }
+        if kq < 0 {
+            return;
+        }
 
         let mut connections: HashMap<RawFd, Connection> = HashMap::with_capacity(1024);
         let mut events: Vec<libc::kevent> = vec![unsafe { std::mem::zeroed() }; MAX_EVENTS];
@@ -200,12 +210,24 @@ impl Worker {
                 }
             }
 
-            let timeout = libc::timespec { tv_sec: 0, tv_nsec: 1_000_000 }; // 1ms
+            let timeout = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 1_000_000,
+            }; // 1ms
             let n = unsafe {
-                kevent(kq, std::ptr::null(), 0, events.as_mut_ptr(), MAX_EVENTS as i32, &timeout)
+                kevent(
+                    kq,
+                    std::ptr::null(),
+                    0,
+                    events.as_mut_ptr(),
+                    MAX_EVENTS as i32,
+                    &timeout,
+                )
             };
 
-            if n <= 0 { continue; }
+            if n <= 0 {
+                continue;
+            }
 
             for i in 0..n as usize {
                 let fd = events[i].ident as RawFd;
@@ -216,13 +238,17 @@ impl Worker {
 
                     if filter == EVFILT_READ as i16 {
                         match conn.read_all() {
-                            Ok(_) => { conn.process_requests(&self.count); }
+                            Ok(_) => {
+                                conn.process_requests(&self.count);
+                            }
                             Err(_) => should_close = true,
                         }
                     }
 
                     if filter == EVFILT_WRITE as i16 || conn.write_len > 0 {
-                        if conn.write_all().is_err() { should_close = true; }
+                        if conn.write_all().is_err() {
+                            should_close = true;
+                        }
                     }
 
                     if should_close {
@@ -233,35 +259,88 @@ impl Worker {
             }
         }
 
-        unsafe { libc::close(kq); }
+        unsafe {
+            libc::close(kq);
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
 fn register_kqueue_rw(kq: RawFd, fd: RawFd) -> io::Result<()> {
     let events = [
-        libc::kevent { ident: fd as usize, filter: EVFILT_READ, flags: EV_ADD | EV_ENABLE | EV_CLEAR, fflags: 0, data: 0, udata: std::ptr::null_mut() },
-        libc::kevent { ident: fd as usize, filter: EVFILT_WRITE, flags: EV_ADD | EV_ENABLE | EV_CLEAR, fflags: 0, data: 0, udata: std::ptr::null_mut() },
+        libc::kevent {
+            ident: fd as usize,
+            filter: EVFILT_READ,
+            flags: EV_ADD | EV_ENABLE | EV_CLEAR,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
+        libc::kevent {
+            ident: fd as usize,
+            filter: EVFILT_WRITE,
+            flags: EV_ADD | EV_ENABLE | EV_CLEAR,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
     ];
-    if unsafe { kevent(kq, events.as_ptr(), 2, std::ptr::null_mut(), 0, std::ptr::null()) } < 0 {
+    if unsafe {
+        kevent(
+            kq,
+            events.as_ptr(),
+            2,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+        )
+    } < 0
+    {
         Err(io::Error::last_os_error())
-    } else { Ok(()) }
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "macos")]
 fn deregister_kqueue(kq: RawFd, fd: RawFd) {
     let events = [
-        libc::kevent { ident: fd as usize, filter: EVFILT_READ, flags: EV_DELETE, fflags: 0, data: 0, udata: std::ptr::null_mut() },
-        libc::kevent { ident: fd as usize, filter: EVFILT_WRITE, flags: EV_DELETE, fflags: 0, data: 0, udata: std::ptr::null_mut() },
+        libc::kevent {
+            ident: fd as usize,
+            filter: EVFILT_READ,
+            flags: EV_DELETE,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
+        libc::kevent {
+            ident: fd as usize,
+            filter: EVFILT_WRITE,
+            flags: EV_DELETE,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        },
     ];
-    unsafe { kevent(kq, events.as_ptr(), 2, std::ptr::null_mut(), 0, std::ptr::null()); }
+    unsafe {
+        kevent(
+            kq,
+            events.as_ptr(),
+            2,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+        );
+    }
 }
 
 fn main() -> io::Result<()> {
     // Use only performance cores (6 on M2 Pro)
     let num_workers = std::cmp::min(
-        thread::available_parallelism().map(|n| n.get()).unwrap_or(4),
-        6  // Cap at performance cores
+        thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4),
+        6, // Cap at performance cores
     );
 
     println!("==============================================");
@@ -306,7 +385,10 @@ fn main() -> io::Result<()> {
             let rps = (current - last) / 5;
             let elapsed = start.elapsed().as_secs().max(1);
             let avg = current / elapsed;
-            println!("[Stats] Total: {} | Last 5s: {} req/s | Avg: {} req/s", current, rps, avg);
+            println!(
+                "[Stats] Total: {} | Last 5s: {} req/s | Avg: {} req/s",
+                current, rps, avg
+            );
             last = current;
         }
     });
@@ -327,17 +409,28 @@ fn main() -> io::Result<()> {
         data: 0,
         udata: std::ptr::null_mut(),
     };
-    unsafe { kevent(kq, &event, 1, std::ptr::null_mut(), 0, std::ptr::null()); }
+    unsafe {
+        kevent(kq, &event, 1, std::ptr::null_mut(), 0, std::ptr::null());
+    }
 
     let mut events: Vec<libc::kevent> = vec![unsafe { std::mem::zeroed() }; 64];
     let mut next_worker = 0usize;
 
     loop {
         let n = unsafe {
-            kevent(kq, std::ptr::null(), 0, events.as_mut_ptr(), 64, std::ptr::null())
+            kevent(
+                kq,
+                std::ptr::null(),
+                0,
+                events.as_mut_ptr(),
+                64,
+                std::ptr::null(),
+            )
         };
 
-        if n <= 0 { continue; }
+        if n <= 0 {
+            continue;
+        }
 
         for _ in 0..n {
             // Drain all pending accepts

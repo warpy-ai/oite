@@ -17,16 +17,19 @@
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
-use std::net::{TcpListener, TcpStream, SocketAddr};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 #[cfg(target_os = "macos")]
-use libc::{kevent, kqueue, EVFILT_READ, EVFILT_WRITE, EV_ADD, EV_ENABLE, EV_CLEAR, EV_DELETE};
+use libc::{EV_ADD, EV_CLEAR, EV_DELETE, EV_ENABLE, EVFILT_READ, EVFILT_WRITE, kevent, kqueue};
 
 #[cfg(target_os = "linux")]
-use libc::{epoll_create1, epoll_ctl, epoll_wait, epoll_event, EPOLLIN, EPOLLOUT, EPOLLET, EPOLLRDHUP, EPOLLERR, EPOLLHUP, EPOLL_CLOEXEC};
+use libc::{
+    EPOLL_CLOEXEC, EPOLLERR, EPOLLET, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLRDHUP, epoll_create1,
+    epoll_ctl, epoll_event, epoll_wait,
+};
 
 // Pre-computed HTTP response (no allocations per request)
 const HTTP_RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\n\
@@ -128,7 +131,10 @@ impl Connection {
     /// Write as much as possible (edge-triggered requires flushing)
     fn write_all(&mut self) -> io::Result<bool> {
         while self.write_pos < self.write_len {
-            match self.stream.write(&self.write_buf[self.write_pos..self.write_len]) {
+            match self
+                .stream
+                .write(&self.write_buf[self.write_pos..self.write_len])
+            {
                 Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero, "write zero")),
                 Ok(n) => self.write_pos += n,
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(false),
@@ -148,7 +154,8 @@ impl Connection {
 fn find_header_end(data: &[u8]) -> Option<usize> {
     // Simple but fast scan
     for i in 0..data.len().saturating_sub(3) {
-        if data[i] == b'\r' && data[i+1] == b'\n' && data[i+2] == b'\r' && data[i+3] == b'\n' {
+        if data[i] == b'\r' && data[i + 1] == b'\n' && data[i + 2] == b'\r' && data[i + 3] == b'\n'
+        {
             return Some(i);
         }
     }
@@ -160,7 +167,11 @@ fn find_header_end(data: &[u8]) -> Option<usize> {
 // ============================================================================
 
 #[cfg(target_os = "macos")]
-fn run_server(listener: TcpListener, count: Arc<AtomicU64>, shutdown: Arc<AtomicBool>) -> io::Result<()> {
+fn run_server(
+    listener: TcpListener,
+    count: Arc<AtomicU64>,
+    shutdown: Arc<AtomicBool>,
+) -> io::Result<()> {
     let kq = unsafe { kqueue() };
     if kq < 0 {
         return Err(io::Error::last_os_error());
@@ -174,9 +185,19 @@ fn run_server(listener: TcpListener, count: Arc<AtomicU64>, shutdown: Arc<Atomic
     let mut events: Vec<libc::kevent> = vec![unsafe { std::mem::zeroed() }; MAX_EVENTS];
 
     while !shutdown.load(Ordering::Relaxed) {
-        let timeout = libc::timespec { tv_sec: 1, tv_nsec: 0 };
+        let timeout = libc::timespec {
+            tv_sec: 1,
+            tv_nsec: 0,
+        };
         let n = unsafe {
-            kevent(kq, std::ptr::null(), 0, events.as_mut_ptr(), MAX_EVENTS as i32, &timeout)
+            kevent(
+                kq,
+                std::ptr::null(),
+                0,
+                events.as_mut_ptr(),
+                MAX_EVENTS as i32,
+                &timeout,
+            )
         };
 
         if n < 0 {
@@ -232,7 +253,9 @@ fn run_server(listener: TcpListener, count: Arc<AtomicU64>, shutdown: Arc<Atomic
         }
     }
 
-    unsafe { libc::close(kq); }
+    unsafe {
+        libc::close(kq);
+    }
     Ok(())
 }
 
@@ -274,7 +297,16 @@ fn register_kqueue_rw(kq: RawFd, fd: RawFd) -> io::Result<()> {
             udata: std::ptr::null_mut(),
         },
     ];
-    let result = unsafe { kevent(kq, events.as_ptr(), 2, std::ptr::null_mut(), 0, std::ptr::null()) };
+    let result = unsafe {
+        kevent(
+            kq,
+            events.as_ptr(),
+            2,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+        )
+    };
     if result < 0 {
         Err(io::Error::last_os_error())
     } else {
@@ -302,7 +334,16 @@ fn deregister_kqueue(kq: RawFd, fd: RawFd) {
             udata: std::ptr::null_mut(),
         },
     ];
-    unsafe { kevent(kq, events.as_ptr(), 2, std::ptr::null_mut(), 0, std::ptr::null()); }
+    unsafe {
+        kevent(
+            kq,
+            events.as_ptr(),
+            2,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+        );
+    }
 }
 
 // ============================================================================
@@ -310,7 +351,11 @@ fn deregister_kqueue(kq: RawFd, fd: RawFd) {
 // ============================================================================
 
 #[cfg(target_os = "linux")]
-fn run_server(listener: TcpListener, count: Arc<AtomicU64>, shutdown: Arc<AtomicBool>) -> io::Result<()> {
+fn run_server(
+    listener: TcpListener,
+    count: Arc<AtomicU64>,
+    shutdown: Arc<AtomicBool>,
+) -> io::Result<()> {
     let epoll_fd = unsafe { epoll_create1(EPOLL_CLOEXEC) };
     if epoll_fd < 0 {
         return Err(io::Error::last_os_error());
@@ -383,7 +428,9 @@ fn run_server(listener: TcpListener, count: Arc<AtomicU64>, shutdown: Arc<Atomic
         }
     }
 
-    unsafe { libc::close(epoll_fd); }
+    unsafe {
+        libc::close(epoll_fd);
+    }
     Ok(())
 }
 
@@ -418,7 +465,9 @@ fn register_epoll_rw(epoll_fd: RawFd, fd: RawFd) -> io::Result<()> {
 
 #[cfg(target_os = "linux")]
 fn deregister_epoll(epoll_fd: RawFd, fd: RawFd) {
-    unsafe { epoll_ctl(epoll_fd, libc::EPOLL_CTL_DEL, fd, std::ptr::null_mut()); }
+    unsafe {
+        epoll_ctl(epoll_fd, libc::EPOLL_CTL_DEL, fd, std::ptr::null_mut());
+    }
 }
 
 // ============================================================================
@@ -456,7 +505,10 @@ fn main() -> io::Result<()> {
             let rps = (current - last) / 5;
             let elapsed = start.elapsed().as_secs().max(1);
             let avg = current / elapsed;
-            println!("[Stats] Total: {} | Last 5s: {} req/s | Avg: {} req/s", current, rps, avg);
+            println!(
+                "[Stats] Total: {} | Last 5s: {} req/s | Avg: {} req/s",
+                current, rps, avg
+            );
             last = current;
         }
     });

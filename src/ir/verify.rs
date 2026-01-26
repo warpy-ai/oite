@@ -344,8 +344,10 @@ mod tests {
         assert!(result.is_err());
 
         let errors = result.unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|e| matches!(e, VerifyError::MultipleDefinitions(_))));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, VerifyError::MultipleDefinitions(_)))
+        );
     }
 }

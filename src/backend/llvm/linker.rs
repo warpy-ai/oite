@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::super::{aot::OutputFormat, BackendError, LtoMode};
+use super::super::{BackendError, LtoMode, aot::OutputFormat};
 
 /// Link object files with runtime library to create an executable or library
 pub fn link_object_files(
@@ -85,7 +85,8 @@ pub fn link_object_files_with_lto(
         #[cfg(debug_assertions)]
         if std::env::var("TSCL_DEBUG_LINKER").is_ok() {
             if obj.exists() {
-                if let Ok(nm_output) = std::process::Command::new("nm").arg("-g").arg(obj).output() {
+                if let Ok(nm_output) = std::process::Command::new("nm").arg("-g").arg(obj).output()
+                {
                     let symbols = String::from_utf8_lossy(&nm_output.stdout);
                     let has_main = symbols.contains("main") || symbols.contains("_main");
                     eprintln!(

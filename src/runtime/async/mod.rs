@@ -1,21 +1,24 @@
-use std::collections::{BTreeMap, VecDeque, HashMap};
-use std::sync::{Arc, Mutex, Condvar, atomic::{AtomicUsize, Ordering}};
-use std::task::{Context, Poll, Waker, Wake};
-use std::time::{Duration, Instant};
-use std::os::unix::io::{AsRawFd, RawFd, IntoRawFd};
-use std::thread;
-use std::pin::Pin;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::future::Future;
 use std::io;
+use std::os::unix::io::{AsRawFd, IntoRawFd, RawFd};
+use std::pin::Pin;
+use std::sync::{
+    Arc, Condvar, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
+use std::task::{Context, Poll, Wake, Waker};
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub mod reactor;
-pub mod task;
 pub mod runtime_impl;
+pub mod task;
 
 pub use reactor::{Reactor, ReactorHandle};
-pub use task::{Executor, Task, JoinSet, Timer};
-pub use task::{TASK_IDLE, TASK_SCHEDULED, TASK_RUNNING, TASK_COMPLETED};
 pub use runtime_impl::Runtime;
+pub use task::{Executor, JoinSet, Task, Timer};
+pub use task::{TASK_COMPLETED, TASK_IDLE, TASK_RUNNING, TASK_SCHEDULED};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Interest {
@@ -40,15 +43,9 @@ pub trait AsyncWrite {
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>>;
 
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<std::io::Result<()>>;
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<std::io::Result<()>>;
 
-    fn poll_close(
-        self: Pin<&mut Self>,
-        cx: &mut Context,
-    ) -> Poll<std::io::Result<()>>;
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<std::io::Result<()>>;
 }
 
 pub struct AsyncBufRead<T: AsyncRead> {
@@ -234,10 +231,7 @@ impl AsyncWrite for TcpStream {
         }
     }
 
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        _cx: &mut Context,
-    ) -> Poll<std::io::Result<()>> {
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<std::io::Result<()>> {
         use std::io::Write;
         match self.get_mut().stream.flush() {
             Ok(()) => Poll::Ready(Ok(())),
@@ -246,10 +240,7 @@ impl AsyncWrite for TcpStream {
         }
     }
 
-    fn poll_close(
-        self: Pin<&mut Self>,
-        _cx: &mut Context,
-    ) -> Poll<std::io::Result<()>> {
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<std::io::Result<()>> {
         // TCP shutdown for write direction
         match self.get_mut().stream.shutdown(std::net::Shutdown::Write) {
             Ok(()) => Poll::Ready(Ok(())),
@@ -284,7 +275,12 @@ impl std::future::Future for ConnectFuture {
             Some(stream) => {
                 stream.set_nonblocking(true)?;
                 let reactor = reactor::Reactor::new(stream.as_raw_fd(), Interest::Writable);
-                Ok(TcpStream { stream, inner: reactor, interest: Interest::Writable }).into()
+                Ok(TcpStream {
+                    stream,
+                    inner: reactor,
+                    interest: Interest::Writable,
+                })
+                .into()
             }
             None => {
                 self.waker = Some(cx.waker().clone());
