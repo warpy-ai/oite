@@ -12,13 +12,11 @@
 pub mod abi;
 pub mod abi_tests;
 pub mod abi_version;
+pub mod r#async;
 pub mod heap;
 pub mod stubs;
-pub mod r#async;
 
-pub use abi::TsclValue;
 pub use abi_version::ABI_VERSION;
-pub use heap::{HeapPtr, NativeHeap};
 
 // Provide rust_eh_personality for panic handling when linking standalone
 #[cfg(not(feature = "vm_interop"))]

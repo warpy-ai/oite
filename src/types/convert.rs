@@ -3,14 +3,14 @@
 //! Converts SWC's TypeScript type AST (TsType) to tscl's Type representation.
 
 use swc_ecma_ast::{
-    Expr, Ident, TsArrayType, TsFnOrConstructorType, TsFnParam, TsFnType, TsKeywordType,
-    TsKeywordTypeKind, TsPropertySignature, TsType, TsTypeAnn, TsTypeLit, TsTypeParamDecl,
-    TsTypeParamInstantiation, TsTypeRef, TsUnionOrIntersectionType, TsUnionType,
+    Expr, TsArrayType, TsFnOrConstructorType, TsFnParam, TsKeywordType, TsKeywordTypeKind, TsType,
+    TsTypeAnn, TsTypeLit, TsTypeParamDecl, TsTypeParamInstantiation, TsTypeRef,
+    TsUnionOrIntersectionType, TsUnionType,
 };
 
 use super::error::{Span, TypeError};
 use super::registry::TypeRegistry;
-use super::{fresh_type_var_id, FunctionType, ObjectType, Type, TypeVarId};
+use super::{FunctionType, ObjectType, Type, TypeVarId, fresh_type_var_id};
 use std::collections::HashMap;
 
 /// Type converter context.
@@ -74,16 +74,13 @@ impl<'a> TypeConverter<'a> {
     fn convert_union(&self, union: &TsUnionType) -> Result<Type, TypeError> {
         // Filter out null/undefined and take the first remaining type
         for ty in &union.types {
-            match ty.as_ref() {
-                TsType::TsKeywordType(kw) => {
-                    // Skip null and undefined
-                    if kw.kind == TsKeywordTypeKind::TsNullKeyword
-                        || kw.kind == TsKeywordTypeKind::TsUndefinedKeyword
-                    {
-                        continue;
-                    }
+            if let TsType::TsKeywordType(kw) = ty.as_ref() {
+                // Skip null and undefined
+                if kw.kind == TsKeywordTypeKind::TsNullKeyword
+                    || kw.kind == TsKeywordTypeKind::TsUndefinedKeyword
+                {
+                    continue;
                 }
-                _ => {}
             }
             // Return the first non-null type
             return self.convert(ty);

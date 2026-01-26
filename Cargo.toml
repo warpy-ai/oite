@@ -13,6 +13,8 @@ panic = "abort"  # Use abort on panic to avoid unwinding dependencies
 [features]
 default = ["vm_interop"]
 vm_interop = []
+work-stealing = []  # Optional work-stealing scheduler (requires crossbeam-deque, parking)
+tls = []  # Optional TLS support for https_server example
 
 [dependencies]
 swc_common = "18.0.1"

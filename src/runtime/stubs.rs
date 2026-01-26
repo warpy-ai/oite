@@ -14,7 +14,7 @@
 
 use super::abi::TsclValue;
 use super::heap::{
-    heap, NativeArray, NativeObject, NativeString, ObjectHeader, ObjectKind, PropertyMap,
+    NativeArray, NativeObject, NativeString, ObjectHeader, ObjectKind, PropertyMap, heap,
 };
 
 // =========================================================================
@@ -118,10 +118,10 @@ pub extern "C" fn tscl_get_prop(obj: u64, key: *const u8, key_len: usize) -> u64
                     return TsclValue::number(arr.len as f64).to_bits();
                 }
                 // Try to parse as index
-                if let Ok(idx) = key_str.parse::<usize>() {
-                    if idx < arr.len as usize {
-                        return *arr.elements.add(idx);
-                    }
+                if let Ok(idx) = key_str.parse::<usize>()
+                    && idx < arr.len as usize
+                {
+                    return *arr.elements.add(idx);
                 }
                 TsclValue::undefined().to_bits()
             }
@@ -195,12 +195,12 @@ pub extern "C" fn tscl_set_prop(obj: u64, key: *const u8, key_len: usize, value:
             ObjectKind::Array => {
                 let arr = ptr.as_mut::<NativeArray>();
                 // Try to parse as index
-                if let Ok(idx) = key_str.parse::<usize>() {
-                    if idx < arr.capacity as usize {
-                        *arr.elements.add(idx) = value;
-                        if idx >= arr.len as usize {
-                            arr.len = (idx + 1) as u32;
-                        }
+                if let Ok(idx) = key_str.parse::<usize>()
+                    && idx < arr.capacity as usize
+                {
+                    *arr.elements.add(idx) = value;
+                    if idx >= arr.len as usize {
+                        arr.len = (idx + 1) as u32;
                     }
                 }
             }
@@ -443,7 +443,7 @@ pub extern "C" fn tscl_instanceof(obj: u64, constructor: u64) -> u64 {
                 for (name, value) in props.iter() {
                     if name == "prototype" {
                         // Check if value is an object pointer
-                        let prop_val = TsclValue::from_bits(value.clone());
+                        let prop_val = TsclValue::from_bits(*value);
                         if let Some(ptr) = prop_val.as_pointer() {
                             return ptr.as_usize() as u64;
                         }
@@ -484,7 +484,7 @@ pub extern "C" fn tscl_instanceof(obj: u64, constructor: u64) -> u64 {
                 // Find "__proto__" in the property list
                 for (name, value) in props.iter() {
                     if name == "__proto__" {
-                        let prop_val = TsclValue::from_bits(value.clone());
+                        let prop_val = TsclValue::from_bits(*value);
                         if let Some(proto_ptr) = prop_val.as_pointer() {
                             current_ptr = Some(proto_ptr);
                         }

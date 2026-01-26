@@ -8,9 +8,7 @@
 //! - Ownership validity (no use after move)
 //! - Borrow rules (no mutable + immutable overlap)
 
-use crate::ir::{
-    BasicBlock, BlockId, IrFunction, IrModule, IrOp, IrType, Ownership, Terminator, ValueId,
-};
+use crate::ir::{BlockId, IrFunction, IrModule, IrOp, IrType, Terminator, ValueId};
 use std::collections::{HashMap, HashSet};
 
 /// Verification error.
@@ -141,11 +139,11 @@ impl<'a> Verifier<'a> {
         for block in &self.func.blocks {
             for op in &block.ops {
                 if let Some(dest) = op.dest() {
-                    if definitions.contains_key(&dest) {
-                        self.errors.push(VerifyError::MultipleDefinitions(dest));
-                    } else {
-                        definitions.insert(dest, block.id);
+                    if let std::collections::hash_map::Entry::Vacant(e) = definitions.entry(dest) {
+                        e.insert(block.id);
                         self.defined.insert(dest);
+                    } else {
+                        self.errors.push(VerifyError::MultipleDefinitions(dest));
                     }
                 }
             }
@@ -208,11 +206,11 @@ impl<'a> Verifier<'a> {
                 if Self::is_move_op(op) {
                     for used in op.uses() {
                         // Only move reference types
-                        if let Some(ty) = self.func.value_types.get(&used) {
-                            if ty.is_reference() {
-                                moved_at.insert(used, block.id);
-                                self.moved.insert(used);
-                            }
+                        if let Some(ty) = self.func.value_types.get(&used)
+                            && ty.is_reference()
+                        {
+                            moved_at.insert(used, block.id);
+                            self.moved.insert(used);
                         }
                     }
                 }
@@ -344,8 +342,10 @@ mod tests {
         assert!(result.is_err());
 
         let errors = result.unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|e| matches!(e, VerifyError::MultipleDefinitions(_))));
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, VerifyError::MultipleDefinitions(_)))
+        );
     }
 }

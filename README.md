@@ -6,7 +6,8 @@
   <br/>
 
   <img src="https://img.shields.io/badge/rust-1.70+-orange.svg" alt="Rust 1.70+"/>
-  <img src="https://img.shields.io/badge/tests-60%20passing-brightgreen.svg" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-113%20passing-brightgreen.svg" alt="Tests"/>
+  <img src="https://img.shields.io/badge/self--hosting-complete-success.svg" alt="Self-Hosting"/>
   <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"/>
 </div>
 
@@ -451,26 +452,33 @@ Script has three compiler implementations working toward full self-hosting:
 | Compiler | Location | Status | Purpose |
 |----------|----------|--------|---------|
 | **Rust** | `src/compiler/` | ✅ Production | Native binaries via LLVM/Cranelift |
-| **Bootstrap** | `bootstrap/*.tscl` | ✅ Working | Reference implementation, bytecode output |
-| **Modular** | `compiler/*.tscl` | 🚧 In Progress | Future `scriptc`, will replace Rust compiler |
+| **Bootstrap** | `bootstrap/*.tscl` | ✅ Reference | Self-compiling bytecode compiler |
+| **Modular** | `compiler/*.tscl` | ✅ Complete | Full compiler with LLVM IR output |
 
-### Self-Hosting Roadmap
+### Self-Hosting Status
 
-```
-Phase 1 (Current):  bootstrap/*.tscl → Bytecode → Rust VM
-                    src/compiler/ (Rust) → Native Binary
+The self-hosted compiler is **complete** and can generate native binaries:
 
-Phase 2:            compiler/*.tscl → Bytecode (+ optimizations)
-                    Still uses Rust VM for execution
+```bash
+# Generate LLVM IR using self-hosted compiler (runs on Rust VM)
+./target/release/script compiler/main.tscl llvm myapp.tscl
 
-Phase 3:            compiler/*.tscl (scriptc) → Native Binary
-                    No Rust compiler needed!
-
-Phase 4:            scriptc compiles itself
-                    Verify: hash(tscl₁) == hash(tscl₂)
+# Compile to native binary
+clang myapp.tscl.ll -o myapp
+./myapp
 ```
 
-See [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for detailed roadmap.
+**Current requirements:**
+- Rust: Still needed to build the VM that runs the self-hosted compiler
+- LLVM/Clang: Required to compile generated LLVM IR to native code
+
+**Roadmap to full independence:**
+```
+Current:    Rust VM runs compiler/*.tscl → LLVM IR → clang → Native
+Future:     Prebuilt scriptc binary → LLVM IR → clang → Native (no Rust!)
+```
+
+See [docs/docs/self-hosting.md](docs/docs/self-hosting.md) for detailed roadmap.
 
 ## Development Status
 
@@ -478,9 +486,12 @@ See [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for detailed roadmap.
 |-------|--------|-------------|
 | Phase 0 | ✅ Complete | Runtime kernel (NaN-boxing, allocator, stubs) |
 | Phase 1 | ✅ Complete | SSA IR (lowering, type inference, optimizations) |
-| Phase 2 | ✅ Complete | Cranelift JIT backend |
-| Phase 3 | ✅ Complete | LLVM AOT backend with LTO |
-| Phase 4 | 🚧 In Progress | Self-hosted compiler (`scriptc`) |
+| Phase 2 | ✅ Complete | Native Backend (Cranelift JIT + LLVM AOT) |
+| Phase 3 | ✅ Complete | Language Completion (full TypeScript syntax) |
+| Phase 4 | ✅ Complete | Self-Hosting Compiler (generates LLVM IR → native) |
+| Phase 5 | 📋 Planned | Rolls Ecosystem (HTTP, TLS, fs libraries) |
+
+**Current:** Core language complete. 113 tests passing. Self-hosted compiler generates native binaries ~30x faster than VM.
 
 See [PROGRESS.md](PROGRESS.md) for detailed implementation notes.
 

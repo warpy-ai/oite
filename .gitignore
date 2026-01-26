@@ -2,3 +2,5 @@
 *._*
 .compile_temp
 *.o
+*.bc
+*.ll

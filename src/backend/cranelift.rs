@@ -20,6 +20,7 @@ use super::{BackendConfig, BackendError};
 use crate::ir::{BasicBlock, BlockId, IrFunction, IrModule, IrOp, Literal, Terminator, ValueId};
 
 /// Cranelift code generator
+#[allow(dead_code)]
 pub struct CraneliftCodegen {
     /// The JIT module being built
     module: JITModule,
@@ -116,6 +117,7 @@ impl CraneliftCodegen {
     }
 
     /// Declare a runtime stub function in the module
+    #[allow(dead_code)]
     fn declare_stub(&mut self, name: &str, arg_count: usize) -> Result<FuncId, BackendError> {
         if let Some(&id) = self.stubs.get(name) {
             return Ok(id);
@@ -624,10 +626,10 @@ fn translate_op(
             ctx.values.insert(*dst, val);
 
             // Propagate constant if the local was stored with a constant
-            if let Some(&src_val) = ctx.local_stores.get(slot) {
-                if let Some(lit) = ctx.constants.get(&src_val) {
-                    ctx.constants.insert(*dst, lit.clone());
-                }
+            if let Some(&src_val) = ctx.local_stores.get(slot)
+                && let Some(lit) = ctx.constants.get(&src_val)
+            {
+                ctx.constants.insert(*dst, lit.clone());
             }
         }
 
@@ -641,7 +643,7 @@ fn translate_op(
             // Track which ValueId was stored in this slot
             ctx.local_stores.insert(*slot, *src);
 
-            if let Some(lit) = ctx.constants.get(src) {
+            if let Some(_lit) = ctx.constants.get(src) {
                 // We could track slot -> constant mapping, but for now
                 // the existing local_stores -> constants chain should work
             }
@@ -823,7 +825,7 @@ fn translate_op(
             }
         }
 
-        IrOp::CallMethod(dst, obj, name, args) => {
+        IrOp::CallMethod(dst, _obj, name, args) => {
             // Special case: console.log
             if name == "log" && !args.is_empty() {
                 // Get the first argument (the value to log) as a Cranelift Value
@@ -1065,16 +1067,13 @@ fn get_value(ctx: &TranslationContext, id: ValueId) -> Result<Value, BackendErro
 /// Returns Some(address) if the value is a constant function address.
 fn resolve_function_address(ctx: &TranslationContext, func_val: ValueId) -> Option<usize> {
     // Check if this value is a known constant
-    if let Some(lit) = ctx.constants.get(&func_val) {
-        match lit {
-            Literal::Number(n) => {
-                let addr = *n as usize;
-                // Verify this is a known function
-                if ctx.ir_module_ref.function_addrs.contains_key(&addr) {
-                    return Some(addr);
-                }
-            }
-            _ => {}
+    if let Some(lit) = ctx.constants.get(&func_val)
+        && let Literal::Number(n) = lit
+    {
+        let addr = *n as usize;
+        // Verify this is a known function
+        if ctx.ir_module_ref.function_addrs.contains_key(&addr) {
+            return Some(addr);
         }
     }
 

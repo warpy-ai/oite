@@ -14,7 +14,7 @@ use crate::ir::IrModule;
 use std::path::{Path, PathBuf};
 
 /// AOT compilation target format
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputFormat {
     /// Object file (.o)
     Object,
@@ -23,13 +23,8 @@ pub enum OutputFormat {
     /// Shared library (.so/.dylib/.dll)
     SharedLib,
     /// Executable
+    #[default]
     Executable,
-}
-
-impl Default for OutputFormat {
-    fn default() -> Self {
-        OutputFormat::Executable
-    }
 }
 
 /// AOT compilation options
@@ -126,7 +121,7 @@ impl AotCompiler {
                         // Find runtime library (required)
                         let runtime_lib = find_runtime_library()?;
                         super::llvm::linker::link_object_files_with_lto(
-                            &[obj_file.clone()],
+                            std::slice::from_ref(&obj_file),
                             output,
                             self.options.format,
                             Some(&runtime_lib),
@@ -161,7 +156,7 @@ impl AotCompiler {
         modules: &[&IrModule],
         output: &Path,
     ) -> Result<(), BackendError> {
-        use super::llvm::{cache, lto};
+        use super::llvm::lto;
         use std::path::PathBuf;
 
         let temp_dir = output
@@ -367,7 +362,7 @@ fn find_runtime_library() -> Result<PathBuf, BackendError> {
     println!("Building runtime library...");
     if let Err(e) = build_runtime_library(
         &manifest_dir,
-        &runtime_lib.parent().unwrap(),
+        runtime_lib.parent().unwrap(),
         profile == "release",
     ) {
         eprintln!("[WARN] Failed to build runtime library: {}", e);
@@ -413,10 +408,11 @@ fn build_runtime_library(
     if let Ok(entries) = std::fs::read_dir(&deps_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with("libscript") && name.ends_with(".rlib") {
-                    let _ = std::fs::remove_file(&path);
-                }
+            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && name.starts_with("libscript")
+                && name.ends_with(".rlib")
+            {
+                let _ = std::fs::remove_file(&path);
             }
         }
     }

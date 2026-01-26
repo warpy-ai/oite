@@ -1,8 +1,9 @@
 ---
 sidebar_position: 5
-title: Script Memory Model - Ownership and Borrow Checking
+title: Memory Model
 description: Understand Script's Rust-inspired memory model with ownership rules, borrow checking, and memory safety without garbage collection.
-keywords: [memory model, ownership, borrow checker, memory safety, no gc, rust-inspired]
+keywords:
+  [memory model, ownership, borrow checker, memory safety, no gc, rust-inspired]
 ---
 
 # Memory Model
@@ -20,14 +21,14 @@ Script uses a Rust-inspired ownership system for memory safety without garbage c
 
 ```javascript
 let a = { value: 42 };
-let b = a;                // 'a' is MOVED to 'b'
+let b = a; // 'a' is MOVED to 'b'
 // console.log(a.value);  // ERROR: use after move!
-console.log(b.value);     // OK: 42
+console.log(b.value); // OK: 42
 
 // Primitives are copied
 let x = 10;
-let y = x;                // 'x' is COPIED
-console.log(x);           // OK: 10
+let y = x; // 'x' is COPIED
+console.log(x); // OK: 10
 ```
 
 ## Borrowing
@@ -55,6 +56,7 @@ mut_ref.x = 20;           // OK: can mutate
 ## Runtime Representation
 
 All values are represented as **64-bit NaN-boxed** words:
+
 - Booleans, null, undefined encoded in NaN space
 - Pointers to heap objects
 - Uniform representation for VM and native backends
@@ -62,6 +64,7 @@ All values are represented as **64-bit NaN-boxed** words:
 ## Heap Allocation
 
 Objects, arrays, and strings are allocated on the heap:
+
 - Bump allocator for fast allocation
 - Automatic deallocation when scope ends
 - No garbage collection overhead

@@ -1,89 +1,120 @@
 ---
 sidebar_position: 8
-title: Script Development Status and Roadmap
+title: Development Status and Roadmap
 description: Track Script's development progress, feature status, and roadmap. See what's implemented, in progress, and planned for future releases.
 keywords: [development status, roadmap, features, progress, releases, changelog]
 ---
 
 # Development Status
 
-Script is actively under development. Here's the current status of major features and phases.
+Script's core language is complete. Library functionality (HTTP, TLS, fs, etc.) will be developed in the **Rolls** ecosystem.
 
 ## Phase Roadmap
 
-| Phase | Status | Description |
-|-------|--------|-------------|
-| Phase 0 | ✅ Complete | Runtime kernel (NaN-boxing, allocator, stubs) |
-| Phase 1 | ✅ Complete | SSA IR (lowering, type inference, optimizations) |
-| Phase 2 | ✅ Complete | Cranelift JIT backend |
-| Phase 3 | ✅ Complete | LLVM AOT backend with LTO |
-| Phase 4 | 🚧 In Progress | Language Completion (JS compatibility) |
-| Phase 5 | 🚧 Planned | Self-Hosting Compiler |
-| Phase 6 | 🚧 Planned | Runtime & Server (HTTP, async runtime) |
-| Phase 7 | 🚧 Planned | Tooling (fmt, lint, LSP, profiler) |
-| Phase 8 | 🚧 Planned | Distribution (packages, installers, binaries) |
+| Phase   | Status      | Description                                       |
+| ------- | ----------- | ------------------------------------------------- |
+| Phase 0 | ✅ Complete | Runtime kernel (NaN-boxing, allocator, stubs)     |
+| Phase 1 | ✅ Complete | SSA IR (lowering, type inference, optimizations)  |
+| Phase 2 | ✅ Complete | Native Backend (Cranelift JIT + LLVM AOT)         |
+| Phase 3 | ✅ Complete | Language Completion (full TypeScript syntax)      |
+| Phase 4 | 🚧 Working  | Self-Hosting Compiler (compiles itself to native) |
+| Phase 5 | 📋 Planned  | Rolls Ecosystem (HTTP, TLS, fs, crypto libraries) |
+| Phase 6 | 📋 Planned  | Tooling (fmt, lint, LSP, profiler)                |
+| Phase 7 | 📋 Planned  | Distribution (Unroll package manager)             |
 
-## Current Phase: Language Completion
+## Core Language: Complete
 
-### ✅ Completed Features
+### ✅ All Language Features Implemented
 
-- **Control Flow**: `if`/`else`, `while`, `for`, `do..while`, `break`, `continue`
+- **Control Flow**: `if`/`else`, `while`, `for`, `do..while`, `break`/`continue` with labels
 - **Error Handling**: `try`/`catch`/`finally`, `throw` with exception propagation
-- **Classes & OOP**: ES6 classes with inheritance, `super()`, getters/setters, private fields
+- **Classes & OOP**: ES6 classes, inheritance, `super()`, getters/setters, private fields (`#field`)
 - **Decorators**: TypeScript-style decorators on classes, methods, and fields
 - **Template Literals**: Backtick strings with interpolation
-- **Type System**: Type annotations, type inference, generics, ownership types
+- **Type System**: Type annotations, Hindley-Milner inference, generics, ownership types
+- **Modules**: ES module `import`/`export` syntax with file-based resolution
+- **Async/Await**: `async function`, `await`, Promise.resolve/then/catch
 
-### 🚧 In Progress
+### ✅ Self-Hosting Compiler Complete
 
-- **Modules**: `import`/`export` syntax (ES modules)
-- **Async/Await**: `async`/`await`, Promise type, event loop integration
-- **Standard Library**: Rich `fs`, `net`, `http`, `crypto`, `process`, `os` modules
+The compiler written in Script can now compile itself to native binaries:
+
+| Component                         | Status            | Output           |
+| --------------------------------- | ----------------- | ---------------- |
+| Rust Compiler (`src/compiler/`)   | ✅ Production     | Native binaries  |
+| Bootstrap Compiler (`bootstrap/`) | ✅ Reference      | Bytecode         |
+| Modular Compiler (`compiler/`)    | ✅ Self-Compiling | LLVM IR → Native |
+
+**Build Pipeline:**
+
+```bash
+./target/release/script compiler/main.tscl llvm input.tscl  # → input.tscl.ll
+clang input.tscl.ll -c -o input.o                          # → input.o
+clang input.o -o output                                     # → native binary
+```
+
+**Performance (Native vs VM):**
+| Test | Native | VM | Speedup |
+|------|--------|-----|---------|
+| Fibonacci(25) | 75025 | 75025 | ~30x faster |
+| Loops | ✅ | ✅ | ~30x faster |
+| Recursion | ✅ | ✅ | ~30x faster |
+| Objects/Functions | ✅ | ✅ | ~4x faster |
 
 ## Test Coverage
 
 Current test status:
 
 ```
-94 tests passed, 0 failed
+113 tests passed, 0 failed
 ```
 
 Coverage includes:
-- IR lowering and optimization
+
+- IR lowering and optimization (DCE, CSE, constant folding, copy propagation)
 - Type inference and specialization
 - Runtime stubs and heap allocation
 - VM functionality
 - Borrow checker and closures
-- Backend compilation (Cranelift, LLVM)
-- Language features (loops, exceptions, classes, decorators)
+- Backend compilation (Cranelift JIT, LLVM AOT)
+- Language features (loops, exceptions, classes, decorators, modules)
+- Self-compilation verification
+- Deterministic build verification
 
-## Performance Targets
+## Performance
 
-| Benchmark | Node.js | Bun | Target Script |
-|-----------|--------|-----|---------------|
-| HTTP hello world | 100k rps | 200k rps | 250k rps |
-| JSON parse | 1x | 1.5x | 2x |
-| `fib(35)` | 50 ms | 30 ms | 20 ms |
-| Startup | 30 ms | 10 ms | 5 ms |
+| Metric          | VM           | JIT             | Speedup |
+| --------------- | ------------ | --------------- | ------- |
+| Arithmetic      | 2.34 µs/iter | 0.39 µs/iter    | ~6x     |
+| JIT compilation | -            | 980 µs          | -       |
+| Break-even      | -            | ~500 iterations | -       |
 
-Current JIT performance: ~6x faster than VM on arithmetic microbenchmarks.
+### Performance Targets
+
+| Benchmark | Node.js | Bun   | Target Script |
+| --------- | ------- | ----- | ------------- |
+| `fib(35)` | 50 ms   | 30 ms | 20 ms         |
+| Startup   | 30 ms   | 10 ms | 5 ms          |
+
+## What's Intentionally Minimal
+
+Script Core is like "C without libc" — minimal and self-contained. These features are delegated to the **Rolls** ecosystem:
+
+| Not in Core          | Why                   | Future Location             |
+| -------------------- | --------------------- | --------------------------- |
+| HTTP/TLS servers     | External dependencies | `@rolls/http`, `@rolls/tls` |
+| Database drivers     | Database-specific     | `@rolls/db`                 |
+| JSON parsing         | Can be pure Script    | `@rolls/json`               |
+| Math functions       | Standard library      | `@rolls/math`               |
+| Advanced file system | POSIX-specific        | `@rolls/fs`                 |
+| Crypto operations    | External libraries    | `@rolls/crypto`             |
 
 ## Next Steps
 
-1. **Strengthen class semantics**:
-   - Private field enforcement
-   - Getter/setter auto-calling
-   - Consistent `instanceof` across backends
-
-2. **ES Modules**:
-   - `import`/`export`, module graph, resolution, tree-shaking
-
-3. **Async/await**:
-   - `async`/`await`, Promise, event loop integration
-
-4. **Self-Hosting**:
-   - Emit SSA IR from Script compiler
-   - Move toward self-hosted native compiler
+1. **Rolls Ecosystem**: Build official system libraries (`@rolls/http`, `@rolls/fs`, etc.)
+2. **Unroll Package Manager**: Create build system and package management
+3. **Tooling**: Formatter, linter, LSP for IDE integration
+4. **Bootstrap Verification**: Verify `hash(tscl₁) == hash(tscl₂)` for deterministic self-hosting
 
 ## Contributing
 

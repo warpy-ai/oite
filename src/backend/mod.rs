@@ -20,9 +20,10 @@ pub mod tier;
 use crate::ir::IrModule;
 
 /// Backend compilation target
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BackendKind {
     /// JIT compilation with Cranelift
+    #[default]
     CraneliftJit,
     /// AOT compilation with Cranelift (future)
     CraneliftAot,
@@ -32,44 +33,28 @@ pub enum BackendKind {
     Interpreter,
 }
 
-impl Default for BackendKind {
-    fn default() -> Self {
-        BackendKind::CraneliftJit
-    }
-}
-
 /// Optimization level for native compilation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OptLevel {
     /// No optimization (fastest compile)
     None,
     /// Basic optimizations (default for JIT)
+    #[default]
     Speed,
     /// Aggressive optimizations (default for AOT)
     SpeedAndSize,
 }
 
-impl Default for OptLevel {
-    fn default() -> Self {
-        OptLevel::Speed
-    }
-}
-
 /// Link-time optimization mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum LtoMode {
     /// No LTO (dev mode - fastest compilation)
+    #[default]
     None,
     /// ThinLTO (release mode - parallel, fast builds, near-full performance)
     Thin,
     /// Full LTO (dist mode - maximum performance, slower builds)
     Full,
-}
-
-impl Default for LtoMode {
-    fn default() -> Self {
-        LtoMode::None
-    }
 }
 
 /// Configuration for the native backend

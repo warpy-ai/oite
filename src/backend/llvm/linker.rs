@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::super::{aot::OutputFormat, BackendError, LtoMode};
+use super::super::{BackendError, LtoMode, aot::OutputFormat};
 
 /// Link object files with runtime library to create an executable or library
 pub fn link_object_files(
@@ -85,7 +85,8 @@ pub fn link_object_files_with_lto(
         #[cfg(debug_assertions)]
         if std::env::var("TSCL_DEBUG_LINKER").is_ok() {
             if obj.exists() {
-                if let Ok(nm_output) = std::process::Command::new("nm").arg("-g").arg(obj).output() {
+                if let Ok(nm_output) = std::process::Command::new("nm").arg("-g").arg(obj).output()
+                {
                     let symbols = String::from_utf8_lossy(&nm_output.stdout);
                     let has_main = symbols.contains("main") || symbols.contains("_main");
                     eprintln!(
@@ -104,25 +105,25 @@ pub fn link_object_files_with_lto(
 
     // Add runtime library if provided
     // Use -all_load on macOS to ensure ALL symbols from ALL archives are included
-    if let Some(lib) = runtime_lib {
-        if lib.exists() {
-            #[cfg(target_os = "macos")]
-            {
-                if linker.contains("clang") {
-                    // -all_load forces loading all symbols from all archives
-                    cmd.arg("-Wl,-all_load").arg(lib);
-                } else {
-                    cmd.arg(lib);
-                }
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
+    if let Some(lib) = runtime_lib
+        && lib.exists()
+    {
+        #[cfg(target_os = "macos")]
+        {
+            if linker.contains("clang") {
+                // -all_load forces loading all symbols from all archives
+                cmd.arg("-Wl,-all_load").arg(lib);
+            } else {
                 cmd.arg(lib);
             }
-
-            // Runtime uses Vec/String from std, which should be statically linked in libruntime.a
-            // No additional libraries needed since we removed HashMap dependency
         }
+        #[cfg(not(target_os = "macos"))]
+        {
+            cmd.arg(lib);
+        }
+
+        // Runtime uses Vec/String from std, which should be statically linked in libruntime.a
+        // No additional libraries needed since we removed HashMap dependency
     }
 
     // Set output format
@@ -135,9 +136,9 @@ pub fn link_object_files_with_lto(
         }
         OutputFormat::SharedLib => {
             if linker.contains("clang") || linker.contains("gcc") {
-                cmd.args(&["-shared", "-o"]).arg(output);
+                cmd.args(["-shared", "-o"]).arg(output);
             } else {
-                cmd.args(&["-shared", "-o"]).arg(output);
+                cmd.args(["-shared", "-o"]).arg(output);
             }
         }
         OutputFormat::Object => {
@@ -195,6 +196,7 @@ pub fn create_static_library(objects: &[PathBuf], output: &Path) -> Result<(), B
 }
 
 /// Link using rustc (handles Rust dependencies automatically)
+#[allow(dead_code)]
 fn link_with_rustc(
     objects: &[PathBuf],
     output: &Path,
@@ -210,10 +212,10 @@ fn link_with_rustc(
     }
 
     // Add runtime library
-    if let Some(lib) = runtime_lib {
-        if lib.exists() {
-            cmd.arg(lib);
-        }
+    if let Some(lib) = runtime_lib
+        && lib.exists()
+    {
+        cmd.arg(lib);
     }
 
     // Set output

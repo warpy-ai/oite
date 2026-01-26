@@ -6,9 +6,7 @@
 //! - Common Subexpression Elimination (CSE)
 //! - Copy Propagation
 
-use crate::ir::{
-    BasicBlock, BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId,
-};
+use crate::ir::{IrFunction, IrModule, IrOp, Literal, Terminator, ValueId};
 use std::collections::{HashMap, HashSet};
 
 // ============================================================================
@@ -169,12 +167,11 @@ fn fold_op(
         IrOp::DivNum(dst, a, b) => {
             if let (Some(Literal::Number(va)), Some(Literal::Number(vb))) =
                 (constants.get(&a), constants.get(&b))
+                && *vb != 0.0
             {
-                if *vb != 0.0 {
-                    let result = va / vb;
-                    constants.insert(dst, Literal::Number(result));
-                    return IrOp::Const(dst, Literal::Number(result));
-                }
+                let result = va / vb;
+                constants.insert(dst, Literal::Number(result));
+                return IrOp::Const(dst, Literal::Number(result));
             }
             IrOp::DivNum(dst, a, b)
         }
@@ -182,12 +179,11 @@ fn fold_op(
         IrOp::ModNum(dst, a, b) => {
             if let (Some(Literal::Number(va)), Some(Literal::Number(vb))) =
                 (constants.get(&a), constants.get(&b))
+                && *vb != 0.0
             {
-                if *vb != 0.0 {
-                    let result = va % vb;
-                    constants.insert(dst, Literal::Number(result));
-                    return IrOp::Const(dst, Literal::Number(result));
-                }
+                let result = va % vb;
+                constants.insert(dst, Literal::Number(result));
+                return IrOp::Const(dst, Literal::Number(result));
             }
             IrOp::ModNum(dst, a, b)
         }
@@ -639,11 +635,11 @@ pub fn simplify_branches(func: &mut IrFunction) {
 
     // Simplify branch terminators
     for block in &mut func.blocks {
-        if let Terminator::Branch(cond, true_block, false_block) = &block.terminator {
-            if let Some(Literal::Boolean(b)) = constants.get(cond) {
-                let target = if *b { *true_block } else { *false_block };
-                block.terminator = Terminator::Jump(target);
-            }
+        if let Terminator::Branch(cond, true_block, false_block) = &block.terminator
+            && let Some(Literal::Boolean(b)) = constants.get(cond)
+        {
+            let target = if *b { *true_block } else { *false_block };
+            block.terminator = Terminator::Jump(target);
         }
     }
 }
@@ -684,6 +680,7 @@ pub fn optimize_module(module: &mut IrModule) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::IrType;
 
     #[test]
     fn test_constant_folding() {

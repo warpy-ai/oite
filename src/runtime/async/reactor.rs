@@ -1,11 +1,13 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
+
 use super::{Interest, Token};
 #[cfg(target_os = "macos")]
-use libc::{EVFILT_READ, EVFILT_WRITE};
-use std::collections::HashMap;
+use libc::EVFILT_READ;
 use std::io;
-use std::os::unix::io::{AsRawFd, RawFd};
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Waker};
+use std::os::unix::io::RawFd;
+use std::sync::Mutex;
+use std::task::Waker;
 
 pub struct Reactor {
     fd: RawFd,
@@ -47,9 +49,8 @@ impl Drop for Reactor {
 mod sys {
     use super::*;
     use libc::{
-        epoll_create1, epoll_ctl, epoll_event, epoll_wait,
-        EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLET, EPOLLRDHUP,
-        EPOLL_CLOEXEC, EPOLL_CTL_ADD, EPOLL_CTL_MOD, EPOLL_CTL_DEL,
+        EPOLL_CLOEXEC, EPOLL_CTL_ADD, EPOLL_CTL_DEL, EPOLL_CTL_MOD, EPOLLERR, EPOLLET, EPOLLHUP,
+        EPOLLIN, EPOLLOUT, EPOLLRDHUP, epoll_create1, epoll_ctl, epoll_event, epoll_wait,
     };
     use std::os::unix::io::RawFd;
 
@@ -96,8 +97,12 @@ mod sys {
 
     /// Add fd for both read AND write events (common for HTTP keep-alive)
     pub fn add_fd_rw(epoll_fd: RawFd, fd: RawFd) -> io::Result<()> {
-        let events = EPOLLET as u32 | EPOLLIN as u32 | EPOLLOUT as u32 |
-                     EPOLLERR as u32 | EPOLLHUP as u32 | EPOLLRDHUP as u32;
+        let events = EPOLLET as u32
+            | EPOLLIN as u32
+            | EPOLLOUT as u32
+            | EPOLLERR as u32
+            | EPOLLHUP as u32
+            | EPOLLRDHUP as u32;
 
         let mut event = epoll_event {
             events,
@@ -150,7 +155,7 @@ mod sys {
 #[cfg(target_os = "macos")]
 mod sys {
     use super::*;
-    use libc::{kevent, kqueue, EVFILT_READ, EVFILT_WRITE, EV_ADD, EV_ENABLE, EV_CLEAR, EV_DELETE, EV_EOF, EV_ERROR};
+    use libc::{EV_ADD, EV_CLEAR, EV_DELETE, EV_ENABLE, EVFILT_READ, EVFILT_WRITE, kevent, kqueue};
     use std::os::unix::io::RawFd;
 
     pub fn create_kqueue() -> io::Result<RawFd> {
@@ -180,9 +185,7 @@ mod sys {
             udata: std::ptr::null_mut(),
         };
 
-        let result = unsafe {
-            kevent(kq, &event, 1, std::ptr::null_mut(), 0, std::ptr::null())
-        };
+        let result = unsafe { kevent(kq, &event, 1, std::ptr::null_mut(), 0, std::ptr::null()) };
 
         if result < 0 {
             Err(io::Error::last_os_error())
@@ -213,7 +216,14 @@ mod sys {
         ];
 
         let result = unsafe {
-            kevent(kq, events.as_ptr(), 2, std::ptr::null_mut(), 0, std::ptr::null())
+            kevent(
+                kq,
+                events.as_ptr(),
+                2,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null(),
+            )
         };
 
         if result < 0 {
@@ -246,7 +256,14 @@ mod sys {
 
         // Ignore errors (fd might not have both filters registered)
         unsafe {
-            kevent(kq, events.as_ptr(), 2, std::ptr::null_mut(), 0, std::ptr::null());
+            kevent(
+                kq,
+                events.as_ptr(),
+                2,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null(),
+            );
         }
         Ok(())
     }
@@ -331,7 +348,7 @@ impl ReactorHandle {
         let mut ready = Vec::with_capacity(n);
         for i in 0..n {
             let fd = events[i].ident as RawFd;
-            let interest = if events[i].filter == EVFILT_READ as i16 {
+            let interest = if events[i].filter == EVFILT_READ {
                 Interest::Readable
             } else {
                 Interest::Writable
@@ -389,7 +406,7 @@ impl ReactorHandle {
     }
 
     pub fn wait(&self, timeout_ms: i32) -> io::Result<Vec<(Token, Interest)>> {
-        use libc::{epoll_event, EPOLLIN, EPOLLOUT};
+        use libc::{EPOLLIN, EPOLLOUT, epoll_event};
 
         const MAX_EVENTS: usize = 1024;
         let mut events: [epoll_event; MAX_EVENTS] = unsafe { std::mem::zeroed() };

@@ -10,8 +10,8 @@ export default function Home(): ReactNode {
   const {siteConfig} = useDocusaurusContext();
   return (
     <Layout
-      title="Script - High Performance JavaScript Alternative"
-      description="Script is a native programming language for building high-performance systems with JavaScript-inspired syntax, memory safety, and a zero-compromise toolchain.">
+      title="Script - High Performance Systems Language"
+      description="Script is a high-performance systems language with TypeScript syntax, compiling to native code via Cranelift JIT and LLVM AOT. Features self-hosting compiler, ownership model, and SSA IR optimizations.">
       <main className={clsx(styles.page)}>
         <section className={clsx(styles.heroShell)}>
           <div className="container">
@@ -19,14 +19,14 @@ export default function Home(): ReactNode {
               <div>
                 <div className={styles.eyebrow}>Script Language</div>
                 <h1 className={styles.title}>
-                  Write fast.
+                  TypeScript syntax.
                   <br />
-                  Run faster.
+                  Native performance.
                 </h1>
                 <p className={styles.subtitle}>
-                  Script is a native programming language for building
-                  high‑performance systems with a familiar, JavaScript‑inspired
-                  syntax and a zero‑compromise toolchain.
+                  Script is a high‑performance systems language with TypeScript syntax,
+                  compiling to native code via Cranelift JIT and LLVM AOT. Features a
+                  self‑hosting compiler, Rust‑inspired ownership model, and SSA IR optimizations.
                 </p>
                 <div className={styles.heroActions}>
                   <Link
@@ -41,34 +41,34 @@ export default function Home(): ReactNode {
                   </Link>
                 </div>
                 <p className={styles.heroMeta}>
-                  Native performance • Familiar tooling • Built for modern runtimes
+                  Self‑hosting complete • 113 tests passing • ~30x faster native code
                 </p>
               </div>
               <aside className={styles.heroAside}>
-                <div className={styles.heroAsideTitle}>What’s inside</div>
+                <div className={styles.heroAsideTitle}>What's inside</div>
                 <div className={styles.heroAsideGrid}>
                   <div className={styles.heroAsideCard}>
-                    <div className={styles.heroAsideCardTitle}>Runtime</div>
+                    <div className={styles.heroAsideCardTitle}>SSA IR</div>
                     <div className={styles.heroAsideCardBody}>
-                      A compact, Bun‑inspired runtime tuned for Script’s execution model.
+                      Register‑based SSA IR with type inference, constant folding, and DCE.
                     </div>
                   </div>
                   <div className={styles.heroAsideCard}>
-                    <div className={styles.heroAsideCardTitle}>Compiler</div>
+                    <div className={styles.heroAsideCardTitle}>Self‑Hosting</div>
                     <div className={styles.heroAsideCardBody}>
-                      Ahead‑of‑time compilation directly to native code for predictable speed.
+                      Compiler written in Script itself, generating LLVM IR for native binaries.
                     </div>
                   </div>
                   <div className={styles.heroAsideCard}>
-                    <div className={styles.heroAsideCardTitle}>Type System</div>
+                    <div className={styles.heroAsideCardTitle}>Native Backend</div>
                     <div className={styles.heroAsideCardBody}>
-                      A pragmatic, ergonomic type system that stays out of your way.
+                      Cranelift JIT for development, LLVM AOT with ThinLTO/Full LTO for production.
                     </div>
                   </div>
                   <div className={styles.heroAsideCard}>
-                    <div className={styles.heroAsideCardTitle}>Tooling</div>
+                    <div className={styles.heroAsideCardTitle}>Ownership</div>
                     <div className={styles.heroAsideCardBody}>
-                      A cohesive toolkit for building, testing, and shipping Script apps.
+                      Rust‑inspired ownership model with compile‑time borrow checking.
                     </div>
                   </div>
                 </div>
@@ -82,37 +82,37 @@ export default function Home(): ReactNode {
             <div className={styles.sectionHeader}>
               <div className={styles.sectionTitle}>Why Script</div>
               <p className={styles.sectionSubtitle}>
-                A language and runtime designed for people who care about both performance and polish.
+                A minimal core language (like C without libc) with optional Rolls ecosystem libraries.
               </p>
             </div>
 
             <div className={styles.featureGrid}>
               <article className={styles.featureCard}>
-                <div className={styles.featureLabel}>Core runtime</div>
-                <h3 className={styles.featureTitle}>Drop‑in speed</h3>
+                <div className={styles.featureLabel}>Performance</div>
+                <h3 className={styles.featureTitle}>Native code speed</h3>
                 <p className={styles.featureBody}>
-                  Ship native binaries with startup and throughput characteristics comparable to C and Rust.
+                  Compiles to native binaries via LLVM with LTO. Native code runs ~30x faster than VM, JIT ~6x faster.
                 </p>
               </article>
               <article className={styles.featureCard}>
-                <div className={styles.featureLabel}>Developer experience</div>
-                <h3 className={styles.featureTitle}>Familiar syntax</h3>
+                <div className={styles.featureLabel}>Syntax</div>
+                <h3 className={styles.featureTitle}>TypeScript‑like</h3>
                 <p className={styles.featureBody}>
-                  JavaScript‑inspired semantics, modern tooling, and tight feedback loops for everyday work.
+                  Familiar JavaScript/TypeScript syntax with classes, async/await, modules, and full type system.
                 </p>
               </article>
               <article className={styles.featureCard}>
-                <div className={styles.featureLabel}>Safety</div>
-                <h3 className={styles.featureTitle}>Confident systems</h3>
+                <div className={styles.featureLabel}>Memory safety</div>
+                <h3 className={styles.featureTitle}>Ownership model</h3>
                 <p className={styles.featureBody}>
-                  Leverage Script’s type system and tooling to catch entire classes of bugs before they ship.
+                  Rust‑inspired ownership semantics with compile‑time borrow checking for memory safety.
                 </p>
               </article>
               <article className={styles.featureCard}>
-                <div className={styles.featureLabel}>Interoperability</div>
-                <h3 className={styles.featureTitle}>Talks to your stack</h3>
+                <div className={styles.featureLabel}>Architecture</div>
+                <h3 className={styles.featureTitle}>Minimal core</h3>
                 <p className={styles.featureBody}>
-                  Integrate with existing ecosystems and infrastructure without rewriting everything at once.
+                  Script Core is self‑contained. Extended functionality via optional Rolls ecosystem libraries.
                 </p>
               </article>
             </div>

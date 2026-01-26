@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use super::error::{Span, TypeError, TypeErrors};
 use super::registry::TypeRegistry;
-use super::{FunctionType, InferId, ObjectType, Type, TypeContext, TypeVarId, fresh_infer_id};
+use super::{FunctionType, InferId, ObjectType, Type, TypeContext, fresh_infer_id};
 
 // ============================================================================
 // Constraints
@@ -549,7 +549,7 @@ impl TypeNarrower {
     }
 
     /// Merge narrowings from multiple branches (union of possibilities).
-    pub fn merge_branches(&mut self, branches: Vec<HashMap<String, Type>>) {
+    pub fn merge_branches(&mut self, _branches: Vec<HashMap<String, Type>>) {
         // For now, just clear narrowings after merge (conservative)
         // A more sophisticated approach would compute intersection/union
         if let Some(current) = self.narrowings.last_mut() {

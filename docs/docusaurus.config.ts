@@ -131,7 +131,8 @@ const config: Config = {
 
   themeConfig: {
     // SEO: Open Graph / Social card image (must be PNG/JPG, not SVG)
-    image: "img/logo_bg.png",
+    // This should be an absolute URL for OpenGraph to work properly
+    image: "https://docs.script-lang.org/img/owl-light.png",
     // SEO: Site metadata
     metadata: [
       {
@@ -139,9 +140,33 @@ const config: Config = {
         content:
           "Script is a high-performance JavaScript-like programming language with native code execution, memory safety, and a self-hosting compiler.",
       },
-      { name: "og:type", content: "website" },
+      // OpenGraph tags must use 'property', not 'name'
+      { property: "og:type", content: "website" },
+      { property: "og:title", content: "Script Language" },
+      {
+        property: "og:description",
+        content:
+          "Script is a high-performance JavaScript-like programming language with native code execution, memory safety, and a self-hosting compiler.",
+      },
+      {
+        property: "og:image",
+        content: "https://docs.script-lang.org/img/owl-light.png",
+      },
+      { property: "og:url", content: "https://docs.script-lang.org" },
+      { property: "og:site_name", content: "Script Language" },
+      // Twitter Card tags
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:site", content: "@warpy_ai" },
+      { name: "twitter:title", content: "Script Language" },
+      {
+        name: "twitter:description",
+        content:
+          "Script is a high-performance JavaScript-like programming language with native code execution, memory safety, and a self-hosting compiler.",
+      },
+      {
+        name: "twitter:image",
+        content: "https://docs.script-lang.org/img/owl-light.png",
+      },
       { name: "robots", content: "index, follow" },
       {
         name: "google-site-verification",
@@ -155,7 +180,7 @@ const config: Config = {
       title: "Script",
       logo: {
         alt: "Script Logo",
-        src: "img/owl.svg",
+        src: "img/owl_light.png",
         srcDark: "img/owl-light.svg",
       },
       hideOnScroll: false,

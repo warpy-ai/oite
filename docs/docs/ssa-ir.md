@@ -1,8 +1,9 @@
 ---
 sidebar_position: 6
-title: SSA IR - Script's Intermediate Representation
+title: SSA IR
 description: Learn about Script's Static Single Assignment (SSA) intermediate representation used for optimization and native code generation.
-keywords: [ssa, intermediate representation, ir, compiler optimization, code generation]
+keywords:
+  [ssa, intermediate representation, ir, compiler optimization, code generation]
 ---
 
 # SSA IR
@@ -62,10 +63,10 @@ bb0:
 
 The type inference pass specializes dynamic operations:
 
-| Before | After | Speedup |
-|--------|-------|---------|
-| `add.any v0, v1` | `add.num v0, v1` | ~10x |
-| `mul.any v0, v1` | `mul.num v0, v1` | ~10x |
+| Before           | After            | Speedup |
+| ---------------- | ---------------- | ------- |
+| `add.any v0, v1` | `add.num v0, v1` | ~10x    |
+| `mul.any v0, v1` | `mul.num v0, v1` | ~10x    |
 
 ## Optimization Passes
 
@@ -85,6 +86,7 @@ You can dump the IR for any Script program:
 ```
 
 This prints:
+
 - Bytecode
 - SSA before optimization
 - SSA after type inference
@@ -108,6 +110,7 @@ Cranelift:
 ## Verification
 
 The IR is validated for:
+
 - Exactly-once definitions (SSA property)
 - Valid control flow (jumps and blocks)
 - Use-after-move detection
