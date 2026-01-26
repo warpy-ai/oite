@@ -109,6 +109,40 @@ pub fn native_exists_sync(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     }
 }
 
+pub fn native_mkdir_sync(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let Some(JsValue::String(path)) = args.first() {
+        // Check for { recursive: true } option
+        let recursive = if let Some(JsValue::Object(ptr)) = args.get(1) {
+            if let Some(HeapObject {
+                data: HeapData::Object(props),
+            }) = vm.heap.get(*ptr)
+            {
+                matches!(props.get("recursive"), Some(JsValue::Boolean(true)))
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        let result = if recursive {
+            std::fs::create_dir_all(path)
+        } else {
+            std::fs::create_dir(path)
+        };
+
+        match result {
+            Ok(()) => JsValue::Undefined,
+            Err(e) => {
+                eprintln!("Error creating directory '{}': {}", path, e);
+                JsValue::Undefined
+            }
+        }
+    } else {
+        JsValue::Undefined
+    }
+}
+
 pub fn native_write_binary_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     if let (Some(JsValue::String(filename)), Some(JsValue::Object(ptr))) =
         (args.first(), args.get(1))

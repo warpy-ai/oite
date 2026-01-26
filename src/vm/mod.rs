@@ -921,12 +921,24 @@ impl VM {
                     }
                     (JsValue::String(s), JsValue::Number(idx)) => {
                         // String char access: str[index]
+                        // Use O(1) byte indexing for ASCII strings (common case)
                         let i = idx as usize;
-                        let char_val = s
-                            .chars()
-                            .nth(i)
-                            .map(|c| JsValue::String(c.to_string()))
-                            .unwrap_or(JsValue::Undefined);
+                        let bytes = s.as_bytes();
+                        let char_val = if i < bytes.len() {
+                            let b = bytes[i];
+                            if b < 128 {
+                                // ASCII: O(1) fast path
+                                JsValue::String((b as char).to_string())
+                            } else {
+                                // Non-ASCII: fallback to chars().nth() - O(n) but rare
+                                s.chars()
+                                    .nth(i)
+                                    .map(|c| JsValue::String(c.to_string()))
+                                    .unwrap_or(JsValue::Undefined)
+                            }
+                        } else {
+                            JsValue::Undefined
+                        };
                         self.stack.push(char_val);
                     }
                     _ => {
@@ -2021,7 +2033,8 @@ impl VM {
                                 for _ in 0..arg_count {
                                     self.stack.pop();
                                 }
-                                self.stack.push(JsValue::Number(s.chars().count() as f64));
+                                // O(1) for ASCII strings
+                                self.stack.push(JsValue::Number(s.len() as f64));
                             }
                             "charCodeAt" => {
                                 // Get char code at index
@@ -2037,11 +2050,23 @@ impl VM {
                                 for _ in 1..arg_count {
                                     self.stack.pop();
                                 }
-                                let result = s
-                                    .chars()
-                                    .nth(index)
-                                    .map(|c| JsValue::Number(c as u32 as f64))
-                                    .unwrap_or(JsValue::Number(f64::NAN));
+                                // O(1) for ASCII strings (common case)
+                                let bytes = s.as_bytes();
+                                let result = if index < bytes.len() {
+                                    let b = bytes[index];
+                                    if b < 128 {
+                                        // ASCII: O(1) fast path
+                                        JsValue::Number(b as f64)
+                                    } else {
+                                        // Non-ASCII: fallback to chars().nth()
+                                        s.chars()
+                                            .nth(index)
+                                            .map(|c| JsValue::Number(c as u32 as f64))
+                                            .unwrap_or(JsValue::Number(f64::NAN))
+                                    }
+                                } else {
+                                    JsValue::Number(f64::NAN)
+                                };
                                 self.stack.push(result);
                             }
                             "slice" => {
@@ -2052,7 +2077,8 @@ impl VM {
                                 }
                                 args.reverse();
 
-                                let len = s.chars().count() as i64;
+                                // O(1) length for ASCII strings
+                                let len = s.len() as i64;
                                 let start = args
                                     .first()
                                     .and_then(|v| match v {
@@ -2082,12 +2108,48 @@ impl VM {
                                     })
                                     .unwrap_or(len as usize);
 
-                                let result: String = s
-                                    .chars()
-                                    .skip(start)
-                                    .take(end.saturating_sub(start))
-                                    .collect();
+                                // For ASCII strings, use byte slicing (O(1) + copy)
+                                let bytes = s.as_bytes();
+                                let is_ascii = bytes.iter().all(|&b| b < 128);
+                                let result = if is_ascii && end <= bytes.len() {
+                                    let start = start.min(bytes.len());
+                                    let end = end.min(bytes.len());
+                                    // Safe: we verified all bytes are ASCII
+                                    unsafe {
+                                        std::str::from_utf8_unchecked(
+                                            &bytes[start..end.max(start)],
+                                        )
+                                        .to_string()
+                                    }
+                                } else {
+                                    // Non-ASCII fallback
+                                    s.chars()
+                                        .skip(start)
+                                        .take(end.saturating_sub(start))
+                                        .collect()
+                                };
                                 self.stack.push(JsValue::String(result));
+                            }
+                            "indexOf" => {
+                                // Find substring position
+                                let search = if arg_count > 0 {
+                                    match self.stack.pop() {
+                                        Some(JsValue::String(ss)) => ss,
+                                        Some(JsValue::Number(n)) => n.to_string(),
+                                        _ => String::new(),
+                                    }
+                                } else {
+                                    String::new()
+                                };
+                                // Pop remaining args
+                                for _ in 1..arg_count {
+                                    self.stack.pop();
+                                }
+                                let result = s
+                                    .find(&search)
+                                    .map(|i| i as f64)
+                                    .unwrap_or(-1.0);
+                                self.stack.push(JsValue::Number(result));
                             }
                             _ => {
                                 // Unsupported string method - pop args and return undefined

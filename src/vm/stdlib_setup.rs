@@ -129,13 +129,15 @@ fn setup_string(vm: &mut VM) {
 
 fn setup_fs(vm: &mut VM) {
     use crate::stdlib::{
-        native_exists_sync, native_read_file, native_write_binary_file, native_write_file,
+        native_exists_sync, native_mkdir_sync, native_read_file, native_write_binary_file,
+        native_write_file,
     };
 
     let fs_read_file_idx = vm.register_native(native_read_file);
     let fs_write_file_idx = vm.register_native(native_write_file);
     let fs_write_binary_file_idx = vm.register_native(native_write_binary_file);
     let fs_exists_sync_idx = vm.register_native(native_exists_sync);
+    let fs_mkdir_sync_idx = vm.register_native(native_mkdir_sync);
 
     let fs_ptr = vm.heap.len();
     let mut fs_props = std::collections::HashMap::new();
@@ -154,6 +156,10 @@ fn setup_fs(vm: &mut VM) {
     fs_props.insert(
         "existsSync".to_string(),
         JsValue::NativeFunction(fs_exists_sync_idx),
+    );
+    fs_props.insert(
+        "mkdirSync".to_string(),
+        JsValue::NativeFunction(fs_mkdir_sync_idx),
     );
     vm.heap.push(HeapObject {
         data: HeapData::Object(fs_props),
