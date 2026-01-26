@@ -66,10 +66,17 @@ jobs:
       - name: Install LLVM 18 (macOS x86_64 cross-compile)
         if: runner.os == 'macOS' && matrix.target == 'x86_64-apple-darwin'
         run: |
-          # Install x86_64 Homebrew and LLVM for cross-compilation
+          # Install x86_64 Homebrew and LLVM/zstd for cross-compilation
           arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
           arch -x86_64 /usr/local/bin/brew install llvm@18 zstd
+          # Verify installation
+          if [ ! -d "/usr/local/opt/zstd/lib" ]; then
+            echo "zstd not found at /usr/local/opt/zstd" >&2
+            exit 1
+          fi
           echo "LLVM_SYS_180_PREFIX=/usr/local/opt/llvm@18" >> $GITHUB_ENV
+          echo "X86_ZSTD_PREFIX=/usr/local/opt/zstd" >> $GITHUB_ENV
+          echo "X86_LLVM_PREFIX=/usr/local/opt/llvm@18" >> $GITHUB_ENV
           rustup target add x86_64-apple-darwin
 
       - name: Cache cargo registry
@@ -83,11 +90,19 @@ jobs:
           restore-keys: |
             ${{ matrix.os }}-${{ matrix.target }}-cargo-
 
-      - name: Build release binary
+      - name: Build release binary (x86_64 macOS)
+        if: matrix.target == 'x86_64-apple-darwin'
         run: cargo build --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: clang
-          CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS: -C link-arg=-arch -C link-arg=x86_64
+          CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS: -C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/usr/local/opt/zstd/lib -C link-arg=-lzstd
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
+          LIBRARY_PATH: /usr/local/opt/zstd/lib:/usr/local/opt/llvm@18/lib
+          CPATH: /usr/local/opt/zstd/include:/usr/local/opt/llvm@18/include
+
+      - name: Build release binary
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Run tests
         if: matrix.target != 'x86_64-apple-darwin'
