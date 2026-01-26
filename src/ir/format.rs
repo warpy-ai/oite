@@ -12,10 +12,10 @@
 //! - **Human-readable**: Text format that can be inspected and debugged.
 //! - **Versioned**: Includes IR format version for forward/backward compatibility.
 
-use crate::ir::{IrFunction, IrModule, IrOp, Literal, Terminator};
+use crate::ir::{IrFunction, IrModule, IrOp, Terminator};
 use crate::runtime::ABI_VERSION;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self};
 use std::path::Path;
 
 /// Current IR format version (bumped on any breaking change to the format).

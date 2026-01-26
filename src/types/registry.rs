@@ -219,10 +219,10 @@ impl TypeRegistry {
         match ty {
             Type::TypeVar(var) => {
                 // Find which parameter this corresponds to
-                if let Some(idx) = params.iter().position(|p| p == var) {
-                    if idx < args.len() {
-                        return args[idx].clone();
-                    }
+                if let Some(idx) = params.iter().position(|p| p == var)
+                    && idx < args.len()
+                {
+                    return args[idx].clone();
                 }
                 ty.clone()
             }
@@ -283,7 +283,7 @@ impl TypeRegistry {
 
         // Add Vec<T> as an alias for T[]
         let vec_t = fresh_type_id();
-        let t_param = super::fresh_type_var_id();
+        let t_param = fresh_type_var_id();
         registry.register_alias(TypeAlias {
             id: vec_t,
             name: "Vec".to_string(),
@@ -294,7 +294,7 @@ impl TypeRegistry {
         // Add Option<T> as T | null (simplified as nullable T)
         // For now we represent this as a union type or just T
         let option_t = fresh_type_id();
-        let option_param = super::fresh_type_var_id();
+        let option_param = fresh_type_var_id();
         registry.register_alias(TypeAlias {
             id: option_t,
             name: "Option".to_string(),
@@ -352,7 +352,7 @@ mod tests {
         let mut registry = TypeRegistry::new();
 
         // Create generic struct: struct Box<T> { value: T }
-        let t_param = super::fresh_type_var_id();
+        let t_param = fresh_type_var_id();
         let id = fresh_type_id();
         let def = StructDef::new(id, "Box".to_string())
             .with_type_params(vec![t_param])

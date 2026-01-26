@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 #[derive(Debug, Clone)]
@@ -17,6 +17,12 @@ pub struct ModuleCache {
     pub entries: HashMap<PathBuf, CachedModule>,
     content_hashes: HashMap<PathBuf, String>,
     modification_times: HashMap<PathBuf, SystemTime>,
+}
+
+impl Default for ModuleCache {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ModuleCache {
@@ -39,16 +45,13 @@ impl ModuleCache {
     }
 
     pub fn get_valid(&self, path: &PathBuf) -> Option<&CachedModule> {
-        if let Some(cached) = self.entries.get(path) {
-            if let Ok(metadata) = fs::metadata(path) {
-                if let Ok(modified) = metadata.modified() {
-                    if let Some(cached_time) = self.modification_times.get(path) {
-                        if modified <= *cached_time {
-                            return Some(cached);
-                        }
-                    }
-                }
-            }
+        if let Some(cached) = self.entries.get(path)
+            && let Ok(metadata) = fs::metadata(path)
+            && let Ok(modified) = metadata.modified()
+            && let Some(cached_time) = self.modification_times.get(path)
+            && modified <= *cached_time
+        {
+            return Some(cached);
         }
         None
     }
@@ -59,14 +62,13 @@ impl ModuleCache {
         }
 
         let hash = ModuleCache::compute_hash(path);
-        if !hash.is_empty() {
-            if let Ok(metadata) = fs::metadata(path) {
-                if let Ok(modified) = metadata.modified() {
-                    self.content_hashes.insert(path.clone(), hash.clone());
-                    self.modification_times.insert(path.clone(), modified);
-                    return None;
-                }
-            }
+        if !hash.is_empty()
+            && let Ok(metadata) = fs::metadata(path)
+            && let Ok(modified) = metadata.modified()
+        {
+            self.content_hashes.insert(path.clone(), hash.clone());
+            self.modification_times.insert(path.clone(), modified);
+            return None;
         }
         None
     }
@@ -103,10 +105,10 @@ impl ModuleCache {
 
         self.entries.insert(path.clone(), module);
         self.content_hashes.insert(path.clone(), hash);
-        if let Ok(metadata) = fs::metadata(&path) {
-            if let Ok(modified) = metadata.modified() {
-                self.modification_times.insert(path, modified);
-            }
+        if let Ok(metadata) = fs::metadata(&path)
+            && let Ok(modified) = metadata.modified()
+        {
+            self.modification_times.insert(path, modified);
         }
     }
 
@@ -140,7 +142,7 @@ impl ModuleCache {
     pub fn get_cache_info(&self, path: &PathBuf) -> Option<(SystemTime, String, usize)> {
         self.entries.get(path).map(|cached| {
             (
-                cached.load_time.clone(),
+                cached.load_time,
                 cached.hash.clone(),
                 cached.namespace_object,
             )

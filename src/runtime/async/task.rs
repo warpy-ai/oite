@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
+
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
@@ -222,6 +225,12 @@ pub struct Timer {
     heap: std::collections::BinaryHeap<TimerEntry>,
 }
 
+impl Default for Timer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Timer {
     pub fn new() -> Self {
         Self {
@@ -274,6 +283,12 @@ pub struct Executor {
     pub tasks: VecDeque<Arc<Task>>,
     pub timer: Mutex<Timer>,
     pub id_gen: AtomicUsize,
+}
+
+impl Default for Executor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Executor {
@@ -392,6 +407,12 @@ impl Executor {
 pub struct JoinSet<T> {
     tasks: Mutex<Vec<Arc<Task>>>,
     _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T> Default for JoinSet<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T> JoinSet<T> {

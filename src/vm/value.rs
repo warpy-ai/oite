@@ -79,6 +79,12 @@ impl PartialEq for Promise {
     }
 }
 
+impl Default for Promise {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Promise {
     pub fn new() -> Self {
         let state = Arc::new(Mutex::new(PromiseInternal {
@@ -127,21 +133,19 @@ impl Promise {
 
             for handler in handlers {
                 if is_fulfilled {
-                    if let Some(on_fulfilled) = handler.on_fulfilled {
-                        if let JsValue::Function { address, env } = *on_fulfilled {
-                            let _ = address;
-                            let _ = env;
-                            let _ = value_to_store;
-                        }
+                    if let Some(on_fulfilled) = handler.on_fulfilled
+                        && let JsValue::Function { address, env } = *on_fulfilled
+                    {
+                        let _ = address;
+                        let _ = env;
+                        let _ = value_to_store;
                     }
-                } else {
-                    if let Some(on_rejected) = handler.on_rejected {
-                        if let JsValue::Function { address, env } = *on_rejected {
-                            let _ = address;
-                            let _ = env;
-                            let _ = value_to_store;
-                        }
-                    }
+                } else if let Some(on_rejected) = handler.on_rejected
+                    && let JsValue::Function { address, env } = *on_rejected
+                {
+                    let _ = address;
+                    let _ = env;
+                    let _ = value_to_store;
                 }
             }
         }

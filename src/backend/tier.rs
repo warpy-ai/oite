@@ -140,7 +140,7 @@ impl TierManager {
     pub fn compile_function(
         &mut self,
         func_addr: usize,
-        bytecode: &[OpCode],
+        _bytecode: &[OpCode],
         module: &IrModule,
     ) -> Result<*const u8, BackendError> {
         // Initialize JIT runtime if needed
@@ -207,30 +207,32 @@ impl TierManager {
     /// The caller must ensure the function pointer is valid and the
     /// argument count matches the function signature.
     pub unsafe fn call_compiled(&self, func_addr: usize, args: &[TsclValue]) -> Option<TsclValue> {
-        let ptr = self.compiled_functions.get(&func_addr)?;
+        unsafe {
+            let ptr = self.compiled_functions.get(&func_addr)?;
 
-        // Cast and call based on argument count
-        let result = match args.len() {
-            0 => {
-                let f: extern "C" fn() -> u64 = std::mem::transmute(*ptr);
-                f()
-            }
-            1 => {
-                let f: extern "C" fn(u64) -> u64 = std::mem::transmute(*ptr);
-                f(args[0].to_bits())
-            }
-            2 => {
-                let f: extern "C" fn(u64, u64) -> u64 = std::mem::transmute(*ptr);
-                f(args[0].to_bits(), args[1].to_bits())
-            }
-            3 => {
-                let f: extern "C" fn(u64, u64, u64) -> u64 = std::mem::transmute(*ptr);
-                f(args[0].to_bits(), args[1].to_bits(), args[2].to_bits())
-            }
-            _ => return None, // Too many arguments
-        };
+            // Cast and call based on argument count
+            let result = match args.len() {
+                0 => {
+                    let f: extern "C" fn() -> u64 = std::mem::transmute(*ptr);
+                    f()
+                }
+                1 => {
+                    let f: extern "C" fn(u64) -> u64 = std::mem::transmute(*ptr);
+                    f(args[0].to_bits())
+                }
+                2 => {
+                    let f: extern "C" fn(u64, u64) -> u64 = std::mem::transmute(*ptr);
+                    f(args[0].to_bits(), args[1].to_bits())
+                }
+                3 => {
+                    let f: extern "C" fn(u64, u64, u64) -> u64 = std::mem::transmute(*ptr);
+                    f(args[0].to_bits(), args[1].to_bits(), args[2].to_bits())
+                }
+                _ => return None, // Too many arguments
+            };
 
-        Some(TsclValue::from_bits(result))
+            Some(TsclValue::from_bits(result))
+        }
     }
 
     /// Check if tiered compilation is enabled.

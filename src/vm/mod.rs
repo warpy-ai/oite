@@ -19,13 +19,12 @@ pub use crate::vm::value::JsValue;
 pub use crate::vm::value::NativeFn;
 pub use crate::vm::value::Promise;
 pub use crate::vm::value::PromiseState;
-pub use sha2::{Digest, Sha256};
+pub use sha2::Digest;
 pub use std::collections::{HashMap, VecDeque};
 pub use std::fs;
 pub use std::path::{Path, PathBuf};
-pub use std::sync::{Arc, Mutex};
-pub use std::time::{Duration, Instant, SystemTime};
-pub use swc_common::{BytePos, FileName, input::StringInput};
+pub use std::time::{Duration, Instant};
+pub use swc_common::{FileName, input::StringInput};
 pub use swc_ecma_parser::{Parser, Syntax, TsSyntax, lexer::Lexer};
 pub use tokio::runtime::Runtime;
 pub use tokio::sync::mpsc;
@@ -70,12 +69,12 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
                                                 .as_ref()
                                                 .map(|e| {
                                                     let atom = e.atom();
-                                                    let s: &str = &*atom;
+                                                    let s: &str = &atom;
                                                     s.to_string()
                                                 })
                                                 .unwrap_or_else(|| {
                                                     let atom = named.orig.atom();
-                                                    let s: &str = &*atom;
+                                                    let s: &str = &atom;
                                                     s.to_string()
                                                 });
                                             exports.insert(export_name, JsValue::Undefined);
@@ -86,7 +85,7 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
                                         }
                                         swc_ecma_ast::ExportSpecifier::Namespace(ns) => {
                                             let atom = ns.name.atom();
-                                            let s: &str = &*atom;
+                                            let s: &str = &atom;
                                             exports.insert(s.to_string(), JsValue::Undefined);
                                         }
                                     }
@@ -100,12 +99,12 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
                                                 .as_ref()
                                                 .map(|e| {
                                                     let atom = e.atom();
-                                                    let s: &str = &*atom;
+                                                    let s: &str = &atom;
                                                     s.to_string()
                                                 })
                                                 .unwrap_or_else(|| {
                                                     let atom = named.orig.atom();
-                                                    let s: &str = &*atom;
+                                                    let s: &str = &atom;
                                                     s.to_string()
                                                 });
                                             exports.insert(export_name, JsValue::Undefined);
@@ -116,7 +115,7 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
                                         }
                                         swc_ecma_ast::ExportSpecifier::Namespace(ns) => {
                                             let atom = ns.name.atom();
-                                            let s: &str = &*atom;
+                                            let s: &str = &atom;
                                             exports.insert(s.to_string(), JsValue::Undefined);
                                         }
                                     }
@@ -160,26 +159,24 @@ fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValu
                         }
                         _ => {}
                     }
-                } else if let swc_ecma_ast::ModuleItem::Stmt(stmt) = item {
-                    if let swc_ecma_ast::Stmt::Decl(decl) = stmt {
-                        match decl {
-                            swc_ecma_ast::Decl::Var(var_decl) => {
-                                for declarator in &var_decl.decls {
-                                    if let swc_ecma_ast::Pat::Ident(ident) = &declarator.name {
-                                        exports
-                                            .insert(ident.id.sym.to_string(), JsValue::Undefined);
-                                    }
+                } else if let swc_ecma_ast::ModuleItem::Stmt(stmt) = item
+                    && let swc_ecma_ast::Stmt::Decl(decl) = stmt
+                {
+                    match decl {
+                        swc_ecma_ast::Decl::Var(var_decl) => {
+                            for declarator in &var_decl.decls {
+                                if let swc_ecma_ast::Pat::Ident(ident) = &declarator.name {
+                                    exports.insert(ident.id.sym.to_string(), JsValue::Undefined);
                                 }
                             }
-                            swc_ecma_ast::Decl::Fn(fn_decl) => {
-                                exports.insert(fn_decl.ident.sym.to_string(), JsValue::Undefined);
-                            }
-                            swc_ecma_ast::Decl::Class(class_decl) => {
-                                exports
-                                    .insert(class_decl.ident.sym.to_string(), JsValue::Undefined);
-                            }
-                            _ => {}
                         }
+                        swc_ecma_ast::Decl::Fn(fn_decl) => {
+                            exports.insert(fn_decl.ident.sym.to_string(), JsValue::Undefined);
+                        }
+                        swc_ecma_ast::Decl::Class(class_decl) => {
+                            exports.insert(class_decl.ident.sym.to_string(), JsValue::Undefined);
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -255,6 +252,12 @@ pub struct VM {
     pub resolved_queue: Vec<(ContinuationCallback, JsValue)>,
     /// Current promise being constructed (for resolve/reject callbacks)
     pub current_promise: Option<Promise>,
+}
+
+impl Default for VM {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VM {
@@ -799,12 +802,11 @@ impl VM {
                 });
 
                 // Set the prototype
-                if let JsValue::Object(proto_ptr) = proto {
-                    if let Some(heap_item) = self.heap.get_mut(ptr) {
-                        if let HeapData::Object(props) = &mut heap_item.data {
-                            props.insert("__proto__".to_string(), JsValue::Object(proto_ptr));
-                        }
-                    }
+                if let JsValue::Object(proto_ptr) = proto
+                    && let Some(heap_item) = self.heap.get_mut(ptr)
+                    && let HeapData::Object(props) = &mut heap_item.data
+                {
+                    props.insert("__proto__".to_string(), JsValue::Object(proto_ptr));
                 }
 
                 self.stack.push(JsValue::Object(ptr));
@@ -845,10 +847,10 @@ impl VM {
                     }
 
                     // No setter found, store the value directly
-                    if let Some(heap_item) = self.heap.get_mut(ptr) {
-                        if let HeapData::Object(props) = &mut heap_item.data {
-                            props.insert(name.to_string(), value);
-                        }
+                    if let Some(heap_item) = self.heap.get_mut(ptr)
+                        && let HeapData::Object(props) = &mut heap_item.data
+                    {
+                        props.insert(name.to_string(), value);
                     }
                 } else {
                     // Object was not an Object, silently ignore or could panic
@@ -868,15 +870,15 @@ impl VM {
                         JsValue::Number(n) => n.to_string(),
                         JsValue::Object(_) => {
                             // For objects, use default string representation
-                            format!("[object Object]")
+                            "[object Object]".to_string()
                         }
                         _ => format!("{:?}", key_val),
                     };
 
-                    if let Some(heap_item) = self.heap.get_mut(ptr) {
-                        if let HeapData::Object(props) = &mut heap_item.data {
-                            props.insert(key_name, value);
-                        }
+                    if let Some(heap_item) = self.heap.get_mut(ptr)
+                        && let HeapData::Object(props) = &mut heap_item.data
+                    {
+                        props.insert(key_name, value);
                     }
                 }
             }
@@ -892,14 +894,14 @@ impl VM {
                 match (target, key_val) {
                     (JsValue::Object(ptr), JsValue::Number(idx)) => {
                         // Array access: arr[index]
-                        if let Some(heap_obj) = self.heap.get(ptr) {
-                            if let HeapData::Array(arr) = &heap_obj.data {
-                                let i = idx as usize;
-                                let val = arr.get(i).cloned().unwrap_or(JsValue::Undefined);
-                                self.stack.push(val.clone());
-                                self.ip += 1;
-                                return ExecResult::Continue;
-                            }
+                        if let Some(heap_obj) = self.heap.get(ptr)
+                            && let HeapData::Array(arr) = &heap_obj.data
+                        {
+                            let i = idx as usize;
+                            let val = arr.get(i).cloned().unwrap_or(JsValue::Undefined);
+                            self.stack.push(val.clone());
+                            self.ip += 1;
+                            return ExecResult::Continue;
                         }
                         self.stack.push(JsValue::Undefined);
                     }
@@ -909,9 +911,7 @@ impl VM {
                         let key_name = match &key_val {
                             JsValue::String(s) => s.clone(),
                             JsValue::Number(n) => n.to_string(),
-                            JsValue::Object(_) => {
-                                format!("[object Object]")
-                            }
+                            JsValue::Object(_) => "[object Object]".to_string(),
                             _ => format!("{:?}", key_val),
                         };
 
@@ -954,7 +954,7 @@ impl VM {
                     Some(JsValue::Object(ptr)) => {
                         if let Some(heap_item) = self.heap.get(ptr) {
                             match &heap_item.data {
-                                HeapData::Object(props) => {
+                                HeapData::Object(_props) => {
                                     let getter_name = format!("getter:{}", name);
                                     let val = self.get_prop_with_proto_chain(ptr, &getter_name);
 
@@ -1008,7 +1008,10 @@ impl VM {
                         }
                     }
                     // Special case: looking up .prototype on a function value
-                    Some(JsValue::Function { address, env }) if name == "prototype" => {
+                    Some(JsValue::Function {
+                        address: _address,
+                        env: _env,
+                    }) if name == "prototype" => {
                         // Functions don't have a prototype property by default in our VM
                         // This returns undefined
                         self.stack.push(JsValue::Undefined);
@@ -1188,7 +1191,7 @@ impl VM {
                     }
                     other => {
                         // Print the last few instructions for context
-                        let start = if self.ip > 5 { self.ip - 5 } else { 0 };
+                        let start = self.ip.saturating_sub(5);
                         let end = (self.ip + 3).min(self.program.len());
                         eprintln!("Context around ip={}:", self.ip);
                         for i in start..end {
@@ -1248,7 +1251,7 @@ impl VM {
                             JsValue::Undefined => "undefined".to_string(),
                             JsValue::String(s) => s,
                             JsValue::Object(ptr) => format!("Object({})", ptr),
-                            JsValue::Function { address, env } => {
+                            JsValue::Function { address, env: _env } => {
                                 format!("Function({})", address)
                             }
                             JsValue::NativeFunction(idx) => {
@@ -1266,7 +1269,7 @@ impl VM {
                             JsValue::Undefined => "undefined".to_string(),
                             JsValue::String(s) => s,
                             JsValue::Object(ptr) => format!("Object({})", ptr),
-                            JsValue::Function { address, env } => {
+                            JsValue::Function { address, env: _env } => {
                                 format!("Function({})", address)
                             }
                             JsValue::NativeFunction(idx) => {
@@ -1450,7 +1453,7 @@ impl VM {
                     (self.stack.pop(), self.stack.pop())
                 {
                     self.stack
-                        .push(JsValue::Number((((a as u64) >> (b as u64)) as u64) as f64));
+                        .push(JsValue::Number(((a as u64) >> (b as u64)) as f64));
                 } else {
                     self.stack.push(JsValue::Undefined);
                 }
@@ -1697,12 +1700,12 @@ impl VM {
                 let target = self.stack.pop().expect("Missing target (array or String)");
                 match (target, index_val) {
                     (JsValue::Object(ptr), JsValue::Number(idx)) => {
-                        if let Some(heap_obj) = self.heap.get(ptr) {
-                            if let HeapData::Array(arr) = &heap_obj.data {
-                                let i = idx as usize;
-                                let val = arr.get(i).cloned().unwrap_or(JsValue::Undefined);
-                                self.stack.push(val);
-                            }
+                        if let Some(heap_obj) = self.heap.get(ptr)
+                            && let HeapData::Array(arr) = &heap_obj.data
+                        {
+                            let i = idx as usize;
+                            let val = arr.get(i).cloned().unwrap_or(JsValue::Undefined);
+                            self.stack.push(val);
                         }
                     }
                     (JsValue::String(s), JsValue::Number(idx)) => {
@@ -1760,12 +1763,7 @@ impl VM {
                 let (address, env, prototype, new_target_val) = match &constructor_val {
                     JsValue::Function { address, env } => {
                         // For a plain function, new.target is the function itself
-                        (
-                            *address,
-                            env.clone(),
-                            None::<JsValue>,
-                            constructor_val.clone(),
-                        )
+                        (*address, *env, None::<JsValue>, constructor_val.clone())
                     }
                     JsValue::Object(ptr) => {
                         // Look for a "constructor" property and "prototype" property
@@ -1780,13 +1778,13 @@ impl VM {
                                     // In ES6 JavaScript, new.target is the class itself (the constructor function)
                                     // The class wrapper has a 'constructor' property pointing to the constructor
                                     // So we need to use the wrapper as new-target, not the extracted constructor
-                                    (address, env.clone(), proto, constructor_val.clone())
+                                    (address, env, proto, constructor_val.clone())
                                 }
-                                Some(JsValue::Object(ptr)) => {
+                                Some(JsValue::Object(_ptr)) => {
                                     // Constructor might be wrapped in another object
                                     (0usize, None, proto, constructor_val.clone())
                                 }
-                                Some(JsValue::NativeFunction(native_idx)) => {
+                                Some(JsValue::NativeFunction(_native_idx)) => {
                                     // Native function constructor - use index 0 as placeholder
                                     // The native function will handle construction itself
                                     (0usize, None, proto, constructor_val.clone())
@@ -1821,14 +1819,12 @@ impl VM {
                 });
 
                 // Set prototype if we have one
-                if let Some(proto_val) = prototype {
-                    if let JsValue::Object(proto_ptr) = proto_val {
-                        if let Some(heap_item) = self.heap.get_mut(this_ptr) {
-                            if let HeapData::Object(props) = &mut heap_item.data {
-                                props.insert("__proto__".to_string(), JsValue::Object(proto_ptr));
-                            }
-                        }
-                    }
+                if let Some(proto_val) = prototype
+                    && let JsValue::Object(proto_ptr) = proto_val
+                    && let Some(heap_item) = self.heap.get_mut(this_ptr)
+                    && let HeapData::Object(props) = &mut heap_item.data
+                {
+                    props.insert("__proto__".to_string(), JsValue::Object(proto_ptr));
                 }
 
                 // Push args back for function prologue
@@ -1881,7 +1877,7 @@ impl VM {
                         eprintln!("DEBUG: Construct - Promise detected");
 
                         // The executor should be the first argument
-                        let executor = args.get(0).cloned().unwrap_or(JsValue::Undefined);
+                        let executor = args.first().cloned().unwrap_or(JsValue::Undefined);
                         eprintln!("DEBUG: Construct - executor = {:?}", executor);
 
                         // Create a new pending promise
@@ -1901,7 +1897,7 @@ impl VM {
 
                             // Create resolve function
                             let resolve_idx = self.register_native(|vm, args| {
-                                let value = args.get(0).cloned().unwrap_or(JsValue::Undefined);
+                                let value = args.first().cloned().unwrap_or(JsValue::Undefined);
                                 eprintln!("DEBUG: Construct resolve called with {:?}", value);
                                 if let Some(p) = vm.current_promise.take() {
                                     p.set_value(value, true);
@@ -1911,7 +1907,7 @@ impl VM {
 
                             // Create reject function
                             let reject_idx = self.register_native(|vm, args| {
-                                let reason = args.get(0).cloned().unwrap_or(JsValue::Undefined);
+                                let reason = args.first().cloned().unwrap_or(JsValue::Undefined);
                                 eprintln!("DEBUG: Construct reject called with {:?}", reason);
                                 if let Some(p) = vm.current_promise.take() {
                                     p.set_value(reason, false);
@@ -1940,14 +1936,13 @@ impl VM {
                                 .insert("reject".to_string(), JsValue::NativeFunction(reject_idx));
 
                             // Load captured environment
-                            if let Some(env_ptr) = env {
-                                if let Some(HeapObject {
+                            if let Some(env_ptr) = env
+                                && let Some(HeapObject {
                                     data: HeapData::Object(props),
                                 }) = self.heap.get(env_ptr)
-                                {
-                                    for (name, value) in props {
-                                        exec_frame.locals.insert(name.clone(), value.clone());
-                                    }
+                            {
+                                for (name, value) in props {
+                                    exec_frame.locals.insert(name.clone(), value.clone());
                                 }
                             }
 
@@ -1961,7 +1956,7 @@ impl VM {
                         self.stack.push(JsValue::Promise(promise));
                     } else {
                         // Regular native constructor - push a frame with this_context
-                        let mut native_frame = Frame {
+                        let native_frame = Frame {
                             return_address: self.ip + 1,
                             locals: HashMap::new(),
                             indexed_locals: Vec::new(),
@@ -2116,10 +2111,8 @@ impl VM {
                                     let end = end.min(bytes.len());
                                     // Safe: we verified all bytes are ASCII
                                     unsafe {
-                                        std::str::from_utf8_unchecked(
-                                            &bytes[start..end.max(start)],
-                                        )
-                                        .to_string()
+                                        std::str::from_utf8_unchecked(&bytes[start..end.max(start)])
+                                            .to_string()
                                     }
                                 } else {
                                     // Non-ASCII fallback
@@ -2145,10 +2138,7 @@ impl VM {
                                 for _ in 1..arg_count {
                                     self.stack.pop();
                                 }
-                                let result = s
-                                    .find(&search)
-                                    .map(|i| i as f64)
-                                    .unwrap_or(-1.0);
+                                let result = s.find(&search).map(|i| i as f64).unwrap_or(-1.0);
                                 self.stack.push(JsValue::Number(result));
                             }
                             _ => {
@@ -2795,10 +2785,10 @@ impl VM {
                     // Now do the mutable operation
                     if let Some(w_ptr) = weakmap_ptr {
                         let key = this_ptr.to_string();
-                        if let Some(heap_item) = self.heap.get_mut(w_ptr) {
-                            if let HeapData::Object(field_map) = &mut heap_item.data {
-                                field_map.insert(key, value);
-                            }
+                        if let Some(heap_item) = self.heap.get_mut(w_ptr)
+                            && let HeapData::Object(field_map) = &mut heap_item.data
+                        {
+                            field_map.insert(key, value);
                         }
                     }
                 }
@@ -2932,7 +2922,7 @@ impl VM {
             }
 
             // === ES Modules ===
-            OpCode::ImportAsync(specifier) => {
+            OpCode::ImportAsync(_specifier) => {
                 let specifier_str = match self.stack.pop() {
                     Some(JsValue::String(s)) => s,
                     Some(_) => {
@@ -3031,7 +3021,7 @@ impl VM {
                 }
 
                 // Check if file exists but hash doesn't match (stale cache entry)
-                let current_hash = ModuleCache::compute_hash(&canonical_path);
+                let _current_hash = ModuleCache::compute_hash(&canonical_path);
                 if self.module_cache.has_content_hash(&canonical_path) {
                     // Hash mismatch - stale cache, invalidate
                     self.module_cache.invalidate(&canonical_path);
@@ -3195,8 +3185,9 @@ impl VM {
         self.ip += 1;
         ExecResult::Continue
     }
+    #[allow(dead_code)]
     fn native_write_bytecode_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-        if let Some(JsValue::String(path)) = args.get(0) {
+        if let Some(JsValue::String(path)) = args.first() {
             match std::fs::write(
                 path,
                 vm.program
@@ -3204,8 +3195,7 @@ impl VM {
                     .map(|op| format!("{:?}", op))
                     .collect::<Vec<String>>()
                     .join("\n")
-                    .as_bytes()
-                    .to_vec(),
+                    .as_bytes(),
             ) {
                 Ok(_) => JsValue::Undefined,
                 Err(e) => JsValue::String(format!("Error writing bytecode file: {}", e)),

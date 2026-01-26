@@ -10,13 +10,10 @@ use std::collections::BTreeMap;
 use swc_ecma_ast::*;
 
 use super::convert::TypeConverter;
-use super::error::{BorrowKind, Span, TypeError, TypeErrors};
-use super::inference::{Constraint, InferenceEngine, TypeNarrower};
+use super::error::{Span, TypeError, TypeErrors};
+use super::inference::{InferenceEngine, TypeNarrower};
 use super::registry::TypeRegistry;
-use super::{
-    FunctionType, ObjectType, Ownership, Type, TypeContext, TypeId, TypeVarId, VarType,
-    fresh_infer_id, fresh_type_var_id,
-};
+use super::{FunctionType, ObjectType, Ownership, Type, TypeVarId, VarType, fresh_type_var_id};
 
 // ============================================================================
 // Type Checker
@@ -187,16 +184,16 @@ impl<'a> TypeChecker<'a> {
                     TypeConverter::new(self.registry).with_type_params(&type_params, &param_names);
 
                 for member in &iface.body.body {
-                    if let TsTypeElement::TsPropertySignature(prop) = member {
-                        if let Expr::Ident(ident) = &*prop.key {
-                            let field_name = ident.sym.to_string();
-                            let field_ty = prop
-                                .type_ann
-                                .as_ref()
-                                .and_then(|ann| converter.convert(&ann.type_ann).ok())
-                                .unwrap_or(Type::Any);
-                            def = def.with_field(field_name, field_ty);
-                        }
+                    if let TsTypeElement::TsPropertySignature(prop) = member
+                        && let Expr::Ident(ident) = &*prop.key
+                    {
+                        let field_name = ident.sym.to_string();
+                        let field_ty = prop
+                            .type_ann
+                            .as_ref()
+                            .and_then(|ann| converter.convert(&ann.type_ann).ok())
+                            .unwrap_or(Type::Any);
+                        def = def.with_field(field_name, field_ty);
                     }
                 }
 
@@ -229,7 +226,7 @@ impl<'a> TypeChecker<'a> {
                                     .convert(&ann.type_ann)
                                     .ok()
                             })
-                            .unwrap_or_else(|| if self.strict { Type::Error } else { Type::Any }),
+                            .unwrap_or(if self.strict { Type::Error } else { Type::Any }),
                         _ => Type::Any,
                     };
                     (param_name, param_ty)
@@ -462,13 +459,13 @@ impl<'a> TypeChecker<'a> {
         if let Some(handler) = &try_stmt.handler {
             self.inference.enter_scope();
             // Bind catch parameter
-            if let Some(param) = &handler.param {
-                if let Pat::Ident(ident) = param {
-                    self.inference.context_mut().define(
-                        ident.id.sym.to_string(),
-                        VarType::new(Type::Any), // catch parameter is any
-                    );
-                }
+            if let Some(param) = &handler.param
+                && let Pat::Ident(ident) = param
+            {
+                self.inference.context_mut().define(
+                    ident.id.sym.to_string(),
+                    VarType::new(Type::Any), // catch parameter is any
+                );
             }
             self.check_stmt(&Stmt::Block(handler.body.clone()));
             self.inference.exit_scope();
@@ -698,14 +695,12 @@ impl<'a> TypeChecker<'a> {
         }
 
         // Infer element type from elements
-        let mut elem_ty = self.inference.fresh_var();
+        let elem_ty = self.inference.fresh_var();
 
-        for elem in &arr.elems {
-            if let Some(elem) = elem {
-                let ty = self.check_expr(&elem.expr);
-                self.inference
-                    .constrain_equal(ty, elem_ty.clone(), Span::default());
-            }
+        for elem in arr.elems.iter().flatten() {
+            let ty = self.check_expr(&elem.expr);
+            self.inference
+                .constrain_equal(ty, elem_ty.clone(), Span::default());
         }
 
         Type::Array(Box::new(elem_ty))
@@ -965,6 +960,7 @@ impl<'a> TypeChecker<'a> {
     // Helpers
     // ========================================================================
 
+    #[allow(dead_code)]
     fn span_from_expr(&self, _expr: Option<&Expr>) -> Span {
         Span::default()
     }

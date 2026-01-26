@@ -7,9 +7,7 @@
 //! 3. Convert stack operations to explicit value assignments
 //! 4. Insert phi nodes at CFG merge points
 
-use crate::ir::{
-    BasicBlock, BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId,
-};
+use crate::ir::{BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId};
 use crate::vm::opcodes::OpCode;
 use crate::vm::value::JsValue;
 use std::collections::{HashMap, HashSet};
@@ -544,7 +542,7 @@ impl Lowerer {
                 let stub = self.alloc_value(IrType::Any);
                 self.emit(IrOp::LoadGlobal(stub, "tscl_apply_decorator".to_string()));
                 let result = self.alloc_value(IrType::Any);
-                self.emit(IrOp::Call(result, stub, vec![target.clone(), decorator]));
+                self.emit(IrOp::Call(result, stub, vec![target, decorator]));
                 self.push(result);
             }
 
@@ -680,7 +678,7 @@ impl Lowerer {
                     .instr_to_block
                     .get(target)
                     .copied()
-                    .ok_or_else(|| LowerError::InvalidJumpTarget(*target))?;
+                    .ok_or(LowerError::InvalidJumpTarget(*target))?;
                 self.terminate(Terminator::Jump(target_block));
             }
 
@@ -690,7 +688,7 @@ impl Lowerer {
                     .instr_to_block
                     .get(target)
                     .copied()
-                    .ok_or_else(|| LowerError::InvalidJumpTarget(*target))?;
+                    .ok_or(LowerError::InvalidJumpTarget(*target))?;
 
                 // True block is the fall-through (next instruction)
                 let true_block = self
@@ -1009,10 +1007,10 @@ pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
     // This is used to pre-initialize function references in extracted functions
     let mut func_var_addrs: HashMap<String, usize> = HashMap::new();
     for i in 0..instructions.len().saturating_sub(1) {
-        if let OpCode::Push(JsValue::Function { address, .. }) = &instructions[i] {
-            if let OpCode::Let(name) | OpCode::Store(name) = &instructions[i + 1] {
-                func_var_addrs.insert(name.clone(), *address);
-            }
+        if let OpCode::Push(JsValue::Function { address, .. }) = &instructions[i]
+            && let OpCode::Let(name) | OpCode::Store(name) = &instructions[i + 1]
+        {
+            func_var_addrs.insert(name.clone(), *address);
         }
     }
 
@@ -1053,13 +1051,12 @@ pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
     // Step 4: Detect user-defined main() function
     // Look for pattern: Push(Function { address: X, ... }) followed by Let("main")
     for i in 0..instructions.len().saturating_sub(1) {
-        if let OpCode::Push(JsValue::Function { address, .. }) = &instructions[i] {
-            if let OpCode::Let(name) = &instructions[i + 1] {
-                if name == "main" {
-                    module.user_main_addr = Some(*address);
-                    break;
-                }
-            }
+        if let OpCode::Push(JsValue::Function { address, .. }) = &instructions[i]
+            && let OpCode::Let(name) = &instructions[i + 1]
+            && name == "main"
+        {
+            module.user_main_addr = Some(*address);
+            break;
         }
     }
 
@@ -1104,21 +1101,20 @@ fn lower_extracted_function(
     }
 
     for op in &rebased {
-        if let OpCode::Load(var_name) = op {
-            if !initialized_vars.contains(var_name) {
-                if let Some(&func_addr) = func_var_addrs.get(var_name) {
-                    // This variable references an outer function - pre-initialize it
-                    let slot = lowerer.get_or_create_local(var_name);
-                    let func_addr_val = lowerer.alloc_value(IrType::Function);
-                    lowerer.emit(IrOp::Const(
-                        func_addr_val,
-                        Literal::Number(func_addr as f64),
-                    ));
-                    lowerer.emit(IrOp::StoreLocal(slot, func_addr_val));
-                    lowerer.local_values.insert(slot, func_addr_val);
-                    initialized_vars.insert(var_name.clone());
-                }
-            }
+        if let OpCode::Load(var_name) = op
+            && !initialized_vars.contains(var_name)
+            && let Some(&func_addr) = func_var_addrs.get(var_name)
+        {
+            // This variable references an outer function - pre-initialize it
+            let slot = lowerer.get_or_create_local(var_name);
+            let func_addr_val = lowerer.alloc_value(IrType::Function);
+            lowerer.emit(IrOp::Const(
+                func_addr_val,
+                Literal::Number(func_addr as f64),
+            ));
+            lowerer.emit(IrOp::StoreLocal(slot, func_addr_val));
+            lowerer.local_values.insert(slot, func_addr_val);
+            initialized_vars.insert(var_name.clone());
         }
     }
 

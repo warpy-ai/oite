@@ -13,6 +13,10 @@
 //! Benchmark:
 //!   wrk -t8 -c400 -d30s -s pipeline.lua http://localhost:8080/
 
+#![allow(dead_code)]
+#![allow(unused_must_use)]
+#![allow(clippy::needless_range_loop)]
+
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -173,10 +177,9 @@ fn find_header_end_fast(data: &[u8]) -> Option<usize> {
     while i <= len - 4 {
         // Check for \r\n\r\n pattern
         // This compiles to efficient SIMD on modern CPUs
-        if data[i] == b'\r' {
-            if data[i + 1] == b'\n' && data[i + 2] == b'\r' && data[i + 3] == b'\n' {
-                return Some(i);
-            }
+        if data[i] == b'\r' && data[i + 1] == b'\n' && data[i + 2] == b'\r' && data[i + 3] == b'\n'
+        {
+            return Some(i);
         }
         i += 1;
     }
@@ -236,7 +239,7 @@ impl Worker {
                 if let Some(conn) = connections.get_mut(&fd) {
                     let mut should_close = false;
 
-                    if filter == EVFILT_READ as i16 {
+                    if filter == EVFILT_READ {
                         match conn.read_all() {
                             Ok(_) => {
                                 conn.process_requests(&self.count);
@@ -245,10 +248,8 @@ impl Worker {
                         }
                     }
 
-                    if filter == EVFILT_WRITE as i16 || conn.write_len > 0 {
-                        if conn.write_all().is_err() {
-                            should_close = true;
-                        }
+                    if (filter == EVFILT_WRITE || conn.write_len > 0) && conn.write_all().is_err() {
+                        should_close = true;
                     }
 
                     if should_close {
@@ -437,7 +438,7 @@ fn main() -> io::Result<()> {
             loop {
                 match listener.accept() {
                     Ok((stream, _)) => {
-                        if senders[next_worker].send(stream).is_err() {}
+                        senders[next_worker].send(stream).is_err();
                         next_worker = (next_worker + 1) % num_workers;
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,

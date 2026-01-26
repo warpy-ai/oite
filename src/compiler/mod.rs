@@ -1,5 +1,4 @@
 use crate::vm::opcodes::OpCode;
-use std::borrow::Cow;
 use std::collections::HashSet;
 use swc_ecma_ast::*;
 pub mod borrow_ck;
@@ -10,6 +9,12 @@ use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 
 pub struct Compiler {
     pub borrow_checker: BorrowChecker,
+}
+
+impl Default for Compiler {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Compiler {
@@ -99,6 +104,12 @@ pub struct Codegen {
     private_method_indices: std::collections::HashMap<String, usize>,
     /// Warnings collected during compilation
     pub warnings: Vec<String>,
+}
+
+impl Default for Codegen {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Codegen {
@@ -302,7 +313,7 @@ impl Codegen {
                                 .as_ref()
                                 .map(|i| {
                                     let atom = i.atom();
-                                    let s: &str = &*atom;
+                                    let s: &str = &atom;
                                     s.to_string()
                                 })
                                 .unwrap_or_else(|| local.clone());
@@ -346,7 +357,7 @@ impl Codegen {
                     self.instructions.push(OpCode::Pop);
                 }
 
-                if let Some(with) = &import.with {
+                if let Some(_with) = &import.with {
                     self.warnings.push(format!(
                         "Warning: Import assertions for '{}' are not fully supported",
                         import.src.value.to_string_lossy()
@@ -364,17 +375,17 @@ impl Codegen {
                                     .as_ref()
                                     .map(|e| {
                                         let atom = e.atom();
-                                        let s: &str = &*atom;
+                                        let s: &str = &atom;
                                         s.to_string()
                                     })
                                     .unwrap_or_else(|| {
                                         let atom = named.orig.atom();
-                                        let s: &str = &*atom;
+                                        let s: &str = &atom;
                                         s.to_string()
                                     });
-                                let local_name = {
+                                let _local_name = {
                                     let atom = named.orig.atom();
-                                    let s: &str = &*atom;
+                                    let s: &str = &atom;
                                     s.to_string()
                                 };
 
@@ -404,7 +415,7 @@ impl Codegen {
                             ExportSpecifier::Namespace(ns) => {
                                 let name = {
                                     let atom = ns.name.atom();
-                                    let s: &str = &*atom;
+                                    let s: &str = &atom;
                                     s.to_string()
                                 };
                                 self.instructions
@@ -423,17 +434,17 @@ impl Codegen {
                                     .as_ref()
                                     .map(|e| {
                                         let atom = e.atom();
-                                        let s: &str = &*atom;
+                                        let s: &str = &atom;
                                         s.to_string()
                                     })
                                     .unwrap_or_else(|| {
                                         let atom = named.orig.atom();
-                                        let s: &str = &*atom;
+                                        let s: &str = &atom;
                                         s.to_string()
                                     });
                                 let local_name = {
                                     let atom = named.orig.atom();
-                                    let s: &str = &*atom;
+                                    let s: &str = &atom;
                                     s.to_string()
                                 };
 
@@ -449,7 +460,7 @@ impl Codegen {
                             ExportSpecifier::Namespace(ns) => {
                                 let name = {
                                     let atom = ns.name.atom();
-                                    let s: &str = &*atom;
+                                    let s: &str = &atom;
                                     s.to_string()
                                 };
                                 self.instructions.push(OpCode::Load(name.clone()));
@@ -608,10 +619,10 @@ impl Codegen {
             let before = self.instructions.len();
             self.gen_stmt(s);
             // Check if the last instruction emitted was a Return
-            if self.instructions.len() > before {
-                if let Some(OpCode::Return) = self.instructions.last() {
-                    last_instr_was_return = true;
-                }
+            if self.instructions.len() > before
+                && let Some(OpCode::Return) = self.instructions.last()
+            {
+                last_instr_was_return = true;
             }
         }
 
@@ -978,10 +989,10 @@ impl Codegen {
                     for s in stmts {
                         let before = self.instructions.len();
                         self.gen_stmt(s);
-                        if self.instructions.len() > before {
-                            if let Some(OpCode::Return) = self.instructions.last() {
-                                last_instr_was_return = true;
-                            }
+                        if self.instructions.len() > before
+                            && let Some(OpCode::Return) = self.instructions.last()
+                        {
+                            last_instr_was_return = true;
                         }
                     }
 
@@ -1136,10 +1147,10 @@ impl Codegen {
                         for s in stmts {
                             let before = self.instructions.len();
                             self.gen_stmt(s);
-                            if self.instructions.len() > before {
-                                if let Some(OpCode::Return) = self.instructions.last() {
-                                    last_instr_was_return = true;
-                                }
+                            if self.instructions.len() > before
+                                && let Some(OpCode::Return) = self.instructions.last()
+                            {
+                                last_instr_was_return = true;
                             }
                         }
 
@@ -1295,34 +1306,30 @@ impl Codegen {
                 }
             }
             Expr::Call(call_expr) => {
-                if let Callee::Expr(callee_expr) = &call_expr.callee {
-                    if let Expr::Member(member) = callee_expr.as_ref() {
-                        for arg in &call_expr.args {
-                            self.gen_expr(&arg.expr);
-                        }
+                if let Callee::Expr(callee_expr) = &call_expr.callee
+                    && let Expr::Member(member) = callee_expr.as_ref()
+                {
+                    for arg in &call_expr.args {
+                        self.gen_expr(&arg.expr);
+                    }
 
-                        self.gen_expr(&member.obj);
+                    self.gen_expr(&member.obj);
 
-                        if let MemberProp::Ident(id) = &member.prop {
-                            self.instructions.push(OpCode::CallMethod(
-                                id.sym.to_string(),
-                                call_expr.args.len() as usize,
-                            ));
-                            return;
-                        }
+                    if let MemberProp::Ident(id) = &member.prop {
+                        self.instructions
+                            .push(OpCode::CallMethod(id.sym.to_string(), call_expr.args.len()));
+                        return;
                     }
                 }
                 // detect if this is a 'require' call
-                if let Callee::Expr(expr) = &call_expr.callee {
-                    if let Expr::Ident(id) = expr.as_ref() {
-                        if id.sym.to_string() == "require" {
-                            if let Some(arg) = call_expr.args.first() {
-                                self.gen_expr(&arg.expr);
-                                self.instructions.push(OpCode::Require);
-                                return;
-                            }
-                        }
-                    }
+                if let Callee::Expr(expr) = &call_expr.callee
+                    && let Expr::Ident(id) = expr.as_ref()
+                    && id.sym == "require"
+                    && let Some(arg) = call_expr.args.first()
+                {
+                    self.gen_expr(&arg.expr);
+                    self.instructions.push(OpCode::Require);
+                    return;
                 }
 
                 let arg_count = call_expr.args.len();
@@ -1447,7 +1454,7 @@ impl Codegen {
                             .push(OpCode::GetSuperProp(id.sym.to_string()));
                     }
                     // Handle super[expr]
-                    swc_ecma_ast::SuperProp::Computed(computed) => {
+                    swc_ecma_ast::SuperProp::Computed(_computed) => {
                         // For computed super properties, we need a different opcode
                         // For now, just push undefined
                         self.instructions.push(OpCode::Push(JsValue::Undefined));
@@ -1703,7 +1710,7 @@ impl Codegen {
         }
 
         // Store private field indices for use in constructor
-        let private_field_count = 0; // Will be set dynamically as we encounter private fields
+        let _private_field_count = 0; // Will be set dynamically as we encounter private fields
 
         // Create constructor function
         let constructor_start = self.instructions.len() + 2;

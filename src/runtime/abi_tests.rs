@@ -114,7 +114,7 @@ mod object_layout_tests {
 
 #[cfg(test)]
 mod ir_format_tests {
-    use crate::ir::format::{IR_FORMAT_VERSION, serialize_module};
+    use crate::ir::format::serialize_module;
     use crate::ir::{IrFunction, IrModule, IrOp, IrType, Terminator};
 
     /// Test that IR serialization produces deterministic output.

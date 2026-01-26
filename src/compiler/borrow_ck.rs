@@ -9,9 +9,9 @@
 use std::collections::{HashMap, HashSet};
 use swc_ecma_ast::*;
 
+use crate::types::Type;
 use crate::types::error::{BorrowKind, Span, TypeError, TypeErrors};
 use crate::types::registry::TypeRegistry;
-use crate::types::{Ownership, Type, TypeContext, VarType};
 
 /// Variable state in the borrow checker.
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -110,6 +110,7 @@ impl VarInfo {
 }
 
 /// The borrow checker with type integration.
+#[allow(dead_code)]
 pub struct BorrowChecker {
     /// Variable name to metadata mapping.
     symbols: HashMap<String, VarInfo>,
@@ -292,11 +293,11 @@ impl BorrowChecker {
 
     fn determine_type(&self, decl: &VarDeclarator) -> Type {
         // Try to get type from annotation
-        if let Pat::Ident(ident) = &decl.name {
-            if let Some(_ann) = &ident.type_ann {
-                // Would convert TsType to Type here if we had the converter
-                // For now, infer from initializer
-            }
+        if let Pat::Ident(ident) = &decl.name
+            && let Some(_ann) = &ident.type_ann
+        {
+            // Would convert TsType to Type here if we had the converter
+            // For now, infer from initializer
         }
 
         // Infer from initializer
@@ -335,12 +336,12 @@ impl BorrowChecker {
     fn analyze_expr(&mut self, expr: &Expr) -> Result<(), String> {
         match expr {
             Expr::Ident(id) => {
-                self.process_use(&id.sym.to_string())?;
+                self.process_use(id.sym.as_ref())?;
             }
             Expr::Member(member) => {
                 // Member access is an implicit borrow
                 if let Expr::Ident(id) = member.obj.as_ref() {
-                    self.process_borrow(&id.sym.to_string(), false)?;
+                    self.process_borrow(id.sym.as_ref(), false)?;
                 } else {
                     self.analyze_expr(&member.obj)?;
                 }
@@ -352,13 +353,13 @@ impl BorrowChecker {
                 // Check if assigning to a borrowed variable
                 if let AssignTarget::Simple(SimpleAssignTarget::Ident(id)) = &assign.left {
                     let name = id.id.sym.to_string();
-                    if let Some(info) = self.symbols.get(&name) {
-                        if info.immut_borrows > 0 {
-                            return Err(format!(
-                                "BORROW ERROR: Cannot assign to '{}' while it is borrowed",
-                                name
-                            ));
-                        }
+                    if let Some(info) = self.symbols.get(&name)
+                        && info.immut_borrows > 0
+                    {
+                        return Err(format!(
+                            "BORROW ERROR: Cannot assign to '{}' while it is borrowed",
+                            name
+                        ));
                     }
                 }
                 self.analyze_expr(&assign.right)?;
@@ -374,7 +375,7 @@ impl BorrowChecker {
                 // Function arguments are implicit borrows
                 for arg in &call.args {
                     if let Expr::Ident(id) = arg.expr.as_ref() {
-                        self.process_borrow(&id.sym.to_string(), false)?;
+                        self.process_borrow(id.sym.as_ref(), false)?;
                     } else {
                         self.analyze_expr(&arg.expr)?;
                     }
@@ -384,18 +385,16 @@ impl BorrowChecker {
                 }
             }
             Expr::Array(arr) => {
-                for elem in &arr.elems {
-                    if let Some(elem) = elem {
-                        self.analyze_expr(&elem.expr)?;
-                    }
+                for elem in arr.elems.iter().flatten() {
+                    self.analyze_expr(&elem.expr)?;
                 }
             }
             Expr::Object(obj) => {
                 for prop in &obj.props {
-                    if let PropOrSpread::Prop(p) = prop {
-                        if let Prop::KeyValue(kv) = p.as_ref() {
-                            self.analyze_expr(&kv.value)?;
-                        }
+                    if let PropOrSpread::Prop(p) = prop
+                        && let Prop::KeyValue(kv) = p.as_ref()
+                    {
+                        self.analyze_expr(&kv.value)?;
                     }
                 }
             }
@@ -663,18 +662,16 @@ impl BorrowChecker {
             }
             Expr::Object(obj) => {
                 for prop in &obj.props {
-                    if let PropOrSpread::Prop(p) = prop {
-                        if let Prop::KeyValue(kv) = p.as_ref() {
-                            self.scan_expr_for_captures(&kv.value, local_vars, captured);
-                        }
+                    if let PropOrSpread::Prop(p) = prop
+                        && let Prop::KeyValue(kv) = p.as_ref()
+                    {
+                        self.scan_expr_for_captures(&kv.value, local_vars, captured);
                     }
                 }
             }
             Expr::Array(arr) => {
-                for elem in &arr.elems {
-                    if let Some(elem) = elem {
-                        self.scan_expr_for_captures(&elem.expr, local_vars, captured);
-                    }
+                for elem in arr.elems.iter().flatten() {
+                    self.scan_expr_for_captures(&elem.expr, local_vars, captured);
                 }
             }
             Expr::Assign(assign) => {

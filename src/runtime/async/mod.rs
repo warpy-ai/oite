@@ -1,24 +1,15 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::future::Future;
-use std::io;
-use std::os::unix::io::{AsRawFd, IntoRawFd, RawFd};
+//! Async runtime implementation (work in progress)
+
+#![allow(dead_code)]
+#![allow(unused_variables)]
+
+use std::os::unix::io::AsRawFd;
 use std::pin::Pin;
-use std::sync::{
-    Arc, Condvar, Mutex,
-    atomic::{AtomicUsize, Ordering},
-};
-use std::task::{Context, Poll, Wake, Waker};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::task::{Context, Poll, Waker};
 
 pub mod reactor;
 pub mod runtime_impl;
 pub mod task;
-
-pub use reactor::{Reactor, ReactorHandle};
-pub use runtime_impl::Runtime;
-pub use task::{Executor, JoinSet, Task, Timer};
-pub use task::{TASK_COMPLETED, TASK_IDLE, TASK_RUNNING, TASK_SCHEDULED};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Interest {
@@ -66,7 +57,7 @@ impl<T: AsyncRead> AsyncBufRead<T> {
 
 impl<T: AsyncRead + Unpin> AsyncRead for AsyncBufRead<T> {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {

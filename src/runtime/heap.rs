@@ -243,6 +243,12 @@ pub struct NativeHeap {
     config: HeapConfig,
 }
 
+impl Default for NativeHeap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NativeHeap {
     /// Create a new native heap with default configuration.
     pub fn new() -> Self {

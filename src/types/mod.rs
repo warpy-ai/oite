@@ -84,7 +84,7 @@ pub fn fresh_infer_id() -> InferId {
 // ============================================================================
 
 /// The core type enum representing all types in tscl.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum Type {
     // === Primitives (Copy semantics) ===
     /// IEEE 754 double-precision float (like JavaScript's number).
@@ -128,6 +128,7 @@ pub enum Type {
 
     // === Special ===
     /// Dynamic type (escape hatch, disables optimizations).
+    #[default]
     Any,
     /// Inference placeholder (resolved during type checking).
     Infer(InferId),
@@ -204,12 +205,6 @@ impl Type {
             Type::Array(inner) => Some(inner),
             _ => None,
         }
-    }
-}
-
-impl Default for Type {
-    fn default() -> Self {
-        Type::Any
     }
 }
 

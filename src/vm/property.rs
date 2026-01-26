@@ -53,10 +53,10 @@ pub fn find_setter_with_proto_chain(
             data: HeapData::Object(props),
         }) = vm.heap.get(ptr)
         {
-            if let Some(setter_val) = props.get(&setter_name) {
-                if let JsValue::Function { address, env } = setter_val {
-                    return Some((*address, *env));
-                }
+            if let Some(setter_val) = props.get(&setter_name)
+                && let JsValue::Function { address, env } = setter_val
+            {
+                return Some((*address, *env));
             }
 
             if let Some(JsValue::Object(proto_ptr)) = props.get("__proto__") {

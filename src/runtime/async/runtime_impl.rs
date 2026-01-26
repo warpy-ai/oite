@@ -1,6 +1,8 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
+
 use std::collections::VecDeque;
 use std::io;
-use std::os::unix::io::RawFd;
 use std::pin::Pin;
 use std::sync::{
     Arc, Mutex,
@@ -11,7 +13,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::reactor::ReactorHandle;
-use super::task::{Executor, Task, Timer};
+use super::task::{Executor, Task};
 use super::{Interest, Token};
 
 // ============================================================================

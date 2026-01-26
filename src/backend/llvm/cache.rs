@@ -26,10 +26,10 @@ fn generate_cache_key(file_path: &Path, lto_mode: LtoMode) -> String {
     lto_mode.hash(&mut hasher);
 
     // Hash file modification time (simple invalidation)
-    if let Ok(metadata) = fs::metadata(file_path) {
-        if let Ok(modified) = metadata.modified() {
-            modified.hash(&mut hasher);
-        }
+    if let Ok(metadata) = fs::metadata(file_path)
+        && let Ok(modified) = metadata.modified()
+    {
+        modified.hash(&mut hasher);
     }
 
     format!("{:x}", hasher.finish())

@@ -7,9 +7,7 @@
 //!   Before: v3 = add.any v1, v2  (where v1: num, v2: num)
 //!   After:  v3 = add.num v1, v2
 
-use crate::ir::{
-    BasicBlock, BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId,
-};
+use crate::ir::{BlockId, IrFunction, IrModule, IrOp, IrType, ValueId};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Type inference context for a function.

@@ -3,6 +3,12 @@
 //! This module provides AOT compilation using LLVM. It translates tscl SSA IR
 //! to LLVM IR and generates optimized native object files.
 
+// Allow these for LLVM FFI code
+#![allow(clippy::manual_c_str_literals)]
+#![allow(clippy::missing_safety_doc)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::uninit_vec)]
+
 pub mod abi;
 pub mod bitcode;
 pub mod cache;
@@ -105,8 +111,6 @@ pub fn compile_to_llvm_ir_file(
     config: &BackendConfig,
     output_path: &Path,
 ) -> Result<(), BackendError> {
-    use llvm_sys::prelude::*;
-
     // Get target triple
     let target_triple = object::get_default_target_triple()?;
 

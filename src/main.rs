@@ -1,3 +1,26 @@
+// Suppress some clippy lints for this crate
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(clippy::redundant_slicing)]
+#![allow(clippy::ptr_arg)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::if_same_then_else)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::module_inception)]
+#![allow(clippy::manual_c_str_literals)]
+#![allow(clippy::missing_safety_doc)]
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+#![allow(clippy::uninit_vec)]
+#![allow(clippy::only_used_in_recursion)]
+#![allow(clippy::should_implement_trait)]
+#![allow(clippy::useless_conversion)]
+#![allow(clippy::assertions_on_constants)]
+#![allow(clippy::approx_constant)]
+#![allow(clippy::unnecessary_cast)]
+#![allow(clippy::redundant_clone)]
+#![allow(clippy::wrong_self_convention)]
+#![allow(clippy::field_reassign_with_default)]
+
 mod backend;
 mod compiler;
 use compiler::Compiler;
@@ -154,7 +177,7 @@ fn main() {
         eprintln!("  build [options] <filename>  Build a .tscl file to native binary");
         eprintln!("  <filename>           Run a .tscl file (VM interpreter)");
         eprintln!("  --run-binary <file>  Run a bytecode file (.bc)");
-        eprintln!("");
+        eprintln!();
         eprintln!("Build options:");
         eprintln!("  --backend <llvm|cranelift>  Choose code generator (default: llvm)");
         eprintln!("  --output <file>, -o <file>  Output file name");
@@ -275,7 +298,7 @@ fn main() {
         println!("Loading modular compiler modules...");
         for modular_file in MODULAR_COMPILER_FILES {
             // Skip the main file being run if it's in the list
-            if modular_file == &filename {
+            if modular_file == filename {
                 continue;
             }
             if Path::new(modular_file).exists() {

@@ -12,6 +12,10 @@
 //! Benchmark:
 //!   wrk -t8 -c400 -d30s http://localhost:8080/
 
+#![allow(dead_code)]
+#![allow(unused_must_use)]
+#![allow(clippy::needless_range_loop)]
+
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -133,13 +137,9 @@ impl Connection {
 }
 
 fn find_header_end(data: &[u8]) -> Option<usize> {
-    for i in 0..data.len().saturating_sub(3) {
-        if data[i] == b'\r' && data[i + 1] == b'\n' && data[i + 2] == b'\r' && data[i + 3] == b'\n'
-        {
-            return Some(i);
-        }
-    }
-    None
+    (0..data.len().saturating_sub(3)).find(|&i| {
+        data[i] == b'\r' && data[i + 1] == b'\n' && data[i + 2] == b'\r' && data[i + 3] == b'\n'
+    })
 }
 
 /// Create a listener with SO_REUSEPORT enabled
@@ -308,7 +308,7 @@ impl Worker {
                 } else if let Some(conn) = connections.get_mut(&fd) {
                     let mut should_close = false;
 
-                    if filter == EVFILT_READ as i16 {
+                    if filter == EVFILT_READ {
                         match conn.read_all() {
                             Ok(_) => {
                                 conn.process_requests(&self.count);
@@ -317,10 +317,8 @@ impl Worker {
                         }
                     }
 
-                    if filter == EVFILT_WRITE as i16 || conn.write_len > 0 {
-                        if conn.write_all().is_err() {
-                            should_close = true;
-                        }
+                    if (filter == EVFILT_WRITE || conn.write_len > 0) && conn.write_all().is_err() {
+                        should_close = true;
                     }
 
                     if should_close {

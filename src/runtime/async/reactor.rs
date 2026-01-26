@@ -1,11 +1,13 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
+
 use super::{Interest, Token};
 #[cfg(target_os = "macos")]
-use libc::{EVFILT_READ, EVFILT_WRITE};
-use std::collections::HashMap;
+use libc::EVFILT_READ;
 use std::io;
-use std::os::unix::io::{AsRawFd, RawFd};
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Waker};
+use std::os::unix::io::RawFd;
+use std::sync::Mutex;
+use std::task::Waker;
 
 pub struct Reactor {
     fd: RawFd,
@@ -153,10 +155,7 @@ mod sys {
 #[cfg(target_os = "macos")]
 mod sys {
     use super::*;
-    use libc::{
-        EV_ADD, EV_CLEAR, EV_DELETE, EV_ENABLE, EV_EOF, EV_ERROR, EVFILT_READ, EVFILT_WRITE,
-        kevent, kqueue,
-    };
+    use libc::{EV_ADD, EV_CLEAR, EV_DELETE, EV_ENABLE, EVFILT_READ, EVFILT_WRITE, kevent, kqueue};
     use std::os::unix::io::RawFd;
 
     pub fn create_kqueue() -> io::Result<RawFd> {
@@ -349,7 +348,7 @@ impl ReactorHandle {
         let mut ready = Vec::with_capacity(n);
         for i in 0..n {
             let fd = events[i].ident as RawFd;
-            let interest = if events[i].filter == EVFILT_READ as i16 {
+            let interest = if events[i].filter == EVFILT_READ {
                 Interest::Readable
             } else {
                 Interest::Writable

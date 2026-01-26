@@ -5,4 +5,4 @@
 
 mod decoder;
 
-pub use decoder::{BytecodeDecoder, LoaderError};
+pub use decoder::BytecodeDecoder;
