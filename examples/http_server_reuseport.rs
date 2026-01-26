@@ -183,9 +183,18 @@ fn create_reuseport_listener(addr: &SocketAddr) -> io::Result<RawFd> {
         }
 
         // Bind to address
+        #[cfg(target_os = "macos")]
         let sockaddr = sockaddr_in {
             sin_len: std::mem::size_of::<sockaddr_in>() as u8,
             sin_family: AF_INET as u8,
+            sin_port: addr.port().to_be(),
+            sin_addr: libc::in_addr { s_addr: 0 }, // INADDR_ANY
+            sin_zero: [0; 8],
+        };
+
+        #[cfg(target_os = "linux")]
+        let sockaddr = sockaddr_in {
+            sin_family: AF_INET as u16,
             sin_port: addr.port().to_be(),
             sin_addr: libc::in_addr { s_addr: 0 }, // INADDR_ANY
             sin_zero: [0; 8],
