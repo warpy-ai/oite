@@ -61,7 +61,8 @@ jobs:
         if: runner.os == 'macOS' && matrix.target == 'aarch64-apple-darwin'
         run: |
           brew install llvm@18 zstd
-          echo "LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)" >> $GITHUB_ENV
+          # Use explicit ARM Homebrew path
+          echo "LLVM_SYS_180_PREFIX=/opt/homebrew/opt/llvm@18" >> $GITHUB_ENV
 
       - name: Install LLVM 18 (macOS x86_64 cross-compile)
         if: runner.os == 'macOS' && matrix.target == 'x86_64-apple-darwin'
@@ -74,9 +75,8 @@ jobs:
             echo "zstd not found at /usr/local/opt/zstd" >&2
             exit 1
           fi
+          # Use explicit x86_64 Homebrew path
           echo "LLVM_SYS_180_PREFIX=/usr/local/opt/llvm@18" >> $GITHUB_ENV
-          echo "X86_ZSTD_PREFIX=/usr/local/opt/zstd" >> $GITHUB_ENV
-          echo "X86_LLVM_PREFIX=/usr/local/opt/llvm@18" >> $GITHUB_ENV
           rustup target add x86_64-apple-darwin
 
       - name: Cache cargo registry
@@ -85,7 +85,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ matrix.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ matrix.os }}-${{ matrix.target }}-cargo-
