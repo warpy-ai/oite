@@ -93,13 +93,12 @@ jobs:
 
       - name: Build release binary (x86_64 macOS)
         if: matrix.target == 'x86_64-apple-darwin'
-        run: cargo build --release --target ${{ matrix.target }}
-        env:
-          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: clang
-          CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS: -C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/usr/local/opt/zstd/lib -C link-arg=-lzstd
-          MACOSX_DEPLOYMENT_TARGET: "14.0"
-          LIBRARY_PATH: /usr/local/opt/zstd/lib:/usr/local/opt/llvm@18/lib
-          CPATH: /usr/local/opt/zstd/include:/usr/local/opt/llvm@18/include
+        run: |
+          # Build with x86_64 target but don't pollute host (arm64) build environment
+          # LIBRARY_PATH/CPATH are only for the target linker, not for build scripts
+          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=clang \
+          CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/usr/local/opt/zstd/lib -C link-arg=-lzstd -C link-arg=-L/usr/local/opt/llvm@18/lib" \
+          cargo build --release --target ${{ matrix.target }}
 
       - name: Build release binary
         if: matrix.target != 'x86_64-apple-darwin'
