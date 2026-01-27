@@ -69,16 +69,25 @@ jobs:
       - name: Install LLVM 18 (macOS x86_64 cross-compile)
         if: runner.os == 'macOS' && matrix.target == 'x86_64-apple-darwin'
         run: |
-          # Install x86_64 Homebrew and LLVM/zstd for cross-compilation
+          # First install arm64 LLVM for build scripts (they run on host)
+          brew install llvm@18 zstd
+
+          # Install x86_64 Homebrew and LLVM/zstd for cross-compilation target
           arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
           arch -x86_64 /usr/local/bin/brew install llvm@18 zstd
-          # Verify installation
+
+          # Verify x86_64 installation
           if [ ! -d "/usr/local/opt/zstd/lib" ]; then
             echo "zstd not found at /usr/local/opt/zstd" >&2
             exit 1
           fi
-          # Use explicit x86_64 Homebrew path
-          echo "LLVM_SYS_180_PREFIX=/usr/local/opt/llvm@18" >> $GITHUB_ENV
+
+          # Move x86_64 LLVM to isolated location to prevent interference with arm64 host builds
+          sudo mv /usr/local/opt/llvm@18 /usr/local/opt/llvm@18-x86_64
+          sudo mv /usr/local/opt/zstd /usr/local/opt/zstd-x86_64
+
+          # Use arm64 LLVM for llvm-sys build script (runs on host)
+          echo "LLVM_SYS_180_PREFIX=/opt/homebrew/opt/llvm@18" >> $GITHUB_ENV
           rustup target add x86_64-apple-darwin
 
       - name: Cache cargo registry
@@ -94,11 +103,9 @@ jobs:
       - name: Build release binary (x86_64 macOS)
         if: matrix.target == 'x86_64-apple-darwin'
         run: |
-          export MACOSX_DEPLOYMENT_TARGET=14.0
-          # Override LIBRARY_PATH to only use x86_64 libraries, preventing arm64 fallback
-          export LIBRARY_PATH="/usr/local/opt/zstd/lib:/usr/local/opt/llvm@18/lib"
-          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=clang \
-          CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/usr/local/opt/zstd/lib -C link-arg=-lzstd -C link-arg=-L/usr/local/opt/llvm@18/lib -C link-arg=-mmacosx-version-min=14.0" \
+          # Use isolated x86_64 library paths (moved during setup to avoid arm64 host interference)
+          export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=clang
+          export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/usr/local/opt/zstd-x86_64/lib -C link-arg=-lzstd -C link-arg=-L/usr/local/opt/llvm@18-x86_64/lib -C link-arg=-mmacosx-version-min=14.0"
           cargo build --release --target ${{ matrix.target }}
 
       - name: Build release binary
