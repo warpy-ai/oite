@@ -61,8 +61,8 @@ This document describes the Script ecosystem architecture, the philosophy behind
 │  │  Runtime                │  │   │  ├─────────────────────────────────┤    │
 │  │  ├── NaN-boxed Values   │  │   │  │ @rolls/fs      File system      │    │
 │  │  ├── Heap Allocator     │  │   │  ├─────────────────────────────────┤    │
-│  │  ├── GC (future)        │  │   │  │ @rolls/json    JSON parse/str   │    │
-│  │  └── FFI Stubs          │  │   │  ├─────────────────────────────────┤    │
+│  │  └── FFI Stubs          │  │   │  │ @rolls/json    JSON parse/str   │    │
+│  │                         │  │   │  ├─────────────────────────────────┤    │
 │  └─────────────────────────┘  │   │  │ @rolls/crypto  Hashing, etc.    │    │
 │                               │   │  └─────────────────────────────────┘    │
 │  ┌─────────────────────────┐  │   │                                         │
