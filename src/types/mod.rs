@@ -62,10 +62,80 @@ impl fmt::Display for InferId {
     }
 }
 
+/// Unique identifier for lifetime parameters ('a, 'b, 'static).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LifetimeId(pub u32);
+
+impl LifetimeId {
+    /// The 'static lifetime - lives for the entire program duration.
+    /// Reserved as ID 0.
+    pub const STATIC: LifetimeId = LifetimeId(0);
+
+    /// Check if this is the 'static lifetime.
+    pub fn is_static(self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl fmt::Display for LifetimeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0 == 0 {
+            write!(f, "'static")
+        } else {
+            write!(f, "'l{}", self.0)
+        }
+    }
+}
+
+/// A lifetime parameter with a name binding.
+/// Used in function signatures like `fn find<'a>(...)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifetimeParam {
+    /// Unique identifier for this lifetime.
+    pub id: LifetimeId,
+    /// The name as written in source (e.g., "a" for 'a).
+    pub name: String,
+    /// Bounds: lifetimes this must outlive (for 'a: 'b syntax).
+    pub bounds: Vec<LifetimeId>,
+}
+
+impl LifetimeParam {
+    pub fn new(id: LifetimeId, name: String) -> Self {
+        Self {
+            id,
+            name,
+            bounds: Vec::new(),
+        }
+    }
+
+    pub fn with_bounds(mut self, bounds: Vec<LifetimeId>) -> Self {
+        self.bounds = bounds;
+        self
+    }
+}
+
+impl fmt::Display for LifetimeParam {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "'{}", self.name)?;
+        if !self.bounds.is_empty() {
+            write!(f, ": ")?;
+            for (i, bound) in self.bounds.iter().enumerate() {
+                if i > 0 {
+                    write!(f, " + ")?;
+                }
+                write!(f, "{}", bound)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Global counter for generating unique type IDs.
 static NEXT_TYPE_ID: AtomicU32 = AtomicU32::new(0);
 static NEXT_TYPE_VAR_ID: AtomicU32 = AtomicU32::new(0);
 static NEXT_INFER_ID: AtomicU32 = AtomicU32::new(0);
+/// Starts at 1 because 0 is reserved for 'static.
+static NEXT_LIFETIME_ID: AtomicU32 = AtomicU32::new(1);
 
 pub fn fresh_type_id() -> TypeId {
     TypeId(NEXT_TYPE_ID.fetch_add(1, Ordering::SeqCst))
@@ -77,6 +147,11 @@ pub fn fresh_type_var_id() -> TypeVarId {
 
 pub fn fresh_infer_id() -> InferId {
     InferId(NEXT_INFER_ID.fetch_add(1, Ordering::SeqCst))
+}
+
+/// Generate a fresh lifetime ID. ID 0 is reserved for 'static.
+pub fn fresh_lifetime_id() -> LifetimeId {
+    LifetimeId(NEXT_LIFETIME_ID.fetch_add(1, Ordering::SeqCst))
 }
 
 // ============================================================================
