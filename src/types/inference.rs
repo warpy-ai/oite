@@ -462,6 +462,7 @@ impl<'a> InferenceEngine<'a> {
                     .map(|(n, t)| (n.clone(), self.apply_substitutions(t)))
                     .collect(),
                 return_ty: self.apply_substitutions(&func.return_ty),
+                lifetime_params: func.lifetime_params.clone(),
                 type_params: func.type_params.clone(),
                 is_method: func.is_method,
             })),

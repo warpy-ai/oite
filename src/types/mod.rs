@@ -1,22 +1,4 @@
-//! Type System for tscl
-//!
-//! This module provides a statically-typed language core with:
-//! - TypeScript-style type annotations
-//! - Rust-style ownership and borrowing semantics
-//! - Hindley-Milner type inference
-//! - Generics with monomorphization
-//!
-//! Type annotations use familiar syntax:
-//! ```typescript
-//! let x: number = 42;
-//! function add(a: number, b: number): number { return a + b; }
-//! ```
-//!
-//! Borrowing uses wrapper types (parsed by SWC):
-//! ```typescript
-//! function read(buf: Ref<Buffer>): number { ... }      // &Buffer
-//! function write(buf: MutRef<Buffer>): void { ... }    // &mut Buffer
-//! ```
+//! Type system with ownership, borrowing, and lifetime tracking.
 
 pub mod checker;
 pub mod convert;
@@ -28,11 +10,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-// ============================================================================
-// Type Identifiers
-// ============================================================================
-
-/// Unique identifier for user-defined types (structs, enums, aliases).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypeId(pub u32);
 
@@ -42,7 +19,6 @@ impl fmt::Display for TypeId {
     }
 }
 
-/// Unique identifier for type variables (generics, inference placeholders).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypeVarId(pub u32);
 
@@ -52,7 +28,6 @@ impl fmt::Display for TypeVarId {
     }
 }
 
-/// Unique identifier for inference variables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InferId(pub u32);
 
@@ -62,7 +37,6 @@ impl fmt::Display for InferId {
     }
 }
 
-/// Unique identifier for lifetime parameters ('a, 'b, 'static).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LifetimeId(pub u32);
 
@@ -84,12 +58,11 @@ impl fmt::Display for LifetimeId {
     }
 }
 
-/// A lifetime parameter in function/struct signatures (e.g., 'a in `fn find<'a>(...)`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LifetimeParam {
     pub id: LifetimeId,
     pub name: String,
-    pub bounds: Vec<LifetimeId>, // For 'a: 'b bounds
+    pub bounds: Vec<LifetimeId>,
 }
 
 impl LifetimeParam {
@@ -144,76 +117,37 @@ pub fn fresh_lifetime_id() -> LifetimeId {
     LifetimeId(NEXT_LIFETIME_ID.fetch_add(1, Ordering::SeqCst))
 }
 
-// ============================================================================
-// Core Type Representation
-// ============================================================================
-
-/// The core type enum representing all types in tscl.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum Type {
-    // === Primitives (Copy semantics) ===
-    /// IEEE 754 double-precision float (like JavaScript's number).
     Number,
-    /// Boolean true/false.
     Boolean,
-    /// No value (function returns nothing).
     Void,
-    /// Unreachable / bottom type (never returns).
     Never,
-
-    // === Heap types (Move semantics) ===
-    /// UTF-8 string (heap-allocated).
     String,
-    /// Homogeneous array: T[].
     Array(Box<Type>),
-    /// Object type with named fields: { a: T, b: U }.
     Object(ObjectType),
-    /// Function type: (params) => return.
     Function(Box<FunctionType>),
-
-    // === User-defined types ===
-    /// Named struct type.
     Struct(TypeId),
-    /// Named enum type.
     Enum(TypeId),
-    /// Type alias (resolved during checking).
     Alias(TypeId),
-
-    // === Generics ===
-    /// Unresolved type variable (e.g., T in `function id<T>(x: T): T`).
     TypeVar(TypeVarId),
-    /// Applied generic type (e.g., Array<number>).
     Generic(TypeId, Vec<Type>),
-
-    // === References (Borrow semantics) ===
-    /// Immutable borrow: Ref<T> compiles to &T semantics (lifetime inferred).
     Ref(Box<Type>),
-    /// Mutable borrow: MutRef<T> compiles to &mut T semantics (lifetime inferred).
     MutRef(Box<Type>),
-    /// Immutable borrow with explicit lifetime: &'a T.
     RefWithLifetime(LifetimeId, Box<Type>),
-    /// Mutable borrow with explicit lifetime: &'a mut T.
     MutRefWithLifetime(LifetimeId, Box<Type>),
-    /// Lifetime as a type (for lifetime bounds and parameters).
     Lifetime(LifetimeId),
-
-    // === Special ===
-    /// Dynamic type (escape hatch, disables optimizations).
     #[default]
     Any,
-    /// Inference placeholder (resolved during type checking).
     Infer(InferId),
-    /// Error type (for error recovery).
     Error,
 }
 
 impl Type {
-    /// Check if this type has Copy semantics (no ownership transfer).
     pub fn is_copy(&self) -> bool {
         matches!(self, Type::Number | Type::Boolean)
     }
 
-    /// Check if this type has Move semantics (ownership transfer on assignment).
     pub fn is_move(&self) -> bool {
         matches!(
             self,
@@ -226,7 +160,6 @@ impl Type {
         )
     }
 
-    /// Check if this type is a reference (borrow).
     pub fn is_reference(&self) -> bool {
         matches!(
             self,
@@ -237,7 +170,6 @@ impl Type {
         )
     }
 
-    /// Check if this type is a primitive.
     pub fn is_primitive(&self) -> bool {
         matches!(
             self,
@@ -245,7 +177,6 @@ impl Type {
         )
     }
 
-    /// Check if this type needs heap allocation.
     pub fn is_heap(&self) -> bool {
         matches!(
             self,
@@ -253,7 +184,6 @@ impl Type {
         )
     }
 
-    /// Check if this type is concrete (no unresolved variables).
     pub fn is_concrete(&self) -> bool {
         match self {
             Type::TypeVar(_) | Type::Infer(_) => false,
@@ -267,12 +197,11 @@ impl Type {
                 inner.is_concrete()
             }
             Type::Generic(_, args) => args.iter().all(|t| t.is_concrete()),
-            Type::Lifetime(_) => true, // Lifetimes are always concrete
+            Type::Lifetime(_) => true,
             _ => true,
         }
     }
 
-    /// Get the inner type for reference types.
     pub fn deref(&self) -> Option<&Type> {
         match self {
             Type::Ref(inner)
@@ -283,7 +212,6 @@ impl Type {
         }
     }
 
-    /// Get the lifetime of a reference type, if it has one.
     pub fn lifetime(&self) -> Option<LifetimeId> {
         match self {
             Type::RefWithLifetime(lt, _) | Type::MutRefWithLifetime(lt, _) => Some(*lt),
@@ -292,12 +220,10 @@ impl Type {
         }
     }
 
-    /// Check if this is a mutable reference.
     pub fn is_mut_ref(&self) -> bool {
         matches!(self, Type::MutRef(_) | Type::MutRefWithLifetime(_, _))
     }
 
-    /// Get element type for array types.
     pub fn element_type(&self) -> Option<&Type> {
         match self {
             Type::Array(inner) => Some(inner),
@@ -352,20 +278,12 @@ impl fmt::Display for Type {
     }
 }
 
-// ============================================================================
-// Function Type
-// ============================================================================
-
-/// Function type: (params) => return.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FunctionType {
-    /// Parameter names and types.
     pub params: Vec<(String, Type)>,
-    /// Return type.
     pub return_ty: Type,
-    /// Generic type parameters (e.g., T, U in `<T, U>`).
+    pub lifetime_params: Vec<LifetimeParam>,
     pub type_params: Vec<TypeVarId>,
-    /// Whether this function is a method (has implicit `this`).
     pub is_method: bool,
 }
 
@@ -374,9 +292,15 @@ impl FunctionType {
         Self {
             params,
             return_ty,
+            lifetime_params: Vec::new(),
             type_params: Vec::new(),
             is_method: false,
         }
+    }
+
+    pub fn with_lifetime_params(mut self, lifetime_params: Vec<LifetimeParam>) -> Self {
+        self.lifetime_params = lifetime_params;
+        self
     }
 
     pub fn with_type_params(mut self, type_params: Vec<TypeVarId>) -> Self {
@@ -389,7 +313,6 @@ impl FunctionType {
         self
     }
 
-    /// Get the arity (number of parameters).
     pub fn arity(&self) -> usize {
         self.params.len()
     }
@@ -397,6 +320,22 @@ impl FunctionType {
 
 impl fmt::Display for FunctionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.lifetime_params.is_empty() || !self.type_params.is_empty() {
+            write!(f, "<")?;
+            for (i, lt) in self.lifetime_params.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", lt)?;
+            }
+            for (i, tp) in self.type_params.iter().enumerate() {
+                if i > 0 || !self.lifetime_params.is_empty() {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", tp)?;
+            }
+            write!(f, ">")?;
+        }
         write!(f, "(")?;
         for (i, (name, ty)) in self.params.iter().enumerate() {
             if i > 0 {
@@ -408,16 +347,9 @@ impl fmt::Display for FunctionType {
     }
 }
 
-// ============================================================================
-// Object Type
-// ============================================================================
-
-/// Object type with named fields.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ObjectType {
-    /// Field name -> type mapping (BTreeMap for Hash/Eq).
     pub fields: BTreeMap<String, Type>,
-    /// Whether this is an exact type (no extra fields allowed).
     pub exact: bool,
 }
 
@@ -436,24 +368,16 @@ impl ObjectType {
         self
     }
 
-    /// Get the type of a field.
     pub fn get_field(&self, name: &str) -> Option<&Type> {
         self.fields.get(name)
     }
 }
 
-// ============================================================================
-// Struct Definition
-// ============================================================================
-
-/// A named struct type definition.
 #[derive(Debug, Clone)]
 pub struct StructDef {
     pub id: TypeId,
     pub name: String,
-    /// Fields in declaration order.
     pub fields: Vec<(String, Type)>,
-    /// Generic type parameters.
     pub type_params: Vec<TypeVarId>,
 }
 
@@ -477,37 +401,26 @@ impl StructDef {
         self
     }
 
-    /// Get the type of a field by name.
     pub fn get_field(&self, name: &str) -> Option<&Type> {
         self.fields.iter().find(|(n, _)| n == name).map(|(_, t)| t)
     }
 
-    /// Get field index by name.
     pub fn field_index(&self, name: &str) -> Option<usize> {
         self.fields.iter().position(|(n, _)| n == name)
     }
 }
 
-// ============================================================================
-// Enum Definition
-// ============================================================================
-
-/// A named enum type definition.
 #[derive(Debug, Clone)]
 pub struct EnumDef {
     pub id: TypeId,
     pub name: String,
-    /// Variants with optional associated data.
     pub variants: Vec<EnumVariant>,
-    /// Generic type parameters.
     pub type_params: Vec<TypeVarId>,
 }
 
-/// A single enum variant.
 #[derive(Debug, Clone)]
 pub struct EnumVariant {
     pub name: String,
-    /// Associated data (if any).
     pub data: Option<Type>,
 }
 
@@ -527,18 +440,11 @@ impl EnumDef {
     }
 }
 
-// ============================================================================
-// Type Alias
-// ============================================================================
-
-/// A type alias definition.
 #[derive(Debug, Clone)]
 pub struct TypeAlias {
     pub id: TypeId,
     pub name: String,
-    /// The aliased type.
     pub ty: Type,
-    /// Generic type parameters.
     pub type_params: Vec<TypeVarId>,
 }
 
@@ -558,31 +464,18 @@ impl TypeAlias {
     }
 }
 
-// ============================================================================
-// Ownership Tracking
-// ============================================================================
-
-/// Ownership state for type checking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ownership {
-    /// Value is owned.
     Owned,
-    /// Value has been moved.
     Moved,
-    /// Value is borrowed immutably.
     Borrowed,
-    /// Value is borrowed mutably.
     BorrowedMut,
 }
 
-/// Variable information for type checking.
 #[derive(Debug, Clone)]
 pub struct VarType {
-    /// The type of the variable.
     pub ty: Type,
-    /// Current ownership state.
     pub ownership: Ownership,
-    /// Whether the variable is mutable.
     pub mutable: bool,
 }
 
@@ -604,20 +497,11 @@ impl VarType {
     }
 }
 
-// ============================================================================
-// Type Context
-// ============================================================================
-
-/// Type checking context with variable bindings.
 #[derive(Debug, Clone, Default)]
 pub struct TypeContext {
-    /// Variable name -> type info.
     pub variables: HashMap<String, VarType>,
-    /// Type variable bindings (for generics).
     pub type_vars: HashMap<TypeVarId, Type>,
-    /// Inference variable solutions.
     pub infer_vars: HashMap<InferId, Type>,
-    /// Parent context (for scopes).
     parent: Option<Box<TypeContext>>,
 }
 
@@ -626,7 +510,6 @@ impl TypeContext {
         Self::default()
     }
 
-    /// Create a child scope.
     pub fn child(&self) -> Self {
         Self {
             variables: HashMap::new(),
@@ -636,19 +519,16 @@ impl TypeContext {
         }
     }
 
-    /// Define a variable in this scope.
     pub fn define(&mut self, name: String, var: VarType) {
         self.variables.insert(name, var);
     }
 
-    /// Look up a variable (searches parent scopes).
     pub fn lookup(&self, name: &str) -> Option<&VarType> {
         self.variables
             .get(name)
             .or_else(|| self.parent.as_ref().and_then(|parent| parent.lookup(name)))
     }
 
-    /// Look up a variable mutably.
     pub fn lookup_mut(&mut self, name: &str) -> Option<&mut VarType> {
         if self.variables.contains_key(name) {
             self.variables.get_mut(name)
@@ -659,12 +539,10 @@ impl TypeContext {
         }
     }
 
-    /// Bind a type variable to a concrete type.
     pub fn bind_type_var(&mut self, var: TypeVarId, ty: Type) {
         self.type_vars.insert(var, ty);
     }
 
-    /// Resolve a type variable.
     pub fn resolve_type_var(&self, var: TypeVarId) -> Option<&Type> {
         self.type_vars.get(&var).or_else(|| {
             self.parent
@@ -673,12 +551,10 @@ impl TypeContext {
         })
     }
 
-    /// Bind an inference variable.
     pub fn bind_infer(&mut self, var: InferId, ty: Type) {
         self.infer_vars.insert(var, ty);
     }
 
-    /// Resolve an inference variable.
     pub fn resolve_infer(&self, var: InferId) -> Option<&Type> {
         self.infer_vars.get(&var).or_else(|| {
             self.parent
@@ -687,7 +563,6 @@ impl TypeContext {
         })
     }
 
-    /// Substitute all type variables and inference variables in a type.
     pub fn substitute(&self, ty: &Type) -> Type {
         match ty {
             Type::TypeVar(var) => self
@@ -722,6 +597,7 @@ impl TypeContext {
                     .map(|(n, t)| (n.clone(), self.substitute(t)))
                     .collect(),
                 return_ty: self.substitute(&func.return_ty),
+                lifetime_params: func.lifetime_params.clone(),
                 type_params: func.type_params.clone(),
                 is_method: func.is_method,
             })),
@@ -732,10 +608,6 @@ impl TypeContext {
         }
     }
 }
-
-// ============================================================================
-// Tests
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -781,6 +653,30 @@ mod tests {
         );
         assert_eq!(func.arity(), 2);
         assert_eq!(format!("{}", func), "(a: number, b: number) => number");
+        assert!(func.lifetime_params.is_empty());
+    }
+
+    #[test]
+    fn test_function_type_with_lifetimes() {
+        let lt = fresh_lifetime_id();
+        let lt_param = LifetimeParam::new(lt, "a".to_string());
+
+        let func = FunctionType::new(
+            vec![(
+                "x".to_string(),
+                Type::RefWithLifetime(lt, Box::new(Type::Number)),
+            )],
+            Type::RefWithLifetime(lt, Box::new(Type::Number)),
+        )
+        .with_lifetime_params(vec![lt_param]);
+
+        assert_eq!(func.lifetime_params.len(), 1);
+        assert_eq!(func.lifetime_params[0].name, "a");
+
+        // Display should show lifetime params
+        let display = format!("{}", func);
+        assert!(display.starts_with("<'a>"));
+        assert!(display.contains("&'l"));
     }
 
     #[test]

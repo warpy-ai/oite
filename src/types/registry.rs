@@ -250,6 +250,7 @@ impl TypeRegistry {
                     .map(|(n, t)| (n.clone(), self.substitute_type_params(t, params, args)))
                     .collect(),
                 return_ty: self.substitute_type_params(&func.return_ty, params, args),
+                lifetime_params: func.lifetime_params.clone(),
                 type_params: func.type_params.clone(),
                 is_method: func.is_method,
             })),

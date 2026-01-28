@@ -213,6 +213,7 @@ impl<'a> TypeConverter<'a> {
                 Ok(Type::Function(Box::new(FunctionType {
                     params,
                     return_ty,
+                    lifetime_params: Vec::new(),
                     type_params,
                     is_method: false,
                 })))
