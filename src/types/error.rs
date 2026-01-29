@@ -1,12 +1,9 @@
-//! Type Error Definitions
-//!
-//! Error types for type checking, inference, and borrow checking.
+//! Type error definitions.
 
 use std::fmt;
 
 use super::Type;
 
-/// Source code location span.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Span {
     pub start: u32,
@@ -41,7 +38,6 @@ impl fmt::Display for Span {
     }
 }
 
-/// Borrow kind for conflict reporting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BorrowKind {
     Immutable,
@@ -57,114 +53,117 @@ impl fmt::Display for BorrowKind {
     }
 }
 
-/// Type checking errors.
 #[derive(Debug, Clone)]
 pub enum TypeError {
-    /// Type mismatch: expected X, got Y.
     Mismatch {
         expected: Type,
         got: Type,
         span: Span,
     },
-
-    /// Undefined variable.
-    UndefinedVariable { name: String, span: Span },
-
-    /// Undefined type.
-    UndefinedType { name: String, span: Span },
-
-    /// Trying to call a non-function.
-    NotCallable { ty: Type, span: Span },
-
-    /// Wrong number of arguments.
+    UndefinedVariable {
+        name: String,
+        span: Span,
+    },
+    UndefinedType {
+        name: String,
+        span: Span,
+    },
+    UndefinedLifetime {
+        name: String,
+        span: Span,
+    },
+    NotCallable {
+        ty: Type,
+        span: Span,
+    },
     WrongArgCount {
         expected: usize,
         got: usize,
         span: Span,
     },
-
-    /// Cannot infer type.
-    CannotInfer { span: Span },
-
-    /// Using a value after it has been moved.
+    CannotInfer {
+        span: Span,
+    },
     UseAfterMove {
         var: String,
         moved_at: Span,
         used_at: Span,
     },
-
-    /// Borrow conflict (e.g., mutable borrow while immutable borrow exists).
     BorrowConflict {
         var: String,
         existing: BorrowKind,
         new: BorrowKind,
         span: Span,
     },
-
-    /// Borrow outlives the borrowed value.
     BorrowOutlives {
         var: String,
         borrow_span: Span,
         end_span: Span,
     },
-
-    /// Assigning to immutable variable.
-    ImmutableAssignment { var: String, span: Span },
-
-    /// Field not found on type.
-    FieldNotFound { ty: Type, field: String, span: Span },
-
-    /// Index operation on non-array.
-    NotIndexable { ty: Type, span: Span },
-
-    /// Binary operation not supported for types.
+    ImmutableAssignment {
+        var: String,
+        span: Span,
+    },
+    FieldNotFound {
+        ty: Type,
+        field: String,
+        span: Span,
+    },
+    NotIndexable {
+        ty: Type,
+        span: Span,
+    },
     InvalidBinaryOp {
         op: String,
         left: Type,
         right: Type,
         span: Span,
     },
-
-    /// Unary operation not supported for type.
-    InvalidUnaryOp { op: String, ty: Type, span: Span },
-
-    /// Cannot assign to expression.
-    NotAssignable { span: Span },
-
-    /// Type parameter count mismatch.
+    InvalidUnaryOp {
+        op: String,
+        ty: Type,
+        span: Span,
+    },
+    NotAssignable {
+        span: Span,
+    },
     TypeArgCountMismatch {
         expected: usize,
         got: usize,
         span: Span,
     },
-
-    /// Recursive type without indirection.
-    RecursiveType { name: String, span: Span },
-
-    /// Generic inference failure.
-    CannotInferTypeArg { param_name: String, span: Span },
-
-    /// Return type mismatch.
+    RecursiveType {
+        name: String,
+        span: Span,
+    },
+    CannotInferTypeArg {
+        param_name: String,
+        span: Span,
+    },
     ReturnTypeMismatch {
         expected: Type,
         got: Type,
         span: Span,
     },
-
-    /// Missing return statement.
-    MissingReturn { expected: Type, span: Span },
-
-    /// Unreachable code.
-    UnreachableCode { span: Span },
-
-    /// Duplicate field.
-    DuplicateField { name: String, span: Span },
-
-    /// Duplicate type parameter.
-    DuplicateTypeParam { name: String, span: Span },
-
-    /// Unsupported type syntax.
-    UnsupportedType { description: String, span: Span },
+    MissingReturn {
+        expected: Type,
+        span: Span,
+    },
+    UnreachableCode {
+        span: Span,
+    },
+    DuplicateField {
+        name: String,
+        span: Span,
+    },
+    DuplicateTypeParam {
+        name: String,
+        span: Span,
+    },
+    UnsupportedType {
+        description: String,
+        span: Span,
+    },
 }
 
 impl fmt::Display for TypeError {
@@ -186,6 +185,9 @@ impl fmt::Display for TypeError {
             }
             TypeError::UndefinedType { name, span } => {
                 write!(f, "undefined type '{}' at {}", name, span)
+            }
+            TypeError::UndefinedLifetime { name, span } => {
+                write!(f, "undefined lifetime '{}' at {}", name, span)
             }
             TypeError::NotCallable { ty, span } => {
                 write!(f, "type '{}' is not callable at {}", ty, span)
@@ -334,7 +336,6 @@ impl fmt::Display for TypeError {
 
 impl std::error::Error for TypeError {}
 
-/// Collection of type errors.
 #[derive(Debug, Default)]
 pub struct TypeErrors {
     pub errors: Vec<TypeError>,
