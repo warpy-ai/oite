@@ -86,17 +86,20 @@ impl<'a> TypeConverter<'a> {
     }
 
     fn convert_union(&self, union: &TsUnionType) -> Result<Type, TypeError> {
-        for ty in &union.types {
-            if let TsType::TsKeywordType(kw) = ty.as_ref() {
-                if kw.kind == TsKeywordTypeKind::TsNullKeyword
-                    || kw.kind == TsKeywordTypeKind::TsUndefinedKeyword
-                {
-                    continue;
-                }
-            }
-            return self.convert(ty);
+        let first_non_nullable = union.types.iter().find(|ty| {
+            !matches!(
+                ty.as_ref(),
+                TsType::TsKeywordType(kw) if matches!(
+                    kw.kind,
+                    TsKeywordTypeKind::TsNullKeyword | TsKeywordTypeKind::TsUndefinedKeyword
+                )
+            )
+        });
+
+        match first_non_nullable {
+            Some(ty) => self.convert(ty),
+            None => Ok(Type::Void),
         }
-        Ok(Type::Void)
     }
 
     fn convert_keyword(&self, kw: &TsKeywordType) -> Result<Type, TypeError> {

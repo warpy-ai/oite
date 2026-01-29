@@ -7,7 +7,13 @@ tags: [release, announcement, performance, memory-safety, typescript]
 image: /img/owl-light.png
 ---
 
-NOTE: A lot of good feedback has been received about the name Script. I've decided to keep it at the moment until mid February, while looking into a new name. There are a lot to consider, and I'm open to suggestions. You can give your suggestions about the name change here: https://github.com/warpy-ai/script/discussions/20
+NOTE: The project is currently in preview and it will change its name. You can give your suggestions about the name change here: https://github.com/warpy-ai/script/discussions/20
+
+NOTE2: Most of the code in this project is written by a human, me. AI is used selectively to speed up repetitive tasks, generate initial drafts, and it wrote most of the documentation ( which will be reviewed and edited by a human more the project advances). Architecture, system design, and implementation decisions were hand-written, even more on wrong implementation/bugs. If you're against "AI Slop", consider move away from this project.
+
+<!-- truncate -->
+
+## Introduction
 
 After years of starting, killing, restarting, and refining, I finally realised a dream: operating JavaScript at the low level. And I'm giving it to the world!
 
@@ -120,7 +126,7 @@ const doubled = numbers.map((x) => x * 2);
 
 Script has reached a **major milestone**: the compiler is now **fully self-hosting** and can generate native binaries!
 
-✅ **Core Language Complete (Phases 0-4)**
+**Core Language Complete**
 
 **Phase 0: Runtime Kernel**
 

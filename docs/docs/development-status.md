@@ -9,22 +9,22 @@ keywords: [development status, roadmap, features, progress, releases, changelog]
 
 Script's core language is complete. Library functionality (HTTP, TLS, fs, etc.) will be developed in the **Rolls** ecosystem.
 
-## Phase Roadmap
+## Current Status
 
-| Phase   | Status      | Description                                       |
-| ------- | ----------- | ------------------------------------------------- |
-| Phase 0 | ✅ Complete | Runtime kernel (NaN-boxing, allocator, stubs)     |
-| Phase 1 | ✅ Complete | SSA IR (lowering, type inference, optimizations)  |
-| Phase 2 | ✅ Complete | Native Backend (Cranelift JIT + LLVM AOT)         |
-| Phase 3 | ✅ Complete | Language Completion (full TypeScript syntax)      |
-| Phase 4 | 🚧 Working  | Self-Hosting Compiler (compiles itself to native) |
-| Phase 5 | 📋 Planned  | Rolls Ecosystem (HTTP, TLS, fs, crypto libraries) |
-| Phase 6 | 📋 Planned  | Tooling (fmt, lint, LSP, profiler)                |
-| Phase 7 | 📋 Planned  | Distribution (Unroll package manager)             |
+| Component                                   | Status      |
+| ------------------------------------------- | ----------- |
+| Runtime kernel (NaN-boxing, allocator)      | Complete |
+| SSA IR + optimizations                      | Complete |
+| Native backends (Cranelift JIT, LLVM AOT)   | Complete |
+| Language features (classes, async, modules) | Complete |
+| Self-hosting compiler                       | Complete |
+| Rolls ecosystem (HTTP, TLS, fs, crypto)     | Planned  |
+| Tooling (fmt, lint, LSP)                    | Planned  |
+| Unroll package manager                      | Planned  |
 
 ## Core Language: Complete
 
-### ✅ All Language Features Implemented
+###All Language Features Implemented
 
 - **Control Flow**: `if`/`else`, `while`, `for`, `do..while`, `break`/`continue` with labels
 - **Error Handling**: `try`/`catch`/`finally`, `throw` with exception propagation
@@ -35,15 +35,15 @@ Script's core language is complete. Library functionality (HTTP, TLS, fs, etc.) 
 - **Modules**: ES module `import`/`export` syntax with file-based resolution
 - **Async/Await**: `async function`, `await`, Promise.resolve/then/catch
 
-### ✅ Self-Hosting Compiler Complete
+###Self-Hosting Compiler Complete
 
 The compiler written in Script can now compile itself to native binaries:
 
 | Component                         | Status            | Output           |
 | --------------------------------- | ----------------- | ---------------- |
-| Rust Compiler (`src/compiler/`)   | ✅ Production     | Native binaries  |
-| Bootstrap Compiler (`bootstrap/`) | ✅ Reference      | Bytecode         |
-| Modular Compiler (`compiler/`)    | ✅ Self-Compiling | LLVM IR → Native |
+| Rust Compiler (`src/compiler/`)   | Production     | Native binaries  |
+| Bootstrap Compiler (`bootstrap/`) | Reference      | Bytecode         |
+| Modular Compiler (`compiler/`)    | Self-Compiling | LLVM IR → Native |
 
 **Build Pipeline:**
 
@@ -57,9 +57,9 @@ clang input.o -o output                                     # → native binary
 | Test | Native | VM | Speedup |
 |------|--------|-----|---------|
 | Fibonacci(25) | 75025 | 75025 | ~30x faster |
-| Loops | ✅ | ✅ | ~30x faster |
-| Recursion | ✅ | ✅ | ~30x faster |
-| Objects/Functions | ✅ | ✅ | ~4x faster |
+| Loops | Pass | ✅ | ~30x faster |
+| Recursion | Pass | ✅ | ~30x faster |
+| Objects/Functions | Pass | ✅ | ~4x faster |
 
 ## Test Coverage
 

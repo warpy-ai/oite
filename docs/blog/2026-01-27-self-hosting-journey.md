@@ -300,7 +300,7 @@ Self-hosting is where many languages fail. Here are the risks we're aware of:
 
 Phase 4 is a multi-week effort. Here's the roadmap:
 
-- **Week 1-2**: ✅ ABI freezing and IR serialization (COMPLETE)
+- **Week 1-2**: ABI freezing and IR serialization (COMPLETE)
 - **Week 3-8**: Port compiler modules (lexer → parser → emitter → IR → codegen)
 - **Week 9**: Bootstrap tests and verification
 - **Week 10+**: Performance tuning and VM removal

@@ -427,7 +427,7 @@ Error: Module not found: './math'
 
 ## Current Status
 
-✅ **Working:**
+**Working:**
 - Import/export syntax
 - File-based resolution
 - Module caching (SHA256)
@@ -435,12 +435,12 @@ Error: Module not found: './math'
 - Namespace objects
 - Export parsing from AST
 
-🚧 **In Progress:**
+**In Progress:**
 - Full async loading (currently synchronous)
 - Circular dependency detection
 - Tree-shaking (dead code elimination)
 
-⏳ **Future:**
+**Future:**
 - `package.json` resolution
 - Node modules compatibility
 - Import maps

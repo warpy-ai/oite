@@ -40,16 +40,16 @@ The Script compiler (`scriptc`) is now **fully self-hosting** — written entire
 
 | Component          | Location                   | Status                                                  |
 | ------------------ | -------------------------- | ------------------------------------------------------- |
-| Rust Compiler      | `src/compiler/`            | ✅ Production: parse → bytecode → IR → native           |
-| Bootstrap Compiler | `bootstrap/*.tscl`         | ✅ Reference: parse → bytecode                          |
-| Modular Compiler   | `compiler/*.tscl`          | ✅ **Complete**: parse → IR → bytecode/LLVM IR → native |
-| VM                 | `src/vm/`                  | ✅ Full bytecode execution                              |
-| JIT                | `src/backend/cranelift.rs` | ✅ Cranelift codegen                                    |
-| AOT                | `src/backend/llvm/`        | ✅ LLVM with LTO                                        |
+| Rust Compiler      | `src/compiler/`            | Production: parse → bytecode → IR → native           |
+| Bootstrap Compiler | `bootstrap/*.tscl`         | Reference: parse → bytecode                          |
+| Modular Compiler   | `compiler/*.tscl`          | **Complete**: parse → IR → bytecode/LLVM IR → native |
+| VM                 | `src/vm/`                  | Full bytecode execution                              |
+| JIT                | `src/backend/cranelift.rs` | Cranelift codegen                                    |
+| AOT                | `src/backend/llvm/`        | LLVM with LTO                                        |
 
 ---
 
-## Phase 1: Foundation ✅ Complete
+## Foundation Complete
 
 **Goal**: Consolidate and stabilize the .tscl compiler infrastructure.
 
@@ -128,7 +128,7 @@ compiler/                     # Production compiler (~10,500 lines)
 
 ---
 
-## Phase 2: Feature Parity ✅ Complete
+## Feature Parity Complete
 
 **Goal**: Make `compiler/*.tscl` feature-complete with `bootstrap/` and add optimization passes.
 
@@ -138,8 +138,8 @@ compiler/                     # Production compiler (~10,500 lines)
 Source (.tscl) ──► compiler/*.tscl ──► Bytecode ──► Rust VM
                         │
                         ├──► IR Verification
-                        ├──► Type Inference  ✅
-                        └──► Optimizations   ✅
+                        ├──► Type Inference  [done]
+                        └──► Optimizations   [done]
 ```
 
 ### Tasks (All Complete)
@@ -167,7 +167,7 @@ script llvm <file>              # Generate LLVM IR (.ll)
 
 ---
 
-## Phase 3: Native Code Generation ✅ Complete
+## Native Code Generation Complete
 
 **Goal**: Add native code generation to `compiler/*.tscl`, making it a full `scriptc`.
 
@@ -226,15 +226,15 @@ clang input.o -o output
 
 | Test          | Native Output | VM Output | Speedup     |
 | ------------- | ------------- | --------- | ----------- |
-| Objects       | ✅ Match      | ✅ Match  | ~4x faster  |
-| Functions     | ✅ Match      | ✅ Match  | ~4x faster  |
-| Recursion     | ✅ Match      | ✅ Match  | ~30x faster |
-| Loops         | ✅ Match      | ✅ Match  | ~30x faster |
+| Objects       | Match      | Match  | ~4x faster  |
+| Functions     | Match      | Match  | ~4x faster  |
+| Recursion     | Match      | Match  | ~30x faster |
+| Loops         | Match      | Match  | ~30x faster |
 | Fibonacci(25) | 75025         | 75025     | ~30x faster |
 
 ---
 
-## Phase 4: Bootstrap Verification (In Progress)
+## Bootstrap Verification (In Progress)
 
 **Goal**: Prove deterministic self-hosting through the bootstrap chain.
 
@@ -282,11 +282,11 @@ clang input.o -o output
 
 # Verify: scriptc2 == scriptc3 (bit-for-bit)
 if cmp -s scriptc2 scriptc3; then
-    echo "✅ Bootstrap verification PASSED"
+    echo "Bootstrap verification PASSED"
     echo "   scriptc2 and scriptc3 are identical"
     sha256sum scriptc2 scriptc3
 else
-    echo "❌ Bootstrap verification FAILED"
+    echo "Bootstrap verification FAILED"
     echo "   scriptc2 and scriptc3 differ"
     exit 1
 fi
@@ -304,12 +304,12 @@ fi
 
 ## Progress Summary
 
-| Phase   | Description      | Status         | Lines of Code         |
-| ------- | ---------------- | -------------- | --------------------- |
-| Phase 1 | Foundation       | ✅ Complete    | ~5,400 (bootstrap)    |
-| Phase 2 | Feature parity   | ✅ Complete    | ~10,500 (compiler)    |
-| Phase 3 | Native codegen   | ✅ Complete    | +1,348 (LLVM backend) |
-| Phase 4 | Bootstrap verify | 🚧 In Progress | ~500 lines + testing  |
+| Milestone | Status | Lines of Code |
+|-----------|--------|---------------|
+| Foundation | Complete | ~5,400 (bootstrap) |
+| Feature parity | Complete | ~10,500 (compiler) |
+| Native codegen | Complete | +1,348 (LLVM backend) |
+| Bootstrap verification | In Progress | ~500 lines + testing |
 
 **Total self-hosted code**: ~10,500 lines of .tscl
 
@@ -317,24 +317,24 @@ fi
 
 ## Success Criteria
 
-### Phase 1 Complete ✅
+### Foundation (Complete)
 
 - [x] `bootstrap/` compiles .tscl to bytecode
 - [x] `compiler/` can parse same syntax as `bootstrap/`
 
-### Phase 2 Complete ✅
+### Feature Parity (Complete)
 
 - [x] `compiler/` produces working bytecode
 - [x] Type inference implemented
 - [x] Basic optimizations working
 
-### Phase 3 Complete ✅
+### Native Codegen (Complete)
 
 - [x] `compiler/` can produce LLVM IR
 - [x] LLVM IR compiles to native binaries via clang
 - [x] All compiler modules self-compile
 
-### Phase 4 In Progress 🚧
+### Bootstrap Verification (In Progress)
 
 - [x] `scriptc` can compile itself (via LLVM IR)
 - [ ] `hash(tscl₁) == hash(tscl₂)` verified
@@ -344,7 +344,7 @@ fi
 
 ## Migration Strategy
 
-Once Phase 4 is complete:
+Once bootstrap verification is complete:
 
 1. **Keep Rust compiler** as reference/testing tool
 2. **Primary compiler** becomes `scriptc` (compiler/\*.tscl)

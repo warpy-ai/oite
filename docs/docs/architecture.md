@@ -17,10 +17,10 @@ This document describes the Script ecosystem architecture, the philosophy behind
 
 | Layer | Required? | Analogy |
 |-------|-----------|---------|
-| Script Core | ✅ Always | C language + basic allocator |
-| Rolls | ❌ Optional | libc, POSIX, system libraries |
-| NPM (via .nroll) | ❌ Optional | Third-party C libraries |
-| Unroll | ❌ Optional | make, cargo, package manager |
+| Script Core | Always | C language + basic allocator |
+| Rolls | Optional | libc, POSIX, system libraries |
+| NPM (via .nroll) | Optional | Third-party C libraries |
+| Unroll | Optional | make, cargo, package manager |
 
 ---
 
@@ -66,26 +66,26 @@ This document describes the Script ecosystem architecture, the philosophy behind
 │  └─────────────────────────┘  │   │  │ @rolls/crypto  Hashing, etc.    │    │
 │                               │   │  └─────────────────────────────────┘    │
 │  ┌─────────────────────────┐  │   │                                         │
-│  │  Primitives             │  │   │  ⚡ Not required for core execution     │
-│  │  ├── number, string     │  │   │  ✅ Batteries included for real apps   │
-│  │  ├── boolean, null      │  │   │  📦 Statically linked into binary      │
+│  │  Primitives             │  │   │  Not required for core execution     │
+│  │  ├── number, string     │  │   │  Batteries included for real apps   │
+│  │  ├── boolean, null      │  │   │  Statically linked into binary      │
 │  │  ├── object, array      │  │   │                                         │
 │  │  ├── function           │  │   └─────────────────────────────────────────┘
 │  │  └── console.log        │  │
 │  └─────────────────────────┘  │               ┌─────────────────────────────┐
 │                               │               │                             │
-│  ✅ RUNNABLE WITHOUT ROLLS    │               │      NPM ECOSYSTEM          │
-│  ✅ RUNNABLE WITHOUT UNROLL   │               │      ─────────────          │
-│  ✅ SINGLE BINARY OUTPUT      │               │                             │
+│  RUNNABLE WITHOUT ROLLS    │               │      NPM ECOSYSTEM          │
+│  RUNNABLE WITHOUT UNROLL   │               │      ─────────────          │
+│  SINGLE BINARY OUTPUT      │               │                             │
 │                               │               │  Converted to .nroll format │
 │  Like C without libc:         │               │  ├── lodash.nroll           │
 │  - Can allocate memory        │               │  ├── uuid.nroll             │
 │  - Can do math                │               │  ├── zod.nroll              │
 │  - Can print output           │               │  └── ...                    │
 │  - Can call functions         │               │                             │
-│  - Cannot do HTTP (no Rolls)  │               │  📦 Precompiled, no runtime │
-│  - Cannot read files (no Rolls)│              │  📦 No node_modules folder  │
-│                               │               │  📦 Statically linked       │
+│  - Cannot do HTTP (no Rolls)  │               │  Precompiled, no runtime │
+│  - Cannot read files (no Rolls)│              │  No node_modules folder  │
+│                               │               │  Statically linked       │
 └───────────────────────────────┘               │                             │
                                                 └──────────────┬──────────────┘
                                                                │
@@ -144,10 +144,10 @@ This document describes the Script ecosystem architecture, the philosophy behind
 │  │   │             │ │  Runtime    │ │  Libraries  │ │  Libraries  │   │    │
 │  │   └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘   │    │
 │  │                                                                     │    │
-│  │   ✅ No runtime installation required                               │    │
-│  │   ✅ No node_modules                                                │    │
-│  │   ✅ No dynamic linking (optional)                                  │    │
-│  │   ✅ Deploy anywhere: copy single file                              │    │
+│  │   No runtime installation required                               │    │
+│  │   No node_modules                                                │    │
+│  │   No dynamic linking (optional)                                  │    │
+│  │   Deploy anywhere: copy single file                              │    │
 │  │                                                                     │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                             │
@@ -161,7 +161,7 @@ This document describes the Script ecosystem architecture, the philosophy behind
 ### Script Core (Always Available)
 
 ```javascript
-// ✅ These work without Rolls or Unroll
+// These work without Rolls or Unroll
 
 // Variables and types
 let x = 42;
@@ -197,7 +197,7 @@ let bigArray = new Array(1000000);
 ### Rolls (Optional, Recommended)
 
 ```javascript
-// ❌ These require Rolls
+// These require Rolls
 
 import { serve } from "@rolls/http";
 import { readFile } from "@rolls/fs";
@@ -285,8 +285,8 @@ This diagram shows the evolution from the Rust-based compiler to the fully self-
                            COMPILER EVOLUTION
 ═══════════════════════════════════════════════════════════════════════════════
 
-PHASE 1: RUST FOUNDATION ✅ Complete
-────────────────────────────────────
+RUST FOUNDATION Complete
+───────────────────────────
 
     ┌─────────────────────────────────────────────────────────────────────┐
     │                                                                     │
@@ -324,8 +324,8 @@ PHASE 1: RUST FOUNDATION ✅ Complete
     └─────────────────────────────────────────────────────────────────────┘
 
 
-PHASE 2: FEATURE PARITY ✅ Complete
-───────────────────────────────────
+FEATURE PARITY Complete
+──────────────────────────
 
     ┌─────────────────────────────────────────────────────────────────────┐
     │                                                                     │
@@ -337,11 +337,11 @@ PHASE 2: FEATURE PARITY ✅ Complete
     │   │         │   │         │   │  Check  │   │ + Opts  │             │
     │   └─────────┘   └─────────┘   └─────────┘   └────┬────┘             │
     │                                                  │                  │
-    │                 NEW IN PHASE 2:                  │                  │
-    │                 ════════════════                 │                  │
-    │                 ✅ Type inference                │                  │
-    │                 ✅ Optimizations (DCE, const fold)                  │
-    │                 ✅ Borrow checker                ▼                  │
+    │                 ADDED:                            │                  │
+    │                 ══════                           │                  │
+    │                 Type inference                │                  │
+    │                 Optimizations (DCE, const fold)                  │
+    │                 Borrow checker                ▼                  │
     │                                          ┌─────────────┐            │
     │                                          │  Bytecode   │            │
     │                                          └──────┬──────┘            │
@@ -354,8 +354,8 @@ PHASE 2: FEATURE PARITY ✅ Complete
     └─────────────────────────────────────────────────────────────────────┘
 
 
-PHASE 3: NATIVE CODEGEN ✅ Complete (via LLVM IR)
-─────────────────────────────────────────────────
+NATIVE CODEGEN Complete (via LLVM IR)
+────────────────────────────────────────
 
     ┌─────────────────────────────────────────────────────────────────────┐
     │                                                                     │
@@ -377,19 +377,19 @@ PHASE 3: NATIVE CODEGEN ✅ Complete (via LLVM IR)
     │                                    │                         │      │
     │                                    └───────────┬─────────────┘      │
     │                                                │                    │
-    │                 NEW IN PHASE 3:                ▼                    │
-    │                 ════════════════        ┌─────────────┐             │
-    │                 ✅ x86-64 codegen       │   Native    │             │
-    │                 ✅ ARM64 codegen        │   Binary    │             │
-    │                 ✅ ELF/Mach-O writer    └─────────────┘             │
-    │                 ✅ Register allocator                               │
-    │                 ❌ No Rust needed!                                  │
+    │                 ADDED:                      ▼                    │
+    │                 ══════                  ┌─────────────┐             │
+    │                 x86-64 codegen       │   Native    │             │
+    │                 ARM64 codegen        │   Binary    │             │
+    │                 ELF/Mach-O writer    └─────────────┘             │
+    │                 Register allocator                               │
+    │                 No Rust needed!                                  │
     │                                                                     │
     └─────────────────────────────────────────────────────────────────────┘
 
 
-PHASE 4: BOOTSTRAP VERIFICATION 🚧 In Progress
-──────────────────────────────────────────────
+BOOTSTRAP VERIFICATION In Progress
+──────────────────────────────────────
 
     ┌─────────────────────────────────────────────────────────────────────┐
     │                                                                     │
@@ -445,10 +445,10 @@ PHASE 4: BOOTSTRAP VERIFICATION 🚧 In Progress
     │   FINAL STATE:                                                      │
     │   ════════════                                                      │
     │                                                                     │
-    │   ✅ scriptc compiles itself                                        │
-    │   ✅ No Rust compiler needed for development                        │
-    │   ✅ Deterministic builds verified                                  │
-    │   ✅ src/compiler/ (Rust) kept for reference/testing only           │
+    │   scriptc compiles itself                                        │
+    │   No Rust compiler needed for development                        │
+    │   Deterministic builds verified                                  │
+    │   src/compiler/ (Rust) kept for reference/testing only           │
     │                                                                     │
     └─────────────────────────────────────────────────────────────────────┘
 
@@ -457,17 +457,17 @@ PHASE 4: BOOTSTRAP VERIFICATION 🚧 In Progress
                               PROGRESS
 ═══════════════════════════════════════════════════════════════════════════════
 
-    Phase 1          Phase 2          Phase 3          Phase 4
-    ════════         ════════         ════════         ════════
+    Foundation       Feature Parity   Native Codegen   Bootstrap Verify
+    ══════════       ══════════════   ══════════════   ════════════════
 
-    [Rust+Bootstrap] [Feature Parity] [Native Codegen] [Bootstrap Verify]
+    [Rust+Bootstrap] [Type+Borrow]    [LLVM IR Gen]    [Self-Compile]
          │                │                │                │
          │   ~5,400       │   ~10,500      │    +1,348      │  In Progress
          │   lines        │   lines        │    lines       │
          │                │                │                │
     ─────┴────────────────┴────────────────┴────────────────┴─────────────▶
 
-       ✅                ✅               ✅               🚧
+       [x]               [x]              [x]              [ ]
     COMPLETE          COMPLETE        COMPLETE        IN PROGRESS
 
 
@@ -478,7 +478,7 @@ PHASE 4: BOOTSTRAP VERIFICATION 🚧 In Progress
 
 ## Repository Structure (Final State)
 
-After Phase 4 completion:
+After bootstrap verification is complete:
 
 ```
 script/
@@ -559,8 +559,8 @@ Script Core only     → Minimal binary, ~100KB
 
 | Aspect | Script | Node.js | Go | Rust |
 |--------|--------|---------|-----|------|
-| Core without stdlib | ✅ Yes | ❌ No | ❌ No | ✅ Yes (#![no_std]) |
-| Static linking | ✅ Default | ❌ No | ✅ Default | ✅ Default |
-| Single binary | ✅ Yes | ❌ No | ✅ Yes | ✅ Yes |
+| Core without stdlib | Yes | No | No | Yes (#![no_std]) |
+| Static linking | Default | No | Default | Default |
+| Single binary | Yes | No | Yes | Yes |
 | Package manager | Unroll | npm | go mod | Cargo |
-| Self-hosted compiler | ✅ Yes | ❌ No (C++) | ✅ Yes | ✅ Yes |
+| Self-hosted compiler | Yes | No (C++) | Yes | Yes |
