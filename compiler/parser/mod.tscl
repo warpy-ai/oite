@@ -1,15 +1,7 @@
-// ============================================================================
-// Parser Module for tscl Compiler
-// ============================================================================
+// Parser Module - Main entry point
 
-// Dependencies loaded by runtime
 require ./stmt;
 require ./expr;
-// require ../lexer/token;  // (require ../ syntax not supported)
-
-// ============================================================================
-// Main Parse Function
-// ============================================================================
 
 function parseSource(source) {
     let tokens = tokenize(source);

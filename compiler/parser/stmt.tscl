@@ -1,14 +1,4 @@
-// ============================================================================
-// Statement Parsers for tscl Compiler
-// ============================================================================
-
-// Dependencies loaded by runtime (require ../ syntax not supported)
-// require ../ast/types;
-// require ../lexer/token;
-
-// ============================================================================
-// Parser State
-// ============================================================================
+// Statement Parsers - Parser state and statement parsing
 
 function createParser(tokens) {
     return {
@@ -60,16 +50,11 @@ function expect(parser, type, value) {
     if (tok != null && tok.type == type && (value == null || tok.value == value)) {
         return parserAdvance(parser);
     }
-    // Error recovery: skip the unexpected token to prevent infinite loops
     if (tok != null) {
         parserAdvance(parser);
     }
     return null;
 }
-
-// ============================================================================
-// Type Annotation Parsers
-// ============================================================================
 
 function parseTypeAnnotation(parser) {
     let baseType = parseBaseType(parser);
@@ -77,7 +62,6 @@ function parseTypeAnnotation(parser) {
         return null;
     }
 
-    // Check for union types: A | B | C
     if (peekType(parser) == "OPERATOR" && peekValue(parser) == "|") {
         let unionTypes = [baseType];
         while (peekType(parser) == "OPERATOR" && peekValue(parser) == "|") {
@@ -103,7 +87,6 @@ function parseTypeAnnotation(parser) {
 function parseBaseType(parser) {
     let tok = parserPeek(parser);
 
-    // Function type: (params) => ReturnType
     if (tok != null && tok.type == "DELIMITER" && tok.value == "(") {
         parserAdvance(parser);
         let params = [];
@@ -137,7 +120,6 @@ function parseBaseType(parser) {
         };
     }
 
-    // Object type: { x: number, y: string }
     if (tok != null && tok.type == "DELIMITER" && tok.value == "{") {
         parserAdvance(parser);
         let members = [];
@@ -176,7 +158,6 @@ function parseBaseType(parser) {
         };
     }
 
-    // Simple type: identifier or keyword
     if (tok == null || (tok.type != "KEYWORD" && tok.type != "IDENTIFIER")) {
         return null;
     }
@@ -188,7 +169,6 @@ function parseBaseType(parser) {
     let genericParams = null;
     let isGeneric = false;
 
-    // Generic parameters: Type<T, U>
     if (peekType(parser) == "OPERATOR" && peekValue(parser) == "<") {
         parserAdvance(parser);
         genericParams = [];
@@ -208,7 +188,6 @@ function parseBaseType(parser) {
         isGeneric = true;
     }
 
-    // Array shorthand: Type[]
     if (peekType(parser) == "DELIMITER" && peekValue(parser) == "[") {
         parserAdvance(parser);
         expect(parser, "DELIMITER", "]");
@@ -282,10 +261,6 @@ function parseTypedParams(parser) {
     }
     return params;
 }
-
-// ============================================================================
-// Statement Parsers
-// ============================================================================
 
 function parseStatement(parser) {
     let tok = parserPeek(parser);
@@ -374,7 +349,6 @@ function parseBlockStatement(parser) {
         if (stmt != null) {
             body.push(stmt);
         }
-        // Error recovery: if no progress was made, skip token to prevent infinite loop
         if (parser.pos == startPos) {
             parserAdvance(parser);
         }
@@ -424,12 +398,21 @@ function parseFunctionDeclaration(parser, isAsyncParam = false) {
         name = peekValue(parser);
         parserAdvance(parser);
     }
+    let genericParams = null;
+    let lifetimeParams = null;
+    if (peekType(parser) == "OPERATOR" && peekValue(parser) == "<") {
+        let parsed = parseGenericParams(parser);
+        genericParams = parsed.typeParams;
+        lifetimeParams = parsed.lifetimeParams;
+    }
     let params = parseTypedParams(parser);
     let returnType = tryParseTypeAnnotation(parser);
     let body = parseBlockStatement(parser);
     return {
         type: "FunctionDeclaration",
         name: name,
+        genericParams: genericParams,
+        lifetimeParams: lifetimeParams,
         params: params,
         returnType: returnType,
         body: body,
@@ -777,16 +760,18 @@ function parseRequireStatement(parser) {
 }
 
 function parseTypeAliasDeclaration(parser) {
-    parserAdvance(parser); // consume 'type'
+    parserAdvance(parser);
     let name = "";
     if (peekType(parser) == "IDENTIFIER") {
         name = peekValue(parser);
         parserAdvance(parser);
     }
-    // Optional generic parameters
     let genericParams = null;
+    let lifetimeParams = null;
     if (peekType(parser) == "OPERATOR" && peekValue(parser) == "<") {
-        genericParams = parseGenericParams(parser);
+        let parsed = parseGenericParams(parser);
+        genericParams = parsed.typeParams;
+        lifetimeParams = parsed.lifetimeParams;
     }
     expect(parser, "OPERATOR", "=");
     let typeAnnotation = parseTypeAnnotation(parser);
@@ -795,23 +780,25 @@ function parseTypeAliasDeclaration(parser) {
         type: "TypeAliasDeclaration",
         name: name,
         genericParams: genericParams,
+        lifetimeParams: lifetimeParams,
         typeAnnotation: typeAnnotation
     };
 }
 
 function parseInterfaceDeclaration(parser) {
-    parserAdvance(parser); // consume 'interface'
+    parserAdvance(parser);
     let name = "";
     if (peekType(parser) == "IDENTIFIER") {
         name = peekValue(parser);
         parserAdvance(parser);
     }
-    // Optional generic parameters
     let genericParams = null;
+    let lifetimeParams = null;
     if (peekType(parser) == "OPERATOR" && peekValue(parser) == "<") {
-        genericParams = parseGenericParams(parser);
+        let parsed = parseGenericParams(parser);
+        genericParams = parsed.typeParams;
+        lifetimeParams = parsed.lifetimeParams;
     }
-    // Optional extends
     let extendsTypes = [];
     if (peekType(parser) == "KEYWORD" && peekValue(parser) == "extends") {
         parserAdvance(parser);
@@ -827,7 +814,6 @@ function parseInterfaceDeclaration(parser) {
             }
         }
     }
-    // Parse body
     expect(parser, "DELIMITER", "{");
     let members = [];
     while (peekType(parser) != "DELIMITER" || peekValue(parser) != "}") {
@@ -842,6 +828,7 @@ function parseInterfaceDeclaration(parser) {
         type: "InterfaceDeclaration",
         name: name,
         genericParams: genericParams,
+        lifetimeParams: lifetimeParams,
         extends: extendsTypes,
         members: members
     };
@@ -850,22 +837,18 @@ function parseInterfaceDeclaration(parser) {
 function parseInterfaceMember(parser) {
     let name = "";
     let optional = false;
-    // Member name (can be keyword or identifier)
     if (peekType(parser) == "IDENTIFIER" || peekType(parser) == "KEYWORD") {
         name = peekValue(parser);
         parserAdvance(parser);
     }
-    // Optional marker
     if (peekType(parser) == "OPERATOR" && peekValue(parser) == "?") {
         optional = true;
         parserAdvance(parser);
     }
-    // Type annotation
     let typeAnnotation = null;
     if (peekType(parser) == "DELIMITER" && peekValue(parser) == ":") {
         typeAnnotation = tryParseTypeAnnotation(parser);
     } else if (peekType(parser) == "DELIMITER" && peekValue(parser) == "(") {
-        // Method signature
         let params = parseTypedParams(parser);
         let returnType = tryParseTypeAnnotation(parser);
         typeAnnotation = {
@@ -931,15 +914,56 @@ function parseEnumDeclaration(parser) {
     };
 }
 
+function parseLifetimeParams(parser) {
+    let lifetimes = [];
+    while (peekType(parser) == "OPERATOR" && peekValue(parser) == "'") {
+        parserAdvance(parser);
+        if (peekType(parser) == "IDENTIFIER") {
+            let lifetimeName = peekValue(parser);
+            parserAdvance(parser);
+            let bounds = [];
+            if (peekType(parser) == "DELIMITER" && peekValue(parser) == ":") {
+                parserAdvance(parser);
+                while (peekType(parser) == "OPERATOR" && peekValue(parser) == "'") {
+                    parserAdvance(parser);
+                    if (peekType(parser) == "IDENTIFIER") {
+                        bounds.push(peekValue(parser));
+                        parserAdvance(parser);
+                    }
+                    if (peekType(parser) == "OPERATOR" && peekValue(parser) == "+") {
+                        parserAdvance(parser);
+                    } else {
+                        break;
+                    }
+                }
+            }
+            lifetimes.push({
+                type: "LifetimeParameter",
+                name: lifetimeName,
+                bounds: bounds
+            });
+        }
+        if (peekType(parser) == "DELIMITER" && peekValue(parser) == ",") {
+            parserAdvance(parser);
+        } else {
+            break;
+        }
+    }
+    return lifetimes;
+}
+
 function parseGenericParams(parser) {
     let params = [];
+    let lifetimeParams = [];
     expect(parser, "OPERATOR", "<");
+
+    lifetimeParams = parseLifetimeParams(parser);
+
     while (peekType(parser) != "OPERATOR" || peekValue(parser) != ">") {
         if (peekType(parser) == "EOF") break;
         if (peekType(parser) == "IDENTIFIER") {
             let paramName = peekValue(parser);
             parserAdvance(parser);
-            // Optional constraint: extends Type
             let constraint = null;
             if (peekType(parser) == "KEYWORD" && peekValue(parser) == "extends") {
                 parserAdvance(parser);
@@ -958,7 +982,10 @@ function parseGenericParams(parser) {
         }
     }
     expect(parser, "OPERATOR", ">");
-    return params;
+    return {
+        typeParams: params,
+        lifetimeParams: lifetimeParams
+    };
 }
 
 function parseExpressionStatement(parser) {

@@ -1,14 +1,4 @@
-// ============================================================================
-// Expression Parsers for tscl Compiler
-// ============================================================================
-
-// Dependencies loaded by runtime (require ../ syntax not supported)
-// require ../ast/types;
-// require ../lexer/token;
-
-// ============================================================================
-// Expression Parsing (Recursive Descent)
-// ============================================================================
+// Expression Parsers - Recursive descent expression parsing
 
 let PRECEDENCE = {
     "||": 1,
@@ -113,7 +103,6 @@ function parseUnary(parser) {
     let op = tok.value;
     let isOperator = tok.type == "OPERATOR";
     let isKeyword = tok.type == "KEYWORD";
-    // Only treat as unary if it's an OPERATOR token (!, -, +, ~) or KEYWORD (typeof, void, delete)
     if ((isOperator && (op == "!" || op == "-" || op == "+" || op == "~")) ||
         (isKeyword && (op == "typeof" || op == "void" || op == "delete"))) {
         parserAdvance(parser);
@@ -132,7 +121,6 @@ function parsePostfix(parser) {
     let expr = parsePrimary(parser);
     if (expr == null) return null;
     while (true) {
-        // Handle member access: expr.property
         if (match(parser, "DELIMITER", ".")) {
             let propTok = parserPeek(parser);
             if (propTok != null && (propTok.type == "IDENTIFIER" || propTok.type == "KEYWORD")) {
@@ -148,7 +136,6 @@ function parsePostfix(parser) {
                 break;
             }
         }
-        // Handle computed member access: expr[index]
         else if (match(parser, "DELIMITER", "[")) {
             let index = parseExpression(parser);
             expect(parser, "DELIMITER", "]");
@@ -160,7 +147,6 @@ function parsePostfix(parser) {
                 optional: false
             };
         }
-        // Handle call expression: expr(args)
         else if (match(parser, "DELIMITER", "(")) {
             let args = [];
             while (!match(parser, "DELIMITER", ")")) {
@@ -180,7 +166,6 @@ function parsePostfix(parser) {
                 arguments: args
             };
         }
-        // Handle postfix ++
         else if (match(parser, "OPERATOR", "++")) {
             expr = {
                 type: "UpdateExpression",
@@ -189,7 +174,6 @@ function parsePostfix(parser) {
                 prefix: false
             };
         }
-        // Handle postfix --
         else if (match(parser, "OPERATOR", "--")) {
             expr = {
                 type: "UpdateExpression",
@@ -341,12 +325,21 @@ function parseFunctionExpression(parser, forceAsync = false) {
         name = peekValue(parser);
         parserAdvance(parser);
     }
+    let genericParams = null;
+    let lifetimeParams = null;
+    if (peekType(parser) == "OPERATOR" && peekValue(parser) == "<") {
+        let parsed = parseGenericParams(parser);
+        genericParams = parsed.typeParams;
+        lifetimeParams = parsed.lifetimeParams;
+    }
     let params = parseTypedParams(parser);
     let returnType = tryParseTypeAnnotation(parser);
     let body = parseBlockStatement(parser);
     return {
         type: "FunctionExpression",
         name: name,
+        genericParams: genericParams,
+        lifetimeParams: lifetimeParams,
         params: params,
         returnType: returnType,
         body: body,
