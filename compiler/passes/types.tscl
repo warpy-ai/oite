@@ -1,22 +1,21 @@
-// ============================================================================
-// Structural Type Checking Pass for tscl Compiler
-// Source-level type validation with structural typing
-// ============================================================================
+// Structural type checking with lifetime support
 
-// ============================================================================
-// Type Representation
-// ============================================================================
-
-// Normalized type representation for comparison
-// NOTE: We use arrays instead of objects for fields to avoid Object.keys
 interface Type {
-    kind: string;  // "primitive" | "object" | "array" | "function" | "union" | "any" | "never" | "unknown"
-    name?: string; // For primitives: "number", "string", "boolean", "null", "undefined"
-    fields?: FieldEntry[];  // For objects - array of {name, type, optional}
-    elementType?: Type;  // For arrays
-    params?: ParamType[];  // For functions
-    returnType?: Type;  // For functions
-    unionTypes?: Type[];  // For unions
+    kind: string;  // "primitive" | "object" | "array" | "function" | "union" | "ref" | "mutref" | "any" | "never" | "unknown"
+    name?: string;
+    fields?: FieldEntry[];
+    elementType?: Type;
+    innerType?: Type;  // For ref/mutref types
+    lifetime?: string;  // For ref/mutref with explicit lifetime ('a, 'static)
+    params?: ParamType[];
+    returnType?: Type;
+    lifetimeParams?: LifetimeParam[];  // For functions with lifetime parameters
+    unionTypes?: Type[];
+}
+
+interface LifetimeParam {
+    name: string;
+    bounds?: string[];  // For 'a: 'b bounds
 }
 
 interface FieldEntry {
@@ -31,10 +30,6 @@ interface ParamType {
     optional: boolean;
 }
 
-// ============================================================================
-// Built-in Types
-// ============================================================================
-
 let BuiltinTypes = {
     number: { kind: "primitive", name: "number" },
     string: { kind: "primitive", name: "string" },
@@ -46,10 +41,6 @@ let BuiltinTypes = {
     never: { kind: "never" },
     unknown: { kind: "unknown" }
 };
-
-// ============================================================================
-// Field Helpers (since we can't use Object.keys)
-// ============================================================================
 
 function findField(fields, name) {
     if (fields == null) return null;
@@ -64,7 +55,6 @@ function findField(fields, name) {
 }
 
 function addField(fields, name, type, optional) {
-    // Check if field already exists
     let existing = findField(fields, name);
     if (existing != null) {
         existing.type = type;
@@ -73,10 +63,6 @@ function addField(fields, name, type, optional) {
     }
     fields.push({ name: name, type: type, optional: optional });
 }
-
-// ============================================================================
-// Type Registry - Collects all type definitions
-// ============================================================================
 
 interface TypeRegistry {
     interfaces: InterfaceEntry[];
@@ -147,10 +133,6 @@ function findEnum(registry, name) {
     return null;
 }
 
-// ============================================================================
-// Type Environment - Tracks variable types in scope
-// ============================================================================
-
 interface TypeEnv {
     parent: TypeEnv | null;
     bindings: BindingEntry[];
@@ -206,7 +188,6 @@ function envLookupFunction(env, name) {
 }
 
 function envBind(env, name, type) {
-    // Update existing or add new
     let i = 0;
     while (i < env.bindings.length) {
         if (env.bindings[i].name == name) {
@@ -230,10 +211,6 @@ function envBindFunction(env, name, funcEntry) {
     env.functions.push(funcEntry);
 }
 
-// ============================================================================
-// Type Errors
-// ============================================================================
-
 interface TypeError {
     kind: string;
     message: string;
@@ -246,10 +223,6 @@ function createTypeError(kind, message) {
     return err;
 }
 
-// ============================================================================
-// Type Checker Context
-// ============================================================================
-
 interface TypeChecker {
     registry: TypeRegistry;
     env: TypeEnv;
@@ -258,7 +231,6 @@ interface TypeChecker {
 }
 
 function createTypeChecker() {
-    // NOTE: Must create objects inline - function call returns don't work properly in VM
     let checker = {};
     checker.registry = {};
     checker.registry.interfaces = [];
@@ -274,23 +246,17 @@ function createTypeChecker() {
 }
 
 function addError(checker, kind, message) {
-    // Inline error creation to avoid function call issues
     let err = {};
     err.kind = kind;
     err.message = message;
     checker.errors.push(err);
 }
 
-// ============================================================================
-// Convert AST Type Annotations to Internal Type Representation
-// ============================================================================
-
 function resolveTypeAnnotation(checker, annotation) {
     if (annotation == null) {
         return BuiltinTypes.any;
     }
 
-    // Handle union types
     if (annotation.typeKind == "union" && annotation.unionTypes != null) {
         let unionTypes = [];
         let i = 0;
@@ -301,13 +267,11 @@ function resolveTypeAnnotation(checker, annotation) {
         return { kind: "union", unionTypes: unionTypes };
     }
 
-    // Handle array types
     if (annotation.isArray && annotation.elementType != null) {
         let elemType = resolveTypeAnnotation(checker, annotation.elementType);
         return { kind: "array", elementType: elemType };
     }
 
-    // Handle object type annotations { x: number, y: string }
     if (annotation.type == "ObjectTypeAnnotation" && annotation.members != null) {
         let fields = [];
         let i = 0;
@@ -324,7 +288,6 @@ function resolveTypeAnnotation(checker, annotation) {
         return { kind: "object", fields: fields };
     }
 
-    // Handle function type annotations (a: T, b: U) => R
     if (annotation.type == "FunctionTypeAnnotation") {
         let params = [];
         if (annotation.params != null) {
@@ -343,13 +306,11 @@ function resolveTypeAnnotation(checker, annotation) {
         return { kind: "function", params: params, returnType: returnType };
     }
 
-    // Handle simple type kinds
     let typeKind = annotation.typeKind;
     if (typeKind == null && annotation.name != null) {
         typeKind = annotation.name;
     }
 
-    // Built-in primitives
     if (typeKind == "number") return BuiltinTypes.number;
     if (typeKind == "string") return BuiltinTypes.string;
     if (typeKind == "boolean") return BuiltinTypes.boolean;
@@ -360,13 +321,42 @@ function resolveTypeAnnotation(checker, annotation) {
     if (typeKind == "never") return BuiltinTypes.never;
     if (typeKind == "unknown") return BuiltinTypes.unknown;
 
-    // Array<T> generic
     if (typeKind == "Array" && annotation.genericParams != null && annotation.genericParams.length > 0) {
         let elemType = resolveTypeAnnotation(checker, annotation.genericParams[0]);
         return { kind: "array", elementType: elemType };
     }
 
-    // Look up in registry (interfaces, type aliases)
+    if (typeKind == "Ref" && annotation.genericParams != null && annotation.genericParams.length > 0) {
+        let innerType = resolveTypeAnnotation(checker, annotation.genericParams[0]);
+        return { kind: "ref", innerType: innerType };
+    }
+
+    if (typeKind == "MutRef" && annotation.genericParams != null && annotation.genericParams.length > 0) {
+        let innerType = resolveTypeAnnotation(checker, annotation.genericParams[0]);
+        return { kind: "mutref", innerType: innerType };
+    }
+
+    if (typeKind == "RefL" && annotation.genericParams != null && annotation.genericParams.length >= 2) {
+        let lifetime = null;
+        let lifetimeParam = annotation.genericParams[0];
+        if (lifetimeParam != null && lifetimeParam.value != null) {
+            lifetime = lifetimeParam.value;
+        }
+        let innerType = resolveTypeAnnotation(checker, annotation.genericParams[1]);
+        return { kind: "ref", innerType: innerType, lifetime: lifetime };
+    }
+
+    if (typeKind == "MutRefL" && annotation.genericParams != null && annotation.genericParams.length >= 2) {
+        let lifetime = null;
+        let lifetimeParam = annotation.genericParams[0];
+        if (lifetimeParam != null && lifetimeParam.value != null) {
+            lifetime = lifetimeParam.value;
+        }
+        let innerType = resolveTypeAnnotation(checker, annotation.genericParams[1]);
+        return { kind: "mutref", innerType: innerType, lifetime: lifetime };
+    }
+
+    let iface = findInterface(checker.registry, typeKind);
     let iface = findInterface(checker.registry, typeKind);
     if (iface != null) {
         return { kind: "object", name: typeKind, fields: iface.fields };
@@ -386,17 +376,11 @@ function resolveTypeAnnotation(checker, annotation) {
     return BuiltinTypes.any;
 }
 
-// ============================================================================
-// Structural Type Compatibility
-// ============================================================================
-
 function isAssignable(sourceType, targetType) {
-    // Any is assignable to/from anything
     if (sourceType.kind == "any" || targetType.kind == "any") {
         return true;
     }
 
-    // Unknown accepts anything, but can only be assigned to unknown/any
     if (targetType.kind == "unknown") {
         return true;
     }
@@ -404,7 +388,6 @@ function isAssignable(sourceType, targetType) {
         return targetType.kind == "unknown" || targetType.kind == "any";
     }
 
-    // Never is assignable to everything, nothing is assignable to never
     if (sourceType.kind == "never") {
         return true;
     }
@@ -412,7 +395,6 @@ function isAssignable(sourceType, targetType) {
         return false;
     }
 
-    // Same primitive types
     if (sourceType.kind == "primitive" && targetType.kind == "primitive") {
         if (sourceType.name == "null" && targetType.name == "undefined") {
             return true;
@@ -426,7 +408,6 @@ function isAssignable(sourceType, targetType) {
         return sourceType.name == targetType.name;
     }
 
-    // Array types - covariant
     if (sourceType.kind == "array" && targetType.kind == "array") {
         if (sourceType.elementType == null || targetType.elementType == null) {
             return true;
@@ -434,7 +415,27 @@ function isAssignable(sourceType, targetType) {
         return isAssignable(sourceType.elementType, targetType.elementType);
     }
 
-    // Function types
+    if (sourceType.kind == "ref" && targetType.kind == "ref") {
+        if (sourceType.innerType == null || targetType.innerType == null) {
+            return true;
+        }
+        return isAssignable(sourceType.innerType, targetType.innerType);
+    }
+
+    if (sourceType.kind == "mutref" && targetType.kind == "mutref") {
+        if (sourceType.innerType == null || targetType.innerType == null) {
+            return true;
+        }
+        return isAssignable(sourceType.innerType, targetType.innerType);
+    }
+
+    if (sourceType.kind == "mutref" && targetType.kind == "ref") {
+        if (sourceType.innerType == null || targetType.innerType == null) {
+            return true;
+        }
+        return isAssignable(sourceType.innerType, targetType.innerType);
+    }
+
     if (sourceType.kind == "function" && targetType.kind == "function") {
         if (sourceType.returnType != null && targetType.returnType != null) {
             if (!isAssignable(sourceType.returnType, targetType.returnType)) {
@@ -459,12 +460,10 @@ function isAssignable(sourceType, targetType) {
         return true;
     }
 
-    // Object types - structural compatibility
     if (sourceType.kind == "object" && targetType.kind == "object") {
         return isObjectAssignable(sourceType, targetType);
     }
 
-    // Union types
     if (targetType.kind == "union" && targetType.unionTypes != null) {
         let i = 0;
         while (i < targetType.unionTypes.length) {
@@ -493,8 +492,6 @@ function isAssignable(sourceType, targetType) {
 function isObjectAssignable(sourceType, targetType) {
     let sourceFields = sourceType.fields || [];
     let targetFields = targetType.fields || [];
-
-    // All required fields in target must exist in source with compatible types
     let i = 0;
     while (i < targetFields.length) {
         let targetField = targetFields[i];
@@ -514,10 +511,6 @@ function isObjectAssignable(sourceType, targetType) {
 
     return true;
 }
-
-// ============================================================================
-// Type Formatting (for error messages)
-// ============================================================================
 
 function formatType(type) {
     if (type == null) {
@@ -545,6 +538,22 @@ function formatType(type) {
             return formatType(type.elementType) + "[]";
         }
         return "Array<unknown>";
+    }
+
+    if (type.kind == "ref") {
+        let inner = type.innerType != null ? formatType(type.innerType) : "unknown";
+        if (type.lifetime != null) {
+            return "&'" + type.lifetime + " " + inner;
+        }
+        return "&" + inner;
+    }
+
+    if (type.kind == "mutref") {
+        let inner = type.innerType != null ? formatType(type.innerType) : "unknown";
+        if (type.lifetime != null) {
+            return "&'" + type.lifetime + " mut " + inner;
+        }
+        return "&mut " + inner;
     }
 
     if (type.kind == "function") {
@@ -596,10 +605,6 @@ function formatType(type) {
     return "unknown";
 }
 
-// ============================================================================
-// Expression Type Inference
-// ============================================================================
-
 function inferExprType(checker, expr) {
     if (expr == null) {
         return BuiltinTypes.undefined;
@@ -607,7 +612,6 @@ function inferExprType(checker, expr) {
 
     let exprType = expr.type;
 
-    // Literals
     if (exprType == "Literal") {
         let value = expr.value;
         if (typeof value == "number") {
@@ -625,7 +629,6 @@ function inferExprType(checker, expr) {
         return BuiltinTypes.any;
     }
 
-    // Identifiers
     if (exprType == "Identifier") {
         let name = expr.name;
         let varType = envLookup(checker.env, name);
@@ -643,7 +646,6 @@ function inferExprType(checker, expr) {
         return BuiltinTypes.any;
     }
 
-    // Array expressions
     if (exprType == "ArrayExpression") {
         let elements = expr.elements || [];
         if (elements.length == 0) {
@@ -653,7 +655,6 @@ function inferExprType(checker, expr) {
         return { kind: "array", elementType: elemType };
     }
 
-    // Object expressions
     if (exprType == "ObjectExpression") {
         let fields = [];
         let properties = expr.properties || [];
@@ -675,7 +676,6 @@ function inferExprType(checker, expr) {
         return { kind: "object", fields: fields };
     }
 
-    // Binary expressions
     if (exprType == "BinaryExpression") {
         let op = expr.operator;
         let leftType = inferExprType(checker, expr.left);
@@ -711,7 +711,6 @@ function inferExprType(checker, expr) {
         return BuiltinTypes.any;
     }
 
-    // Unary expressions
     if (exprType == "UnaryExpression") {
         let op = expr.operator;
         if (op == "!" || op == "delete") {
@@ -729,7 +728,6 @@ function inferExprType(checker, expr) {
         return BuiltinTypes.any;
     }
 
-    // Call expressions
     if (exprType == "CallExpression") {
         let calleeType = inferExprType(checker, expr.callee);
         if (calleeType.kind == "function" && calleeType.returnType != null) {
@@ -744,7 +742,6 @@ function inferExprType(checker, expr) {
         return BuiltinTypes.any;
     }
 
-    // Member expressions
     if (exprType == "MemberExpression") {
         let objType = inferExprType(checker, expr.object);
         if (objType.kind == "object" && objType.fields != null) {
@@ -769,12 +766,10 @@ function inferExprType(checker, expr) {
         return BuiltinTypes.any;
     }
 
-    // Assignment expressions
     if (exprType == "AssignmentExpression") {
         return inferExprType(checker, expr.right);
     }
 
-    // Conditional expressions
     if (exprType == "ConditionalExpression") {
         let consequentType = inferExprType(checker, expr.consequent);
         let alternateType = inferExprType(checker, expr.alternate);
@@ -784,7 +779,6 @@ function inferExprType(checker, expr) {
         return { kind: "union", unionTypes: [consequentType, alternateType] };
     }
 
-    // New expressions
     if (exprType == "NewExpression") {
         if (expr.callee != null && expr.callee.type == "Identifier") {
             let className = expr.callee.name;
@@ -796,7 +790,6 @@ function inferExprType(checker, expr) {
         return BuiltinTypes.any;
     }
 
-    // Arrow/Function expressions
     if (exprType == "ArrowFunctionExpression" || exprType == "FunctionExpression") {
         let params = [];
         if (expr.params != null) {
@@ -824,22 +817,16 @@ function inferExprType(checker, expr) {
         return { kind: "function", params: params, returnType: returnType };
     }
 
-    // This expression
     if (exprType == "ThisExpression") {
         return BuiltinTypes.any;
     }
 
-    // Template literals
     if (exprType == "TemplateLiteral") {
         return BuiltinTypes.string;
     }
 
     return BuiltinTypes.any;
 }
-
-// ============================================================================
-// Statement Type Checking
-// ============================================================================
 
 function checkStatement(checker, stmt) {
     if (stmt == null) {
@@ -960,7 +947,6 @@ function checkVariableDeclaration(checker, stmt) {
 
     if (declaredType != null && stmt.init != null) {
         if (!isAssignable(inferredType, declaredType)) {
-            // Format types inline to avoid function call return issues in VM
             let inferredStr = "unknown";
             if (inferredType != null) {
                 if (inferredType.kind == "primitive" && inferredType.name != null) {
@@ -1064,7 +1050,6 @@ function checkReturnStatement(checker, stmt) {
     }
 
     if (!isAssignable(actualType, expectedType)) {
-        // Inline type formatting
         let actualStr = "unknown";
         if (actualType != null) {
             if (actualType.kind == "primitive" && actualType.name != null) {
@@ -1119,7 +1104,6 @@ function checkAssignmentExpression(checker, expr) {
 
     if (expr.operator == "=") {
         if (!isAssignable(rightType, leftType)) {
-            // Inline type formatting
             let rightStr = "unknown";
             if (rightType != null) {
                 if (rightType.kind == "primitive" && rightType.name != null) {
@@ -1149,7 +1133,6 @@ function checkCallExpression(checker, expr) {
 
     if (calleeType.kind != "function") {
         if (calleeType.kind != "any") {
-            // Inline type formatting
             let calleeStr = "unknown";
             if (calleeType != null) {
                 if (calleeType.kind == "primitive" && calleeType.name != null) {
@@ -1186,7 +1169,6 @@ function checkCallExpression(checker, expr) {
         let argType = inferExprType(checker, actualArgs[i]);
         let paramType = expectedParams[i].type;
         if (!isAssignable(argType, paramType)) {
-            // Inline type formatting
             let argStr = "unknown";
             if (argType != null) {
                 if (argType.kind == "primitive" && argType.name != null) {
@@ -1212,10 +1194,6 @@ function checkCallExpression(checker, expr) {
 
     return calleeType.returnType || BuiltinTypes.any;
 }
-
-// ============================================================================
-// First Pass: Collect Type Definitions
-// ============================================================================
 
 function collectTypeDefinitions(checker, ast) {
     if (ast == null || ast.body == null) {
@@ -1255,7 +1233,6 @@ function collectInterface(checker, stmt) {
         i = i + 1;
     }
 
-    // Handle extends
     let extendsNames = [];
     if (stmt.extends != null) {
         let j = 0;
@@ -1268,7 +1245,6 @@ function collectInterface(checker, stmt) {
         }
     }
 
-    // Merge fields from extended interfaces
     let k = 0;
     while (k < extendsNames.length) {
         let extName = extendsNames[k];
@@ -1331,12 +1307,7 @@ function collectEnum(checker, stmt) {
     checker.registry.enums.push({ name: name, members: members });
 }
 
-// ============================================================================
-// Main Type Checking Entry Point
-// ============================================================================
-
 function typecheckProgram(ast) {
-    // NOTE: Must create objects inline - function call returns don't work properly in VM
     let checker = {};
     checker.registry = {};
     checker.registry.interfaces = [];
@@ -1349,7 +1320,6 @@ function typecheckProgram(ast) {
     checker.errors = [];
     checker.currentFunction = null;
 
-    // First pass: collect all type definitions (inlined to avoid function call issues)
     if (ast != null && ast.body != null) {
         let body = ast.body;
         let i = 0;
@@ -1366,7 +1336,6 @@ function typecheckProgram(ast) {
         }
     }
 
-    // Second pass: check all statements
     if (ast != null && ast.body != null) {
         let body = ast.body;
         let i = 0;
@@ -1395,11 +1364,6 @@ function printErrors(checker) {
     }
 }
 
-// ============================================================================
-// Export
-// ============================================================================
-
-// Expose main functions at global level to avoid VM closure issues
 function Types_check(ast) {
     return typecheckProgram(ast);
 }
