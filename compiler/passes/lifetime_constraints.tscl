@@ -77,8 +77,12 @@ function getConstraints(set: ConstraintSet): LifetimeConstraint[] {
     return set.constraint;
 }
 
-function getConstraints(set: ConstraintSet): LifetimeConstraint[] {
-    return set.constraint;
+function isEmpty(set: ConstraintSet): boolean {
+    return set.constraint.length == 0;
+}
+
+function isNotEmpty(set: ConstraintSet): boolean {
+    return set.constraint.length > 0;
 }
 
 let LifetimeConstraint = {
