@@ -77,6 +77,7 @@ interface InterfaceEntry {
     fields: FieldEntry[];
     extends: string[];
     genericParams: string[];
+    lifetimeParams: LifetimeParam[];
 }
 
 interface AliasEntry {
@@ -1392,7 +1393,8 @@ function checkClassDeclaration(checker, stmt) {
         name: name,
         fields: fields,
         extends: [],
-        genericParams: []
+        genericParams: [],
+        lifetimeParams: [],
     });
 }
 
@@ -1592,13 +1594,87 @@ function collectInterface(checker, stmt) {
         }
     }
 
+    let lifetimeParams = [];
+    if(stmt.lifetimeParams != null && stmt.lifetimeParams.length){
+        let lp = 0;
+        while(lp < stmt.lifetimeParams.length) {
+            lifetimeParams.push(stmt.lifetimeParams[lp]);
+            lp = lp + 1;
+        }
+    }
+
     checker.registry.interfaces.push({
         name: name,
         fields: fields,
         extends: extendsNames,
-        genericParams: genericParams
+        genericParams: genericParams,
+        lifetimeParams: lifetimeParams,
     });
 }
+
+function validateStructLifetimes(checker: Checker, iface: InterfaceEntry){
+    let errors = [];
+    let declaredLifetimes = [];
+
+    let i=0;
+    while(i < iface.lifetimeParams.length){
+        declaredLifetimes.push(iface.lifetimeParams[i].name);
+        i = i + 1;
+    }
+
+
+    let j = 0;
+    while(j < iface.fields.length){
+        let field = iface.fields[j];
+        let fieldErrors = validateTypeLifetimes(field.type, declaredLifetimes, field.name);
+        let k = 0;
+        while(k < fieldErrors.length){
+            errors.push(fieldErrors[k]);
+            k = k + 1;
+        }
+        j = j + 1;
+    }
+
+    return errors;
+}
+
+  function validateTypeLifetimes(type, declaredLifetimes, fieldName) {
+      let errors = [];
+
+      if (type == null) return errors;
+
+      // Check ref/mutref types for lifetime
+      if (type.kind == "ref" || type.kind == "mutref") {
+          if (type.lifetime != null && type.lifetime != "static") {
+              // Check if lifetime is declared
+              let found = false;
+              let i = 0;
+              while (i < declaredLifetimes.length) {
+                  if (declaredLifetimes[i] == type.lifetime) {
+                      found = true;
+                      break;
+                  }
+                  i = i + 1;
+              }
+              if (!found) {
+                  errors.push("Field '" + fieldName + "' uses undeclared lifetime '" + type.lifetime + "'");
+              }
+          }
+          // Recurse into inner type
+          if (type.innerType != null) {
+              let inner = validateTypeLifetimes(type.innerType, declaredLifetimes, fieldName);
+              let j = 0;
+              while (j < inner.length) {
+                  errors.push(inner[j]);
+                  j = j + 1;
+              }
+          }
+      }
+
+      return errors;
+  }
+
+
 
 function collectTypeAlias(checker, stmt) {
     let name = stmt.name;
@@ -1714,7 +1790,8 @@ let Types = {
     ElisionResultKind: ElisionResultKind,
     isStaticLifetime: isStaticLifetime,
     staticOutlivesAll: staticOutlivesAll,
-    STATIC_LIFETIME: STATIC_LIFETIME
+    STATIC_LIFETIME: STATIC_LIFETIME,
+    validateStructLifetimes: validateStructLifetimes
 };
 
 console.log("Structural type checker loaded");

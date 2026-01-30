@@ -38,5 +38,67 @@ console.log("isActive = " + isActive);
 console.log("numbers[0] = " + numbers[0]);
 console.log("apply(double, 10) = " + apply((x: number): number => x * 2, 10));
 
+
+console.log("");
+console.log("=== Struct Lifetime Tests ===");
+
+console.log("");
+console.log("Test: Interface with valid lifetime params");
+let testInterface = {
+    name: "StringView",
+    fields: [
+        { name: "data", type: { kind: "ref", innerType: { kind: "primitive", name: "string" }, lifetime: "'a" }, optional: false }
+    ],
+    extends: [],
+    genericParams: [],
+    lifetimeParams: [{ name: "'a", bounds: [] }]
+};
+let errors1 = Types.validateStructLifetimes(null, testInterface);
+if (errors1.length == 0) {
+    console.log("  PASS: Valid struct lifetimes accepted");
+} else {
+    console.log("  FAIL: Expected no errors, got: " + errors1[0]);
+}
+
+console.log("");
+console.log("Test: Interface with undeclared lifetime");
+let badInterface = {
+    name: "BadView",
+    fields: [
+        { name: "data", type: { kind: "ref", innerType: { kind: "primitive", name: "string" }, lifetime: "'b" }, optional: false }
+    ],
+    extends: [],
+    genericParams: [],
+    lifetimeParams: [{ name: "'a", bounds: [] }]
+};
+let errors2 = Types.validateStructLifetimes(null, badInterface);
+if (errors2.length > 0) {
+    console.log("  PASS: Undeclared lifetime detected");
+    console.log("  Error: " + errors2[0]);
+} else {
+    console.log("  FAIL: Should have detected undeclared lifetime");
+}
+
+console.log("");
+console.log("Test: Interface with static lifetime (always valid)");
+let staticInterface = {
+    name: "StaticView",
+    fields: [
+        { name: "data", type: { kind: "ref", innerType: { kind: "primitive", name: "string" }, lifetime: "static" }, optional: false }
+    ],
+    extends: [],
+    genericParams: [],
+    lifetimeParams: []
+};
+let errors3 = Types.validateStructLifetimes(null, staticInterface);
+if (errors3.length == 0) {
+    console.log("  PASS: Static lifetime accepted without declaration");
+} else {
+    console.log("  FAIL: Static lifetime should always be valid");
+}
+
+console.log("");
+console.log("Struct lifetime tests complete!");
+
 console.log("");
 console.log("All type annotations compiled successfully!");
