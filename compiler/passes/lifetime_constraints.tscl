@@ -1,101 +1,283 @@
 // Lifetime Constraint System
-//
-// Generates and represents constraints between lifetimes for validation.
+
+  let ConstraintKind = {
+      OUTLIVES: "outlives",
+      VALID_AT: "valid_at",
+      EQUAL: "equal",
+  }
+
+  interface ProgramPoint {
+      scopeDepth: number;
+      statementIndex: number;
+  }
+
+  interface LifetimeConstraint {
+      kind: string;
+      longer?: string;
+      shorter?: string;
+      lifetime?: string;
+      point?: ProgramPoint;
+      a?: string;
+      b?: string;
+      span?: string;
+  }
+
+  interface ConstraintSet {
+      constraint: LifetimeConstraint[];
+  }
+
+  interface LifetimeGraph {
+      edges: { [key: string]: string[] };
+      nodes: string[];
+  }
+
+  interface SolveResult {
+      success: boolean;
+      errors: string[];
+      order: string[];
+  }
 
 
-let ConstraintKind = {
-    OUTLIVES: "outlives",
-    VALID_AT: "valid_at",
-    EQUAL: "equal",
-}
+  function createProgramPoint(scopeDepth: number, statementIndex: number): ProgramPoint {
+      return { scopeDepth: scopeDepth, statementIndex: statementIndex };
+  }
 
-interface ProgramPoint {
-    scopeDepth: number;
-    statementIndex: number;
-}
+  function createConstraintSet(): ConstraintSet {
+      return { constraint: [] };
+  }
 
-interface LifetimeConstraint {
-    kind: string;
-    longer?: string;
-    shorter?: string;
-    lifetime?: string;
-    point?: ProgramPoint;
-    a?: string;
-    b?: string;
-    span?: string;
-}
+  function addConstraint(set: ConstraintSet, constraint: LifetimeConstraint): void {
+      set.constraint.push(constraint);
+  }
 
-interface ConstraintSet {
-    constraint: LifetimeConstraint[];
-}
+  function addOutlives(set: ConstraintSet, longer: string, shorter: string, span: string): void {
+      addConstraint(set, { kind: ConstraintKind.OUTLIVES, longer: longer, shorter: shorter, span: span });
+  }
 
-function createProgramPoint(scopeDepth: number, statementIndex: number): ProgramPoint {
-    return {
-        scopeDepth: scopeDepth,
-        statementIndex: statementIndex,
-    };
-}
+  function addValidAt(set: ConstraintSet, lifetime: string, point: ProgramPoint, span: string): void {
+      addConstraint(set, { kind: ConstraintKind.VALID_AT, lifetime: lifetime, point: point, span: span });
+  }
 
-function createConstraintSet(): ConstraintSet {
-    return {
-        constraint: []
-    };
-}
+  function addEqual(set: ConstraintSet, a: string, b: string, span: string): void {
+      addConstraint(set, { kind: ConstraintKind.EQUAL, a: a, b: b, span: span });
+  }
 
-function addConstraint(set: ConstraintSet, constraint: LifetimeConstraint): void {
-    set.constraint.push(constraint);
-}
+  function getConstraints(set: ConstraintSet): LifetimeConstraint[] {
+      return set.constraint;
+  }
 
-function addOutlives(set: ConstraintSet, longer: string, shorter: string, span: string): void {
-    addConstraint(set, {
-        kind: ConstraintKind.OUTLIVES,
-        longer: longer,
-        shorter: shorter,
-        span: span,
-    })
-}
+  function isEmpty(set: ConstraintSet): boolean {
+      return set.constraint.length == 0;
+  }
 
-function addValidAt(set: ConstraintSet, lifetime: string, point: ProgramPoint, span: string): void {
-    addConstraint(set, {
-        kind: ConstraintKind.VALID_AT,
-        lifetime: lifetime,
-        point: point,
-        span: span,
-    })
-}
+  function isNotEmpty(set: ConstraintSet): boolean {
+      return set.constraint.length > 0;
+  }
 
-function addEqual(set: ConstraintSet, a: string, b: string, span: string): void {
-    addConstraint(set, {
-        kind: ConstraintKind.EQUAL,
-        a: a,
-        b: b,
-        span: span,
-    })
-}
+function buildLifetimeGraph(set: ConstraintSet): LifetimeGraph {
+      let edges = {};
+      let nodes = [];
 
-function getConstraints(set: ConstraintSet): LifetimeConstraint[] {
-    return set.constraint;
-}
+      let i = 0;
+      while (i < set.constraint.length) {
+          let c = set.constraint[i];
+          if (c.kind == ConstraintKind.OUTLIVES) {
+              // Inline indexOf for c.longer
+              let foundLonger = false;
+              let j = 0;
+              while (j < nodes.length) {
+                  if (nodes[j] == c.longer) { foundLonger = true; break; }
+                  j = j + 1;
+              }
+              if (!foundLonger) nodes.push(c.longer);
 
-function isEmpty(set: ConstraintSet): boolean {
-    return set.constraint.length == 0;
-}
+              // Inline indexOf for c.shorter
+              let foundShorter = false;
+              let k = 0;
+              while (k < nodes.length) {
+                  if (nodes[k] == c.shorter) { foundShorter = true; break; }
+                  k = k + 1;
+              }
+              if (!foundShorter) nodes.push(c.shorter);
 
-function isNotEmpty(set: ConstraintSet): boolean {
-    return set.constraint.length > 0;
-}
+              if (edges[c.longer] == null) edges[c.longer] = [];
+              edges[c.longer].push(c.shorter);
+          } else if (c.kind == ConstraintKind.EQUAL) {
+              // Inline indexOf for c.a
+              let foundA = false;
+              let ja = 0;
+              while (ja < nodes.length) {
+                  if (nodes[ja] == c.a) { foundA = true; break; }
+                  ja = ja + 1;
+              }
+              if (!foundA) nodes.push(c.a);
 
-let LifetimeConstraint = {
-   ConstraintKind: ConstraintKind,
-   createProgramPoint: createProgramPoint,
-   createConstraintSet: createConstraintSet,
-   addConstraint: addConstraint,
-   addOutlives: addOutlives,
-   addValidAt: addValidAt,
-   addEqual: addEqual,
-   getConstraints: getConstraints,
-   isEmpty: isEmpty,
-   isNotEmpty: isNotEmpty,
-};
+              // Inline indexOf for c.b
+              let foundB = false;
+              let jb = 0;
+              while (jb < nodes.length) {
+                  if (nodes[jb] == c.b) { foundB = true; break; }
+                  jb = jb + 1;
+              }
+              if (!foundB) nodes.push(c.b);
 
-console.log("Lifetime constraints module loaded.");
+              if (edges[c.a] == null) edges[c.a] = [];
+              edges[c.a].push(c.b);
+              if (edges[c.b] == null) edges[c.b] = [];
+              edges[c.b].push(c.a);
+          }
+          i = i + 1;
+      }
+      return { edges: edges, nodes: nodes };
+  }
+
+
+   function detectCycle(graph: LifetimeGraph): string | null {
+      let visited = [];
+      let inStack = [];
+      let callStack = []; // Stack of {node, neighborIndex}
+
+      let nodeIdx = 0;
+      while (nodeIdx < graph.nodes.length) {
+          let startNode = graph.nodes[nodeIdx];
+
+          // Check if already visited
+          let alreadyVisited = false;
+          let v = 0;
+          while (v < visited.length) {
+              if (visited[v] == startNode) { alreadyVisited = true; break; }
+              v = v + 1;
+          }
+          if (alreadyVisited) {
+              nodeIdx = nodeIdx + 1;
+              continue;
+          }
+
+          // Start DFS from this node
+          callStack.push({ node: startNode, idx: 0 });
+          inStack.push(startNode);
+          visited.push(startNode);
+
+          while (callStack.length > 0) {
+              let current = callStack[callStack.length - 1];
+              let neighbors = graph.edges[current.node];
+              if(neighbors == null) neighbors = [];
+
+              if (current.idx >= neighbors.length) {
+                  // Done with this node
+                  callStack.pop();
+                  inStack.pop();
+                  continue;
+              }
+
+              let neighbor = neighbors[current.idx];
+              current.idx = current.idx + 1;
+
+              // Check if neighbor is in stack (cycle!)
+              let inStackFound = false;
+              let s = 0;
+              while (s < inStack.length) {
+                  if (inStack[s] == neighbor) { inStackFound = true; break; }
+                  s = s + 1;
+              }
+              if (inStackFound) {
+                  return neighbor;
+              }
+
+              // Check if already visited
+              let neighborVisited = false;
+              let nv = 0;
+              while (nv < visited.length) {
+                  if (visited[nv] == neighbor) { neighborVisited = true; break; }
+                  nv = nv + 1;
+              }
+              if (neighborVisited) continue;
+
+              // Push neighbor onto stack
+              callStack.push({ node: neighbor, idx: 0 });
+              inStack.push(neighbor);
+              visited.push(neighbor);
+          }
+
+          nodeIdx = nodeIdx + 1;
+      }
+
+      return null;
+  }
+
+  function topoVisit(graph: LifetimeGraph, node: string, visited: string[], result: string[]): void {
+      // if (visited.indexOf(node) != -1) return;
+      visited.push(node);
+      let isVisited = false;
+      let xm = 0;
+      while(xm < isVisited.length){
+        if(isVisited[xm] == node) { isVisited[xm] = true; }
+        xm++;
+      }
+
+      if(!isVisited){
+        return
+      }
+
+
+
+      let neighbors = graph.edges[node];
+      if(neighbors == null) neighbors = [];
+
+      let j = 0;
+      while (j < neighbors.length) {
+          topoVisit(graph, neighbors[j], visited, result);
+          j = j + 1;
+      }
+      result.push(node);
+  }
+
+  function topologicalSort(graph: LifetimeGraph): string[] {
+      let visited = [];
+      let result = [];
+
+      let i = 0;
+      while (i < graph.nodes.length) {
+          topoVisit(graph, graph.nodes[i], visited, result);
+          i = i + 1;
+      }
+      return result.reverse();
+  }
+
+  function solveConstraints(set: ConstraintSet): SolveResult {
+      if (isEmpty(set)) {
+          return { success: true, errors: [], order: [] };
+      }
+
+      let graph = buildLifetimeGraph(set);
+      let cycle = detectCycle(graph);
+      if (cycle != null) {
+          return {
+              success: false,
+              errors: ["Contradictory lifetime constraint: cycle involving '" + cycle + "'"],
+              order: []
+          };
+      }
+
+      let order = topologicalSort(graph);
+      return { success: true, errors: [], order: order };
+  }
+
+  let LifetimeConstraints = {
+      ConstraintKind: ConstraintKind,
+      createProgramPoint: createProgramPoint,
+      createConstraintSet: createConstraintSet,
+      addConstraint: addConstraint,
+      addOutlives: addOutlives,
+      addValidAt: addValidAt,
+      addEqual: addEqual,
+      getConstraints: getConstraints,
+      isEmpty: isEmpty,
+      isNotEmpty: isNotEmpty,
+      buildLifetimeGraph: buildLifetimeGraph,
+      detectCycle: detectCycle,
+      topologicalSort: topologicalSort,
+      solveConstraints: solveConstraints,
+  };
+
+  console.log("Lifetime constraints module loaded.");

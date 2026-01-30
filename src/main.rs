@@ -71,6 +71,7 @@ const MODULAR_COMPILER_FILES: &[&str] = &[
     "compiler/passes/types.tscl",
     "compiler/passes/typecheck.tscl",
     "compiler/passes/opt.tscl",
+    "compiler/passes/lifetime_constraints.tscl",
     "compiler/passes/borrow_ck.tscl",
     // Level 3: Depends on level 2
     "compiler/parser/mod.tscl",

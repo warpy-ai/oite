@@ -1,0 +1,101 @@
+// Test: Lifetime Constraint Solver
+
+  console.log("Testing lifetime constraint solver...");
+
+  console.log("");
+  console.log("Test 1: Empty constraint set");
+  let set1 = LifetimeConstraints.createConstraintSet();
+  if (LifetimeConstraints.isEmpty(set1)) {
+      console.log("  PASS: Empty set detected");
+  } else {
+      console.log("  FAIL: Set should be empty");
+  }
+
+  console.log("");
+  console.log("Test 2: Add outlives constraint");
+  let set2 = LifetimeConstraints.createConstraintSet();
+  LifetimeConstraints.addOutlives(set2, "'a", "'b", "test:1:1");
+  if (LifetimeConstraints.isNotEmpty(set2)) {
+      console.log("  PASS: Constraint added");
+  } else {
+      console.log("  FAIL: Set should not be empty");
+  }
+  let constraints2 = LifetimeConstraints.getConstraints(set2);
+  if (constraints2.length == 1) {
+      console.log("  PASS: One constraint in set");
+  } else {
+      console.log("  FAIL: Expected 1 constraint, got " + constraints2.length);
+  }
+
+  console.log("");
+  console.log("Test 3: Build lifetime graph");
+  let set3 = LifetimeConstraints.createConstraintSet();
+  LifetimeConstraints.addOutlives(set3, "'a", "'b", "test:1:1");
+  LifetimeConstraints.addOutlives(set3, "'b", "'c", "test:2:1");
+  let graph3 = LifetimeConstraints.buildLifetimeGraph(set3);
+  if (graph3.nodes.length == 3) {
+      console.log("  PASS: Graph has 3 nodes");
+  } else {
+      console.log("  FAIL: Expected 3 nodes, got " + graph3.nodes.length);
+  }
+
+  console.log("");
+  console.log("Test 4: Solve valid constraints (no cycle)");
+  let set4 = LifetimeConstraints.createConstraintSet();
+  LifetimeConstraints.addOutlives(set4, "'a", "'b", "test:1:1");
+  LifetimeConstraints.addOutlives(set4, "'b", "'c", "test:2:1");
+  let result4 = LifetimeConstraints.solveConstraints(set4);
+  if (result4.success) {
+      console.log("  PASS: Constraints solved successfully");
+      console.log("  Order: " + result4.order.join(" -> "));
+  } else {
+      console.log("  FAIL: Should have solved, got errors:");
+      console.log("    " + result4.errors.join(", "));
+  }
+
+  console.log("");
+  console.log("Test 5: Detect cycle in constraints");
+  let set5 = LifetimeConstraints.createConstraintSet();
+  LifetimeConstraints.addOutlives(set5, "'a", "'b", "test:1:1");
+  LifetimeConstraints.addOutlives(set5, "'b", "'c", "test:2:1");
+  LifetimeConstraints.addOutlives(set5, "'c", "'a", "test:3:1");
+  let result5 = LifetimeConstraints.solveConstraints(set5);
+  if (!result5.success) {
+      console.log("  PASS: Cycle detected");
+      console.log("  Error: " + result5.errors[0]);
+  } else {
+      console.log("  FAIL: Should have detected cycle");
+  }
+
+  console.log("");
+  console.log("Test 6: Equal lifetime constraints");
+  let set6 = LifetimeConstraints.createConstraintSet();
+  LifetimeConstraints.addEqual(set6, "'a", "'b", "test:1:1");
+  let constraints6 = LifetimeConstraints.getConstraints(set6);
+  if (constraints6.length == 1 && constraints6[0].kind == LifetimeConstraints.ConstraintKind.EQUAL) {
+      console.log("  PASS: Equal constraint added");
+  } else {
+      console.log("  FAIL: Equal constraint not added correctly");
+  }
+
+  console.log("");
+  console.log("Test 7: Empty set solves immediately");
+  let set7 = LifetimeConstraints.createConstraintSet();
+  let result7 = LifetimeConstraints.solveConstraints(set7);
+  if (result7.success && result7.errors.length == 0) {
+      console.log("  PASS: Empty set solved");
+  } else {
+      console.log("  FAIL: Empty set should solve successfully");
+  }
+
+  console.log("");
+  console.log("Test 8: Program point creation");
+  let point = LifetimeConstraints.createProgramPoint(2, 5);
+  if (point.scopeDepth == 2 && point.statementIndex == 5) {
+      console.log("  PASS: Program point created correctly");
+  } else {
+      console.log("  FAIL: Program point values incorrect");
+  }
+
+  console.log("");
+  console.log("Lifetime constraint tests complete!");

@@ -1,5 +1,6 @@
 // Borrow Checker - Ownership and borrowing analysis with lifetime tracking
-import { LifetimeConstraint, ConstraintKind, createProgramPoint, createConstraintSet, addConstraint, addOutlives, addValidAt, addEqual, getConstraints, isEmpty, isNotEmpty } from './lifetime_constraints';
+require ./lifetime_constraints
+
 
 enum VarKind {
     PRIMITIVE = 0,  // Numbers, Booleans (Copy semantics)
