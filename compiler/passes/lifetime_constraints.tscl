@@ -1,0 +1,97 @@
+// Lifetime Constraint System
+//
+// Generates and represents constraints between lifetimes for validation.
+
+
+let ConstraintKind = {
+    OUTLIVES: "outlives",
+    VALID_AT: "valid_at",
+    EQUAL: "equal",
+}
+
+interface ProgramPoint {
+    scopeDepth: number;
+    statementIndex: number;
+}
+
+interface LifetimeConstraint {
+    kind: string;
+    longer?: string;
+    shorter?: string;
+    lifetime?: string;
+    point?: ProgramPoint;
+    a?: string;
+    b?: string;
+    span?: string;
+}
+
+interface ConstraintSet {
+    constraint: LifetimeConstraint[];
+}
+
+function createProgramPoint(scopeDepth: number, statementIndex: number): ProgramPoint {
+    return {
+        scopeDepth: scopeDepth,
+        statementIndex: statementIndex,
+    };
+}
+
+function createConstraintSet(): ConstraintSet {
+    return {
+        constraint: []
+    };
+}
+
+function addConstraint(set: ConstraintSet, constraint: LifetimeConstraint): void {
+    set.constraint.push(constraint);
+}
+
+function addOutlives(set: ConstraintSet, longer: string, shorter: string, span: string): void {
+    addConstraint(set, {
+        kind: ConstraintKind.OUTLIVES,
+        longer: longer,
+        shorter: shorter,
+        span: span,
+    })
+}
+
+function addValidAt(set: ConstraintSet, lifetime: string, point: ProgramPoint, span: string): void {
+    addConstraint(set, {
+        kind: ConstraintKind.VALID_AT,
+        lifetime: lifetime,
+        point: point,
+        span: span,
+    })
+}
+
+function addEqual(set: ConstraintSet, a: string, b: string, span: string): void {
+    addConstraint(set, {
+        kind: ConstraintKind.EQUAL,
+        a: a,
+        b: b,
+        span: span,
+    })
+}
+
+function getConstraints(set: ConstraintSet): LifetimeConstraint[] {
+    return set.constraint;
+}
+
+function getConstraints(set: ConstraintSet): LifetimeConstraint[] {
+    return set.constraint;
+}
+
+let LifetimeConstraint = {
+   ConstraintKind: ConstraintKind,
+   createProgramPoint: createProgramPoint,
+   createConstraintSet: createConstraintSet,
+   addConstraint: addConstraint,
+   addOutlives: addOutlives,
+   addValidAt: addValidAt,
+   addEqual: addEqual,
+   getConstraints: getConstraints,
+   isEmpty: isEmpty,
+   isNotEmpty: isNotEmpty,
+};
+
+console.log("Lifetime constraints module loaded.");
