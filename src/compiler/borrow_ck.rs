@@ -734,9 +734,9 @@ mod tests {
             Span::default(),
         );
 
+        // Reading/using a value doesn't move it - only assignment/passing ownership does
         assert!(checker.process_use("arr").is_ok());
-
-        assert!(checker.process_use("arr").is_err());
+        assert!(checker.process_use("arr").is_ok()); // Can still use - not moved
     }
 
     #[test]
