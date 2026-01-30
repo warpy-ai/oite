@@ -4,7 +4,7 @@
 //
 
 use super::LifetimeId;
-use swc_common::Span;
+use super::error::Span;
 
 #[derive(Debug, Clone)]
 pub enum LifetimeConstraint {

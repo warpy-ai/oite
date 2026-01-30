@@ -12,53 +12,34 @@ use swc_ecma_ast::*;
 use crate::types::Type;
 use crate::types::error::{BorrowKind, Span, TypeError, TypeErrors};
 use crate::types::registry::TypeRegistry;
+use crate::types::{ConstraintSet, LifetimeId, ProgramPoint};
 
-/// Variable state in the borrow checker.
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum VarKind {
-    /// Numbers, Booleans (Copy semantics).
     Primitive,
-    /// Objects, Arrays, Functions (Move semantics).
     Heap,
-    /// Immutable borrow (Ref<T>).
     Borrow,
-    /// Mutable borrow (MutRef<T>).
     BorrowMut,
 }
 
-/// Ownership state.
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum VarState {
-    /// Currently valid and owned.
     Owned,
-    /// Data has been moved to another location.
     Moved,
-    /// Captured by an async closure.
     CapturedByAsync,
-    /// Borrowed immutably.
     Borrowed,
-    /// Borrowed mutably.
     BorrowedMut,
 }
 
-/// Variable information for borrow checking.
 #[derive(Clone, Debug)]
 pub struct VarInfo {
-    /// The type of the variable.
     pub ty: Type,
-    /// Derived kind from type.
     pub kind: VarKind,
-    /// Current ownership state.
     pub state: VarState,
-    /// Number of active immutable borrows.
     pub immut_borrows: usize,
-    /// Whether there's an active mutable borrow.
     pub mut_borrow: bool,
-    /// Location where the variable was defined.
     pub def_span: Span,
-    /// Location where the variable was moved (if moved).
     pub moved_span: Option<Span>,
-    /// Scope depth where variable was defined (0 = global/module level).
     pub scope_depth: usize,
 }
 
@@ -77,7 +58,6 @@ impl VarInfo {
         }
     }
 
-    /// Check if this variable is at global/module scope.
     pub fn is_global(&self) -> bool {
         self.scope_depth == 0
     }
@@ -98,30 +78,24 @@ impl VarInfo {
         }
     }
 
-    /// Check if this variable can be copied (no ownership transfer).
     pub fn is_copy(&self) -> bool {
         self.kind == VarKind::Primitive
     }
 
-    /// Check if this variable has move semantics.
     pub fn is_move(&self) -> bool {
         self.kind == VarKind::Heap
     }
 }
 
-/// The borrow checker with type integration.
 #[allow(dead_code)]
 pub struct BorrowChecker {
-    /// Variable name to metadata mapping.
     symbols: HashMap<String, VarInfo>,
-    /// Type registry for looking up named types.
     registry: Option<TypeRegistry>,
-    /// Accumulated errors.
     errors: TypeErrors,
-    /// Current scope depth.
     scope_depth: usize,
-    /// Scope stack for tracking variables at each scope level.
     scope_stack: Vec<HashSet<String>>,
+    lifetime_constraints: ConstraintSet,
+    current_point: ProgramPoint,
 }
 
 impl Default for BorrowChecker {
@@ -138,10 +112,11 @@ impl BorrowChecker {
             errors: TypeErrors::new(),
             scope_depth: 0,
             scope_stack: vec![HashSet::new()],
+            lifetime_constraints: ConstraintSet::new(),
+            current_point: ProgramPoint::new(0, 0),
         }
     }
 
-    /// Create a borrow checker with a type registry.
     pub fn with_registry(registry: TypeRegistry) -> Self {
         Self {
             symbols: HashMap::new(),
@@ -149,16 +124,16 @@ impl BorrowChecker {
             errors: TypeErrors::new(),
             scope_depth: 0,
             scope_stack: vec![HashSet::new()],
+            lifetime_constraints: ConstraintSet::new(),
+            current_point: ProgramPoint::new(0, 0),
         }
     }
 
-    /// Enter a new scope.
     pub fn enter_scope(&mut self) {
         self.scope_depth += 1;
         self.scope_stack.push(HashSet::new());
     }
 
-    /// Exit current scope, cleaning up variables.
     pub fn exit_scope(&mut self) {
         if let Some(vars) = self.scope_stack.pop() {
             for name in vars {
@@ -168,7 +143,6 @@ impl BorrowChecker {
         self.scope_depth = self.scope_depth.saturating_sub(1);
     }
 
-    /// Define a new variable.
     pub fn define(&mut self, name: String, ty: Type, span: Span) {
         let info = VarInfo::from_type(ty, span, self.scope_depth);
         self.symbols.insert(name.clone(), info);
@@ -177,36 +151,26 @@ impl BorrowChecker {
         }
     }
 
-    /// Look up a variable.
     pub fn lookup(&self, name: &str) -> Option<&VarInfo> {
         self.symbols.get(name)
     }
 
-    /// Look up a variable mutably.
     pub fn lookup_mut(&mut self, name: &str) -> Option<&mut VarInfo> {
         self.symbols.get_mut(name)
     }
 
-    /// Get all errors.
     pub fn errors(&self) -> &TypeErrors {
         &self.errors
     }
 
-    /// Take all errors.
     pub fn take_errors(&mut self) -> TypeErrors {
         std::mem::take(&mut self.errors)
     }
 
-    /// Check if there are any errors.
     pub fn has_errors(&self) -> bool {
         self.errors.has_errors()
     }
 
-    // ========================================================================
-    // Statement Analysis
-    // ========================================================================
-
-    /// Analyze a statement.
     pub fn analyze_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
             Stmt::Decl(Decl::Var(var_decl)) => {
@@ -277,22 +241,18 @@ impl BorrowChecker {
             _ => return Ok(()),
         };
 
-        // Determine type from annotation or infer from initializer
         let ty = self.determine_type(decl);
 
-        // Analyze initializer (might move values)
         if let Some(init) = &decl.init {
             self.analyze_expr(init)?;
         }
 
-        // Register the variable
         self.define(name, ty, Span::default());
 
         Ok(())
     }
 
     fn determine_type(&self, decl: &VarDeclarator) -> Type {
-        // Try to get type from annotation
         if let Pat::Ident(ident) = &decl.name
             && let Some(_ann) = &ident.type_ann
         {
@@ -300,7 +260,6 @@ impl BorrowChecker {
             // For now, infer from initializer
         }
 
-        // Infer from initializer
         if let Some(init) = &decl.init {
             return self.infer_type(init);
         }
@@ -328,10 +287,6 @@ impl BorrowChecker {
             _ => Type::Any,
         }
     }
-
-    // ========================================================================
-    // Expression Analysis
-    // ========================================================================
 
     fn analyze_expr(&mut self, expr: &Expr) -> Result<(), String> {
         match expr {
@@ -372,7 +327,6 @@ impl BorrowChecker {
                 self.analyze_expr(&un.arg)?;
             }
             Expr::Call(call) => {
-                // Function arguments are implicit borrows
                 for arg in &call.args {
                     if let Expr::Ident(id) = arg.expr.as_ref() {
                         self.process_borrow(id.sym.as_ref(), false)?;
@@ -420,11 +374,6 @@ impl BorrowChecker {
         Ok(())
     }
 
-    // ========================================================================
-    // Ownership Operations
-    // ========================================================================
-
-    /// Process a variable use (potential move or copy).
     fn process_use(&mut self, name: &str) -> Result<(), String> {
         if let Some(info) = self.symbols.get_mut(name) {
             // Check for use-after-move
@@ -445,8 +394,6 @@ impl BorrowChecker {
                 ));
             }
 
-            // If it's a move type and not already borrowed, this is a move
-            // But don't move global/module-level variables - they should be reusable
             if info.is_move() && info.immut_borrows == 0 && !info.mut_borrow && !info.is_global() {
                 info.state = VarState::Moved;
                 info.moved_span = Some(Span::default());
@@ -455,10 +402,8 @@ impl BorrowChecker {
         Ok(())
     }
 
-    /// Process a borrow (immutable or mutable).
     fn process_borrow(&mut self, name: &str, mutable: bool) -> Result<(), String> {
         if let Some(info) = self.symbols.get_mut(name) {
-            // Check for use-after-move
             if info.state == VarState::Moved {
                 return Err(format!(
                     "BORROW ERROR: Cannot borrow moved variable '{}'",
@@ -474,7 +419,6 @@ impl BorrowChecker {
             }
 
             if mutable {
-                // Mutable borrow: no other borrows allowed
                 if info.immut_borrows > 0 {
                     self.errors.push(TypeError::BorrowConflict {
                         var: name.to_string(),
@@ -501,7 +445,6 @@ impl BorrowChecker {
                 }
                 info.mut_borrow = true;
             } else {
-                // Immutable borrow: no mutable borrows allowed
                 if info.mut_borrow {
                     self.errors.push(TypeError::BorrowConflict {
                         var: name.to_string(),
@@ -520,7 +463,6 @@ impl BorrowChecker {
         Ok(())
     }
 
-    /// Release a borrow.
     pub fn release_borrow(&mut self, name: &str, mutable: bool) {
         if let Some(info) = self.symbols.get_mut(name) {
             if mutable {
@@ -531,12 +473,29 @@ impl BorrowChecker {
         }
     }
 
-    // ========================================================================
-    // Closure Analysis
-    // ========================================================================
+    pub fn lifetime_constraints(&self) -> &ConstraintSet {
+        &self.lifetime_constraints
+    }
+
+    pub fn take_lifetime_constraints(&mut self) -> ConstraintSet {
+        std::mem::take(&mut self.lifetime_constraints)
+    }
+
+    fn advance_statement(&mut self) {
+        self.current_point.statement_index += 1;
+    }
+
+    fn add_outlives(&mut self, longer: LifetimeId, shorter: LifetimeId) {
+        self.lifetime_constraints
+            .add_outlives(longer, shorter, Span::default())
+    }
+
+    fn add_valid_at(&mut self, lifetime: LifetimeId) {
+        self.lifetime_constraints
+            .add_valid_at(lifetime, self.current_point, Span::default())
+    }
 
     fn analyze_closure(&mut self, params: &[Pat], body: &BlockStmtOrExpr) -> Result<(), String> {
-        // Collect parameter names
         let param_names: HashSet<String> = params
             .iter()
             .filter_map(|p| {
@@ -548,7 +507,6 @@ impl BorrowChecker {
             })
             .collect();
 
-        // Find captured variables
         let mut captured = HashSet::new();
         match body {
             BlockStmtOrExpr::Expr(e) => {
@@ -561,7 +519,6 @@ impl BorrowChecker {
             }
         }
 
-        // Process captures (moves the values into the closure)
         for var_name in &captured {
             self.process_capture(var_name)?;
         }
@@ -599,13 +556,10 @@ impl BorrowChecker {
 
     fn process_capture(&mut self, name: &str) -> Result<(), String> {
         if let Some(info) = self.symbols.get_mut(name) {
-            // Global/module-level variables are exempt from capture-move semantics.
-            // They're designed to be accessed from anywhere (e.g., module exports like Emitter).
             if info.is_global() {
                 return Ok(());
             }
 
-            // Check if already moved
             if info.state == VarState::Moved || info.state == VarState::CapturedByAsync {
                 return Err(format!(
                     "BORROW ERROR: Variable '{}' was already moved or captured",
@@ -613,7 +567,6 @@ impl BorrowChecker {
                 ));
             }
 
-            // Check for active borrows
             if info.immut_borrows > 0 || info.mut_borrow {
                 return Err(format!(
                     "LIFETIME ERROR: Cannot capture '{}' while it has active borrow(s)",
@@ -621,7 +574,6 @@ impl BorrowChecker {
                 ));
             }
 
-            // Move into closure
             if info.is_move() {
                 info.state = VarState::CapturedByAsync;
             }
@@ -758,10 +710,6 @@ impl BorrowChecker {
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -771,7 +719,6 @@ mod tests {
         let mut checker = BorrowChecker::new();
         checker.define("x".to_string(), Type::Number, Span::default());
 
-        // Using a primitive should not move it
         assert!(checker.process_use("x").is_ok());
         assert!(checker.process_use("x").is_ok()); // Can use again
     }
@@ -779,8 +726,6 @@ mod tests {
     #[test]
     fn test_heap_move() {
         let mut checker = BorrowChecker::new();
-        // Enter a scope so variable is not at global level (scope_depth > 0)
-        // Global variables don't get moved to allow multiple uses
         checker.enter_scope();
         checker.define(
             "arr".to_string(),
@@ -788,10 +733,8 @@ mod tests {
             Span::default(),
         );
 
-        // First use moves
         assert!(checker.process_use("arr").is_ok());
 
-        // Second use should fail
         assert!(checker.process_use("arr").is_err());
     }
 
@@ -800,10 +743,8 @@ mod tests {
         let mut checker = BorrowChecker::new();
         checker.define("x".to_string(), Type::String, Span::default());
 
-        // Immutable borrow OK
         assert!(checker.process_borrow("x", false).is_ok());
 
-        // Mutable borrow should fail (already borrowed)
         assert!(checker.process_borrow("x", true).is_err());
     }
 
@@ -812,7 +753,6 @@ mod tests {
         let mut checker = BorrowChecker::new();
         checker.define("x".to_string(), Type::String, Span::default());
 
-        // Multiple immutable borrows are OK
         assert!(checker.process_borrow("x", false).is_ok());
         assert!(checker.process_borrow("x", false).is_ok());
     }
@@ -820,21 +760,31 @@ mod tests {
     #[test]
     fn test_global_variables_not_moved() {
         let mut checker = BorrowChecker::new();
-        // Variables at global scope (scope_depth 0) should NOT be moved
-        // This allows module-level constants and builtins to be reused
         checker.define(
             "Pipeline".to_string(),
             Type::Any, // Module objects are typically Any type
             Span::default(),
         );
 
-        // First use should work
         assert!(checker.process_use("Pipeline").is_ok());
 
-        // Second use should ALSO work (not moved because it's global)
         assert!(checker.process_use("Pipeline").is_ok());
 
-        // Borrowing should also work
         assert!(checker.process_borrow("Pipeline", false).is_ok());
+    }
+
+    #[test]
+    fn test_lifetime_constraints() {
+        let mut checker = BorrowChecker::new();
+        // Initially no constraints
+        assert!(checker.lifetime_constraints().is_empty());
+
+        // Add some constraints
+        let a = LifetimeId(1);
+        let b = LifetimeId(2);
+        checker.add_outlives(a, b);
+        checker.add_valid_at(a);
+
+        assert_eq!(checker.lifetime_constraints().len(), 2);
     }
 }
