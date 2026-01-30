@@ -4,11 +4,14 @@ pub mod checker;
 pub mod convert;
 pub mod error;
 pub mod inference;
+pub mod lifetime_constraints;
 pub mod registry;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
+
+pub use lifetime_constraints::{ConstraintSet, LifetimeConstraint, ProgramPoint};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypeId(pub u32);
