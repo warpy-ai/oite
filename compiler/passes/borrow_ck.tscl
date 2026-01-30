@@ -1,4 +1,5 @@
 // Borrow Checker - Ownership and borrowing analysis with lifetime tracking
+import { LifetimeConstraint, ConstraintKind, createProgramPoint, createConstraintSet, addConstraint, addOutlives, addValidAt, addEqual, getConstraints, isEmpty, isNotEmpty } from './lifetime_constraints';
 
 enum VarKind {
     PRIMITIVE = 0,  // Numbers, Booleans (Copy semantics)
@@ -108,6 +109,8 @@ interface BorrowChecker {
     scopeStack: string[][];
     lifetimeScopes: { [name: string]: number };
     currentFunctionLifetime: string | null;
+    lifetimeConstraints: ConstraintSet;
+    currentPoint: ProgramPoint;
 }
 
 function createBorrowChecker(): BorrowChecker {
@@ -117,7 +120,9 @@ function createBorrowChecker(): BorrowChecker {
         scopeDepth: 0,
         scopeStack: [[]],
         lifetimeScopes: { "static": 0 },
-        currentFunctionLifetime: null
+        currentFunctionLifetime: null,
+        lifetimeConstraints:  LifetimeConstraints.createConstraintSet(),
+        currentPoint:  LifetimeConstraints.createProgramPoint(0,0)
     };
 }
 
@@ -324,6 +329,23 @@ function checkBorrowOutlives(checker: BorrowChecker, borrowInfo: VarInfo, locati
     }
 
     return true;
+}
+
+function advanceStatement(checker: BorrowChecker):void{
+    checker.currentPoint.statementIndex += 1;
+}
+
+function addOutlivesConstraint(checker: BorrowChecker, longer: string, shorter:string, location:string): void {
+    LifetimeConstraints.addOutlives(checker.lifetimeConstraints, longer, shorter, checker.currentPoint, location);
+
+}
+
+function addValidAtConstraint(checker: BorrowChecker, lifetime:string, location:string): void {
+    LifetimeConstraints.addValidAt(checker.lifetimeConstraints, lifetime, checker.currentPoint, location);
+}
+
+function getLifetimeConstraints(checker: BorrowChecker): ConstraintSet {
+    return checker.lifetimeConstraints;
 }
 
 function defineBorrowVariable(checker: BorrowChecker, name: string, irType: IrType, location: string, borrowedFrom: string, mutable: boolean, lifetime: string | null): void {
@@ -845,7 +867,11 @@ let BorrowCheck = {
     checkAst: checkAst,
     formatError: formatBorrowError,
     VarKind: VarKind,
-    VarState: VarState
+    VarState: VarState,
+    advanceStatement: advanceStatement,
+    addOutlivesConstraint: addOutlivesConstraint,
+    addValidAtConstraint: addValidAtConstraint,
+    getLifetimeConstraints: getLifetimeConstraints
 };
 
 console.log("BorrowCheck pass loaded");
