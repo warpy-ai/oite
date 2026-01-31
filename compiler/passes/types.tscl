@@ -733,35 +733,101 @@ function createElisionResult(kind, funcType, error) {
     return { kind: kind, funcType: funcType, error: error };
 }
 
+function isReferenceType(type) {
+    if (type == null) {
+        return false;
+    }
+    return type.kind == "ref" || type.kind == "mutref";
+}
+
+function countInputReferenceParams(input) {
+    if (input == null) {
+        return 0;
+    }
+    // Handle both array of params and object with params property
+    let params = null;
+    if (input.params != null) {
+        params = input.params;
+    } else if (input.length != null) {
+        // Treat as array directly
+        params = input;
+    } else {
+        return 0;
+    }
+    let count = 0;
+    let i = 0;
+    while (i < params.length) {
+        if (isReferenceType(params[i].type)) {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    return count;
+}
+
+function hasReferenceInParams(params) {
+    if (params == null) {
+        return false;
+    }
+    let i = 0;
+    while (i < params.length) {
+        if (params[i] != null && params[i].type != null) {
+            if (isReferenceType(params[i].type)) {
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+function applyElisionToFunc(ft, isMethod) {
+    if (ft == null) {
+        return createElisionResult(ElisionResultKind.NO_ELISION_NEEDED, ft, null);
+    }
+
+    if (ft.lifetimeParams != null && ft.lifetimeParams.length > 0) {
+        return createElisionResult(ElisionResultKind.NO_ELISION_NEEDED, ft, null);
+    }
+
+    let inputRefCount = countInputReferenceParams(ft);
+    let hasRefReturn = hasReferenceType(ft.returnType);
+
+    if (inputRefCount == 0 && !hasRefReturn) {
+        return createElisionResult(ElisionResultKind.NO_ELISION_NEEDED, ft, null);
+    }
+
+    let hasSelf = false;
+    if (ft.params != null && ft.params.length > 0) {
+        let firstParam = ft.params[0];
+        if (firstParam.name == "self") {
+            hasSelf = true;
+        }
+    }
+
+    if (hasSelf && hasRefReturn) {
+        return createElisionResult(ElisionResultKind.APPLIED, ft, null);
+    }
+
+    if (inputRefCount > 1 && hasRefReturn) {
+        return createElisionResult(ElisionResultKind.AMBIGUOUS_LIFETIME, null,
+            "Cannot infer lifetime: multiple input references require explicit annotation");
+    }
+
+    if (inputRefCount > 0) {
+        return createElisionResult(ElisionResultKind.APPLIED, ft, null);
+    }
+
+    if (hasRefReturn) {
+        return createElisionResult(ElisionResultKind.AMBIGUOUS_LIFETIME, null,
+            "Cannot infer lifetime: no input lifetimes to flow to output");
+    }
+
+    return createElisionResult(ElisionResultKind.NO_ELISION_NEEDED, ft, null);
+}
+
 function applyLifetimeElision(funcType, isMethod) {
-    if (funcType == null) {
-        return createElisionResult(ElisionResultKind.NO_ELISION_NEEDED, funcType, null);
-    }
-
-    if (funcType.lifetimeParams != null && funcType.lifetimeParams.length > 0) {
-        return createElisionResult(ElisionResultKind.NO_ELISION_NEEDED, funcType, null);
-    }
-
-    if (!needsLifetimeElision(funcType)) {
-        return createElisionResult(ElisionResultKind.NO_ELISION_NEEDED, funcType, null);
-    }
-
-    let inputLifetimes = collectInputLifetimes(funcType);
-
-    if (isMethod == true) {
-        return applyMethodElision(funcType, inputLifetimes);
-    }
-
-    if (inputLifetimes.length == 0) {
-        return createElisionResult(ElisionResultKind.NO_ELISION_NEEDED, funcType, null);
-    }
-
-    if (inputLifetimes.length == 1) {
-        return applySingleInputElision(funcType, inputLifetimes[0]);
-    }
-
-    return createElisionResult(ElisionResultKind.AMBIGUOUS_LIFETIME, null,
-        "Cannot infer lifetime: multiple input references require explicit annotation");
+    return applyElisionToFunc(funcType, isMethod);
 }
 
 function needsLifetimeElision(funcType) {
@@ -1012,28 +1078,6 @@ function applyLifetimeToRefs(type, lifetime) {
     }
 
     return type;
-}
-
-function countInputReferenceParams(funcType) {
-    if (funcType == null || funcType.params == null) {
-        return 0;
-    }
-    let count = 0;
-    let i = 0;
-    while (i < funcType.params.length) {
-        if (isReferenceType(funcType.params[i].type)) {
-            count = count + 1;
-        }
-        i = i + 1;
-    }
-    return count;
-}
-
-function isReferenceType(type) {
-    if (type == null) {
-        return false;
-    }
-    return type.kind == "ref" || type.kind == "mutref";
 }
 
 function inferExprType(checker, expr) {
@@ -1903,6 +1947,7 @@ let Types = {
     applyLifetimeToRefs: applyLifetimeToRefs,
     countInputReferenceParams: countInputReferenceParams,
     isReferenceType: isReferenceType,
+    hasReferenceInParams: hasReferenceInParams,
     ElisionResultKind: ElisionResultKind,
     isStaticLifetime: isStaticLifetime,
     staticOutlivesAll: staticOutlivesAll,

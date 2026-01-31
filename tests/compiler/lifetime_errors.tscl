@@ -1,0 +1,170 @@
+console.log("==============================================");
+console.log("Lifetime Error Test Suite");
+console.log("==============================================");
+console.log("");
+
+let passed = 0;
+let failed = 0;
+
+
+console.log("Test 1: Error - Return Local Reference");
+let err1 = LifetimeConstraints.errorReturnLocalRef("local_var", "test.tscl:5:12", "test.tscl:4:8");
+if (err1.kind == LifetimeConstraints.ErrorKind.RETURN_LOCAL_REF &&
+    err1.code == LifetimeConstraints.ErrorCode.RETURN_LOCAL_REF &&
+    err1.variable == "local_var") {
+    console.log("  PASS: Return local ref error created");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Error structure incorrect");
+    failed = failed + 1;
+}
+
+
+console.log("");
+console.log("Test 2: Error - Lifetime Too Short");
+let err2 = LifetimeConstraints.errorLifetimeTooShort("'a", "'b", "test.tscl:10:5");
+if (err2.kind == LifetimeConstraints.ErrorKind.LIFETIME_TOO_SHORT &&
+    err2.lifetime == "'a" &&
+    err2.expected == "'b") {
+    console.log("  PASS: Lifetime too short error created");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Error structure incorrect");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 3: Error - Mutable While Borrowed");
+let err3 = LifetimeConstraints.errorMutableWhileBorrowed("x", "test.tscl:15:3", "test.tscl:12:8");
+if (err3.kind == LifetimeConstraints.ErrorKind.MUTABLE_WHILE_BORROWED &&
+    err3.variable == "x") {
+    console.log("  PASS: Mutable while borrowed error created");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Error structure incorrect");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 4: Error - Lifetime Mismatch");
+let err4 = LifetimeConstraints.errorLifetimeMismatch("'a", "'b", "test.tscl:20:10");
+if (err4.kind == LifetimeConstraints.ErrorKind.LIFETIME_MISMATCH &&
+    err4.expected == "'a" &&
+    err4.found == "'b") {
+    console.log("  PASS: Lifetime mismatch error created");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Error structure incorrect");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 5: Error - Ambiguous Lifetime");
+let err5 = LifetimeConstraints.errorAmbiguousLifetime("test.tscl:25:1");
+if (err5.kind == LifetimeConstraints.ErrorKind.AMBIGUOUS_LIFETIME &&
+    err5.hint != null) {
+    console.log("  PASS: Ambiguous lifetime error created with hint");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Error structure incorrect");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 6: Error - Cycle Detected");
+let err6 = LifetimeConstraints.errorCycleDetected("'a", "test.tscl:30:5");
+if (err6.kind == LifetimeConstraints.ErrorKind.CYCLE_DETECTED &&
+    err6.lifetime == "'a") {
+    console.log("  PASS: Cycle detected error created");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Error structure incorrect");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 7: Format Error - Contains Code");
+let formatted7 = LifetimeConstraints.formatError(err1);
+if (formatted7.indexOf("E0501") != -1) {
+    console.log("  PASS: Formatted error contains error code");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Error code missing from formatted output");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 8: Format Error - Contains Span");
+if (formatted7.indexOf("test.tscl:5:12") != -1) {
+    console.log("  PASS: Formatted error contains span");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Span missing from formatted output");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 9: Format Error - Contains Message");
+if (formatted7.indexOf("cannot return reference") != -1) {
+    console.log("  PASS: Formatted error contains message");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Message missing from formatted output");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 10: All Error Codes Are Unique");
+let codes = [
+    LifetimeConstraints.ErrorCode.RETURN_LOCAL_REF,
+    LifetimeConstraints.ErrorCode.LIFETIME_TOO_SHORT,
+    LifetimeConstraints.ErrorCode.MUTABLE_WHILE_BORROWED,
+    LifetimeConstraints.ErrorCode.LIFETIME_MISMATCH,
+    LifetimeConstraints.ErrorCode.AMBIGUOUS_LIFETIME,
+    LifetimeConstraints.ErrorCode.CYCLE_DETECTED
+];
+let unique = true;
+let i = 0;
+while (i < codes.length) {
+    let j = i + 1;
+    while (j < codes.length) {
+        if (codes[i] == codes[j]) {
+            unique = false;
+        }
+        j = j + 1;
+    }
+    i = i + 1;
+}
+if (unique) {
+    console.log("  PASS: All 6 error codes are unique");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Duplicate error codes found");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 11: Constraint Cycle Produces Structured Error");
+let cycleSet = LifetimeConstraints.createConstraintSet();
+LifetimeConstraints.addOutlives(cycleSet, "'a", "'b", "src:1:1");
+LifetimeConstraints.addOutlives(cycleSet, "'b", "'a", "src:2:1");
+let cycleResult = LifetimeConstraints.solveConstraints(cycleSet);
+if (!cycleResult.success &&
+    cycleResult.errors.length > 0 &&
+    cycleResult.errors[0].code == LifetimeConstraints.ErrorCode.CYCLE_DETECTED) {
+    console.log("  PASS: Cycle produces structured error with code");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Cycle should produce structured error");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("==============================================");
+console.log("Results: " + passed + " passed, " + failed + " failed");
+if (failed == 0) {
+    console.log("All lifetime error tests passed!");
+} else {
+    console.log("Some tests failed!");
+}
+console.log("==============================================");

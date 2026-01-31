@@ -42,8 +42,8 @@ let ErrorCode = {
     RETURN_LOCAL_REF: "E0501",
     LIFETIME_TOO_SHORT: "E0502",
     MUTABLE_WHILE_BORROWED: "E0503",
-    LIFETIME_MISSMATCH: "E0504",
-    AMBIGUOS_LIFETIME: "E0505",
+    LIFETIME_MISMATCH: "E0504",
+    AMBIGUOUS_LIFETIME: "E0505",
     CYCLE_DETECTED: "E0506"
 }
 
@@ -51,8 +51,8 @@ let ErrorKind = {
     RETURN_LOCAL_REF: "return_local_ref",
     LIFETIME_TOO_SHORT: "lifetime_too_short",
     MUTABLE_WHILE_BORROWED: "mutable_while_borrowed",
-    LIFETIME_MISSMATCH: "lifetime_mismatch",
-    AMBIGUOS_LIFETIME: "ambiguous_lifetime",
+    LIFETIME_MISMATCH: "lifetime_mismatch",
+    AMBIGUOUS_LIFETIME: "ambiguous_lifetime",
     CYCLE_DETECTED: "cycle_detected"
 }
 
@@ -173,117 +173,112 @@ function buildLifetimeGraph(set: ConstraintSet): LifetimeGraph {
   }
 
 
-   function detectCycle(graph: LifetimeGraph): string | null {
-      let visited = [];
-      let inStack = [];
-      let callStack = []; // Stack of {node, neighborIndex}
+function detectCycle(graph: LifetimeGraph): string | null {
+    let visited = [];
+    let inStack = [];
+    let callStack = []; // Stack of {node, neighborIndex}
 
-      let nodeIdx = 0;
-      while (nodeIdx < graph.nodes.length) {
-          let startNode = graph.nodes[nodeIdx];
+    let nodeIdx = 0;
+    while (nodeIdx < graph.nodes.length) {
+        let startNode = graph.nodes[nodeIdx];
 
-          // Check if already visited
-          let alreadyVisited = false;
-          let v = 0;
-          while (v < visited.length) {
-              if (visited[v] == startNode) { alreadyVisited = true; break; }
-              v = v + 1;
-          }
-          if (alreadyVisited) {
-              nodeIdx = nodeIdx + 1;
-              continue;
-          }
+        let alreadyVisited = false;
+        let v = 0;
+        while (v < visited.length) {
+            if (visited[v] == startNode) { alreadyVisited = true; break; }
+            v = v + 1;
+        }
+        if (alreadyVisited) {
+            nodeIdx = nodeIdx + 1;
+            continue;
+        }
 
-          // Start DFS from this node
-          callStack.push({ node: startNode, idx: 0 });
-          inStack.push(startNode);
-          visited.push(startNode);
+        callStack.push({ node: startNode, idx: 0 });
+        inStack.push(startNode);
+        visited.push(startNode);
 
-          while (callStack.length > 0) {
-              let current = callStack[callStack.length - 1];
-              let neighbors = graph.edges[current.node];
-              if(neighbors == null) neighbors = [];
+        while (callStack.length > 0) {
+            let current = callStack[callStack.length - 1];
+            let neighbors = graph.edges[current.node];
+            if(neighbors == null) neighbors = [];
 
-              if (current.idx >= neighbors.length) {
-                  // Done with this node
-                  callStack.pop();
-                  inStack.pop();
-                  continue;
-              }
+            if (current.idx >= neighbors.length) {
+                // Done with this node
+                callStack.pop();
+                inStack.pop();
+                continue;
+            }
 
-              let neighbor = neighbors[current.idx];
-              current.idx = current.idx + 1;
+            let neighbor = neighbors[current.idx];
+            current.idx = current.idx + 1;
 
-              // Check if neighbor is in stack (cycle!)
-              let inStackFound = false;
-              let s = 0;
-              while (s < inStack.length) {
-                  if (inStack[s] == neighbor) { inStackFound = true; break; }
-                  s = s + 1;
-              }
-              if (inStackFound) {
-                  return neighbor;
-              }
+            let inStackFound = false;
+            let s = 0;
+            while (s < inStack.length) {
+                if (inStack[s] == neighbor) { inStackFound = true; break; }
+                s = s + 1;
+            }
+            if (inStackFound) {
+                return neighbor;
+            }
 
-              // Check if already visited
-              let neighborVisited = false;
-              let nv = 0;
-              while (nv < visited.length) {
-                  if (visited[nv] == neighbor) { neighborVisited = true; break; }
-                  nv = nv + 1;
-              }
-              if (neighborVisited) continue;
+            let neighborVisited = false;
+            let nv = 0;
+            while (nv < visited.length) {
+                if (visited[nv] == neighbor) { neighborVisited = true; break; }
+                nv = nv + 1;
+            }
+            if (neighborVisited) continue;
 
-              // Push neighbor onto stack
-              callStack.push({ node: neighbor, idx: 0 });
-              inStack.push(neighbor);
-              visited.push(neighbor);
-          }
+            callStack.push({ node: neighbor, idx: 0 });
+            inStack.push(neighbor);
+            visited.push(neighbor);
+        }
 
-          nodeIdx = nodeIdx + 1;
-      }
+        nodeIdx = nodeIdx + 1;
+    }
 
-      return null;
-  }
+    return null;
+}
 
-  function topoVisit(graph: LifetimeGraph, node: string, visited: string[], result: string[]): void {
-      // if (visited.indexOf(node) != -1) return;
-      visited.push(node);
-      let isVisited = false;
-      let xm = 0;
-      while(xm < isVisited.length){
-        if(isVisited[xm] == node) { isVisited[xm] = true; }
-        xm++;
-      }
+function topoVisit(graph: LifetimeGraph, node: string, visited: string[], result: string[]): void {
+    // if (visited.indexOf(node) != -1) return;
+    visited.push(node);
+    let isVisited = false;
+    let xm = 0;
+    while(xm < isVisited.length){
+    if(isVisited[xm] == node) { isVisited[xm] = true; }
+    xm++;
+    }
 
-      if(!isVisited){
-        return
-      }
+    if(!isVisited){
+    return
+    }
 
 
 
-      let neighbors = graph.edges[node];
-      if(neighbors == null) neighbors = [];
+    let neighbors = graph.edges[node];
+    if(neighbors == null) neighbors = [];
 
-      let j = 0;
-      while (j < neighbors.length) {
-          topoVisit(graph, neighbors[j], visited, result);
-          j = j + 1;
-      }
-      result.push(node);
-  }
+    let j = 0;
+    while (j < neighbors.length) {
+        topoVisit(graph, neighbors[j], visited, result);
+        j = j + 1;
+    }
+    result.push(node);
+}
 
-  function topologicalSort(graph: LifetimeGraph): string[] {
-      let visited = [];
-      let result = [];
+function topologicalSort(graph: LifetimeGraph): string[] {
+    let visited = [];
+    let result = [];
 
-      let i = 0;
-      while (i < graph.nodes.length) {
-          topoVisit(graph, graph.nodes[i], visited, result);
-          i = i + 1;
-      }
-      return result.reverse();
-  }
+    let i = 0;
+    while (i < graph.nodes.length) {
+        topoVisit(graph, graph.nodes[i], visited, result);
+        i = i + 1;
+    }
+    return result.reverse();
+}
 
   function solveConstraints(set: ConstraintSet): SolveResult {
       if (isEmpty(set)) {
@@ -293,9 +288,17 @@ function buildLifetimeGraph(set: ConstraintSet): LifetimeGraph {
       let graph = buildLifetimeGraph(set);
       let cycle = detectCycle(graph);
       if (cycle != null) {
+          let err = {
+              kind: ErrorKind.CYCLE_DETECTED,
+              code: ErrorCode.CYCLE_DETECTED,
+              span: "unknown:0:0",
+              message: "cycle lifetime dependency detected",
+              lifetime: cycle,
+              primaryLabel: "cycle involves " + cycle
+          };
           return {
               success: false,
-              errors: ["Contradictory lifetime constraint: cycle involving '" + cycle + "'"],
+              errors: [err],
               order: []
           };
       }
@@ -306,7 +309,6 @@ function buildLifetimeGraph(set: ConstraintSet): LifetimeGraph {
 
 
 
-  // Errors
 
 
 
@@ -373,7 +375,16 @@ function errorReturnLocalRef(variable: string,  span:string, declSpan: string): 
     return err;
 }
 
-function errorMutableWhileBorrower(variable: string, span:string,  borrowSpan:string): LifetimeError{
+function errorLifetimeTooShort(lifetime: string, expected: string, span: string): LifetimeError {
+    let err = createError(ErrorKind.LIFETIME_TOO_SHORT, ErrorCode.LIFETIME_TOO_SHORT, span,
+        "Lifetime " + lifetime + " does not live long enough");
+    err.lifetime = lifetime;
+    err.expected = expected;
+    err.hint = "The reference must be valid for " + expected + " but it only lives for " + lifetime;
+    return err;
+}
+
+function errorMutableWhileBorrowed(variable: string, span:string,  borrowSpan:string): LifetimeError{
     let err = createError(ErrorKind.MUTABLE_WHILE_BORROWED, ErrorCode.MUTABLE_WHILE_BORROWED, span, "cannot borrow `" + variable + "` as mutable because it is also borrowed as immutable");
     err.variable = variable;
     err.primaryLabel = "mutable borrow occours here";
@@ -383,9 +394,9 @@ function errorMutableWhileBorrower(variable: string, span:string,  borrowSpan:st
     return err;
 }
 
-function errorLifeTimeMismatch(expected: string, found: string, span: string):LifetimeError{
+function errorLifetimeMismatch(expected: string, found: string, span: string):LifetimeError{
 
-    let err = createError(ErrorKind.LIFETIME_MISSMATCH, ErrorCode.LIFETIME_MISSMATCH, span, "lifetime mismatch");
+    let err = createError(ErrorKind.LIFETIME_MISMATCH, ErrorCode.LIFETIME_MISMATCH, span, "lifetime mismatch");
 
     err.expected = expected;
     err.found = found;
@@ -456,25 +467,31 @@ function formatError(err: LifetimeError): string {
 }
 
 let LifetimeConstraints = {
-      ConstraintKind: ConstraintKind,
-      createProgramPoint: createProgramPoint,
-      createConstraintSet: createConstraintSet,
-      addConstraint: addConstraint,
-      addOutlives: addOutlives,
-      addValidAt: addValidAt,
-      addEqual: addEqual,
-      getConstraints: getConstraints,
-      isEmpty: isEmpty,
-      isNotEmpty: isNotEmpty,
-      buildLifetimeGraph: buildLifetimeGraph,
-      detectCycle: detectCycle,
-      topologicalSort: topologicalSort,
-      solveConstraints: solveConstraints,
-      ErrorCode: ErrorCode,
-      ErrorKind: ErrorKind,
-      parseSpan: parseSpan,
-      formatError: formatError,
-      formatErrorWithSource: formatErrorWithSource
-  };
+    ConstraintKind: ConstraintKind,
+    createProgramPoint: createProgramPoint,
+    createConstraintSet: createConstraintSet,
+    addConstraint: addConstraint,
+    addOutlives: addOutlives,
+    addValidAt: addValidAt,
+    addEqual: addEqual,
+    getConstraints: getConstraints,
+    isEmpty: isEmpty,
+    isNotEmpty: isNotEmpty,
+    buildLifetimeGraph: buildLifetimeGraph,
+    detectCycle: detectCycle,
+    topologicalSort: topologicalSort,
+    solveConstraints: solveConstraints,
+    ErrorCode: ErrorCode,
+    ErrorKind: ErrorKind,
+    parseSpan: parseSpan,
+    formatError: formatError,
+    formatErrorWithSource: formatErrorWithSource,
+    errorReturnLocalRef: errorReturnLocalRef,
+    errorLifetimeTooShort: errorLifetimeTooShort,
+    errorMutableWhileBorrowed: errorMutableWhileBorrowed,
+    errorLifetimeMismatch: errorLifetimeMismatch,
+    errorAmbiguousLifetime: errorAmbiguousLifetime,
+    errorCycleDetected: errorCycleDetected
+};
 
   console.log("Lifetime constraints module loaded.");

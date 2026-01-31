@@ -1,0 +1,215 @@
+console.log("==============================================");
+console.log("Lifetime Struct Test Suite");
+console.log("==============================================");
+console.log("");
+
+let passed = 0;
+let failed = 0;
+
+console.log("Test 1: Struct with Valid Lifetime Params");
+let validStruct = {
+    name: "StringView",
+    fields: [
+        { name: "data", type: { kind: "ref", innerType: { kind: "primitive", name: "string" }, lifetime: "'a" }, optional: false },
+        { name: "len", type: { kind: "primitive", name: "number" }, optional: false }
+    ],
+    extends: [],
+    genericParams: [],
+    lifetimeParams: [{ name: "'a", bounds: [] }]
+};
+let errors1 = Types.validateStructLifetimes(null, validStruct);
+if (errors1.length == 0) {
+    console.log("  PASS: Valid struct lifetimes accepted");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Should accept valid struct, got: " + errors1[0]);
+    failed = failed + 1;
+}
+
+
+console.log("");
+console.log("Test 2: Struct with Undeclared Lifetime");
+let invalidStruct = {
+    name: "BadView",
+    fields: [
+        { name: "data", type: { kind: "ref", innerType: { kind: "primitive", name: "string" }, lifetime: "'b" }, optional: false }
+    ],
+    extends: [],
+    genericParams: [],
+    lifetimeParams: [{ name: "'a", bounds: [] }]  // 'a declared, but 'b used
+};
+let errors2 = Types.validateStructLifetimes(null, invalidStruct);
+if (errors2.length > 0) {
+    console.log("  PASS: Undeclared lifetime 'b detected");
+    console.log("  Error: " + errors2[0]);
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Should detect undeclared lifetime");
+    failed = failed + 1;
+}
+
+
+console.log("");
+console.log("Test 3: Struct with Static Lifetime (Always Valid)");
+let staticStruct = {
+    name: "StaticRef",
+    fields: [
+        { name: "data", type: { kind: "ref", innerType: { kind: "primitive", name: "string" }, lifetime: "static" }, optional: false }
+    ],
+    extends: [],
+    genericParams: [],
+    lifetimeParams: []  // No lifetime params needed for 'static
+};
+let errors3 = Types.validateStructLifetimes(null, staticStruct);
+if (errors3.length == 0) {
+    console.log("  PASS: Static lifetime requires no declaration");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Static lifetime should be valid without declaration");
+    failed = failed + 1;
+}
+
+
+console.log("");
+console.log("Test 4: Variance - Immutable Ref is Covariant");
+let refType = { kind: "ref", innerType: { kind: "primitive", name: "string" }, lifetime: "'a" };
+let refVariance = Types.computeTypeVariance(refType, "'a");
+if (refVariance == Types.Variance.COVARIANT) {
+    console.log("  PASS: &'a T is covariant in 'a");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Expected covariant, got " + refVariance);
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 5: Variance - Mutable Ref is Invariant");
+let mutRefType = { kind: "mutref", innerType: { kind: "primitive", name: "string" }, lifetime: "'a" };
+let mutRefVariance = Types.computeTypeVariance(mutRefType, "'a");
+if (mutRefVariance == Types.Variance.INVARIANT) {
+    console.log("  PASS: &'a mut T is invariant in 'a");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Expected invariant, got " + mutRefVariance);
+    failed = failed + 1;
+}
+
+
+console.log("");
+console.log("Test 6: Struct Variance - Covariant from Fields");
+let covariantStruct = {
+    name: "CovariantView",
+    fields: [
+        { name: "data", type: { kind: "ref", innerType: { kind: "primitive", name: "string" }, lifetime: "'a" }, optional: false }
+    ],
+    lifetimeParams: [{ name: "'a" }]
+};
+let structVariance = Types.computeStructVariance(covariantStruct, "'a");
+if (structVariance == Types.Variance.COVARIANT) {
+    console.log("  PASS: Struct with &'a field is covariant in 'a");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Expected covariant, got " + structVariance);
+    failed = failed + 1;
+}
+
+
+console.log("");
+console.log("Test 7: Struct Variance - Invariant from Mut Ref Field");
+let invariantStruct = {
+    name: "InvariantView",
+    fields: [
+        { name: "data", type: { kind: "mutref", innerType: { kind: "primitive", name: "string" }, lifetime: "'a" }, optional: false }
+    ],
+    lifetimeParams: [{ name: "'a" }]
+};
+let invariantVariance = Types.computeStructVariance(invariantStruct, "'a");
+if (invariantVariance == Types.Variance.INVARIANT) {
+    console.log("  PASS: Struct with &'a mut field is invariant in 'a");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Expected invariant, got " + invariantVariance);
+    failed = failed + 1;
+}
+
+
+console.log("");
+console.log("Test 8: Lifetime Substitution - Covariant Allows Longer");
+let outlives = { "'long": ["'short"] };
+let canSub = Types.canSubstituteLifetime("'long", "'short", Types.Variance.COVARIANT, outlives);
+if (canSub) {
+    console.log("  PASS: Covariant allows 'long -> 'short");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Covariant should allow longer to shorter");
+    failed = failed + 1;
+}
+
+
+console.log("");
+console.log("Test 9: Lifetime Substitution - Invariant Blocks");
+let canSubInvariant = Types.canSubstituteLifetime("'long", "'short", Types.Variance.INVARIANT, outlives);
+if (!canSubInvariant) {
+    console.log("  PASS: Invariant blocks 'long -> 'short");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Invariant should block substitution");
+    failed = failed + 1;
+}
+
+
+console.log("");
+console.log("Test 10: Static Outlives Everything");
+let staticOutlives = Types.lifetimeOutlives("static", "'any", {});
+if (staticOutlives) {
+    console.log("  PASS: 'static outlives any lifetime");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Static should outlive everything");
+    failed = failed + 1;
+}
+
+
+console.log("");
+console.log("Test 11: Multiple Lifetime Params");
+let multiLifetimeStruct = {
+    name: "Pair",
+    fields: [
+        { name: "first", type: { kind: "ref", innerType: { kind: "primitive", name: "string" }, lifetime: "'a" }, optional: false },
+        { name: "second", type: { kind: "ref", innerType: { kind: "primitive", name: "number" }, lifetime: "'b" }, optional: false }
+    ],
+    extends: [],
+    genericParams: [],
+    lifetimeParams: [{ name: "'a", bounds: [] }, { name: "'b", bounds: [] }]
+};
+let errors11 = Types.validateStructLifetimes(null, multiLifetimeStruct);
+if (errors11.length == 0) {
+    console.log("  PASS: Multiple lifetime params validated");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Should accept multiple lifetimes");
+    failed = failed + 1;
+}
+
+
+console.log("");
+console.log("Test 12: Combine Variance - Bivariant is Neutral");
+let combined = Types.combineVariance(Types.Variance.BIVARIANT, Types.Variance.COVARIANT);
+if (combined == Types.Variance.COVARIANT) {
+    console.log("  PASS: Bivariant + Covariant = Covariant");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Expected covariant, got " + combined);
+    failed = failed + 1;
+}
+
+
+console.log("");
+console.log("==============================================");
+console.log("Results: " + passed + " passed, " + failed + " failed");
+if (failed == 0) {
+    console.log("All lifetime struct tests passed!");
+} else {
+    console.log("Some tests failed!");
+}
+console.log("==============================================");
