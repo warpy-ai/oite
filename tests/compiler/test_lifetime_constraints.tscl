@@ -107,7 +107,6 @@
       console.log("  FAIL: Span function broken");
   }
 
-
   console.log("");
   console.log("Test 11: Format error");
   let testErr = {

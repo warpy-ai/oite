@@ -168,6 +168,7 @@ if (!canSub2) {
 }
 
 
+
 console.log("");
 console.log("Test: Static outlives everything");
 let canSubStatic = Types.canSubstituteLifetime("static", "'any", Types.Variance.COVARIANT, {});

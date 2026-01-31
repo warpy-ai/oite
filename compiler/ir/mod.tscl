@@ -1,10 +1,5 @@
-// ============================================================================
 // IR Types for tscl Compiler
-// ============================================================================
-
-// ============================================================================
 // IR Value and Types
-// ============================================================================
 
 type IrValue = number;
 
@@ -19,10 +14,6 @@ enum IrType {
     NEVER = 7,
     VOID = 8
 }
-
-// ============================================================================
-// IR Operation Codes
-// ============================================================================
 
 enum IrOpCode {
     CONST = 0,
@@ -60,12 +51,10 @@ enum IrOpCode {
     LENGTH = 32,
     TO_NUMBER = 33,
     TO_STRING = 34,
-    TO_BOOLEAN = 35
+    TO_BOOLEAN = 35,
+    LIFETIME_START = 36,
+    LIFETIME_END = 37
 }
-
-// ============================================================================
-// IR Data Structures
-// ============================================================================
 
 interface IrInstruction {
     opcode: IrOpCode;
@@ -86,7 +75,7 @@ interface IrFunction {
     name: string;
     params: string[];
     return_type: IrType;
-    locals: { index: number, name: string, type: IrType }[];
+    locals: { index: number, name: string, type: IrType, lifetime?: string }[];
     blocks: IrBlock[];
     entry_block: IrBlock;
 }
@@ -97,14 +86,67 @@ interface IrModule {
     functions: IrFunction[];
 }
 
+interface LifetimeInfo{
+    name:string;
+    startBlock: string;
+    startIndex: number;
+    endBlock: string;
+    endIndex: number;
+}
+
+interface IrValueInfo{
+    register: number;
+    type: IrType;
+    lifetime?: string;
+    isRef: boolean;
+    isMut: boolean;
+}
+
 interface RegisterAllocator {
     next_reg: number;
     max_regs: number;
 }
 
-// ============================================================================
-// Register Allocator Functions
-// ============================================================================
+function createLifetimeStart(dest: number, lifetimeName:string): IrInstruction {
+    return{
+        opcode: IrOpCode.LIFETIME_START,
+        dest: dest,
+        args: [],
+        immediate: lifetimeName,
+        label: null
+
+    }
+}
+
+
+function createLifetimeEnd(dest: number, lifetimeName:string): IrInstruction {
+    return{
+        opcode: IrOpCode.LIFETIME_END,
+        dest: dest,
+        args: [],
+        immediate: lifetimeName,
+        label: null
+
+    }
+}
+
+function addLocalWithLifetime(func: IrFunction, name: string, type: IrType, lifetime: string): number {
+    let index = func.locals.length;
+    func.locals.push({ index: index, name: name, type: type, lifetime: lifetime });
+    return index;
+}
+
+function getLocalLifetime(func: IrFunction, index: number): string | null {
+    if(index >= 0 && index < func.locals.length){
+        let local = func.locals[index];
+        if(local.lifetime != null){
+            return local.lifetime;
+        }
+    }
+    return null;
+}
+
+
 
 function createRegisterAllocator(): RegisterAllocator {
     return {
@@ -131,10 +173,6 @@ function getMaxRegisters(ra: RegisterAllocator): number {
     return ra.max_regs;
 }
 
-// ============================================================================
-// IR Block Construction
-// ============================================================================
-
 function createIrBlock(label: string): IrBlock {
     return {
         label: label,
@@ -143,10 +181,6 @@ function createIrBlock(label: string): IrBlock {
         successors: []
     };
 }
-
-// ============================================================================
-// IR Instruction Emission
-// ============================================================================
 
 function emitIrOp(block: IrBlock, opcode: IrOpCode, dest: number | null, args: number[], immediate: IrValue | null): void {
     let inst: IrInstruction = {
@@ -234,10 +268,6 @@ function emitMethodCall(block: IrBlock, dest: number, objName: string, methodNam
     emitIrOp(block, IrOpCode.CALL_METHOD, dest, args, methodPath);
 }
 
-// ============================================================================
-// IR Verification
-// ============================================================================
-
 function verifyIrModule(module: IrModule): boolean {
     let i = 0;
     while (i < module.functions.length) {
@@ -288,10 +318,6 @@ function verifyIrBlock(block: IrBlock): boolean {
     }
     return true;
 }
-
-// ============================================================================
-// IR Serialization (Deterministic)
-// ============================================================================
 
 // Helper to get opcode name (VM doesn't support reverse enum lookup)
 // Using explicit numeric comparisons due to VM enum resolution issues
@@ -454,5 +480,19 @@ function serializeIrInstruction(inst: IrInstruction): string {
     }
     return opName;
 }
+
+
+
+let IR = {
+    IrOpCode: IrOpCode,
+    IrType: IrType,
+    createLifetimeStart: createLifetimeStart,
+    createLifetimeEnd: createLifetimeEnd,
+    addLocalWithLifetime: addLocalWithLifetime,
+    getLocalLifetime: getLocalLifetime,
+    createRegisterAllocator: createRegisterAllocator,
+    allocRegister: allocRegister,
+    formatInstruction: formatInstruction
+};
 
 console.log("IR module loaded");
