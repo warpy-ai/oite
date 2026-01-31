@@ -985,27 +985,25 @@ impl Codegen {
                 self.instructions.push(OpCode::Load(iter_name.clone()));
                 self.instructions.push(OpCode::Load(idx_name.clone()));
                 self.instructions.push(OpCode::LoadElement);
-                if let Some(var_decl) = &for_of_stmt.left.as_var_decl() {
-                    if let Some(decl) = var_decl.decls.first() {
-                        if let Pat::Ident(id) = &decl.name {
-                            let var_name = id.id.sym.to_string();
-                            self.instructions.push(OpCode::Let(var_name.clone()));
-                            if let Some(scope) = self.scope_stack.last_mut() {
-                                scope.push(var_name);
-                            }
-                        }
+                if let Some(var_decl) = &for_of_stmt.left.as_var_decl()
+                    && let Some(decl) = var_decl.decls.first()
+                    && let Pat::Ident(id) = &decl.name
+                {
+                    let var_name = id.id.sym.to_string();
+                    self.instructions.push(OpCode::Let(var_name.clone()));
+                    if let Some(scope) = self.scope_stack.last_mut() {
+                        scope.push(var_name);
                     }
                 }
                 self.gen_stmt(&for_of_stmt.body);
-                if let Some(var_decl) = &for_of_stmt.left.as_var_decl() {
-                    if let Some(decl) = var_decl.decls.first() {
-                        if let Pat::Ident(id) = &decl.name {
-                            let var_name = id.id.sym.to_string();
-                            self.instructions.push(OpCode::Drop(var_name));
-                            if let Some(scope) = self.scope_stack.last_mut() {
-                                scope.retain(|n| n != &id.id.sym.to_string());
-                            }
-                        }
+                if let Some(var_decl) = &for_of_stmt.left.as_var_decl()
+                    && let Some(decl) = var_decl.decls.first()
+                    && let Pat::Ident(id) = &decl.name
+                {
+                    let var_name = id.id.sym.to_string();
+                    self.instructions.push(OpCode::Drop(var_name));
+                    if let Some(scope) = self.scope_stack.last_mut() {
+                        scope.retain(|n| n != &id.id.sym.to_string());
                     }
                 }
                 self.instructions.push(OpCode::Load(idx_name.clone()));
