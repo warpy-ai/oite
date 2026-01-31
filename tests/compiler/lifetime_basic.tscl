@@ -1,0 +1,146 @@
+console.log("==============================================");
+console.log("Lifetime Basic Test Suite");
+console.log("==============================================");
+console.log("");
+
+let passed = 0;
+let failed = 0;
+
+console.log("Test 1: Constraint Set Creation");
+let set1 = LifetimeConstraints.createConstraintSet();
+if (LifetimeConstraints.isEmpty(set1)) {
+    console.log("  PASS: Empty constraint set created");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Constraint set should be empty");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 2: Add Outlives Constraint");
+let set2 = LifetimeConstraints.createConstraintSet();
+LifetimeConstraints.addOutlives(set2, "'a", "'b", "test:1:1");
+if (LifetimeConstraints.isNotEmpty(set2)) {
+    console.log("  PASS: Outlives constraint added");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Constraint set should not be empty");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 3: Add Equal Constraint");
+let set3 = LifetimeConstraints.createConstraintSet();
+LifetimeConstraints.addEqual(set3, "'a", "'b", "test:2:1");
+let constraints3 = LifetimeConstraints.getConstraints(set3);
+if (constraints3.length == 1 && constraints3[0].kind == LifetimeConstraints.ConstraintKind.EQUAL) {
+    console.log("  PASS: Equal constraint added correctly");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Equal constraint not added correctly");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 4: Build Lifetime Graph");
+let set4 = LifetimeConstraints.createConstraintSet();
+LifetimeConstraints.addOutlives(set4, "'a", "'b", "test:1:1");
+LifetimeConstraints.addOutlives(set4, "'b", "'c", "test:2:1");
+let graph4 = LifetimeConstraints.buildLifetimeGraph(set4);
+if (graph4.nodes.length == 3) {
+    console.log("  PASS: Graph has 3 nodes ('a, 'b, 'c)");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Expected 3 nodes, got " + graph4.nodes.length);
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 5: Solve Valid Constraints (Chain)");
+let set5 = LifetimeConstraints.createConstraintSet();
+LifetimeConstraints.addOutlives(set5, "'a", "'b", "test:1:1");
+LifetimeConstraints.addOutlives(set5, "'b", "'c", "test:2:1");
+let result5 = LifetimeConstraints.solveConstraints(set5);
+if (result5.success) {
+    console.log("  PASS: Chain constraints solved");
+    console.log("  Order: " + result5.order.join(" -> "));
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Should have solved");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 6: Detect Cycle");
+let set6 = LifetimeConstraints.createConstraintSet();
+LifetimeConstraints.addOutlives(set6, "'a", "'b", "test:1:1");
+LifetimeConstraints.addOutlives(set6, "'b", "'c", "test:2:1");
+LifetimeConstraints.addOutlives(set6, "'c", "'a", "test:3:1");
+let result6 = LifetimeConstraints.solveConstraints(set6);
+if (!result6.success && result6.errors.length > 0) {
+    console.log("  PASS: Cycle detected");
+    console.log("  Error: " + result6.errors[0].message);
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Should have detected cycle");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 7: Program Point Creation");
+let point = LifetimeConstraints.createProgramPoint(2, 5);
+if (point.scopeDepth == 2 && point.statementIndex == 5) {
+    console.log("  PASS: Program point created (scope=2, stmt=5)");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Program point values incorrect");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 8: Static Lifetime");
+if (Types.STATIC_LIFETIME == "static") {
+    console.log("  PASS: Static lifetime constant defined");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Static lifetime should be 'static'");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 9: Error Code Format");
+if (LifetimeConstraints.ErrorCode.RETURN_LOCAL_REF == "E0501") {
+    console.log("  PASS: Error codes follow E05xx format");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Error code format incorrect");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 10: Format Error Message");
+let testErr = {
+    kind: "return_local_ref",
+    code: "E0501",
+    span: "test.tscl:5:12",
+    message: "cannot return reference to local variable",
+    primaryLabel: "returns reference to data owned by current function"
+};
+let formatted = LifetimeConstraints.formatError(testErr);
+if (formatted.indexOf("E0501") != -1) {
+    console.log("  PASS: Error formatted with code");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Error format missing code");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("==============================================");
+console.log("Results: " + passed + " passed, " + failed + " failed");
+if (failed == 0) {
+    console.log("All lifetime basic tests passed!");
+} else {
+    console.log("Some tests failed!");
+}
+console.log("==============================================");

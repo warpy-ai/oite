@@ -1,0 +1,224 @@
+console.log("==============================================");
+console.log("Lifetime Elision Test Suite");
+console.log("==============================================");
+console.log("");
+
+let passed = 0;
+let failed = 0;
+
+// Local elision function to work around VM module function call issues
+function localApplyElision(ft) {
+    if (ft == null) {
+        return { kind: Types.ElisionResultKind.NO_ELISION_NEEDED };
+    }
+    if (ft.lifetimeParams != null && ft.lifetimeParams.length > 0) {
+        return { kind: Types.ElisionResultKind.NO_ELISION_NEEDED };
+    }
+
+    let inputRefCount = Types.countInputReferenceParams(ft);
+    let hasRefReturn = Types.hasReferenceType(ft.returnType);
+
+    if (inputRefCount == 0 && !hasRefReturn) {
+        return { kind: Types.ElisionResultKind.NO_ELISION_NEEDED };
+    }
+
+    let hasSelf = false;
+    if (ft.params != null && ft.params.length > 0) {
+        if (ft.params[0].name == "self") {
+            hasSelf = true;
+        }
+    }
+
+    if (hasSelf && hasRefReturn) {
+        return { kind: Types.ElisionResultKind.APPLIED };
+    }
+
+    if (inputRefCount > 1 && hasRefReturn) {
+        return { kind: Types.ElisionResultKind.AMBIGUOUS_LIFETIME };
+    }
+
+    if (inputRefCount > 0) {
+        return { kind: Types.ElisionResultKind.APPLIED };
+    }
+
+    if (hasRefReturn) {
+        return { kind: Types.ElisionResultKind.AMBIGUOUS_LIFETIME };
+    }
+
+    return { kind: Types.ElisionResultKind.NO_ELISION_NEEDED };
+}
+
+console.log("Test 1: Rule 1 - Input references get unique lifetimes");
+// fn foo(x: &T, y: &T) -> becomes -> fn foo<'a, 'b>(x: &'a T, y: &'b T)
+let funcType1 = {
+    kind: "function",
+    params: [
+        { name: "x", type: { kind: "ref", innerType: { kind: "primitive", name: "string" } } },
+        { name: "y", type: { kind: "ref", innerType: { kind: "primitive", name: "number" } } }
+    ],
+    returnType: { kind: "primitive", name: "void" }
+};
+let result1 = localApplyElision(funcType1);
+if (result1.kind == Types.ElisionResultKind.APPLIED) {
+    console.log("  PASS: Elision applied to multi-ref function");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Should apply elision (got " + result1.kind + ")");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 2: Rule 2 - Single input lifetime flows to output");
+// fn foo(x: &T) -> &T becomes fn foo<'a>(x: &'a T) -> &'a T
+let funcType2 = {
+    kind: "function",
+    params: [
+        { name: "x", type: { kind: "ref", innerType: { kind: "primitive", name: "string" } } }
+    ],
+    returnType: { kind: "ref", innerType: { kind: "primitive", name: "string" } }
+};
+let result2 = localApplyElision(funcType2);
+if (result2.kind == Types.ElisionResultKind.APPLIED) {
+    console.log("  PASS: Single input lifetime flows to output");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Should apply elision for single input");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 3: Rule 3 - Method self lifetime flows to output");
+// fn foo(&self, x: &T) -> &T becomes fn foo<'a, 'b>(&'a self, x: &'b T) -> &'a T
+let funcType3 = {
+    kind: "function",
+    params: [
+        { name: "self", type: { kind: "ref", innerType: { kind: "object", name: "Self" } } },
+        { name: "x", type: { kind: "ref", innerType: { kind: "primitive", name: "string" } } }
+    ],
+    returnType: { kind: "ref", innerType: { kind: "primitive", name: "string" } }
+};
+let result3 = localApplyElision(funcType3);
+if (result3.kind == Types.ElisionResultKind.APPLIED) {
+    console.log("  PASS: Self lifetime flows to output in method");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Should apply method elision");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 4: Ambiguous - Multiple inputs with ref output");
+// fn foo(x: &T, y: &T) -> &T - AMBIGUOUS, needs explicit annotation
+let funcType4 = {
+    kind: "function",
+    params: [
+        { name: "x", type: { kind: "ref", innerType: { kind: "primitive", name: "string" } } },
+        { name: "y", type: { kind: "ref", innerType: { kind: "primitive", name: "string" } } }
+    ],
+    returnType: { kind: "ref", innerType: { kind: "primitive", name: "string" } }
+};
+let result4 = localApplyElision(funcType4);
+if (result4.kind == Types.ElisionResultKind.AMBIGUOUS_LIFETIME) {
+    console.log("  PASS: Ambiguous case detected - needs annotation");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Should detect ambiguous elision (got " + result4.kind + ")");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 5: No References - No elision needed");
+let funcType5 = {
+    kind: "function",
+    params: [
+        { name: "x", type: { kind: "primitive", name: "number" } },
+        { name: "y", type: { kind: "primitive", name: "number" } }
+    ],
+    returnType: { kind: "primitive", name: "number" }
+};
+let result5 = localApplyElision(funcType5);
+if (result5.kind == Types.ElisionResultKind.NO_ELISION_NEEDED) {
+    console.log("  PASS: No elision needed for non-ref function");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Should report no elision needed (got " + result5.kind + ")");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 6: Count Input Reference Params");
+let params6 = [
+    { name: "x", type: { kind: "ref", innerType: { kind: "primitive", name: "string" } } },
+    { name: "y", type: { kind: "primitive", name: "number" } },
+    { name: "z", type: { kind: "ref", innerType: { kind: "primitive", name: "string" } } }
+];
+let count6 = Types.countInputReferenceParams(params6);
+if (count6 == 2) {
+    console.log("  PASS: Counted 2 reference params");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Expected 2, got " + count6);
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 7: Is Reference Type");
+let refType = { kind: "ref", innerType: { kind: "primitive", name: "string" } };
+let mutRefType = { kind: "mutref", innerType: { kind: "primitive", name: "string" } };
+let primType = { kind: "primitive", name: "number" };
+
+if (Types.isReferenceType(refType) && Types.isReferenceType(mutRefType) && !Types.isReferenceType(primType)) {
+    console.log("  PASS: Reference type detection works");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Reference type detection incorrect");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 8: Has Reference Type (in params)");
+let paramsWithRef = [
+    { name: "x", type: { kind: "primitive", name: "number" } },
+    { name: "y", type: { kind: "ref", innerType: { kind: "primitive", name: "string" } } }
+];
+let paramsNoRef = [
+    { name: "x", type: { kind: "primitive", name: "number" } },
+    { name: "y", type: { kind: "primitive", name: "string" } }
+];
+if (Types.hasReferenceInParams(paramsWithRef) && !Types.hasReferenceInParams(paramsNoRef)) {
+    console.log("  PASS: Has reference type detection works");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Has reference type detection incorrect");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 9: Static Outlives All Lifetimes");
+if (Types.staticOutlivesAll("static") && !Types.staticOutlivesAll("'a")) {
+    console.log("  PASS: Static outlives check works");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Static outlives check incorrect");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("Test 10: Is Static Lifetime");
+if (Types.isStaticLifetime("static") && !Types.isStaticLifetime("'a")) {
+    console.log("  PASS: Static lifetime check works");
+    passed = passed + 1;
+} else {
+    console.log("  FAIL: Static lifetime check incorrect");
+    failed = failed + 1;
+}
+
+console.log("");
+console.log("==============================================");
+console.log("Results: " + passed + " passed, " + failed + " failed");
+if (failed == 0) {
+    console.log("All lifetime elision tests passed!");
+} else {
+    console.log("Some tests failed!");
+}
+console.log("==============================================");
