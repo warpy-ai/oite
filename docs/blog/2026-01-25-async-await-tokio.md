@@ -1,13 +1,13 @@
 ---
 slug: async-await-tokio
-title: "Async/Await in Script: How We Built a Modern Async Runtime on Top of Tokio"
-description: Deep dive into Script's async/await implementation using Tokio. Learn about Promises, the await opcode, and bridging Rust's async with Script's VM.
+title: "Async/Await in Oite: How We Built a Modern Async Runtime on Top of Tokio"
+description: Deep dive into Oite's async/await implementation using Tokio. Learn about Promises, the await opcode, and bridging Rust's async with Oite's VM.
 authors: [lucas]
 tags: [async, promises, tokio, runtime, javascript]
 image: /img/logo_bg.png
 ---
 
-Script now has full async/await support, built on top of Tokio—Rust's production-grade async runtime. This post dives into how we implemented Promises, the `await` opcode, and bridged Rust's async world with Script's VM.
+Oite now has full async/await support, built on top of Tokio—Rust's production-grade async runtime. This post dives into how we implemented Promises, the `await` opcode, and bridged Rust's async world with Oite's VM.
 
 <!-- truncate -->
 
@@ -36,15 +36,15 @@ async function workflow() {
 }
 ```
 
-We wanted Script to have the same ergonomics, but with native performance.
+We wanted Oite to have the same ergonomics, but with native performance.
 
 ## Architecture Overview
 
-Script's async system has three layers:
+Oite's async system has three layers:
 
 ```
 ┌─────────────────────────────────────────┐
-│      Script Code (async/await)          │
+│      Oite Code (async/await)          │
 └─────────────────┬───────────────────────┘
                   │
                   ▼
@@ -58,13 +58,13 @@ Script's async system has three layers:
 └─────────────────────────────────────────┘
 ```
 
-1. **Script layer**: `async function` syntax, `await` expressions
+1. **Oite layer**: `async function` syntax, `await` expressions
 2. **VM layer**: Promise state machine, `Await` opcode
 3. **Tokio layer**: Actual async execution, I/O, timers
 
 ## Promise Implementation
 
-A Promise in Script is a state machine with three states:
+A Promise in Oite is a state machine with three states:
 
 ```rust
 // src/vm/value.rs
@@ -309,7 +309,7 @@ pub async fn native_fs_read_file_async(
 }
 ```
 
-Then in Script:
+Then in Oite:
 
 ```typescript
 async function readConfig() {
@@ -320,7 +320,7 @@ async function readConfig() {
 
 ## Performance: Zero-Cost Abstractions
 
-Script's async/await is designed for performance:
+Oite's async/await is designed for performance:
 
 ### 1. **No Heap Allocation for Resolved Promises**
 
@@ -422,17 +422,17 @@ async function* readLines(file: string): AsyncGenerator<string> {
 
 ## Conclusion
 
-Script's async/await implementation brings modern JavaScript ergonomics to a native-compiled language. By building on Tokio, we get production-grade performance while maintaining the familiar Promise API.
+Oite's async/await implementation brings modern JavaScript ergonomics to a native-compiled language. By building on Tokio, we get production-grade performance while maintaining the familiar Promise API.
 
-The foundation is solid. As we integrate more Tokio features, Script will become an excellent choice for async-heavy applications like web servers, data processing pipelines, and real-time systems.
+The foundation is solid. As we integrate more Tokio features, Oite will become an excellent choice for async-heavy applications like web servers, data processing pipelines, and real-time systems.
 
 ---
 
-**Try async/await in Script:**
+**Try async/await in Oite:**
 
 ```bash
-# Create test_async.tscl
-cat > test_async.tscl << 'EOF'
+# Create test_async.ot
+cat > test_async.ot << 'EOF'
 async function test() {
     const result = await Promise.resolve(42);
     console.log("Result:", result);
@@ -441,10 +441,10 @@ test();
 EOF
 
 # Run it
-./target/release/script test_async.tscl
+./target/release/script test_async.ot
 ```
 
 **Learn more:**
-- [Script GitHub Repository](https://github.com/warpy-ai/script)
+- [Oite GitHub Repository](https://github.com/warpy-ai/script)
 - [Async/Await Documentation](/docs/language-features#async-await)
 - [Tokio Documentation](https://tokio.rs/)

@@ -43,48 +43,48 @@ use std::path::{Path, PathBuf};
 mod tests;
 
 /// Default path for the prelude file
-const PRELUDE_PATH: &str = "std/prelude.tscl";
+const PRELUDE_PATH: &str = "std/prelude.ot";
 
 /// Bootstrap compiler files (loaded in order when running bootstrap tests)
 const BOOTSTRAP_FILES: &[&str] = &[
-    "bootstrap/types.tscl",
-    "bootstrap/lexer.tscl",
-    "bootstrap/parser.tscl",
-    "bootstrap/emitter.tscl",
-    "bootstrap/ir.tscl",
-    "bootstrap/ir_builder.tscl",
-    "bootstrap/codegen.tscl",
-    "bootstrap/pipeline.tscl",
+    "bootstrap/types.ot",
+    "bootstrap/lexer.ot",
+    "bootstrap/parser.ot",
+    "bootstrap/emitter.ot",
+    "bootstrap/ir.ot",
+    "bootstrap/ir_builder.ot",
+    "bootstrap/codegen.ot",
+    "bootstrap/pipeline.ot",
 ];
 
 /// Modular compiler files (loaded in dependency order)
 const MODULAR_COMPILER_FILES: &[&str] = &[
     // Level 1: No dependencies
-    "compiler/lexer/token.tscl",
-    "compiler/ast/types.tscl",
-    "compiler/ir/mod.tscl",
+    "compiler/lexer/token.ot",
+    "compiler/ast/types.ot",
+    "compiler/ir/mod.ot",
     // Level 2: Depends on level 1
-    "compiler/lexer/mod.tscl",
-    "compiler/parser/expr.tscl",
-    "compiler/parser/stmt.tscl",
-    "compiler/ir/builder.tscl",
-    "compiler/passes/types.tscl",
-    "compiler/passes/typecheck.tscl",
-    "compiler/passes/opt.tscl",
-    "compiler/passes/lifetime_constraints.tscl",
-    "compiler/passes/borrow_ck.tscl",
+    "compiler/lexer/mod.ot",
+    "compiler/parser/expr.ot",
+    "compiler/parser/stmt.ot",
+    "compiler/ir/builder.ot",
+    "compiler/passes/types.ot",
+    "compiler/passes/typecheck.ot",
+    "compiler/passes/opt.ot",
+    "compiler/passes/lifetime_constraints.ot",
+    "compiler/passes/borrow_ck.ot",
     // Level 3: Depends on level 2
-    "compiler/parser/mod.tscl",
-    "compiler/passes/mod.tscl",
-    "compiler/codegen/mod.tscl",
+    "compiler/parser/mod.ot",
+    "compiler/passes/mod.ot",
+    "compiler/codegen/mod.ot",
     // Level 4: Depends on level 3
-    "compiler/codegen/emitter.tscl",
+    "compiler/codegen/emitter.ot",
     // Level 5: Backend modules
-    "compiler/backend/llvm/runtime.tscl",
-    "compiler/backend/llvm/types.tscl",
-    "compiler/backend/llvm/mod.tscl",
+    "compiler/backend/llvm/runtime.ot",
+    "compiler/backend/llvm/types.ot",
+    "compiler/backend/llvm/mod.ot",
     // Level 6: Top-level pipeline
-    "compiler/pipeline.tscl",
+    "compiler/pipeline.ot",
 ];
 
 /// Helper to load and run a script file
@@ -108,7 +108,7 @@ fn load_and_run_script(
     } else if path.ends_with(".js") || path.ends_with(".jsx") {
         Some(Syntax::Es(Default::default()))
     } else {
-        // Default to TypeScript with decorators for .tscl files
+        // Default to TypeScript with decorators for .ot files
         let ts_syntax = TsSyntax {
             decorators: true,
             ..Default::default()
@@ -172,12 +172,12 @@ fn main() {
     if args.len() < 2 {
         eprintln!("Usage: {} <command> [args...]", args[0]);
         eprintln!("Commands:");
-        eprintln!("  check <filename>     Check a .tscl file for errors (for LSP)");
-        eprintln!("  ir <filename>        Dump SSA IR for a .tscl file");
-        eprintln!("  jit <filename>       Run a .tscl file with JIT compilation");
-        eprintln!("  bench <filename>     Benchmark VM vs JIT for a .tscl file");
-        eprintln!("  build [options] <filename>  Build a .tscl file to native binary");
-        eprintln!("  <filename>           Run a .tscl file (VM interpreter)");
+        eprintln!("  check <filename>     Check a .ot file for errors (for LSP)");
+        eprintln!("  ir <filename>        Dump SSA IR for a .ot file");
+        eprintln!("  jit <filename>       Run a .ot file with JIT compilation");
+        eprintln!("  bench <filename>     Benchmark VM vs JIT for a .ot file");
+        eprintln!("  build [options] <filename>  Build a .ot file to native binary");
+        eprintln!("  <filename>           Run a .ot file (VM interpreter)");
         eprintln!("  --run-binary <file>  Run a bytecode file (.bc)");
         eprintln!();
         eprintln!("Build options:");
@@ -251,7 +251,7 @@ fn main() {
     // Check if we should run in binary mode
     let run_binary = args.iter().any(|a| a == "--run-binary")
         || filename.ends_with(".bc")
-        || filename.ends_with(".tscl.bc");
+        || filename.ends_with(".otb");
 
     let mut vm = VM::new();
     let mut compiler = Compiler::new();
@@ -335,7 +335,7 @@ fn main() {
     } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
         Some(Syntax::Es(Default::default()))
     } else {
-        // Default to TypeScript with decorators for .tscl files
+        // Default to TypeScript with decorators for .ot files
         let ts_syntax = TsSyntax {
             decorators: true,
             ..Default::default()
@@ -384,7 +384,7 @@ fn dump_ir(filename: &str) {
     } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
         Some(Syntax::Es(Default::default()))
     } else {
-        // Default to TypeScript with decorators for .tscl files
+        // Default to TypeScript with decorators for .ot files
         let ts_syntax = TsSyntax {
             decorators: true,
             ..Default::default()
@@ -451,7 +451,7 @@ fn check_file(filename: &str) {
     } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
         Some(Syntax::Es(Default::default()))
     } else {
-        // Default to TypeScript with decorators for .tscl files
+        // Default to TypeScript with decorators for .ot files
         let ts_syntax = TsSyntax {
             decorators: true,
             ..Default::default()
@@ -518,7 +518,7 @@ fn run_jit(filename: &str) {
     } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
         Some(Syntax::Es(Default::default()))
     } else {
-        // Default to TypeScript with decorators for .tscl files
+        // Default to TypeScript with decorators for .ot files
         let ts_syntax = TsSyntax {
             decorators: true,
             ..Default::default()
@@ -633,7 +633,7 @@ fn run_benchmark(filename: &str) {
     } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
         Some(Syntax::Es(Default::default()))
     } else {
-        // Default to TypeScript with decorators for .tscl files
+        // Default to TypeScript with decorators for .ot files
         let ts_syntax = TsSyntax {
             decorators: true,
             ..Default::default()
@@ -905,7 +905,7 @@ fn build_file(args: &[String]) {
         } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
             Some(Syntax::Es(Default::default()))
         } else {
-            // Default to TypeScript with decorators for .tscl files
+            // Default to TypeScript with decorators for .ot files
             let ts_syntax = TsSyntax {
                 decorators: true,
                 ..Default::default()

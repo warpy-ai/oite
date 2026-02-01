@@ -1,29 +1,29 @@
 ---
 sidebar_position: 11
-title: Script ABI Specification
-description: Technical specification of Script's Application Binary Interface (ABI) including calling conventions, value representation, and runtime contracts.
+title: Oite ABI Specification
+description: Technical specification of Oite's Application Binary Interface (ABI) including calling conventions, value representation, and runtime contracts.
 keywords: [abi, application binary interface, calling convention, runtime, low-level]
 ---
 
-# tscl ABI Specification
+# Oite ABI Specification
 
 **Version:** 1
 **Last Updated:** January 2026
 
-This document defines the **Application Binary Interface (ABI)** for the tscl runtime. The ABI is the contract between compiled tscl code and the runtime library.
+This document defines the **Application Binary Interface (ABI)** for the Oite runtime. The ABI is the contract between compiled Oite code and the runtime library.
 
 ## 1. ABI Versioning
 
 ```rust
 pub const ABI_VERSION: u32 = 1;
-pub const ABI_NAME: &str = "tscl";
+pub const ABI_NAME: &str = "oite";
 ```
 
 The ABI version is embedded in all compiled binaries and verified at runtime. Breaking changes to the ABI require bumping this version.
 
 ## 2. Value Representation (NaN-Boxing)
 
-All tscl values are represented as **64-bit words** using NaN-boxing:
+All oite values are represented as **64-bit words** using NaN-boxing:
 
 ```
 64-bit word (u64):
@@ -77,16 +77,16 @@ All runtime functions use the **System V AMD64 ABI** on x86-64 and **aarch64 ABI
 
 // Allocate a new empty object
 // Returns: u64 (pointer to object)
-u64 tscl_alloc_object();
+u64 oite_alloc_object();
 
 // Allocate a new empty array
 // Returns: u64 (pointer to array)
-u64 tscl_alloc_array();
+u64 oite_alloc_array();
 
 // Allocate a new string
 // Parameters: ptr = pointer to UTF-8 data, len = length in bytes
 // Returns: u64 (pointer to string)
-u64 tscl_alloc_string(const char* ptr, size_t len);
+u64 oite_alloc_string(const char* ptr, size_t len);
 
 
 // === Property Access ===
@@ -94,22 +94,22 @@ u64 tscl_alloc_string(const char* ptr, size_t len);
 // Get property from object
 // Parameters: obj = object pointer, key = property name (pointer to string)
 // Returns: u64 (property value)
-u64 tscl_get_prop(u64 obj, u64 key);
+u64 oite_get_prop(u64 obj, u64 key);
 
 // Set property on object
 // Parameters: obj = object pointer, key = property name, val = value
 // Returns: u64 (success code)
-u64 tscl_set_prop(u64 obj, u64 key, u64 val);
+u64 oite_set_prop(u64 obj, u64 key, u64 val);
 
 // Get array element
 // Parameters: obj = array pointer, idx = element index
 // Returns: u64 (element value)
-u64 tscl_get_element(u64 obj, u64 idx);
+u64 oite_get_element(u64 obj, u64 idx);
 
 // Set array element
 // Parameters: obj = array pointer, idx = element index, val = value
 // Returns: u64 (success code)
-u64 tscl_set_element(u64 obj, u64 idx, u64 val);
+u64 oite_set_element(u64 obj, u64 idx, u64 val);
 
 
 // === Arithmetic (Dynamic/Any Type) ===
@@ -117,12 +117,12 @@ u64 tscl_set_element(u64 obj, u64 idx, u64 val);
 // Dynamic addition (numbers or string concatenation)
 // Parameters: a = first operand, b = second operand
 // Returns: u64 (result)
-u64 tscl_add_any(u64 a, u64 b);
+u64 oite_add_any(u64 a, u64 b);
 
-u64 tscl_sub_any(u64 a, u64 b);
-u64 tscl_mul_any(u64 a, u64 b);
-u64 tscl_div_any(u64 a, u64 b);
-u64 tscl_mod_any(u64 a, u64 b);
+u64 oite_sub_any(u64 a, u64 b);
+u64 oite_mul_any(u64 a, u64 b);
+u64 oite_div_any(u64 a, u64 b);
+u64 oite_mod_any(u64 a, u64 b);
 
 
 // === Comparison ===
@@ -130,12 +130,12 @@ u64 tscl_mod_any(u64 a, u64 b);
 // Strict equality (===)
 // Parameters: a, b = values to compare
 // Returns: u64 (1 = true, 0 = false)
-u64 tscl_eq_strict(u64 a, u64 b);
+u64 oite_eq_strict(u64 a, u64 b);
 
 // Less than (<)
 // Parameters: a, b = values to compare
 // Returns: u64 (1 = true, 0 = false)
-u64 tscl_lt(u64 a, u64 b);
+u64 oite_lt(u64 a, u64 b);
 
 
 // === Function Calls ===
@@ -143,7 +143,7 @@ u64 tscl_lt(u64 a, u64 b);
 // Call a function
 // Parameters: func = function pointer, args = arguments array, arg_count = count
 // Returns: u64 (return value)
-u64 tscl_call(u64 func, u64 args, u32 arg_count);
+u64 oite_call(u64 func, u64 args, u32 arg_count);
 
 
 // === Conversions ===
@@ -151,7 +151,7 @@ u64 tscl_call(u64 func, u64 args, u32 arg_count);
 // Convert to boolean
 // Parameters: val = value to convert
 // Returns: u64 (boolean encoding)
-u64 tscl_to_boolean(u64 val);
+u64 oite_to_boolean(u64 val);
 
 
 // === Control ===
@@ -159,7 +159,7 @@ u64 tscl_to_boolean(u64 val);
 // Abort execution with message
 // Parameters: msg = message pointer, len = message length
 // This function does not return
-noreturn void tscl_abort(const char* msg, size_t len);
+noreturn void oite_abort(const char* msg, size_t len);
 ```
 
 ### 3.2 Arithmetic Stubs (Specialized)
@@ -168,11 +168,11 @@ For type-specialized operations (when types are known at compile time):
 
 ```c
 // Numeric operations (all parameters and return are IEEE 754 doubles)
-double tscl_add_num(double a, double b);
-double tscl_sub_num(double a, double b);
-double tscl_mul_num(double a, double b);
-double tscl_div_num(double a, double b);
-double tscl_neg_num(double a);
+double oite_add_num(double a, double b);
+double oite_sub_num(double a, double b);
+double oite_mul_num(double a, double b);
+double oite_div_num(double a, double b);
+double oite_neg_num(double a);
 ```
 
 ### 3.3 String Operations
@@ -181,22 +181,22 @@ double tscl_neg_num(double a);
 // Get string length (in bytes)
 // Parameters: str = string pointer
 // Returns: u64 (length)
-u64 tscl_string_len(u64 str);
+u64 oite_string_len(u64 str);
 
 // Get string character at index
 // Parameters: str = string pointer, idx = character index
 // Returns: u64 (character code)
-u64 tscl_string_char_at(u64 str, u64 idx);
+u64 oite_string_char_at(u64 str, u64 idx);
 
 // String concatenation
 // Parameters: a, b = strings
 // Returns: u64 (new string)
-u64 tscl_string_concat(u64 a, u64 b);
+u64 oite_string_concat(u64 a, u64 b);
 
 // String comparison
 // Parameters: a, b = strings
 // Returns: u64 (comparison result)
-u64 tscl_string_compare(u64 a, u64 b);
+u64 oite_string_compare(u64 a, u64 b);
 ```
 
 ## 4. Object Layout
@@ -204,7 +204,7 @@ u64 tscl_string_compare(u64 a, u64 b);
 ### 4.1 Object Header
 
 ```c
-struct TsclObject {
+struct OiteObject {
     // Header (16 bytes on 64-bit)
     uint32_t type_tag;      // Object type identifier
     uint32_t flags;         // Property attributes
@@ -218,7 +218,7 @@ struct TsclObject {
 ### 4.2 Array Layout
 
 ```c
-struct TsclArray {
+struct OiteArray {
     // Header (24 bytes on 64-bit)
     uint32_t type_tag;      // Always 1 for arrays
     uint32_t flags;
@@ -233,7 +233,7 @@ struct TsclArray {
 ### 4.3 String Layout
 
 ```c
-struct TsclString {
+struct OiteString {
     // Header (24 bytes on 64-bit)
     uint32_t type_tag;      // Always 2 for strings
     uint32_t flags;
@@ -250,10 +250,10 @@ struct TsclString {
 
 ```c
 // Native function (extern "C")
-typedef u64 (*TsclNativeFn)(u64 self, u64* args, u32 arg_count);
+typedef u64 (*OiteNativeFn)(u64 self, u64* args, u32 arg_count);
 
 // Closure (captures environment)
-struct TsclClosure {
+struct OiteClosure {
     uint64_t func_ptr;      // Pointer to function code
     uint64_t env_ptr;       // Pointer to captured environment
 };
@@ -280,16 +280,16 @@ Low addresses
 ### 6.1 Error Codes
 
 ```c
-#define TSCL_OK          0
-#define TSCL_ERROR       1
-#define TSCL TypeError   2
-#define TSCL_RANGE_ERROR 3
-#define TSCL_REF_ERROR   4
+#define OITE_OK          0
+#define OITE_ERROR       1
+#define OITE_TYPE_ERROR  2
+#define OITE_RANGE_ERROR 3
+#define OITE_REF_ERROR   4
 ```
 
 ### 6.2 Exception Propagation
 
-Exceptions are propagated using the Rust panic mechanism in the runtime, with `tscl_abort()` called for unhandled exceptions.
+Exceptions are propagated using the Rust panic mechanism in the runtime, with `oite_abort()` called for unhandled exceptions.
 
 ## 7. Memory Layout Guarantees
 
@@ -330,13 +330,13 @@ The following layout is guaranteed stable:
 cargo test abi_compatibility
 
 # Verify ABI version in binary
-./tscl build app.tscl --dist -o app
+./oite build app.ot --dist -o app
 strings app | grep ABI_VERSION
 # Expected: ABI_VERSION=1
 
 # Verify determinism
-./tscl build app.tscl --dist -o app1
-./tscl build app.tscl --dist -o app2
+./oite build app.ot --dist -o app1
+./oite build app.ot --dist -o app2
 diff <(sha256sum app1) <(sha256sum app2)
 # Must be identical
 ```

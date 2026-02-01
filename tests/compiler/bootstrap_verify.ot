@@ -1,7 +1,7 @@
 // ============================================================================
 // Bootstrap Verification Test Suite
 // ============================================================================
-// Comprehensive verification that the Script compiler can compile itself
+// Comprehensive verification that the Oite compiler can compile itself
 // and produce identical output across multiple generations.
 //
 // The "Triple Test" for self-hosting compilers:
@@ -17,14 +17,14 @@ require("../bootstrap/pipeline");
 // ============================================================================
 
 let BOOTSTRAP_MODULES = [
-    "bootstrap/types.tscl",
-    "bootstrap/lexer.tscl",
-    "bootstrap/parser.tscl",
-    "bootstrap/emitter.tscl",
-    "bootstrap/ir.tscl",
-    "bootstrap/ir_builder.tscl",
-    "bootstrap/codegen.tscl",
-    "bootstrap/pipeline.tscl"
+    "bootstrap/types.ot",
+    "bootstrap/lexer.ot",
+    "bootstrap/parser.ot",
+    "bootstrap/emitter.ot",
+    "bootstrap/ir.ot",
+    "bootstrap/ir_builder.ot",
+    "bootstrap/codegen.ot",
+    "bootstrap/pipeline.ot"
 ];
 
 // ============================================================================
@@ -146,7 +146,7 @@ function testBootstrapModulesCompile() {
             console.log("  FAIL: " + modulePath);
             allCompiled = false;
         } else {
-            let baseName = modulePath.replace("../bootstrap/", "").replace(".tscl", "");
+            let baseName = modulePath.replace("../bootstrap/", "").replace(".ot", "");
             console.log("  " + baseName + ": " + bc.length + " bytes");
             totalBytes = totalBytes + bc.length;
         }
@@ -181,7 +181,7 @@ function testModuleHashConsistency() {
             let hash1 = computeHash(bc1);
             let hash2 = computeHash(bc2);
 
-            let baseName = modulePath.replace("../bootstrap/", "").replace(".tscl", "");
+            let baseName = modulePath.replace("../bootstrap/", "").replace(".ot", "");
 
             if (hash1 == hash2) {
                 console.log("  " + baseName + ": " + hash1 + " (MATCH)");
@@ -337,7 +337,7 @@ if (allPassed) {
     console.log("");
     console.log("BOOTSTRAP VERIFICATION: PASS");
     console.log("");
-    console.log("The Script compiler has achieved bootstrap verification!");
+    console.log("The Oite compiler has achieved bootstrap verification!");
     console.log("");
     console.log("Verified properties:");
     console.log("  - Bytecode generation is deterministic");

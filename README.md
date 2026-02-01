@@ -142,17 +142,17 @@ export LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)
 # Build
 cargo build --release
 
-# Run a oite
-./target/release/oite myprogram.tscl
+# Run an Oite program
+./target/release/oite myprogram.ot
 
 # Dump SSA IR (for debugging)
-./target/release/Oite ir myprogram.tscl
+./target/release/oite ir myprogram.ot
 
 # Run with VM (debug mode)
-./target/release/Oite --run-binary output.tscl.bc
+./target/release/oite --run-binary output.otb
 
 # Build to native binary (requires LLVM)
-./target/release/Oite build myprogram.tscl --release -o myprogram
+./target/release/oite build myprogram.ot --release -o myprogram
 
 # Run the compiled binary
 ./myprogram
@@ -301,7 +301,7 @@ try {
 
 Oite uses a Rust-inspired ownership system:
 
-```javaOite
+```javascript
 let a = { value: 42 };
 let b = a; // 'a' is MOVED to 'b'
 // console.log(a.value);  // ERROR: use after move!
@@ -399,7 +399,7 @@ Oite/
 ├── README.md                     # This file
 ├── PROGRESS.md                   # Development status
 ├── compiler/                     # Self-hosted compiler (modular, target)
-│   ├── main.tscl                 # CLI entry point
+│   ├── main.ot                 # CLI entry point
 │   ├── lexer/                    # Tokenization module
 │   ├── parser/                   # AST generation module
 │   ├── ast/                      # AST type definitions
@@ -407,7 +407,7 @@ Oite/
 │   ├── codegen/                  # Code generation module
 │   └── stdlib/                   # Runtime declarations
 ├── bootstrap/                    # Bootstrap compiler (working reference)
-│   └── *.tscl                    # 11 files (~5,000 lines)
+│   └── *.ot                    # 11 files (~5,000 lines)
 ├── src/
 │   ├── main.rs                   # Entry point
 │   ├── lib.rs                    # Library target
@@ -459,8 +459,8 @@ Oite has three compiler implementations working toward full self-hosting:
 | Compiler      | Location           | Status        | Purpose                            |
 | ------------- | ------------------ | ------------- | ---------------------------------- |
 | **Rust**      | `src/compiler/`    | ✅ Production | Native binaries via LLVM/Cranelift |
-| **Bootstrap** | `bootstrap/*.tscl` | ✅ Reference  | Self-compiling bytecode compiler   |
-| **Modular**   | `compiler/*.tscl`  | ✅ Complete   | Full compiler with LLVM IR output  |
+| **Bootstrap** | `bootstrap/*.ot` | ✅ Reference  | Self-compiling bytecode compiler   |
+| **Modular**   | `compiler/*.ot`  | ✅ Complete   | Full compiler with LLVM IR output  |
 
 ### Self-Hosting Status
 
@@ -468,10 +468,10 @@ The self-hosted compiler is **complete** and can generate native binaries:
 
 ```bash
 # Generate LLVM IR using self-hosted compiler (runs on Rust VM)
-./target/release/Oite compiler/main.tscl llvm myapp.tscl
+./target/release/oite compiler/main.ot llvm myapp.ot
 
 # Compile to native binary
-clang myapp.tscl.ll -o myapp
+clang myapp.ot.ll -o myapp
 ./myapp
 ```
 
@@ -483,8 +483,8 @@ clang myapp.tscl.ll -o myapp
 **Roadmap to full independence:**
 
 ```
-Current:    Rust VM runs compiler/*.tscl → LLVM IR → clang → Native
-Future:     Prebuilt Oitec binary → LLVM IR → clang → Native (no Rust!)
+Current:    Rust VM runs compiler/*.ot → LLVM IR → clang → Native
+Future:     Prebuilt oitec binary → LLVM IR → clang → Native (no Rust!)
 ```
 
 See [docs/docs/self-hosting.md](docs/docs/self-hosting.md) for detailed roadmap.

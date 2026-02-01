@@ -1,6 +1,6 @@
 // ============================================================================
 // Bootstrap Compiler CLI Entry Point
-// Usage: tscl bootstrap/main.tscl <input.tscl> [output.tscb]
+// Usage: oite bootstrap/main.ot <input.ot> [output.otb]
 // ============================================================================
 
 require ./types;
@@ -16,18 +16,18 @@ require ./pipeline;
 // ============================================================================
 
 function printUsage(): void {
-    console.log("tscl Bootstrap Compiler v0.1.0");
+    console.log("Oite Bootstrap Compiler v0.1.0");
     console.log("");
     console.log("Usage:");
-    console.log("  tscl bootstrap/main.tscl <input.tscl> [output.tscb]");
+    console.log("  oite bootstrap/main.ot <input.ot> [output.otb]");
     console.log("");
     console.log("Arguments:");
-    console.log("  input.tscl    Source file to compile");
-    console.log("  output.tscb   Output bytecode file (default: input with .tscb extension)");
+    console.log("  input.ot    Source file to compile");
+    console.log("  output.otb   Output bytecode file (default: input with .otb extension)");
     console.log("");
     console.log("Examples:");
-    console.log("  tscl bootstrap/main.tscl myprogram.tscl");
-    console.log("  tscl bootstrap/main.tscl myprogram.tscl output.tscb");
+    console.log("  oite bootstrap/main.ot myprogram.ot");
+    console.log("  oite bootstrap/main.ot myprogram.ot output.otb");
     console.log("");
     console.log("Options:");
     console.log("  --help, -h    Show this help message");
@@ -38,16 +38,16 @@ function printUsage(): void {
 }
 
 function printVersion(): void {
-    console.log("tscl Bootstrap Compiler v0.1.0");
+    console.log("Oite Bootstrap Compiler v0.1.0");
     console.log("Pipeline: lexer -> parser -> ir -> codegen");
 }
 
 function getOutputPath(inputPath: string): string {
-    // Replace .tscl extension with .tscb, or append .tscb
-    if (inputPath.endsWith(".tscl")) {
-        return inputPath.slice(0, inputPath.length - 5) + ".tscb";
+    // Replace .ot extension with .otb, or append .otb
+    if (inputPath.endsWith(".ot")) {
+        return inputPath.slice(0, inputPath.length - 5) + ".otb";
     }
-    return inputPath + ".tscb";
+    return inputPath + ".otb";
 }
 
 // ============================================================================

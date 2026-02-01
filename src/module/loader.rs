@@ -536,7 +536,7 @@ mod tests {
         let temp_path = temp_dir.path();
 
         std::fs::write(
-            temp_path.join("math.tscl"),
+            temp_path.join("math.ot"),
             r#"
 export function add(a: number, b: number): number {
     return a + b;
@@ -552,7 +552,7 @@ export default function multiply(a: number, b: number): number {
         .unwrap();
 
         std::fs::write(
-            temp_path.join("main.tscl"),
+            temp_path.join("main.ot"),
             r#"
 import { add, PI } from './math';
 import multiply from './math';
@@ -563,7 +563,7 @@ export const output = result;
         )
         .unwrap();
 
-        let result = loader.load(&temp_path.join("main.tscl")).await;
+        let result = loader.load(&temp_path.join("main.ot")).await;
         assert!(result.is_ok(), "Failed to load module: {:?}", result.err());
 
         let module = result.unwrap();

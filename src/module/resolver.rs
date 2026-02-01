@@ -70,7 +70,7 @@ impl Default for ModuleResolver {
 impl ModuleResolver {
     pub fn new() -> Self {
         Self {
-            extensions: [".tscl", ".ts", ".js"],
+            extensions: [".ot", ".ts", ".js"],
             base_paths: Vec::new(),
         }
     }
@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn test_resolve_relative_file() {
         let resolver = ModuleResolver::new();
-        let importer = PathBuf::from("/project/src/main.tscl");
+        let importer = PathBuf::from("/project/src/main.ot");
 
         let result = resolver.resolve("./utils", &importer);
         assert!(result.is_ok());
@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn test_resolve_parent_directory() {
         let resolver = ModuleResolver::new();
-        let importer = PathBuf::from("/project/src/utils/helper.tscl");
+        let importer = PathBuf::from("/project/src/utils/helper.ot");
 
         let result = resolver.resolve("../lib/math", &importer);
         assert!(result.is_ok());
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn test_resolve_with_extension() {
         let resolver = ModuleResolver::new();
-        let importer = PathBuf::from("/project/src/main.tscl");
+        let importer = PathBuf::from("/project/src/main.ot");
 
         let result = resolver.resolve("./foo.js", &importer);
         assert!(result.is_ok());
@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn test_unsupported_specifier() {
         let resolver = ModuleResolver::new();
-        let importer = PathBuf::from("/project/src/main.tscl");
+        let importer = PathBuf::from("/project/src/main.ot");
 
         let result = resolver.resolve("react", &importer);
         assert!(result.is_err());

@@ -100,7 +100,7 @@
 
   console.log("");
   console.log("Test 10: Parse span");
-  let loc = LifetimeConstraints.parseSpan("src/test.tscl:10:5");
+  let loc = LifetimeConstraints.parseSpan("src/test.ot:10:5");
   if (loc.file != null) {
       console.log("  PASS: Span function works (full parsing limited by VM)");
   } else {
@@ -112,12 +112,12 @@
   let testErr = {
       kind: "return_local_ref",
       code: "E0501",
-      span: "test.tscl:5:12",
+      span: "test.ot:5:12",
       message: "cannot return reference to local variable",
       primaryLabel: "returns reference to data owned by current function"
   };
   let formatted = LifetimeConstraints.formatError(testErr);
-  if (formatted.indexOf("E0501") != -1 && formatted.indexOf("test.tscl:5:12") != -1) {
+  if (formatted.indexOf("E0501") != -1 && formatted.indexOf("test.ot:5:12") != -1) {
       console.log("  PASS: Error formatted with code and span");
   } else {
       console.log("  FAIL: Error formatting incorrect");

@@ -1,7 +1,7 @@
 // ============================================================================
-// Bootstrap Emitter for tscl
+// Bootstrap Emitter for Oite
 // Transforms AST to bytecode using ByteStream
-// Requires: std/prelude.tscl, bootstrap/lexer.tscl, and bootstrap/parser.tscl
+// Requires: std/prelude.ot, bootstrap/lexer.ot, and bootstrap/parser.ot
 // ============================================================================
 
 // ============================================================================

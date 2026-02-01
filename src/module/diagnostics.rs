@@ -70,7 +70,7 @@ impl ModuleError {
             kind: ModuleErrorKind::NotFound { specifier, tried_paths },
             source_location: None,
             dependency_chain: Vec::new(),
-            suggestion: Some("Check the file path and ensure the file exists with a supported extension (.tscl, .ts, .js)".to_string()),
+            suggestion: Some("Check the file path and ensure the file exists with a supported extension (.ot, .ts, .js)".to_string()),
         }
     }
 

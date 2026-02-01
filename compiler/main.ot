@@ -62,16 +62,16 @@ function parseArgs(args: string[]): CliArgs {
 }
 
 function printUsage() {
-    console.log("tscl - TypeScript Compiler");
+    console.log("oitec - Oite Compiler");
     console.log("");
-    console.log("Usage: tscl <command> [options] <input>");
+    console.log("Usage: oitec <command> [options] <input>");
     console.log("");
     console.log("Commands:");
     console.log("  run <file>      Run the file");
     console.log("  build <file>    Compile to bytecode");
     console.log("  llvm <file>     Generate LLVM IR (.ll file)");
     console.log("  check <file>    Type check and borrow check");
-    console.log("  ir <file>       Output tscl IR");
+    console.log("  ir <file>       Output Oite IR");
     console.log("  ast <file>      Output AST");
     console.log("");
     console.log("Options:");
@@ -123,7 +123,7 @@ function compileSource(source: string, verbose: boolean): any {
     return irModule;
 }
 
-// lowerProgramToIr is now defined in ./ir/builder.tscl
+// lowerProgramToIr is now defined in ./ir/builder.ot
 // It provides complete AST → IR lowering for all statement and expression types
 
 // ============================================================================
@@ -234,9 +234,9 @@ function main(args: string[]) {
 
         let outputFile = parsed.outputFile;
         if (outputFile == "") {
-            // Replace .tscl extension with .ll, or append .ll
-            if (parsed.inputFile.indexOf(".tscl") > 0) {
-                outputFile = parsed.inputFile.substring(0, parsed.inputFile.indexOf(".tscl")) + ".ll";
+            // Replace .ot extension with .ll, or append .ll
+            if (parsed.inputFile.indexOf(".ot") > 0) {
+                outputFile = parsed.inputFile.substring(0, parsed.inputFile.indexOf(".ot")) + ".ll";
             } else {
                 outputFile = parsed.inputFile + ".ll";
             }

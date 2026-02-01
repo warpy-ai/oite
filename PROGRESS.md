@@ -1,4 +1,4 @@
-# Script: Development Progress
+# Oite: Development Progress
 
 High-performance systems language with **TypeScript syntax** compiling to **native code** via **Cranelift JIT** and **LLVM AOT**.
 
@@ -22,14 +22,14 @@ High-performance systems language with **TypeScript syntax** compiling to **nati
 
 ## Architecture
 
-**Script Core is like C without libc** — minimal, self-contained, runs without dependencies.
+**Oite Core is like C without libc** — minimal, self-contained, runs without dependencies.
 
 ```
 ┌───────────────────────────────────┐  ┌──────────────────────────────────┐
-│         SCRIPT CORE               │  │            ROLLS                 │
+│         OITE CORE               │  │            ROLLS                 │
 │  ✅ Always available              │  │  ⚡ Optional system libraries    │
 │                                   │  │                                  │
-│  • Compiler (scriptc)             │  │  • @rolls/http, @rolls/tls       │
+│  • Compiler (oitec)             │  │  • @rolls/http, @rolls/tls       │
 │  • Runtime (NaN-boxing, heap)     │  │  • @rolls/fs, @rolls/db          │
 │  • Primitives + console.log       │  │  • @rolls/async, @rolls/crypto   │
 └───────────────────────────────────┘  └──────────────────────────────────┘
@@ -57,10 +57,10 @@ tscl source → Compiler → SSA IR → Native Backend → CPU
 
 | Mode        | Command                                  | Use Case                        |
 | ----------- | ---------------------------------------- | ------------------------------- |
-| JIT         | `script jit app.tscl`                    | Fast development, benchmarking  |
-| AOT Release | `script build app.tscl --release -o app` | Production (ThinLTO)            |
-| AOT Dist    | `script build app.tscl --dist -o app`    | Maximum optimization (Full LTO) |
-| VM          | `script run app.tscl`                    | Debugging, REPL, compatibility  |
+| JIT         | `oite jit app.ot`                    | Fast development, benchmarking  |
+| AOT Release | `oite build app.ot --release -o app` | Production (ThinLTO)            |
+| AOT Dist    | `oite build app.ot --dist -o app`    | Maximum optimization (Full LTO) |
+| VM          | `oite run app.ot`                    | Debugging, REPL, compatibility  |
 
 ---
 
@@ -93,7 +93,7 @@ Register-based SSA IR with type tracking and optimizations.
 
 **Optimization Passes:** Dead code elimination, constant folding, common subexpression elimination, copy propagation, branch simplification.
 
-**CLI:** `script ir app.tscl` - Inspect IR before/after optimization
+**CLI:** `oite ir app.ot` - Inspect IR before/after optimization
 
 ---
 
@@ -104,7 +104,7 @@ Register-based SSA IR with type tracking and optimizations.
 Fast compilation for development. Each `IrOp` becomes Cranelift instructions or runtime stub calls.
 
 ```bash
-script jit app.tscl
+oite jit app.ot
 ```
 
 #### 2B: Multi-Function JIT + Tiered Compilation
@@ -124,8 +124,8 @@ brew install llvm@18 zstd
 export LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)
 
 # Build
-script build app.tscl --release -o app  # ThinLTO
-script build app.tscl --dist -o app     # Full LTO
+oite build app.ot --release -o app  # ThinLTO
+oite build app.ot --dist -o app     # Full LTO
 ```
 
 **Key Files:** `src/backend/llvm/codegen.rs`, `src/backend/llvm/optimizer.rs`, `src/backend/llvm/linker.rs`
@@ -160,7 +160,7 @@ Full TypeScript-style language with ownership semantics.
 #### Modules
 
 - ES module `import`/`export` syntax
-- File-based resolution (`.tscl`, `.ts`, `.js`)
+- File-based resolution (`.ot`, `.ts`, `.js`)
 - Module caching with SHA256 verification
 
 #### Async/Await
@@ -171,7 +171,7 @@ Full TypeScript-style language with ownership semantics.
 
 #### Minimal Standard Library
 
-Script core includes only essential primitives:
+Oite core includes only essential primitives:
 
 | Module       | Methods                                                      |
 | ------------ | ------------------------------------------------------------ |
@@ -187,15 +187,15 @@ Script core includes only essential primitives:
 
 ### Self-Hosting Compiler ✅
 
-Fully self-hosted compiler (`scriptc`) written in Script with TypeScript support.
+Fully self-hosted compiler (`oitec`) written in Oite with TypeScript support.
 
 #### Current State
 
 | Compiler          | Location           | Status            | Output                   |
 | ----------------- | ------------------ | ----------------- | ------------------------ |
 | **Rust Compiler** | `src/compiler/`    | ✅ Production     | Native binaries          |
-| **Bootstrap**     | `bootstrap/*.tscl` | ✅ Self-Compiling | Bytecode                 |
-| **Modular**       | `compiler/*.tscl`  | ✅ Working        | Bytecode (VM executable) |
+| **Bootstrap**     | `bootstrap/*.ot` | ✅ Self-Compiling | Bytecode                 |
+| **Modular**       | `compiler/*.ot`  | ✅ Working        | Bytecode (VM executable) |
 
 #### Self-Compilation Verified ✅
 
@@ -203,14 +203,14 @@ The bootstrap compiler can now compile itself! All 8 modules successfully self-c
 
 | Module          | Compiled Size | Purpose                   |
 | --------------- | ------------- | ------------------------- |
-| types.tscl      | 37 bytes      | Type definitions          |
-| lexer.tscl      | 1,325 bytes   | Tokenization              |
-| parser.tscl     | 7,947 bytes   | AST generation            |
-| emitter.tscl    | 4,547 bytes   | Bytecode serialization    |
-| ir.tscl         | 2,766 bytes   | IR types                  |
-| ir_builder.tscl | 1,363 bytes   | AST → IR                  |
-| codegen.tscl    | 1,580 bytes   | IR → Bytecode             |
-| pipeline.tscl   | 969 bytes     | Compilation orchestration |
+| types.ot      | 37 bytes      | Type definitions          |
+| lexer.ot      | 1,325 bytes   | Tokenization              |
+| parser.ot     | 7,947 bytes   | AST generation            |
+| emitter.ot    | 4,547 bytes   | Bytecode serialization    |
+| ir.ot         | 2,766 bytes   | IR types                  |
+| ir_builder.ot | 1,363 bytes   | AST → IR                  |
+| codegen.ot    | 1,580 bytes   | IR → Bytecode             |
+| pipeline.ot   | 969 bytes     | Compilation orchestration |
 
 **Total:** ~20KB bytecode from ~5,000 lines of self-hosted compiler code.
 
@@ -241,14 +241,14 @@ See `docs/SELF_HOSTING.md` for detailed plan.
 **Foundation** ✅
 
 ```
-Source → bootstrap/*.tscl → Bytecode → Rust VM
+Source → bootstrap/*.ot → Bytecode → Rust VM
 Source → src/compiler/ (Rust) → Native Binary ← Production builds
 ```
 
 **Feature Parity** ✅
 
 ```
-Source → compiler/*.tscl → Bytecode → Rust VM
+Source → compiler/*.ot → Bytecode → Rust VM
          + Type inference, optimizations, borrow checking
          + All CLI commands working: ast, ir, check, build, run
 ```
@@ -256,7 +256,7 @@ Source → compiler/*.tscl → Bytecode → Rust VM
 **Native Code Generation** ✅
 
 ```
-Source → compiler/*.tscl → LLVM IR (.ll) → clang → Native Binary
+Source → compiler/*.ot → LLVM IR (.ll) → clang → Native Binary
          No Rust compiler needed for builds!
 ```
 
@@ -273,8 +273,8 @@ The self-hosted compiler now generates LLVM IR that compiles to native binaries:
 **Build Pipeline:**
 
 ```bash
-./target/release/script compiler/main.tscl llvm input.tscl  # → input.tscl.ll
-clang input.tscl.ll -c -o input.o                          # → input.o
+./target/release/oite compiler/main.ot llvm input.ot  # → input.ot.ll
+clang input.ot.ll -c -o input.o                          # → input.o
 clang input.o -o output                                     # → native binary
 ```
 
@@ -290,7 +290,7 @@ clang input.o -o output                                     # → native binary
 **Bootstrap Verification** ✅
 
 ```
-tscl₀ (Rust) ──► tscl₁ (native scriptc)
+tscl₀ (Rust) ──► tscl₁ (native oitec)
                       │
                       └──► tscl₂ (self-compiled)
                                  │
@@ -304,7 +304,7 @@ tscl₀ (Rust) ──► tscl₁ (native scriptc)
 - hash(gen₀) == hash(gen₁) == hash(gen₂) verified
 
 **Verification Tools:**
-- `tests/compiler/bootstrap_verify.tscl` - Comprehensive verification test suite
+- `tests/compiler/bootstrap_verify.ot` - Comprehensive verification test suite
 - `scripts/bootstrap_verify.sh` - Shell script for end-to-end verification
 
 #### Bootstrap Compiler (Working - `bootstrap/`)
@@ -313,17 +313,17 @@ Reference implementation, flat file structure (~5,000 lines):
 
 ```
 bootstrap/
-├── main.tscl           # CLI entry point (273 lines)
-├── types.tscl          # Type definitions (357 lines)
-├── lexer.tscl          # Tokenization (335 lines)
-├── parser.tscl         # AST generation (1,432 lines)
-├── ir.tscl             # IR types (619 lines)
-├── ir_builder.tscl     # AST → IR (270 lines)
-├── codegen.tscl        # IR → Bytecode (315 lines)
-├── emitter.tscl        # Bytecode serialization (846 lines)
-├── pipeline.tscl       # Compilation orchestration (228 lines)
-├── stdlib.tscl         # Runtime declarations (248 lines)
-└── utils.tscl          # Helpers (22 lines)
+├── main.ot           # CLI entry point (273 lines)
+├── types.ot          # Type definitions (357 lines)
+├── lexer.ot          # Tokenization (335 lines)
+├── parser.ot         # AST generation (1,432 lines)
+├── ir.ot             # IR types (619 lines)
+├── ir_builder.ot     # AST → IR (270 lines)
+├── codegen.ot        # IR → Bytecode (315 lines)
+├── emitter.ot        # Bytecode serialization (846 lines)
+├── pipeline.ot       # Compilation orchestration (228 lines)
+├── stdlib.ot         # Runtime declarations (248 lines)
+└── utils.ot          # Helpers (22 lines)
 ```
 
 #### Modular Compiler (Target - `compiler/`)
@@ -385,35 +385,35 @@ Production compiler in modular structure (~3,500 lines, growing).
 
 ```
 compiler/
-├── main.tscl           # CLI entry point
+├── main.ot           # CLI entry point
 ├── lexer/              # Tokenization module
-│   ├── mod.tscl
-│   ├── token.tscl
-│   └── error.tscl
+│   ├── mod.ot
+│   ├── token.ot
+│   └── error.ot
 ├── parser/             # AST generation module
-│   ├── mod.tscl
-│   ├── expr.tscl
-│   ├── stmt.tscl
-│   └── error.tscl
+│   ├── mod.ot
+│   ├── expr.ot
+│   ├── stmt.ot
+│   └── error.ot
 ├── ast/                # AST type definitions
-│   ├── mod.tscl
-│   └── types.tscl
+│   ├── mod.ot
+│   └── types.ot
 ├── ir/                 # IR system
-│   ├── mod.tscl
-│   └── builder.tscl
+│   ├── mod.ot
+│   └── builder.ot
 ├── codegen/            # Code generation
-│   └── mod.tscl
+│   └── mod.ot
 ├── passes/             # Compiler passes (working)
-│   ├── typecheck.tscl
-│   ├── opt.tscl
-│   └── borrow_ck.tscl
+│   ├── typecheck.ot
+│   ├── opt.ot
+│   └── borrow_ck.ot
 ├── backend/            # Native codegen (LLVM IR)
 │   └── llvm/
-│       ├── mod.tscl    # LLVM IR emitter (~1,350 lines)
-│       ├── runtime.tscl # Runtime function stubs
-│       └── types.tscl  # Type mappings
+│       ├── mod.ot    # LLVM IR emitter (~1,350 lines)
+│       ├── runtime.ot # Runtime function stubs
+│       └── types.ot  # Type mappings
 └── stdlib/
-    └── builtins.tscl
+    └── builtins.ot
 ```
 
 #### CLI Flags
@@ -433,7 +433,7 @@ Library functionality has been extracted to future repositories:
 
 ### Rolls (System Libraries)
 
-Official libraries built on Script core:
+Official libraries built on Oite core:
 
 | Roll               | Purpose                          |
 | ------------------ | -------------------------------- |
@@ -514,13 +514,13 @@ cargo build --release
 
 ```bash
 # JIT execution
-./target/release/script jit app.tscl
+./target/release/oite jit app.ot
 
 # VM execution
-./target/release/script run app.tscl
+./target/release/oite run app.ot
 
 # Build native binary
-./target/release/script build app.tscl --release -o app
+./target/release/oite build app.ot --release -o app
 
 # Run tests
 cargo test
@@ -543,10 +543,10 @@ cargo test
 ## Project Structure
 
 ```
-script/
+oite/
 ├── Cargo.toml                    # Minimal dependencies
-├── compiler/                     # Self-hosted compiler (modular .tscl)
-├── bootstrap/                    # Bootstrap compiler (flat .tscl files)
+├── compiler/                     # Self-hosted compiler (modular .ot)
+├── bootstrap/                    # Bootstrap compiler (flat .ot files)
 ├── src/
 │   ├── compiler/                 # Rust: Parser → Bytecode
 │   ├── ir/                       # SSA IR system

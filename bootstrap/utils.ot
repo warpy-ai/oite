@@ -1,4 +1,4 @@
-// debugAST.tscl - Debug utility for printing AST structure
+// debugAST.ot - Debug utility for printing AST structure
 function debugAST(node: Node): void {
     console.log("Node Type:", node.type);
     if (node.type == "BinaryExpression") {

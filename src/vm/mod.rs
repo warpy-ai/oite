@@ -3738,7 +3738,7 @@ impl VM {
                         };
                     }
 
-                    let extensions = ["tscl", "ts", "js"];
+                    let extensions = ["ot", "ts", "js"];
                     if resolved.as_os_str().is_empty() || specifier_str.ends_with('/') {
                         for ext in &extensions {
                             let index_path = resolved.join("index").with_extension(ext);

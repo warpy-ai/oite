@@ -1,4 +1,4 @@
-// math.tscl - A simple math module
+// math.ot - A simple math module
 export function add(a: number, b: number): number {
     return a + b;
 }

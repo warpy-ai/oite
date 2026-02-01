@@ -1,13 +1,13 @@
 ---
 sidebar_position: 9
 title: Self-Hosting Compiler
-description: Script's self-hosting compiler is complete. The Script compiler is written entirely in Script itself and generates native binaries via LLVM IR.
-keywords: [self-hosting, bootstrap, compiler, scriptc, self-compiling, llvm]
+description: Oite's self-hosting compiler is complete. The Oite compiler is written entirely in Oite itself and generates native binaries via LLVM IR.
+keywords: [self-hosting, bootstrap, compiler, oitec, self-compiling, llvm]
 ---
 
-# Script Self-Hosting Compiler
+# Oite Self-Hosting Compiler
 
-The Script compiler (`scriptc`) is now **fully self-hosting** — written entirely in Script and capable of compiling itself to native binaries.
+The Oite compiler (`oitec`) is now **fully self-hosting** — written entirely in Oite and capable of compiling itself to native binaries.
 
 ---
 
@@ -15,7 +15,7 @@ The Script compiler (`scriptc`) is now **fully self-hosting** — written entire
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Source Code (.tscl)                      │
+│                    Source Code (.ot)                      │
 └───────────────────────────┬─────────────────────────────────┘
                             │
             ┌───────────────┼───────────────┐
@@ -41,8 +41,8 @@ The Script compiler (`scriptc`) is now **fully self-hosting** — written entire
 | Component          | Location                   | Status                                                  |
 | ------------------ | -------------------------- | ------------------------------------------------------- |
 | Rust Compiler      | `src/compiler/`            | Production: parse → bytecode → IR → native           |
-| Bootstrap Compiler | `bootstrap/*.tscl`         | Reference: parse → bytecode                          |
-| Modular Compiler   | `compiler/*.tscl`          | **Complete**: parse → IR → bytecode/LLVM IR → native |
+| Bootstrap Compiler | `bootstrap/*.ot`         | Reference: parse → bytecode                          |
+| Modular Compiler   | `compiler/*.ot`          | **Complete**: parse → IR → bytecode/LLVM IR → native |
 | VM                 | `src/vm/`                  | Full bytecode execution                              |
 | JIT                | `src/backend/cranelift.rs` | Cranelift codegen                                    |
 | AOT                | `src/backend/llvm/`        | LLVM with LTO                                        |
@@ -51,26 +51,26 @@ The Script compiler (`scriptc`) is now **fully self-hosting** — written entire
 
 ## Foundation Complete
 
-**Goal**: Consolidate and stabilize the .tscl compiler infrastructure.
+**Goal**: Consolidate and stabilize the .ot compiler infrastructure.
 
 ### Architecture
 
 ```
-Source (.tscl) ──► bootstrap/*.tscl ──► Bytecode ──► Rust VM
+Source (.ot) ──► bootstrap/*.ot ──► Bytecode ──► Rust VM
                         │
                         └──► (reference implementation)
 
-Source (.tscl) ──► src/compiler/ (Rust) ──► Native Binary
+Source (.ot) ──► src/compiler/ (Rust) ──► Native Binary
                         │
                         └──► (production builds)
 ```
 
 ### Tasks (All Complete)
 
-- [x] Working lexer in `bootstrap/lexer.tscl`
-- [x] Working parser in `bootstrap/parser.tscl`
-- [x] IR generation in `bootstrap/ir.tscl`, `bootstrap/ir_builder.tscl`
-- [x] Bytecode emission in `bootstrap/codegen.tscl`, `bootstrap/emitter.tscl`
+- [x] Working lexer in `bootstrap/lexer.ot`
+- [x] Working parser in `bootstrap/parser.ot`
+- [x] IR generation in `bootstrap/ir.ot`, `bootstrap/ir_builder.ot`
+- [x] Bytecode emission in `bootstrap/codegen.ot`, `bootstrap/emitter.ot`
 - [x] Port `bootstrap/` features to `compiler/` (modular structure)
 - [x] Ensure `compiler/` can parse the same syntax as `bootstrap/`
 - [x] Add all expression/statement handling in `compiler/parser/`
@@ -79,63 +79,63 @@ Source (.tscl) ──► src/compiler/ (Rust) ──► Native Binary
 
 ```
 bootstrap/                    # Reference implementation (~5,400 lines)
-├── main.tscl                # CLI (273 lines)
-├── types.tscl               # Type definitions (357 lines)
-├── lexer.tscl               # Tokenization (335 lines)
-├── parser.tscl              # AST generation (1,432 lines)
-├── ir.tscl                  # IR types (619 lines)
-├── ir_builder.tscl          # AST → IR (270 lines)
-├── codegen.tscl             # IR → Bytecode (315 lines)
-├── emitter.tscl             # Binary serialization (846 lines)
-├── pipeline.tscl            # Orchestration (228 lines)
-├── stdlib.tscl              # Runtime decls (248 lines)
-└── utils.tscl               # Helpers (22 lines)
+├── main.ot                # CLI (273 lines)
+├── types.ot               # Type definitions (357 lines)
+├── lexer.ot               # Tokenization (335 lines)
+├── parser.ot              # AST generation (1,432 lines)
+├── ir.ot                  # IR types (619 lines)
+├── ir_builder.ot          # AST → IR (270 lines)
+├── codegen.ot             # IR → Bytecode (315 lines)
+├── emitter.ot             # Binary serialization (846 lines)
+├── pipeline.ot            # Orchestration (228 lines)
+├── stdlib.ot              # Runtime decls (248 lines)
+└── utils.ot               # Helpers (22 lines)
 
 compiler/                     # Production compiler (~10,500 lines)
-├── main.tscl                # CLI entry (344 lines)
+├── main.ot                # CLI entry (344 lines)
 ├── lexer/
-│   ├── mod.tscl             # Tokenization
-│   ├── token.tscl           # Token types
-│   └── error.tscl           # Lexer errors
+│   ├── mod.ot             # Tokenization
+│   ├── token.ot           # Token types
+│   └── error.ot           # Lexer errors
 ├── parser/
-│   ├── mod.tscl             # Parser orchestration
-│   ├── expr.tscl            # Expressions
-│   ├── stmt.tscl            # Statements
-│   └── error.tscl           # Parse errors
+│   ├── mod.ot             # Parser orchestration
+│   ├── expr.ot            # Expressions
+│   ├── stmt.ot            # Statements
+│   └── error.ot           # Parse errors
 ├── ast/
-│   ├── mod.tscl             # AST definitions
-│   └── types.tscl           # Type annotations
+│   ├── mod.ot             # AST definitions
+│   └── types.ot           # Type annotations
 ├── ir/
-│   ├── mod.tscl             # IR types
-│   └── builder.tscl         # AST → IR (1,500+ lines)
+│   ├── mod.ot             # IR types
+│   └── builder.ot         # AST → IR (1,500+ lines)
 ├── codegen/
-│   ├── mod.tscl             # Codegen orchestration
-│   └── emitter.tscl         # IR → Bytecode
+│   ├── mod.ot             # Codegen orchestration
+│   └── emitter.ot         # IR → Bytecode
 ├── passes/
-│   ├── mod.tscl             # Pass orchestration
-│   ├── typecheck.tscl       # Type checking
-│   ├── opt.tscl             # Optimization passes
-│   └── borrow_ck.tscl       # Borrow checking
+│   ├── mod.ot             # Pass orchestration
+│   ├── typecheck.ot       # Type checking
+│   ├── opt.ot             # Optimization passes
+│   └── borrow_ck.ot       # Borrow checking
 ├── backend/
 │   └── llvm/
-│       ├── mod.tscl         # LLVM IR emitter (1,348 lines)
-│       ├── runtime.tscl     # Runtime stubs
-│       └── types.tscl       # Type mappings
+│       ├── mod.ot         # LLVM IR emitter (1,348 lines)
+│       ├── runtime.ot     # Runtime stubs
+│       └── types.ot       # Type mappings
 ├── stdlib/
-│   └── builtins.tscl        # Built-in declarations
-└── pipeline.tscl            # Compilation orchestration
+│   └── builtins.ot        # Built-in declarations
+└── pipeline.ot            # Compilation orchestration
 ```
 
 ---
 
 ## Feature Parity Complete
 
-**Goal**: Make `compiler/*.tscl` feature-complete with `bootstrap/` and add optimization passes.
+**Goal**: Make `compiler/*.ot` feature-complete with `bootstrap/` and add optimization passes.
 
 ### Architecture
 
 ```
-Source (.tscl) ──► compiler/*.tscl ──► Bytecode ──► Rust VM
+Source (.ot) ──► compiler/*.ot ──► Bytecode ──► Rust VM
                         │
                         ├──► IR Verification
                         ├──► Type Inference  [done]
@@ -145,36 +145,36 @@ Source (.tscl) ──► compiler/*.tscl ──► Bytecode ──► Rust VM
 ### Tasks (All Complete)
 
 - [x] Complete parser in `compiler/parser/` to handle all syntax
-- [x] Add type inference pass (`compiler/passes/typecheck.tscl`)
-- [x] Add optimization passes (`compiler/passes/opt.tscl`)
+- [x] Add type inference pass (`compiler/passes/typecheck.ot`)
+- [x] Add optimization passes (`compiler/passes/opt.ot`)
   - [x] Dead code elimination
   - [x] Constant folding
   - [x] Copy propagation
-- [x] Add borrow checker (`compiler/passes/borrow_ck.tscl`)
+- [x] Add borrow checker (`compiler/passes/borrow_ck.ot`)
 - [x] Improve IR verification
 - [x] Match bytecode output with `bootstrap/`
 
 ### CLI Commands (All Working)
 
 ```bash
-script ast <file>               # Output JSON AST
-script ir <file>                # Output SSA IR
-script check <file>             # Type + borrow check
-script build <file>             # Compile to bytecode
-script run <file>               # Generate bytecode for VM
-script llvm <file>              # Generate LLVM IR (.ll)
+oite ast <file>               # Output JSON AST
+oite ir <file>                # Output SSA IR
+oite check <file>             # Type + borrow check
+oite build <file>             # Compile to bytecode
+oite run <file>               # Generate bytecode for VM
+oite llvm <file>              # Generate LLVM IR (.ll)
 ```
 
 ---
 
 ## Native Code Generation Complete
 
-**Goal**: Add native code generation to `compiler/*.tscl`, making it a full `scriptc`.
+**Goal**: Add native code generation to `compiler/*.ot`, making it a full `oitec`.
 
 ### Architecture (Implemented)
 
 ```
-Source (.tscl) ──► compiler/*.tscl (scriptc) ──┬──► Bytecode ──► VM
+Source (.ot) ──► compiler/*.ot (oitec) ──┬──► Bytecode ──► VM
                                                │
                                                └──► LLVM IR ──► clang ──► Native
 ```
@@ -192,14 +192,14 @@ We implemented Option C — generating LLVM IR text and using `clang` to compile
 compiler/
 ├── backend/
 │   └── llvm/
-│       ├── mod.tscl         # LLVM IR emitter (1,348 lines)
-│       ├── runtime.tscl     # Inlined runtime functions
-│       └── types.tscl       # Type mappings
+│       ├── mod.ot         # LLVM IR emitter (1,348 lines)
+│       ├── runtime.ot     # Inlined runtime functions
+│       └── types.ot       # Type mappings
 ```
 
 ### Tasks (All Complete)
 
-- [x] Design backend interface (`compiler/backend/llvm/mod.tscl`)
+- [x] Design backend interface (`compiler/backend/llvm/mod.ot`)
 - [x] Implement NaN-boxing for all value types
 - [x] Implement all IR operations → LLVM IR
 - [x] Implement string constants and escaping
@@ -212,10 +212,10 @@ compiler/
 
 ```bash
 # Generate LLVM IR
-./target/release/script compiler/main.tscl llvm input.tscl
+./target/release/oite compiler/main.ot llvm input.ot
 
 # Compile to native
-clang input.tscl.ll -c -o input.o
+clang input.ot.ll -c -o input.o
 clang input.o -o output
 
 # Run native binary
@@ -242,52 +242,52 @@ clang input.o -o output
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  tscl₀ = src/compiler/ (Rust)                               │
+│  oite₀ = src/compiler/ (Rust)                               │
 │         Original compiler written in Rust                   │
 └───────────────────────────┬─────────────────────────────────┘
                             │ compiles
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  tscl₁ = compiler/*.tscl compiled by tscl₀                  │
-│         First native scriptc binary                         │
+│  oite₁ = compiler/*.ot compiled by oite₀                  │
+│         First native oitec binary                         │
 └───────────────────────────┬─────────────────────────────────┘
                             │ compiles
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  tscl₂ = compiler/*.tscl compiled by tscl₁                  │
-│         Self-compiled scriptc binary                        │
+│  oite₂ = compiler/*.ot compiled by oite₁                  │
+│         Self-compiled oitec binary                        │
 └───────────────────────────┬─────────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  VERIFY: hash(tscl₁) == hash(tscl₂)                         │
+│  VERIFY: hash(oite₁) == hash(oite₂)                         │
 │          Proves deterministic compilation                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Verification Script
+### Verification Oite
 
 ```bash
 #!/bin/bash
 # bootstrap_verify.sh
 
-# Stage 1: Build scriptc with Rust compiler
-./target/release/script build compiler/main.tscl -o scriptc1 --dist
+# Stage 1: Build oitec with Rust compiler
+./target/release/oite build compiler/main.ot -o oitec1 --dist
 
-# Stage 2: Build scriptc with scriptc1
-./scriptc1 build compiler/main.tscl -o scriptc2 --dist
+# Stage 2: Build oitec with oitec1
+./oitec1 build compiler/main.ot -o oitec2 --dist
 
-# Stage 3: Build scriptc with scriptc2
-./scriptc2 build compiler/main.tscl -o scriptc3 --dist
+# Stage 3: Build oitec with oitec2
+./oitec2 build compiler/main.ot -o oitec3 --dist
 
-# Verify: scriptc2 == scriptc3 (bit-for-bit)
-if cmp -s scriptc2 scriptc3; then
+# Verify: oitec2 == oitec3 (bit-for-bit)
+if cmp -s oitec2 oitec3; then
     echo "Bootstrap verification PASSED"
-    echo "   scriptc2 and scriptc3 are identical"
-    sha256sum scriptc2 scriptc3
+    echo "   oitec2 and oitec3 are identical"
+    sha256sum oitec2 oitec3
 else
     echo "Bootstrap verification FAILED"
-    echo "   scriptc2 and scriptc3 differ"
+    echo "   oitec2 and oitec3 differ"
     exit 1
 fi
 ```
@@ -311,7 +311,7 @@ fi
 | Native codegen | Complete | +1,348 (LLVM backend) |
 | Bootstrap verification | In Progress | ~500 lines + testing |
 
-**Total self-hosted code**: ~10,500 lines of .tscl
+**Total self-hosted code**: ~10,500 lines of .ot
 
 ---
 
@@ -319,7 +319,7 @@ fi
 
 ### Foundation (Complete)
 
-- [x] `bootstrap/` compiles .tscl to bytecode
+- [x] `bootstrap/` compiles .ot to bytecode
 - [x] `compiler/` can parse same syntax as `bootstrap/`
 
 ### Feature Parity (Complete)
@@ -336,8 +336,8 @@ fi
 
 ### Bootstrap Verification (In Progress)
 
-- [x] `scriptc` can compile itself (via LLVM IR)
-- [ ] `hash(tscl₁) == hash(tscl₂)` verified
+- [x] `oitec` can compile itself (via LLVM IR)
+- [ ] `hash(oite₁) == hash(oite₂)` verified
 - [ ] CI integration for bootstrap verification
 
 ---
@@ -347,7 +347,7 @@ fi
 Once bootstrap verification is complete:
 
 1. **Keep Rust compiler** as reference/testing tool
-2. **Primary compiler** becomes `scriptc` (compiler/\*.tscl)
+2. **Primary compiler** becomes `oitec` (compiler/\*.ot)
 3. **Remove `bootstrap/`** (superseded by `compiler/`)
 4. **Optional**: Remove `src/compiler/` entirely
 
@@ -355,8 +355,8 @@ Once bootstrap verification is complete:
 
 ```
 script/
-├── compiler/                 # THE compiler (scriptc)
-│   ├── main.tscl
+├── compiler/                 # THE compiler (oitec)
+│   ├── main.ot
 │   ├── lexer/
 │   ├── parser/
 │   ├── ast/
@@ -373,4 +373,4 @@ script/
 └── tests/
 ```
 
-The Rust code becomes minimal runtime support, with the compiler fully in Script.
+The Rust code becomes minimal runtime support, with the compiler fully in Oite.

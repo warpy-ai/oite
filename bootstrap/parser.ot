@@ -1,7 +1,7 @@
 // ============================================================================
-// Bootstrap Parser for tscl
+// Bootstrap Parser for Oite
 // Recursive descent parser - consumes tokens, produces AST
-// Requires: std/prelude.tscl, bootstrap/types.tscl, and bootstrap/lexer.tscl
+// Requires: std/prelude.ot, bootstrap/types.ot, and bootstrap/lexer.ot
 // ============================================================================
 
 // ============================================================================

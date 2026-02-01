@@ -1,10 +1,10 @@
 ---
 sidebar_position: 1
-title: Welcome to Script
-description: Script is a high-performance JavaScript-like programming language with native code execution, memory safety, and a self-hosting compiler. Get started with Script today.
+title: Welcome to Oite
+description: Oite is a high-performance JavaScript-like programming language with native code execution, memory safety, and a self-hosting compiler. Get started with Oite today.
 keywords:
   [
-    script language,
+    oite language,
     programming language,
     javascript alternative,
     native code,
@@ -12,9 +12,9 @@ keywords:
   ]
 ---
 
-# Welcome to Script
+# Welcome to Oite
 
-**Script** is a high-performance JavaScript-like scripting language with native code execution, featuring a self-hosting compiler and Rust-inspired memory safety.
+**Oite** is a high-performance JavaScript-like scripting language with native code execution, featuring a self-hosting compiler and Rust-inspired memory safety.
 
 ```javascript
 function fib(n) {
@@ -31,7 +31,7 @@ console.log(fib(35)); // Compiled to native code!
 - **Link-Time Optimization** — ThinLTO and Full LTO for maximum performance
 - **Standalone Binaries** — Self-contained executables with runtime stubs in LLVM IR
 - **Memory Safety** — Ownership model with compile-time borrow checking
-- **Self-Hosting Complete** — Compiler written in Script, generates LLVM IR → native binaries
+- **Self-Hosting Complete** — Compiler written in Oite, generates LLVM IR → native binaries
 - **Type Inference** — Hindley-Milner type analysis with generics
 - **TypeScript Syntax** — Familiar syntax with full ES6+ and TypeScript features
 - **Classes & Inheritance** — ES6 classes with extends, super(), and private fields
@@ -44,7 +44,7 @@ I've been amazed by the performance of languages like Rust and Go, which I've be
 
 First I've tried to create a hybrid server frameworkd , I was studying on building a javascript library: a hybrid Rust+JavaScript web framework that combines Hyper's HTTP performance with JavaScript's flexibility.
 
-So I’ve developed a solution , and the initial benchmark were … honest : 31,136 requests/second.
+So I've developed a solution , and the initial benchmark were … honest : 31,136 requests/second.
 
 Not bad! I was able to beat Express.js by 55%. But I wanted more. I wanted to hit 88,000 req/sec , where fast javascript libraries , like Fastify, usually sits. But was never able to achieve it.
 
@@ -57,7 +57,7 @@ Then I turn into the runtimes, primarly nodejs and then bun, I've studied how th
 - **Type Safety** — I want to have the same type safety as Rust, but with the ease of use of Javascript/Typescript.
 - **Ease of Use** — I want to have the same ease of use as Javascript/Typescript, but with the performance of Rust and Go.
 
-And then Script was born. It's still on it's early stages, I call it a preview , and not yet production ready, but I've been able to achieve the performance I wanted, and the memory safety I wanted, and the type safety I wanted, and the ease of use I wanted.
+And then Oite was born. It's still on it's early stages, I call it a preview , and not yet production ready, but I've been able to achieve the performance I wanted, and the memory safety I wanted, and the type safety I wanted, and the ease of use I wanted.
 
 So give it a try, and let me know what you think.
 
@@ -68,10 +68,10 @@ So give it a try, and let me know what you think.
 cargo build --release
 
 # Run a script
-./target/release/script myprogram.tscl
+./target/release/oite myprogram.ot
 
 # Build to native binary (requires LLVM)
-./target/release/script build myprogram.tscl --release -o myprogram
+./target/release/oite build myprogram.ot --release -o myprogram
 
 # Run the compiled binary
 ./myprogram

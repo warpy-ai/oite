@@ -1,4 +1,4 @@
-//! Minimal standard library setup for Script VM
+//! Minimal standard library setup for Oite VM
 //!
 //! Sets up only essential globals needed for language operation:
 //! - console (log, error)

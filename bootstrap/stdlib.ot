@@ -233,7 +233,7 @@ declare function isNaN(value: number): boolean;
 declare function isFinite(value: number): boolean;
 
 // ============================================================================
-// Character Classification (from std/prelude.tscl)
+// Character Classification (from std/prelude.ot)
 // ============================================================================
 
 declare function isAlpha(code: number): boolean;

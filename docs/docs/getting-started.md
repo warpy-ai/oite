@@ -1,11 +1,11 @@
 ---
 sidebar_position: 2
 title: Getting Started
-description: Learn how to install and set up Script programming language. Build your first Script program with Cranelift JIT or LLVM AOT compilation.
+description: Learn how to install and set up Oite programming language. Build your first Oite program with Cranelift JIT or LLVM AOT compilation.
 keywords:
   [
-    script installation,
-    script setup,
+    oite installation,
+    oite setup,
     getting started,
     llvm,
     cranelift,
@@ -15,7 +15,7 @@ keywords:
 
 # Getting Started
 
-This guide will help you install Script and build your first program.
+This guide will help you install Oite and build your first program.
 
 ## Installation
 
@@ -61,50 +61,50 @@ source ~/.bashrc
 The Cranelift JIT backend works without LLVM. LLVM is only required for AOT (ahead-of-time) compilation to native binaries.
 :::
 
-### Step 2: Clone and Build Script
+### Step 2: Clone and Build Oite
 
 ```bash
 # Clone the repository
-git clone https://github.com/aspect/script.git
-cd script
+git clone https://github.com/warpy-ai/oite.git
+cd oite
 
 # Build in release mode
 cargo build --release
 
 # Verify installation
-./target/release/script --help
+./target/release/oite --help
 ```
 
 ### Step 3: Add to PATH (Optional)
 
 ```bash
-# Add Script to your PATH
-echo 'export PATH="$PATH:/path/to/script/target/release"' >> ~/.zshrc
+# Add Oite to your PATH
+echo 'export PATH="$PATH:/path/to/oite/target/release"' >> ~/.zshrc
 source ~/.zshrc
 
 # Now you can run from anywhere
-script --help
+oite --help
 ```
 
-## Your First Script Program
+## Your First Oite Program
 
 ### Hello World
 
-Create a file called `hello.tscl`:
+Create a file called `hello.ot`:
 
 ```javascript
-console.log("Hello, Script!");
+console.log("Hello, Oite!");
 ```
 
 Run it:
 
 ```bash
-./target/release/script run hello.tscl
+./target/release/oite hello.ot
 ```
 
 ### A More Complete Example
 
-Create `fibonacci.tscl`:
+Create `fibonacci.ot`:
 
 ```javascript
 function fib(n: number): number {
@@ -120,31 +120,31 @@ Run with different backends:
 
 ```bash
 # VM (interpreted, good for debugging)
-./target/release/script run fibonacci.tscl
+./target/release/oite fibonacci.ot
 
 # JIT (fast compilation, good for development)
-./target/release/script jit fibonacci.tscl
+./target/release/oite jit fibonacci.ot
 
 # AOT (native binary, best performance)
-./target/release/script build fibonacci.tscl --release -o fib
+./target/release/oite build fibonacci.ot --release -o fib
 ./fib
 ```
 
 ## Execution Modes
 
-Script provides multiple ways to run your code:
+Oite provides multiple ways to run your code:
 
 | Mode | Command | Use Case | Performance |
 |------|---------|----------|-------------|
-| **VM** | `script run app.tscl` | Debugging, REPL | Slowest |
-| **JIT** | `script jit app.tscl` | Development, testing | Fast |
-| **AOT Release** | `script build app.tscl --release -o app` | Production (ThinLTO) | Faster |
-| **AOT Dist** | `script build app.tscl --dist -o app` | Maximum optimization (Full LTO) | Fastest |
+| **VM** | `oite app.ot` | Debugging, REPL | Slowest |
+| **JIT** | `oite jit app.ot` | Development, testing | Fast |
+| **AOT Release** | `oite build app.ot --release -o app` | Production (ThinLTO) | Faster |
+| **AOT Dist** | `oite build app.ot --dist -o app` | Maximum optimization (Full LTO) | Fastest |
 
 ### JIT Compilation (Development)
 
 ```bash
-./target/release/script jit app.tscl
+./target/release/oite jit app.ot
 ```
 
 Uses Cranelift for fast compilation. Perfect for rapid iteration.
@@ -153,10 +153,10 @@ Uses Cranelift for fast compilation. Perfect for rapid iteration.
 
 ```bash
 # Release build with ThinLTO
-./target/release/script build app.tscl --release -o app
+./target/release/oite build app.ot --release -o app
 
 # Distribution build with Full LTO (slower compile, faster runtime)
-./target/release/script build app.tscl --dist -o app
+./target/release/oite build app.ot --dist -o app
 
 # Run the native binary
 ./app
@@ -167,7 +167,7 @@ Produces standalone executables with no runtime dependencies.
 ### VM Execution (Debugging)
 
 ```bash
-./target/release/script run app.tscl
+./target/release/oite app.ot
 ```
 
 Interpreted execution for debugging and testing.
@@ -176,42 +176,42 @@ Interpreted execution for debugging and testing.
 
 ```bash
 # Run with VM
-script run <file.tscl>
+oite <file.ot>
 
 # Run with JIT
-script jit <file.tscl>
+oite jit <file.ot>
 
 # Build native binary
-script build <file.tscl> [--release|--dist] -o <output>
+oite build <file.ot> [--release|--dist] -o <output>
 
 # Show SSA IR (debugging)
-script ir <file.tscl>
+oite ir <file.ot>
 
 # Show AST (debugging)
-script ast <file.tscl>
+oite ast <file.ot>
 
 # Type check only
-script check <file.tscl>
+oite check <file.ot>
 ```
 
 ## Project Structure
 
-A typical Script project looks like:
+A typical Oite project looks like:
 
 ```
 my-project/
-├── main.tscl           # Entry point
+├── main.ot             # Entry point
 ├── lib/
-│   ├── utils.tscl      # Utility functions
-│   └── types.tscl      # Type definitions
+│   ├── utils.ot        # Utility functions
+│   └── types.ot        # Type definitions
 └── tests/
-    └── test_utils.tscl # Tests
+    └── test_utils.ot   # Tests
 ```
 
 ### Importing Modules
 
 ```javascript
-// main.tscl
+// main.ot
 import { helper } from "./lib/utils";
 
 let result = helper(42);
@@ -219,7 +219,7 @@ console.log(result);
 ```
 
 ```javascript
-// lib/utils.tscl
+// lib/utils.ot
 export function helper(x: number): number {
   return x * 2;
 }
@@ -227,10 +227,10 @@ export function helper(x: number): number {
 
 ## What's Next?
 
-Now that you have Script running, explore:
+Now that you have Oite running, explore:
 
 - [Language Features](/docs/language-features) — Variables, functions, classes, and more
-- [Architecture](/docs/architecture) — How Script works under the hood
+- [Architecture](/docs/architecture) — How Oite works under the hood
 - [Standard Library](/docs/standard-library) — Built-in functions and modules
 - [Memory Model](/docs/memory-model) — Ownership and borrow checking
 - [Development Status](/docs/development-status) — Current state and roadmap

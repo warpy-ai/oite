@@ -1,7 +1,7 @@
 // ============================================================================
-// Bootstrap Lexer for tscl
+// Bootstrap Lexer for Oite
 // Self-hosting lexer implementation
-// Requires: std/prelude.tscl to be loaded first
+// Requires: std/prelude.ot to be loaded first
 // ============================================================================
 
 // ============================================================================

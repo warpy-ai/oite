@@ -1,10 +1,10 @@
 ---
 sidebar_position: 3
 title: Language Features
-description: Explore Script's language features including JavaScript-like syntax, classes, closures, error handling, type annotations, decorators, and memory-safe programming.
+description: Explore Oite's language features including JavaScript-like syntax, classes, closures, error handling, type annotations, decorators, and memory-safe programming.
 keywords:
   [
-    script syntax,
+    oite syntax,
     functions,
     classes,
     closures,
@@ -16,13 +16,13 @@ keywords:
 
 # Language Features
 
-Script combines JavaScript-like syntax with Rust-inspired memory safety and native code performance.
+Oite combines JavaScript-like syntax with Rust-inspired memory safety and native code performance.
 
 ## Variables & Types
 
 ```javascript
 let x = 42; // Number
-let name = "Script"; // String
+let name = "Oite"; // String
 let active = true; // Boolean
 let data = { key: 1 }; // Object
 let items = [1, 2, 3]; // Array
@@ -120,7 +120,7 @@ dog.speak();  // "Buddy barks!"
 
 ## Private Fields
 
-Script supports JavaScript-style private fields using the `#` prefix:
+Oite supports JavaScript-style private fields using the `#` prefix:
 
 ```javascript
 class Counter {
@@ -164,7 +164,7 @@ const greeting = `Hello, ${name}!`; // "Hello, World!"
 
 ## Decorators
 
-Script supports TypeScript-style decorators:
+Oite supports TypeScript-style decorators:
 
 ```javascript
 function logged(target: any) {
@@ -180,7 +180,7 @@ class MyClass {
 
 ## Type Annotations
 
-Script supports TypeScript-style type annotations with Hindley-Milner inference:
+Oite supports TypeScript-style type annotations with Hindley-Milner inference:
 
 ```javascript
 let x: number = 42;
@@ -217,7 +217,7 @@ Promise.resolve(42).then((value) => {
 
 ## Modules
 
-Script supports ES module syntax:
+Oite supports ES module syntax:
 
 ```javascript
 // Exporting
@@ -234,7 +234,7 @@ import * as utils from "./utils";
 
 ## Ownership & Borrow Checking
 
-Script includes Rust-inspired ownership semantics for memory safety:
+Oite includes Rust-inspired ownership semantics for memory safety:
 
 ```javascript
 // Ownership types

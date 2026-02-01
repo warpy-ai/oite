@@ -1,20 +1,20 @@
 ---
-title: Unroll - Script Package Manager and Tooling
-description: Design document for Unroll, Script's package manager, build system, and developer tooling ecosystem.
+title: Unroll - Oite Package Manager and Tooling
+description: Design document for Unroll, Oite's package manager, build system, and developer tooling ecosystem.
 keywords: [unroll, package manager, build system, tooling, future]
 ---
 
-# Unroll - Runtime & Tooling for Script
+# Unroll - Runtime & Tooling for Oite
 
 > **Status**: Future Implementation - Archived Design Document
 >
 > This document describes the planned architecture for Unroll, the runtime
-> and tooling ecosystem for the Script language.
+> and tooling ecosystem for the Oite language.
 
 ## Overview
 
 **Unroll** is the package manager, build system, and developer tooling for
-Script. It manages Rolls dependencies, handles compilation, and provides
+Oite. It manages Rolls dependencies, handles compilation, and provides
 developer experience features.
 
 ```
@@ -33,7 +33,7 @@ developer experience features.
 └──────────────────┬──────────────────────┘
                    │
 ┌──────────────────▼──────────────────────┐
-│   Script (language core)                │
+│   Oite (language core)                │
 │   compiler, type system, ABI, bootstrap │
 └─────────────────────────────────────────┘
 ```
@@ -205,14 +205,14 @@ my-app/
 ├── unroll.toml         # Project manifest
 ├── unroll.lock         # Lockfile (auto-generated)
 ├── src/
-│   ├── main.tscl       # Entry point (bin)
-│   └── lib.tscl        # Library root (lib)
+│   ├── main.ot       # Entry point (bin)
+│   └── lib.ot        # Library root (lib)
 ├── tests/
-│   └── integration_test.tscl
+│   └── integration_test.ot
 ├── benches/
-│   └── perf_bench.tscl
+│   └── perf_bench.ot
 ├── examples/
-│   └── basic_usage.tscl
+│   └── basic_usage.ot
 └── target/
     ├── debug/
     │   └── my-app      # Debug binary
@@ -281,7 +281,7 @@ token = "env:COMPANY_REGISTRY_TOKEN"
 ## Build Pipeline
 
 ```
-Source Files (.tscl)
+Source Files (.ot)
         │
         ▼
 ┌───────────────────┐

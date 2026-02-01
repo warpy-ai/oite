@@ -35,7 +35,7 @@ impl Compiler {
     ) -> Result<Vec<OpCode>, String> {
         let cm: Lrc<SourceMap> = Default::default();
         let fm = cm.new_source_file(
-            FileName::Custom("main.tscl".into()).into(),
+            FileName::Custom("main.ot".into()).into(),
             source.to_string(),
         );
 

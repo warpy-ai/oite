@@ -1,4 +1,4 @@
-//! Bytecode decoder for loading binary files produced by bootstrap/emitter.tscl
+//! Bytecode decoder for loading binary files produced by bootstrap/emitter.ot
 //!
 //! The binary format uses:
 //! - u8 for opcodes and small values

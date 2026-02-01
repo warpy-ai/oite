@@ -1,22 +1,22 @@
 ---
-title: Rolls - Script System Libraries Design
-description: Design document for Rolls, the official system library ecosystem for Script. Analogous to Rust's standard library crates.
+title: Rolls - Oite System Libraries Design
+description: Design document for Rolls, the official system library ecosystem for Oite. Analogous to Rust's standard library crates.
 keywords: [rolls, system libraries, stdlib, packages, future]
 ---
 
-# Rolls - Official System Libraries for Script
+# Rolls - Official System Libraries for Oite
 
 > **Status**: Future Implementation - Archived Design Document
 >
 > This document describes the planned architecture for Rolls, the official
-> system library ecosystem for the Script language. Code has been removed
-> from Script core to maintain a clean language/library separation.
+> system library ecosystem for the Oite language. Code has been removed
+> from Oite core to maintain a clean language/library separation.
 
 ## Overview
 
-**Rolls** are the official system libraries for Script, analogous to Rust's
+**Rolls** are the official system libraries for Oite, analogous to Rust's
 standard library crates. Each Roll provides specific functionality that builds
-on Script core's primitives.
+on Oite core's primitives.
 
 ```
 User App Code
@@ -28,7 +28,7 @@ User App Code
 └────────────────────────────────┘
      │
      ▼
-Script Core (compiler, ABI, basic async)
+Oite Core (compiler, ABI, basic async)
 ```
 
 ## Roll Catalog
@@ -37,8 +37,8 @@ Script Core (compiler, ABI, basic async)
 
 | Roll | Purpose | Dependencies | Estimated LOC |
 |------|---------|--------------|---------------|
-| `@rolls/async` | Work-stealing executor, io_uring | script-core | ~800 |
-| `@rolls/tls` | TLS encryption via rustls | script-core | ~600 |
+| `@rolls/async` | Work-stealing executor, io_uring | oite-core | ~800 |
+| `@rolls/tls` | TLS encryption via rustls | oite-core | ~600 |
 | `@rolls/http` | HTTP/1.1, HTTP/2 server | @rolls/tls, @rolls/async | ~1800 |
 | `@rolls/websocket` | WebSocket protocol | @rolls/http | ~800 |
 
@@ -46,18 +46,18 @@ Script Core (compiler, ABI, basic async)
 
 | Roll | Purpose | Dependencies | Estimated LOC |
 |------|---------|--------------|---------------|
-| `@rolls/fs` | File system operations | script-core | ~400 |
-| `@rolls/path` | Path utilities | script-core | ~200 |
-| `@rolls/json` | JSON parse/stringify | script-core | ~300 |
-| `@rolls/math` | Math functions | script-core | ~200 |
-| `@rolls/date` | Date/time handling | script-core | ~300 |
-| `@rolls/string` | String methods | script-core | ~400 |
-| `@rolls/array` | Array methods | script-core | ~400 |
-| `@rolls/promise` | Promise implementation | script-core | ~300 |
+| `@rolls/fs` | File system operations | oite-core | ~400 |
+| `@rolls/path` | Path utilities | oite-core | ~200 |
+| `@rolls/json` | JSON parse/stringify | oite-core | ~300 |
+| `@rolls/math` | Math functions | oite-core | ~200 |
+| `@rolls/date` | Date/time handling | oite-core | ~300 |
+| `@rolls/string` | String methods | oite-core | ~400 |
+| `@rolls/array` | Array methods | oite-core | ~400 |
+| `@rolls/promise` | Promise implementation | oite-core | ~300 |
 
 ## File Mapping Reference
 
-Code removed from Script core that maps to future Rolls:
+Code removed from Oite core that maps to future Rolls:
 
 ### @rolls/async
 
@@ -256,15 +256,15 @@ Key Functions:
 @rolls/http/
 ├── roll.toml           # Roll manifest
 ├── src/
-│   ├── lib.tscl        # Public API
-│   ├── request.tscl    # HttpRequest type
-│   ├── response.tscl   # HttpResponse type
-│   ├── server.tscl     # HttpServer implementation
+│   ├── lib.ot        # Public API
+│   ├── request.ot    # HttpRequest type
+│   ├── response.ot   # HttpResponse type
+│   ├── server.ot     # HttpServer implementation
 │   └── internal/       # Private implementation
-│       ├── parser.tscl
-│       └── h2.tscl
+│       ├── parser.ot
+│       └── h2.ot
 └── tests/
-    └── server_test.tscl
+    └── server_test.ot
 ```
 
 ### Roll Manifest (roll.toml)

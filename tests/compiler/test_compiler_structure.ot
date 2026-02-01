@@ -62,20 +62,20 @@ console.log("");
 // Test 4: Compiler structure
 console.log("Test: Compiler structure");
 let expectedModules = [
-    "lexer/token.tscl",
-    "lexer/mod.tscl",
-    "lexer/error.tscl",
-    "ast/types.tscl",
-    "ast/mod.tscl",
-    "parser/stmt.tscl",
-    "parser/expr.tscl",
-    "parser/mod.tscl",
-    "parser/error.tscl",
-    "ir/mod.tscl",
-    "ir/builder.tscl",
-    "codegen/mod.tscl",
-    "stdlib/builtins.tscl",
-    "main.tscl"
+    "lexer/token.ot",
+    "lexer/mod.ot",
+    "lexer/error.ot",
+    "ast/types.ot",
+    "ast/mod.ot",
+    "parser/stmt.ot",
+    "parser/expr.ot",
+    "parser/mod.ot",
+    "parser/error.ot",
+    "ir/mod.ot",
+    "ir/builder.ot",
+    "codegen/mod.ot",
+    "stdlib/builtins.ot",
+    "main.ot"
 ];
 
 let foundModules = 0;
@@ -142,6 +142,6 @@ console.log("Next steps:");
 console.log("1. Integrate compiler/ with bootstrap/ tests");
 console.log("2. Add codegen for LLVM backend");
 console.log("3. Add codegen for Cranelift backend");
-console.log("4. Complete main.tscl CLI");
+console.log("4. Complete main.ot CLI");
 console.log("");
 console.log("The modular structure is now in place!");

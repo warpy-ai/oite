@@ -5,7 +5,7 @@ import type * as Preset from "@docusaurus/preset-classic";
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
 const config: Config = {
-  title: "Script Language",
+  title: "Oite Language",
   tagline: "Write fast. Run faster.",
   favicon: "img/owl.svg",
 
@@ -43,7 +43,7 @@ const config: Config = {
       attributes: {
         name: "keywords",
         content:
-          "script language, programming language, native code, javascript alternative, high performance, compiler, memory safety, borrow checker",
+          "oite language, programming language, native code, javascript alternative, high performance, compiler, memory safety, borrow checker",
       },
     },
     {
@@ -69,14 +69,14 @@ const config: Config = {
       innerHTML: JSON.stringify({
         "@context": "https://schema.org",
         "@type": "SoftwareSourceCode",
-        name: "Script Language",
+        name: "Oite Language",
         description:
           "A high-performance JavaScript-like programming language with native code execution and memory safety.",
         url: "https://docs.script-lang.org",
         codeRepository: "https://github.com/warpy-ai/script",
         programmingLanguage: {
           "@type": "ComputerLanguage",
-          name: "Script",
+          name: "Oite",
         },
         author: {
           "@type": "Organization",
@@ -99,15 +99,15 @@ const config: Config = {
         },
         blog: {
           showReadingTime: true,
-          blogTitle: "Script Language Blog",
+          blogTitle: "Oite Language Blog",
           blogDescription:
-            "Updates, tutorials, and insights about Script programming language development",
+            "Updates, tutorials, and insights about Oite programming language development",
           feedOptions: {
             type: ["rss", "atom"],
             xslt: true,
-            title: "Script Language Blog",
+            title: "Oite Language Blog",
             description:
-              "Updates, tutorials, and insights about Script programming language",
+              "Updates, tutorials, and insights about Oite programming language",
             copyright: `Copyright © ${new Date().getFullYear()} Warpy AI`,
           },
           editUrl: "https://github.com/warpy-ai/script/tree/main/docs",
@@ -138,30 +138,30 @@ const config: Config = {
       {
         name: "description",
         content:
-          "Script is a high-performance JavaScript-like programming language with native code execution, memory safety, and a self-hosting compiler.",
+          "Oite is a high-performance JavaScript-like programming language with native code execution, memory safety, and a self-hosting compiler.",
       },
       // OpenGraph tags must use 'property', not 'name'
       { property: "og:type", content: "website" },
-      { property: "og:title", content: "Script Language" },
+      { property: "og:title", content: "Oite Language" },
       {
         property: "og:description",
         content:
-          "Script is a high-performance JavaScript-like programming language with native code execution, memory safety, and a self-hosting compiler.",
+          "Oite is a high-performance JavaScript-like programming language with native code execution, memory safety, and a self-hosting compiler.",
       },
       {
         property: "og:image",
         content: "https://docs.script-lang.org/img/owl-light.png",
       },
       { property: "og:url", content: "https://docs.script-lang.org" },
-      { property: "og:site_name", content: "Script Language" },
+      { property: "og:site_name", content: "Oite Language" },
       // Twitter Card tags
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:site", content: "@warpy_ai" },
-      { name: "twitter:title", content: "Script Language" },
+      { name: "twitter:title", content: "Oite Language" },
       {
         name: "twitter:description",
         content:
-          "Script is a high-performance JavaScript-like programming language with native code execution, memory safety, and a self-hosting compiler.",
+          "Oite is a high-performance JavaScript-like programming language with native code execution, memory safety, and a self-hosting compiler.",
       },
       {
         name: "twitter:image",
@@ -177,9 +177,9 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: "Script",
+      title: "Oite",
       logo: {
-        alt: "Script Logo",
+        alt: "Oite Logo",
         src: "img/owl_light.png",
         srcDark: "img/owl-light.svg",
       },
@@ -270,7 +270,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Script Language. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} Oite Language. Built with Docusaurus.`,
     },
     prism: {
       theme: prismThemes.github,

@@ -1,10 +1,10 @@
 # Lifetime Parameters
 
-Lifetimes are tscl's way of tracking how long references are valid. They enable you to write functions that return borrowed references safely, without copying data.
+Lifetimes are Oite's way of tracking how long references are valid. They enable you to write functions that return borrowed references safely, without copying data.
 
 ## Why Lifetimes Matter
 
-tscl uses **ownership-based memory management** (like Rust), not garbage collection. When you borrow data with `&`, the compiler needs to ensure you don't use that reference after the original data is freed.
+Oite uses **ownership-based memory management** (like Rust), not garbage collection. When you borrow data with `&`, the compiler needs to ensure you don't use that reference after the original data is freed.
 
 ```javascript
 // Problem: Which input does the return value borrow from?
@@ -212,7 +212,7 @@ let other: &'b mut T = mut_ref;  // ERROR unless 'a == 'b
 
 ```
 error[E0501]: cannot return reference to local variable
-  --> src/example.tscl:5:12
+  --> src/example.ot:5:12
    |
  4 |     let local = [1, 2, 3];
    |         ----- local variable declared here
@@ -226,7 +226,7 @@ error[E0501]: cannot return reference to local variable
 
 ```
 error[E0502]: lifetime 'a does not live long enough
-  --> src/example.tscl:10:5
+  --> src/example.ot:10:5
    |
    = help: The reference must be valid for 'b but it only lives for 'a
 ```
@@ -237,7 +237,7 @@ error[E0502]: lifetime 'a does not live long enough
 
 ```
 error[E0505]: missing lifetime specifier
-  --> src/example.tscl:2:40
+  --> src/example.ot:2:40
    |
  2 | function pick(a: &T, b: &T): &T {
    |                                 ^ expected named lifetime parameter
@@ -249,7 +249,7 @@ help: consider introducing a named lifetime parameter: <'a>
 
 ## Interop with JavaScript/TypeScript
 
-### .tscl Files (Full Lifetime Support)
+### .ot Files (Full Lifetime Support)
 
 ```javascript
 // Full lifetime tracking, zero-copy APIs

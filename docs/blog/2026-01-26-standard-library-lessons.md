@@ -1,19 +1,19 @@
 ---
 slug: standard-library-lessons
 title: "Building a Production-Ready Standard Library: Lessons from Implementing 10 Modules in One Week"
-description: Lessons learned from implementing 10 standard library modules in Script including path, math, date, and fs. Patterns, design decisions, and best practices.
+description: Lessons learned from implementing 10 standard library modules in Oite including path, math, date, and fs. Patterns, design decisions, and best practices.
 authors: [lucas]
 tags: [standard-library, implementation, design, javascript]
 image: /img/logo_bg.png
 ---
 
-This week, we added 10 standard library modules to Script in just 7 days. From `path` to `math`, from `date` to `fs`, we went from a minimal runtime to a production-ready standard library. This post shares the lessons we learned, the patterns we established, and the decisions we made along the way.
+This week, we added 10 standard library modules to Oite in just 7 days. From `path` to `math`, from `date` to `fs`, we went from a minimal runtime to a production-ready standard library. This post shares the lessons we learned, the patterns we established, and the decisions we made along the way.
 
 <!-- truncate -->
 
 ## The Challenge
 
-When we started the week, Script had a basic standard library:
+When we started the week, Oite had a basic standard library:
 - `console.log()` for output
 - `setTimeout()` for timers
 - `require()` for module loading
@@ -48,14 +48,14 @@ Before writing a single line of code, we established three core principles:
 
 ### 1. **Node.js Compatibility Where It Makes Sense**
 
-We didn't reinvent the wheel. JavaScript developers already know Node.js APIs, so we made Script's standard library compatible:
+We didn't reinvent the wheel. JavaScript developers already know Node.js APIs, so we made Oite's standard library compatible:
 
 ```typescript
 // Node.js
 import { join } from 'path';
 const path = join(__dirname, 'config', 'app.json');
 
-// Script (same API)
+// Oite (same API)
 import { path } from 'path';
 const configPath = path.join(__dirname, 'config', 'app.json');
 ```
@@ -127,7 +127,7 @@ const str = "Hello, World!";
 str.trim();                    // "Hello, World!"
 str.toUpperCase();             // "HELLO, WORLD!"
 str.slice(0, 5);               // "Hello"
-str.replace("World", "Script"); // "Hello, Script!"
+str.replace("World", "Oite"); // "Hello, Oite!"
 
 const arr = [1, 2, 3];
 arr.push(4);                    // [1, 2, 3, 4]
@@ -162,7 +162,7 @@ Every native function follows this signature:
 ```rust
 pub fn native_module_method(
     vm: &mut VM,           // VM context (for heap access, etc.)
-    args: Vec<JsValue>     // Arguments from Script
+    args: Vec<JsValue>     // Arguments from Oite
 ) -> JsValue              // Return value
 ```
 
@@ -216,7 +216,7 @@ Let's walk through implementing the `path` module as an example:
 ### Step 1: Define the API
 
 ```typescript
-// What we want in Script
+// What we want in Oite
 import { path } from 'path';
 
 const configPath = path.join(__dirname, 'config', 'app.json');
@@ -290,7 +290,7 @@ fn setup_path(vm: &mut VM) {
 ### Step 4: Test
 
 ```typescript
-// tests/path.tscl
+// tests/path.ot
 import { path } from 'path';
 
 const joined = path.join('a', 'b', 'c');
@@ -430,11 +430,11 @@ Native functions are 10x faster. For a language focused on performance, this is 
 
 Building a standard library is more than just writing functions—it's about creating an ecosystem. By following consistent patterns, prioritizing performance, and ensuring JavaScript compatibility, we've created a standard library that feels familiar yet performs like native code.
 
-The 10 modules we built this week are just the beginning. As Script grows, so will its standard library. And with each new module, we'll apply the lessons we've learned.
+The 10 modules we built this week are just the beginning. As Oite grows, so will its standard library. And with each new module, we'll apply the lessons we've learned.
 
 ---
 
-**Contribute to Script's standard library:**
+**Contribute to Oite's standard library:**
 
 - [GitHub Repository](https://github.com/warpy-ai/script)
 - [Standard Library Documentation](/docs/standard-library)

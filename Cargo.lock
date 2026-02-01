@@ -648,6 +648,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "oite"
+version = "0.6.0"
+dependencies = [
+ "cranelift",
+ "cranelift-codegen",
+ "cranelift-jit",
+ "cranelift-module",
+ "cranelift-native",
+ "fastrand",
+ "hex",
+ "libc",
+ "llvm-sys",
+ "serde_json",
+ "sha2",
+ "swc_common",
+ "swc_ecma_ast",
+ "swc_ecma_parser",
+ "target-lexicon",
+ "tokio",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -801,28 +823,6 @@ name = "scoped-tls"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1cf6437eb19a8f4a6cc0f7dca544973b0b78843adbfeb3683d1a94a0024a294"
-
-[[package]]
-name = "script"
-version = "0.6.0"
-dependencies = [
- "cranelift",
- "cranelift-codegen",
- "cranelift-jit",
- "cranelift-module",
- "cranelift-native",
- "fastrand",
- "hex",
- "libc",
- "llvm-sys",
- "serde_json",
- "sha2",
- "swc_common",
- "swc_ecma_ast",
- "swc_ecma_parser",
- "target-lexicon",
- "tokio",
-]
 
 [[package]]
 name = "semver"

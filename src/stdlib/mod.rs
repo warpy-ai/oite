@@ -1,4 +1,4 @@
-//! Minimal standard library for Script core
+//! Minimal standard library for Oite core
 //!
 //! Contains only essential primitives needed by the language:
 //! - console.log / console.error (debugging)

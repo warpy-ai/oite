@@ -1,7 +1,7 @@
 // ============================================================================
 // IR to Bytecode Codegen
 // Transforms IR to bytecode using ByteStream
-// Requires: bootstrap/ir.tscl, bootstrap/emitter.tscl
+// Requires: bootstrap/ir.ot, bootstrap/emitter.ot
 // ============================================================================
 
 require ./ir;

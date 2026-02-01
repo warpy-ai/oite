@@ -8,7 +8,7 @@ let failed = 0;
 
 
 console.log("Test 1: Error - Return Local Reference");
-let err1 = LifetimeConstraints.errorReturnLocalRef("local_var", "test.tscl:5:12", "test.tscl:4:8");
+let err1 = LifetimeConstraints.errorReturnLocalRef("local_var", "test.ot:5:12", "test.ot:4:8");
 if (err1.kind == LifetimeConstraints.ErrorKind.RETURN_LOCAL_REF &&
     err1.code == LifetimeConstraints.ErrorCode.RETURN_LOCAL_REF &&
     err1.variable == "local_var") {
@@ -22,7 +22,7 @@ if (err1.kind == LifetimeConstraints.ErrorKind.RETURN_LOCAL_REF &&
 
 console.log("");
 console.log("Test 2: Error - Lifetime Too Short");
-let err2 = LifetimeConstraints.errorLifetimeTooShort("'a", "'b", "test.tscl:10:5");
+let err2 = LifetimeConstraints.errorLifetimeTooShort("'a", "'b", "test.ot:10:5");
 if (err2.kind == LifetimeConstraints.ErrorKind.LIFETIME_TOO_SHORT &&
     err2.lifetime == "'a" &&
     err2.expected == "'b") {
@@ -35,7 +35,7 @@ if (err2.kind == LifetimeConstraints.ErrorKind.LIFETIME_TOO_SHORT &&
 
 console.log("");
 console.log("Test 3: Error - Mutable While Borrowed");
-let err3 = LifetimeConstraints.errorMutableWhileBorrowed("x", "test.tscl:15:3", "test.tscl:12:8");
+let err3 = LifetimeConstraints.errorMutableWhileBorrowed("x", "test.ot:15:3", "test.ot:12:8");
 if (err3.kind == LifetimeConstraints.ErrorKind.MUTABLE_WHILE_BORROWED &&
     err3.variable == "x") {
     console.log("  PASS: Mutable while borrowed error created");
@@ -47,7 +47,7 @@ if (err3.kind == LifetimeConstraints.ErrorKind.MUTABLE_WHILE_BORROWED &&
 
 console.log("");
 console.log("Test 4: Error - Lifetime Mismatch");
-let err4 = LifetimeConstraints.errorLifetimeMismatch("'a", "'b", "test.tscl:20:10");
+let err4 = LifetimeConstraints.errorLifetimeMismatch("'a", "'b", "test.ot:20:10");
 if (err4.kind == LifetimeConstraints.ErrorKind.LIFETIME_MISMATCH &&
     err4.expected == "'a" &&
     err4.found == "'b") {
@@ -60,7 +60,7 @@ if (err4.kind == LifetimeConstraints.ErrorKind.LIFETIME_MISMATCH &&
 
 console.log("");
 console.log("Test 5: Error - Ambiguous Lifetime");
-let err5 = LifetimeConstraints.errorAmbiguousLifetime("test.tscl:25:1");
+let err5 = LifetimeConstraints.errorAmbiguousLifetime("test.ot:25:1");
 if (err5.kind == LifetimeConstraints.ErrorKind.AMBIGUOUS_LIFETIME &&
     err5.hint != null) {
     console.log("  PASS: Ambiguous lifetime error created with hint");
@@ -72,7 +72,7 @@ if (err5.kind == LifetimeConstraints.ErrorKind.AMBIGUOUS_LIFETIME &&
 
 console.log("");
 console.log("Test 6: Error - Cycle Detected");
-let err6 = LifetimeConstraints.errorCycleDetected("'a", "test.tscl:30:5");
+let err6 = LifetimeConstraints.errorCycleDetected("'a", "test.ot:30:5");
 if (err6.kind == LifetimeConstraints.ErrorKind.CYCLE_DETECTED &&
     err6.lifetime == "'a") {
     console.log("  PASS: Cycle detected error created");
@@ -95,7 +95,7 @@ if (formatted7.indexOf("E0501") != -1) {
 
 console.log("");
 console.log("Test 8: Format Error - Contains Span");
-if (formatted7.indexOf("test.tscl:5:12") != -1) {
+if (formatted7.indexOf("test.ot:5:12") != -1) {
     console.log("  PASS: Formatted error contains span");
     passed = passed + 1;
 } else {

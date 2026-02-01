@@ -122,7 +122,7 @@ console.log("Test 10: Format Error Message");
 let testErr = {
     kind: "return_local_ref",
     code: "E0501",
-    span: "test.tscl:5:12",
+    span: "test.ot:5:12",
     message: "cannot return reference to local variable",
     primaryLabel: "returns reference to data owned by current function"
 };

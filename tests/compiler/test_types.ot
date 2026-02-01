@@ -1,4 +1,4 @@
-// Test file to verify type annotations work in .tscl
+// Test file to verify type annotations work in .ot
 // This file uses type annotations that are now supported
 
 // Function with typed parameters and return type

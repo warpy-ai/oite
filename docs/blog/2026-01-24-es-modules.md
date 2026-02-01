@@ -1,29 +1,29 @@
 ---
 slug: es-modules
-title: "ES Modules in Script: File-Based Resolution, Caching, and Cross-Module Calls"
-description: Learn how Script implements ES module support with import/export statements, file-based resolution, SHA256 caching, and cross-module function calls.
+title: "ES Modules in Oite: File-Based Resolution, Caching, and Cross-Module Calls"
+description: Learn how Oite implements ES module support with import/export statements, file-based resolution, SHA256 caching, and cross-module function calls.
 authors: [lucas]
 tags: [modules, es-modules, import, export, caching]
 image: /img/logo_bg.png
 ---
 
-Script now has full ES module support with `import` and `export` statements, file-based resolution, SHA256 caching, and cross-module function calls. This post explains how we built it, the decisions we made, and what's coming next.
+Oite now has full ES module support with `import` and `export` statements, file-based resolution, SHA256 caching, and cross-module function calls. This post explains how we built it, the decisions we made, and what's coming next.
 
 <!-- truncate -->
 
 ## The Goal
 
-ES modules are the modern way to organize JavaScript code. We wanted Script to support the same syntax:
+ES modules are the modern way to organize JavaScript code. We wanted Oite to support the same syntax:
 
 ```typescript
-// math.tscl
+// math.ot
 export function add(a: number, b: number): number {
     return a + b;
 }
 
 export const PI = 3.14159;
 
-// main.tscl
+// main.ot
 import { add, PI } from './math';
 
 console.log(add(2, 3));  // 5
@@ -38,7 +38,7 @@ But we also wanted:
 
 ## Architecture
 
-Script's module system has four components:
+Oite's module system has four components:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -79,8 +79,8 @@ import { config } from './config';   // Current directory
 
 1. **Parse the specifier**: Extract path components
 2. **Resolve relative to importer**: `./math` → `/path/to/importer/../math`
-3. **Try extensions**: `.tscl`, `.ts`, `.js`
-4. **Try index files**: `./dir` → `./dir/index.tscl`
+3. **Try extensions**: `.ot`, `.ts`, `.js`
+4. **Try index files**: `./dir` → `./dir/index.ot`
 
 Implementation:
 
@@ -137,15 +137,15 @@ fn resolve_module_path(
 ### Example Resolutions
 
 ```typescript
-// From /project/main.tscl
+// From /project/main.ot
 import { x } from './math';
-// → /project/math.tscl
+// → /project/math.ot
 
 import { y } from '../lib/utils';
-// → /lib/utils.tscl
+// → /lib/utils.ot
 
 import { z } from './config';
-// → /project/config.tscl (or config/index.tscl)
+// → /project/config.ot (or config/index.ot)
 ```
 
 ## Module Loading
@@ -236,7 +236,7 @@ impl ModuleCache {
 When a module is imported, it needs to execute and extract exports:
 
 ```typescript
-// math.tscl
+// math.ot
 export function add(a: number, b: number): number {
     return a + b;
 }
@@ -334,12 +334,12 @@ fn execute_module(
 The key challenge: how do functions from different modules call each other?
 
 ```typescript
-// math.tscl
+// math.ot
 export function add(a: number, b: number): number {
     return a + b;
 }
 
-// calculator.tscl
+// calculator.ot
 import { add } from './math';
 
 export function calculate(x: number, y: number): number {
@@ -352,10 +352,10 @@ export function calculate(x: number, y: number): number {
 All modules share the same global scope. When a module exports a function, it's stored in the global scope:
 
 ```rust
-// When math.tscl exports 'add':
+// When math.ot exports 'add':
 self.globals.insert("add".to_string(), JsValue::Function { address: 42 });
 
-// When calculator.tscl imports 'add':
+// When calculator.ot imports 'add':
 let add = self.globals.get("add").clone();  // Gets the same function
 ```
 
@@ -413,16 +413,16 @@ Example error:
 ```
 Error: Module not found: './math'
 
-  --> main.tscl:1:20
+  --> main.ot:1:20
    |
  1 | import { add } from './math';
    |                    ^^^^^^^^
    |
    Dependency chain:
-   - main.tscl
+   - main.ot
    - ./math (not found)
    |
-   Suggestion: Did you mean './math.tscl'?
+   Suggestion: Did you mean './math.ot'?
 ```
 
 ## Current Status
@@ -461,7 +461,7 @@ Module caching provides significant speedups:
 Here's a complete example:
 
 ```typescript
-// math.tscl
+// math.ot
 export function add(a: number, b: number): number {
     return a + b;
 }
@@ -470,7 +470,7 @@ export function multiply(a: number, b: number): number {
     return a * b;
 }
 
-// calculator.tscl
+// calculator.ot
 import { add, multiply } from './math';
 
 export function calculate(x: number, y: number): number {
@@ -479,7 +479,7 @@ export function calculate(x: number, y: number): number {
     return sum + product;
 }
 
-// main.tscl
+// main.ot
 import { calculate } from './calculator';
 
 const result = calculate(2, 3);
@@ -488,33 +488,33 @@ console.log("Result:", result);  // Result: 11 (2+3 + 2*3)
 
 ## Conclusion
 
-Script's ES module system brings modern JavaScript module organization to a native-compiled language. With file-based resolution, SHA256 caching, and cross-module calls, it provides a solid foundation for building large applications.
+Oite's ES module system brings modern JavaScript module organization to a native-compiled language. With file-based resolution, SHA256 caching, and cross-module calls, it provides a solid foundation for building large applications.
 
-As we add tree-shaking, circular dependency handling, and package.json support, Script will become an even more powerful tool for building production applications.
+As we add tree-shaking, circular dependency handling, and package.json support, Oite will become an even more powerful tool for building production applications.
 
 ---
 
-**Try ES modules in Script:**
+**Try ES modules in Oite:**
 
 ```bash
-# Create math.tscl
-cat > math.tscl << 'EOF'
+# Create math.ot
+cat > math.ot << 'EOF'
 export function add(a: number, b: number): number {
     return a + b;
 }
 EOF
 
-# Create main.tscl
-cat > main.tscl << 'EOF'
+# Create main.ot
+cat > main.ot << 'EOF'
 import { add } from './math';
 console.log(add(2, 3));
 EOF
 
 # Run it
-./target/release/script main.tscl
+./target/release/script main.ot
 ```
 
 **Learn more:**
-- [Script GitHub Repository](https://github.com/warpy-ai/script)
+- [Oite GitHub Repository](https://github.com/warpy-ai/script)
 - [Module System Documentation](/docs/language-features#modules)
 - [Standard Library](/docs/standard-library)

@@ -312,14 +312,14 @@ function testBootstrapModuleDeterminism() {
     console.log("Test 9: Bootstrap Module Determinism");
 
     let BOOTSTRAP_MODULES = [
-        "../bootstrap/types.tscl",
-        "../bootstrap/lexer.tscl",
-        "../bootstrap/parser.tscl",
-        "../bootstrap/emitter.tscl",
-        "../bootstrap/ir.tscl",
-        "../bootstrap/ir_builder.tscl",
-        "../bootstrap/codegen.tscl",
-        "../bootstrap/pipeline.tscl"
+        "../bootstrap/types.ot",
+        "../bootstrap/lexer.ot",
+        "../bootstrap/parser.ot",
+        "../bootstrap/emitter.ot",
+        "../bootstrap/ir.ot",
+        "../bootstrap/ir_builder.ot",
+        "../bootstrap/codegen.ot",
+        "../bootstrap/pipeline.ot"
     ];
 
     let modulesPassed = true;
@@ -352,7 +352,7 @@ function testBootstrapModuleDeterminism() {
             continue;
         }
 
-        let baseName = modulePath.replace("../bootstrap/", "").replace(".tscl", "");
+        let baseName = modulePath.replace("../bootstrap/", "").replace(".ot", "");
         console.log("  " + baseName + ": " + hash1.toString(16) + " (" + bc1.length + " bytes)");
     }
 
@@ -369,14 +369,14 @@ function testCombinedSourceDeterminism() {
     console.log("Test 10: Combined Source Determinism");
 
     let BOOTSTRAP_MODULES = [
-        "../bootstrap/types.tscl",
-        "../bootstrap/lexer.tscl",
-        "../bootstrap/parser.tscl",
-        "../bootstrap/emitter.tscl",
-        "../bootstrap/ir.tscl",
-        "../bootstrap/ir_builder.tscl",
-        "../bootstrap/codegen.tscl",
-        "../bootstrap/pipeline.tscl"
+        "../bootstrap/types.ot",
+        "../bootstrap/lexer.ot",
+        "../bootstrap/parser.ot",
+        "../bootstrap/emitter.ot",
+        "../bootstrap/ir.ot",
+        "../bootstrap/ir_builder.ot",
+        "../bootstrap/codegen.ot",
+        "../bootstrap/pipeline.ot"
     ];
 
     // Combine all sources

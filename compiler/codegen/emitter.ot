@@ -1,6 +1,6 @@
 // ============================================================================
-// Direct AST to Bytecode Emitter for tscl Compiler
-// Compatible with bootstrap/emitter.tscl
+// Direct AST to Bytecode Emitter for Oite Compiler
+// Compatible with bootstrap/emitter.ot
 // ============================================================================
 
 require ./mod;
@@ -70,7 +70,7 @@ let OP = {
     HALT: 255
 };
 
-// Type tags matching bootstrap/types.tscl
+// Type tags matching bootstrap/types.ot
 let TYPE = {
     NUMBER: 0,
     STRING: 1,

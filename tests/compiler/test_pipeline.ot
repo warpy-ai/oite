@@ -5,14 +5,14 @@
 require("../../bootstrap/pipeline");
 
 let BOOTSTRAP_MODULES = [
-    "bootstrap/types.tscl",
-    "bootstrap/lexer.tscl",
-    "bootstrap/parser.tscl",
-    "bootstrap/emitter.tscl",
-    "bootstrap/ir.tscl",
-    "bootstrap/ir_builder.tscl",
-    "bootstrap/codegen.tscl",
-    "bootstrap/pipeline.tscl"
+    "bootstrap/types.ot",
+    "bootstrap/lexer.ot",
+    "bootstrap/parser.ot",
+    "bootstrap/emitter.ot",
+    "bootstrap/ir.ot",
+    "bootstrap/ir_builder.ot",
+    "bootstrap/codegen.ot",
+    "bootstrap/pipeline.ot"
 ];
 
 console.log("==============================================");
@@ -294,7 +294,7 @@ function testBootstrapLoop() {
             console.log("  FAIL: " + modulePath + " - non-deterministic output");
             allPassed = false;
         } else {
-            let baseName = modulePath.replace("bootstrap/", "").replace(".tscl", "");
+            let baseName = modulePath.replace("bootstrap/", "").replace(".ot", "");
             console.log("  " + baseName + ": " + bytecodeA.length + " bytes (deterministic)");
         }
         i = i + 1;
@@ -389,7 +389,7 @@ function testFullBootstrap() {
 
         totalBytecode = totalBytecode + bytecode.length;
 
-        let baseName = modulePath.replace("bootstrap/", "").replace(".tscl", "");
+        let baseName = modulePath.replace("bootstrap/", "").replace(".ot", "");
         console.log("  " + baseName + ": " + source.length + " bytes -> " + bytecode.length + " bytes");
         i = i + 1;
     }
@@ -452,10 +452,10 @@ function testHashMatchVerification() {
         let lensMatch = lenA == lenB;
 
         if (hashesMatch && lensMatch) {
-            let baseName = modulePath.replace("bootstrap/", "").replace(".tscl", "");
+            let baseName = modulePath.replace("bootstrap/", "").replace(".ot", "");
             console.log("  " + baseName + ": MATCH");
         } else {
-            let baseName = modulePath.replace("bootstrap/", "").replace(".tscl", "");
+            let baseName = modulePath.replace("bootstrap/", "").replace(".ot", "");
             console.log("  " + baseName + ": MISMATCH");
             hashMatchPassed = false;
         }

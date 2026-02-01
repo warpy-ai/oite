@@ -1,17 +1,17 @@
 ---
 sidebar_position: 5
 title: Type System
-description: Script's structural type system with TypeScript-style annotations, type inference, and compile-time type checking.
+description: Oite's structural type system with TypeScript-style annotations, type inference, and compile-time type checking.
 keywords: [type system, structural typing, type inference, type annotations, interfaces, generics]
 ---
 
 # Type System
 
-Script features a **structural type system** inspired by TypeScript. Types are checked at compile time and erased at runtime, providing safety without performance overhead.
+Oite features a **structural type system** inspired by TypeScript. Types are checked at compile time and erased at runtime, providing safety without performance overhead.
 
 ## Structural Typing
 
-Script uses structural typing (duck typing), where type compatibility is determined by the structure of types rather than their names. If two types have compatible shapes, they are considered compatible.
+Oite uses structural typing (duck typing), where type compatibility is determined by the structure of types rather than their names. If two types have compatible shapes, they are considered compatible.
 
 ```javascript
 interface Point {
@@ -37,7 +37,7 @@ This is different from **nominal typing** (used in Java/C#) where types must be 
 
 ```javascript
 let count: number = 42;
-let name: string = "Script";
+let name: string = "Oite";
 let active: boolean = true;
 let nothing: null = null;
 let missing: undefined = undefined;
@@ -146,7 +146,7 @@ function format(input: string | number): string {
 
 ## Type Inference
 
-Script infers types when annotations are omitted:
+Oite infers types when annotations are omitted:
 
 ```javascript
 let x = 42;           // Inferred as number
@@ -207,17 +207,17 @@ let user: { name: string } = { age: 25 };
 
 ## Self-Hosted Type Checker
 
-The Script compiler is self-hosted, meaning the type checker itself is written in Script (`compiler/passes/types.tscl`). This provides several benefits:
+The Oite compiler is self-hosted, meaning the type checker itself is written in Oite (`compiler/passes/types.ot`). This provides several benefits:
 
 - **Dogfooding**: The type system is validated by being used to build the compiler itself
-- **Single language**: No context switching between Rust and Script
+- **Single language**: No context switching between Rust and Oite
 - **Fast iteration**: Changes to type checking don't require Rust recompilation
 
 The Rust VM is used during development for running the self-hosted compiler, while production builds target native code via the LLVM backend.
 
 ## Comparison with TypeScript
 
-| Feature | Script | TypeScript |
+| Feature | Oite | TypeScript |
 |---------|--------|------------|
 | Structural typing | Yes | Yes |
 | Type inference | Yes | Yes |
@@ -228,4 +228,4 @@ The Rust VM is used during development for running the self-hosted compiler, whi
 | Runtime type info | No (erased) | No (erased) |
 | Compilation target | Native (LLVM) | JavaScript |
 
-Script's type system is intentionally simpler than TypeScript's, focusing on the most commonly used features while enabling native code compilation.
+Oite's type system is intentionally simpler than TypeScript's, focusing on the most commonly used features while enabling native code compilation.

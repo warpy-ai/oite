@@ -1,7 +1,7 @@
 ---
-slug: introducing-script
-title: "Introducing Script: JavaScript That Runs Like Rust"
-description: After years of development, Script is here. A language that compiles JavaScript and TypeScript to native machine code with Rust-inspired memory safety and zero-overhead abstractions.
+slug: introducing-oite
+title: "Introducing Oite: JavaScript That Runs Like Rust"
+description: After years of development, Oite is here. A language that compiles JavaScript and TypeScript to native machine code with Rust-inspired memory safety and zero-overhead abstractions.
 authors: [lucas]
 tags: [release, announcement, performance, memory-safety, typescript]
 image: /img/owl-light.png
@@ -17,7 +17,7 @@ NOTE2: Most of the code in this project is written by a human, me. AI is used se
 
 After years of starting, killing, restarting, and refining, I finally realised a dream: operating JavaScript at the low level. And I'm giving it to the world!
 
-Script compiles JavaScript and TypeScript to native machine code, without garbage collection, featuring:
+Oite compiles JavaScript and TypeScript to native machine code, without garbage collection, featuring:
 
 - Rust-inspired ownership & borrow checking
 - Native compilation via LLVM & Cranelift
@@ -44,20 +44,20 @@ Then I turned to the runtimes, primarily Node.js and then Bun. I studied how the
 
 ## Philosophy
 
-Script was born from four core principles:
+Oite was born from four core principles:
 
 - **Performance** - I want to have the same performance as Rust and Go, but with the ease of use of JavaScript/TypeScript.
 - **Memory Safety** - I want to have the same memory safety as Rust, but with the ease of use of JavaScript/TypeScript.
 - **Type Safety** - I want to have the same type safety as Rust, but with the ease of use of JavaScript/TypeScript.
 - **Ease of Use** - I want to have the same ease of use of JavaScript/TypeScript, but with the performance of Rust and Go.
 
-And then Script was born. It's still in its early stages, I call it a preview, and not yet production ready, but I've been able to achieve the performance I wanted, the memory safety I wanted, the type safety I wanted, and the ease of use I wanted.
+And then Oite was born. It's still in its early stages, I call it a preview, and not yet production ready, but I've been able to achieve the performance I wanted, the memory safety I wanted, the type safety I wanted, and the ease of use I wanted.
 
-## What Makes Script Different
+## What Makes Oite Different
 
 ### Native Compilation
 
-Script doesn't use a virtual machine or JIT compilation. Instead, it compiles directly to native machine code using LLVM and Cranelift. This means:
+Oite doesn't use a virtual machine or JIT compilation. Instead, it compiles directly to native machine code using LLVM and Cranelift. This means:
 
 - **Standalone binaries**: No runtime dependencies
 - **Fast startup**: No warmup time, instant execution
@@ -66,7 +66,7 @@ Script doesn't use a virtual machine or JIT compilation. Instead, it compiles di
 
 ### Rust-Inspired Memory Safety
 
-Script brings Rust's ownership model to JavaScript with moves and borrows:
+Oite brings Rust's ownership model to JavaScript with moves and borrows:
 
 ```typescript
 // Move: ownership transfers, original becomes invalid
@@ -88,7 +88,7 @@ mutRef[0] = 42;           // ✓ Can mutate through &mut
 // let other = &buffer;   // ✗ Compile error: already mutably borrowed
 ```
 
-No lifetime annotations needed—Script infers them automatically. This eliminates entire classes of bugs:
+No lifetime annotations needed—Oite infers them automatically. This eliminates entire classes of bugs:
 
 - Use-after-free
 - Double-free
@@ -97,7 +97,7 @@ No lifetime annotations needed—Script infers them automatically. This eliminat
 
 ### Full TypeScript Support
 
-Script understands TypeScript syntax and type inference:
+Oite understands TypeScript syntax and type inference:
 
 ```typescript
 // Type inference works just like TypeScript
@@ -112,7 +112,7 @@ let result = add(5, 10); // ✓ Type safe
 
 ### Zero-Overhead Abstractions
 
-Script's abstractions compile away to nothing:
+Oite's abstractions compile away to nothing:
 
 ```typescript
 // High-level code
@@ -124,7 +124,7 @@ const doubled = numbers.map((x) => x * 2);
 
 ## Current Status
 
-Script has reached a **major milestone**: the compiler is now **fully self-hosting** and can generate native binaries!
+Oite has reached a **major milestone**: the compiler is now **fully self-hosting** and can generate native binaries!
 
 **Core Language Complete**
 
@@ -158,9 +158,9 @@ Script has reached a **major milestone**: the compiler is now **fully self-hosti
 
 **Phase 4: Self-Hosting Compiler**
 
-- Bootstrap compiler written in Script (~5,000 lines)
+- Bootstrap compiler written in Oite (~5,000 lines)
 - Modular compiler architecture (~3,500 lines)
-- Generates LLVM IR from Script source
+- Generates LLVM IR from Oite source
 - Native binaries ~30x faster than VM
 - 113 tests passing
 
@@ -168,10 +168,10 @@ Script has reached a **major milestone**: the compiler is now **fully self-hosti
 
 ```bash
 # Self-hosted compiler generates LLVM IR
-./script compiler/main.tscl llvm myapp.tscl
+./script compiler/main.ot llvm myapp.ot
 
 # Compile to native binary
-clang myapp.tscl.ll -o myapp
+clang myapp.ot.ll -o myapp
 
 # Run at native speed!
 ./myapp
@@ -179,7 +179,7 @@ clang myapp.tscl.ll -o myapp
 
 **Minimal Standard Library**
 
-Script core is intentionally minimal (like C without libc):
+Oite core is intentionally minimal (like C without libc):
 
 - `console.log`, `console.error`
 - `ByteStream` for binary data
@@ -219,7 +219,7 @@ _Note: Full benchmarks against Node.js and Bun will come with the Rolls ecosyste
 
 ## Getting Started
 
-Try Script today:
+Try Oite today:
 
 ```bash
 # Clone the repository
@@ -230,7 +230,7 @@ cd script
 cargo build --release
 
 # Compile your first program
-./target/release/script build hello.tscl -o hello
+./target/release/script build hello.ot -o hello
 ./hello
 ```
 
@@ -238,7 +238,7 @@ Write your code in TypeScript:
 
 ```javascript
 // hello.ts
-const name: string = "Script";
+const name: string = "Oite";
 console.log(`Hello, ${name}!`);
 ```
 
@@ -255,11 +255,11 @@ With the core language complete and self-hosting achieved, the focus shifts to t
 - **Production Hardening**: Comprehensive test coverage, real-world validation
 - **Documentation**: Complete API reference, tutorials, and examples
 
-The self-hosted compiler opens the door to rapid iteration—now we can improve Script by writing Script!
+The self-hosted compiler opens the door to rapid iteration—now we can improve Oite by writing Oite!
 
 ## Conclusion
 
-Script represents a new approach to JavaScript: take the syntax and ease of use developers love, but give them the performance and safety of systems languages. It's still early, but the foundation is solid.
+Oite represents a new approach to JavaScript: take the syntax and ease of use developers love, but give them the performance and safety of systems languages. It's still early, but the foundation is solid.
 
 So give it a try, and let me know what you think. This is just the beginning.
 
@@ -276,5 +276,5 @@ So give it a try, and let me know what you think. This is just the beginning.
 
 - Report issues and suggest features
 - Contribute to the standard library
-- Share your Script projects
-- Help shape the future of Script
+- Share your Oite projects
+- Help shape the future of Oite

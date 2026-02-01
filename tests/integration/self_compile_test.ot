@@ -2,8 +2,8 @@
 console.log("=== Self-Compilation Test ===");
 
 // Read a bootstrap module file
-let source = File.readSync("bootstrap/types.tscl");
-console.log("Read types.tscl");
+let source = File.readSync("bootstrap/types.ot");
+console.log("Read types.ot");
 
 // Try to compile it
 let result = compileToBytecode(source);

@@ -1,24 +1,24 @@
 ---
 slug: self-hosting-journey
-title: "Script v0.4: From VM to Native - The Self-Hosting Journey Begins"
-description: Script enters Phase 4 with the self-hosting compiler journey. Learn what self-hosting means, why it matters, and how Script is becoming self-compiling.
+title: "Oite v0.4: From VM to Native - The Self-Hosting Journey Begins"
+description: Oite enters Phase 4 with the self-hosting compiler journey. Learn what self-hosting means, why it matters, and how Oite is becoming self-compiling.
 authors: [lucas]
 tags: [compiler, self-hosting, architecture, phase-4]
 image: /img/logo_bg.png
 ---
 
-This week marks a major milestone for Script: we've officially begun **Phase 4 - Self-Hosting Compiler**. After completing Phase 3 (Language Completion), we're now taking the next step toward making Script a truly self-contained language that can compile itself. This post explores what self-hosting means, why it matters, and how we're building toward it.
+This week marks a major milestone for Oite: we've officially begun **Phase 4 - Self-Hosting Compiler**. After completing Phase 3 (Language Completion), we're now taking the next step toward making Oite a truly self-contained language that can compile itself. This post explores what self-hosting means, why it matters, and how we're building toward it.
 
 <!-- truncate -->
 
 ## What is Self-Hosting?
 
-A **self-hosting compiler** is a compiler written in the language it compiles. Currently, Script's compiler is written in Rust. The goal of Phase 4 is to port the compiler to Script itself, so that Script can compile Script.
+A **self-hosting compiler** is a compiler written in the language it compiles. Currently, Oite's compiler is written in Rust. The goal of Phase 4 is to port the compiler to Oite itself, so that Oite can compile Oite.
 
 This might sound like a chicken-and-egg problem, but it's actually a well-established pattern in language development. Here's how it works:
 
 ```
-tscl₀ (Rust compiler) ──compile──> tscl₁ (Script-compiled binary)
+tscl₀ (Rust compiler) ──compile──> tscl₁ (Oite-compiled binary)
      │                                 │
      │                                 └──compile──> tscl₂ (tscl₁-compiled)
      │                                               │
@@ -35,7 +35,7 @@ Self-hosting is more than just a technical achievement—it's a proof of maturit
 
 ### 1. **Language Completeness**
 
-If a language can compile itself, it's complete enough to build real software. You can't write a compiler in a language that's missing critical features. Self-hosting proves that Script has:
+If a language can compile itself, it's complete enough to build real software. You can't write a compiler in a language that's missing critical features. Self-hosting proves that Oite has:
 - Sufficient control flow (loops, conditionals, functions)
 - Adequate data structures (objects, arrays, strings)
 - Proper error handling
@@ -44,10 +44,10 @@ If a language can compile itself, it's complete enough to build real software. Y
 
 ### 2. **Removing Runtime Dependencies**
 
-Currently, Script's VM is written in Rust and linked into every binary. While this works, it means:
+Currently, Oite's VM is written in Rust and linked into every binary. While this works, it means:
 - Production binaries include the entire Rust runtime
 - We're limited by Rust's compilation model
-- We can't optimize the runtime as aggressively as we could if it were in Script
+- We can't optimize the runtime as aggressively as we could if it were in Oite
 
 With self-hosting, the compiler itself runs as native code, and we can eventually remove the VM from production builds entirely.
 
@@ -60,7 +60,7 @@ Once self-hosting is achieved, we can iterate on the compiler using the compiler
 
 ### 4. **Community Confidence**
 
-Self-hosting demonstrates that Script is serious and production-ready. It shows that the language isn't just a toy project, but something that can be used to build real, complex software.
+Self-hosting demonstrates that Oite is serious and production-ready. It shows that the language isn't just a toy project, but something that can be used to build real, complex software.
 
 ## The Bootstrap Architecture
 
@@ -88,7 +88,7 @@ Once frozen, we can't change these without bumping the version.
 - **IR Serialization**: We've created a deterministic Intermediate Representation (IR) format:
 
 ```bash
-./target/release/script build app.tscl --emit-ir -o app
+./target/release/script build app.ot --emit-ir -o app
 ```
 
 This produces a stable, text-based IR that can be:
@@ -108,11 +108,11 @@ The compiler consists of several modules:
 
 | Module | Lines (est) | Priority |
 |--------|-------------|----------|
-| `lexer.tscl` | ~400 | 1 |
-| `parser.tscl` | ~1200 | 2 |
-| `emitter.tscl` | ~800 | 2 |
-| `ir.tscl` | ~600 | 3 |
-| `codegen.tscl` | ~1000 | 4 |
+| `lexer.ot` | ~400 | 1 |
+| `parser.ot` | ~1200 | 2 |
+| `emitter.ot` | ~800 | 2 |
+| `ir.ot` | ~600 | 3 |
+| `codegen.ot` | ~1000 | 4 |
 
 We'll port incrementally, keeping Rust as the reference implementation. Each module will be tested independently before moving to the next.
 
@@ -121,13 +121,13 @@ We'll port incrementally, keeping Rust as the reference implementation. Each mod
 Once the compiler is ported, we verify self-hosting:
 
 ```typescript
-// tests/bootstrap/loop.tscl
+// tests/bootstrap/loop.ot
 export function testBootstrapLoop(): void {
     // Step 1: Compile compiler with Rust tscl
-    const tscl1 = runRustTscl("build compiler.tscl --dist -o /tmp/tscl1");
+    const tscl1 = runRustTscl("build compiler.ot --dist -o /tmp/tscl1");
     
     // Step 2: Compile compiler with tscl₁
-    const tscl2 = runTscl("/tmp/tscl1", "build compiler.tscl --dist -o /tmp/tscl2");
+    const tscl2 = runTscl("/tmp/tscl1", "build compiler.ot --dist -o /tmp/tscl2");
     
     // Step 3: Verify bit-for-bit match
     assert(hash("/tmp/tscl1") === hash("/tmp/tscl2"), "Bootstrap not deterministic");
@@ -138,7 +138,7 @@ If `tscl₁` and `tscl₂` produce identical binaries, we've achieved self-hosti
 
 ## ABI Freezing Strategy
 
-The ABI (Application Binary Interface) is the contract between compiled Script code and the runtime. Freezing it is critical because:
+The ABI (Application Binary Interface) is the contract between compiled Oite code and the runtime. Freezing it is critical because:
 
 1. **Stability**: Once frozen, we can't change function signatures without breaking compatibility
 2. **Verification**: We can verify that the ABI hasn't changed between bootstrap stages
@@ -226,18 +226,18 @@ bb0:
 
 ```bash
 # Emit IR to file
-./target/release/script build app.tscl --emit-ir -o app
+./target/release/script build app.ot --emit-ir -o app
 # → app.ir
 
 # Verify IR validity
-./target/release/script build app.tscl --verify-ir
+./target/release/script build app.ot --verify-ir
 
 # Emit LLVM IR
-./target/release/script build app.tscl --emit-llvm -o app
+./target/release/script build app.ot --emit-llvm -o app
 # → app.ll
 
 # Emit object file
-./target/release/script build app.tscl --emit-obj -o app
+./target/release/script build app.ot --emit-obj -o app
 # → app.o
 ```
 
@@ -247,7 +247,7 @@ Self-hosting has significant performance implications:
 
 ### Native Code Generation
 
-Currently, Script can compile to:
+Currently, Oite can compile to:
 - **Cranelift JIT**: Fast development, ~6x faster than VM
 - **LLVM AOT**: Optimized native binaries with LTO
 
@@ -309,23 +309,23 @@ We're taking it step by step, ensuring each stage is solid before moving to the 
 
 ## Conclusion
 
-Self-hosting is a major milestone that proves Script's maturity and sets the foundation for future growth. By freezing the ABI and creating deterministic IR serialization, we've laid the groundwork for a robust bootstrap process.
+Self-hosting is a major milestone that proves Oite's maturity and sets the foundation for future growth. By freezing the ABI and creating deterministic IR serialization, we've laid the groundwork for a robust bootstrap process.
 
 The journey from VM to native is challenging, but it's also exciting. Every language that achieves self-hosting joins an elite group of systems that can truly stand on their own.
 
-We're building Script to be fast, safe, and practical. Self-hosting is the next step in that journey.
+We're building Oite to be fast, safe, and practical. Self-hosting is the next step in that journey.
 
 ---
 
-**Try Script today:**
+**Try Oite today:**
 
 ```bash
 cargo build --release
-./target/release/script build hello.tscl -o hello
+./target/release/script build hello.ot -o hello
 ./hello
 ```
 
 **Learn more:**
-- [Script GitHub Repository](https://github.com/warpy-ai/script)
+- [Oite GitHub Repository](https://github.com/warpy-ai/script)
 - [Architecture Documentation](/docs/architecture)
 - [Development Status](/docs/development-status)

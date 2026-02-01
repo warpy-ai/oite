@@ -867,7 +867,7 @@ fn test_move_tracking_full_flow() {
 
     let cm: Lrc<SourceMap> = Default::default();
     let fm = cm.new_source_file(
-        FileName::Custom("test.tscl".into()).into(),
+        FileName::Custom("test.ot".into()).into(),
         source.to_string(),
     );
     let syntax = Syntax::Typescript(Default::default());
@@ -913,7 +913,7 @@ fn test_member_access_borrows_not_moves() {
 
     let cm: Lrc<SourceMap> = Default::default();
     let fm = cm.new_source_file(
-        FileName::Custom("test.tscl".into()).into(),
+        FileName::Custom("test.ot".into()).into(),
         source.to_string(),
     );
     let syntax = Syntax::Typescript(Default::default());

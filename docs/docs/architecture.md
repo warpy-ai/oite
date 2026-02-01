@@ -1,23 +1,23 @@
 ---
 sidebar_position: 4
-title: Script Compiler Architecture
-description: Learn about Script's compiler architecture, including the lexer, parser, type checker, SSA IR, and native code generation via Cranelift and LLVM backends.
+title: Oite Compiler Architecture
+description: Learn about Oite's compiler architecture, including the lexer, parser, type checker, SSA IR, and native code generation via Cranelift and LLVM backends.
 keywords: [compiler architecture, lexer, parser, type checker, ssa, ir, cranelift, llvm, code generation]
 ---
 
-# Script Architecture
+# Oite Architecture
 
-This document describes the Script ecosystem architecture, the philosophy behind each layer, and the transition path to full self-hosting.
+This document describes the Oite ecosystem architecture, the philosophy behind each layer, and the transition path to full self-hosting.
 
 ---
 
 ## Philosophy
 
-**Script Core is like C without libc** — a minimal, self-contained language that can run without any external dependencies. Everything else is optional layers that add convenience.
+**Oite Core is like C without libc** — a minimal, self-contained language that can run without any external dependencies. Everything else is optional layers that add convenience.
 
 | Layer | Required? | Analogy |
 |-------|-----------|---------|
-| Script Core | Always | C language + basic allocator |
+| Oite Core | Always | C language + basic allocator |
 | Rolls | Optional | libc, POSIX, system libraries |
 | NPM (via .nroll) | Optional | Third-party C libraries |
 | Unroll | Optional | make, cargo, package manager |
@@ -44,11 +44,11 @@ This document describes the Script ecosystem architecture, the philosophy behind
                     ▼                               ▼
 ┌───────────────────────────────┐   ┌─────────────────────────────────────────┐
 │                               │   │                                         │
-│       SCRIPT CORE             │   │              ROLLS                      │
+│       OITE CORE             │   │              ROLLS                      │
 │       ───────────             │   │              ─────                      │
 │                               │   │                                         │
 │  ┌─────────────────────────┐  │   │  Official System Libraries              │
-│  │  Compiler (scriptc)     │  │   │                                         │
+│  │  Compiler (oitec)     │  │   │                                         │
 │  │  ├── Lexer              │  │   │  ┌─────────────────────────────────┐    │
 │  │  ├── Parser             │  │   │  │ @rolls/async   Event loop,      │    │
 │  │  ├── Type Checker       │  │   │  │                io_uring         │    │
@@ -140,7 +140,7 @@ This document describes the Script ecosystem architecture, the philosophy behind
 │  │   ./myapp                                     Single executable     │    │
 │  │                                                                     │    │
 │  │   ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐   │    │
-│  │   │ User Code   │ │ Script Core │ │   Rolls     │ │ NPM (.nroll)│   │    │
+│  │   │ User Code   │ │ Oite Core │ │   Rolls     │ │ NPM (.nroll)│   │    │
 │  │   │             │ │  Runtime    │ │  Libraries  │ │  Libraries  │   │    │
 │  │   └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘   │    │
 │  │                                                                     │    │
@@ -158,7 +158,7 @@ This document describes the Script ecosystem architecture, the philosophy behind
 
 ## What Each Layer Provides
 
-### Script Core (Always Available)
+### Oite Core (Always Available)
 
 ```javascript
 // These work without Rolls or Unroll
@@ -240,7 +240,7 @@ let sorted = _.sortBy(items, 'name');
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           SCRIPT CORE COMPILER                              │
+│                           OITE CORE COMPILER                              │
 │                                                                             │
 │   ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────────┐   │
 │   │  Lexer  │──▶│ Parser  │──▶│  Type   │──▶│   IR    │──▶│   Native    │   │
@@ -278,7 +278,7 @@ let sorted = _.sortBy(items, 'name');
 
 ## Transition Path: Rust → Self-Hosted
 
-This diagram shows the evolution from the Rust-based compiler to the fully self-hosted Script compiler.
+This diagram shows the evolution from the Rust-based compiler to the fully self-hosted Oite compiler.
 
 ```
 ═══════════════════════════════════════════════════════════════════════════════
@@ -307,12 +307,12 @@ RUST FOUNDATION Complete
 
     ┌─────────────────────────────────────────────────────────────────────┐
     │                                                                     │
-    │   bootstrap/*.tscl                  Reference implementation        │
+    │   bootstrap/*.ot                  Reference implementation        │
     │   ════════════════                                                  │
     │                                                                     │
     │   ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────────────┐     │
     │   │  Lexer  │──▶│ Parser  │──▶│   IR    │──▶│    Bytecode     │     │
-    │   │ (.tscl) │   │ (.tscl) │   │ (.tscl) │   │     Output      │     │
+    │   │ (.ot) │   │ (.ot) │   │ (.ot) │   │     Output      │     │
     │   └─────────┘   └─────────┘   └─────────┘   └────────┬────────┘     │
     │                                                      │              │
     │                                                      ▼              │
@@ -329,7 +329,7 @@ FEATURE PARITY Complete
 
     ┌─────────────────────────────────────────────────────────────────────┐
     │                                                                     │
-    │   compiler/*.tscl                   Modular, production-ready       │
+    │   compiler/*.ot                   Modular, production-ready       │
     │   ═══════════════                                                   │
     │                                                                     │
     │   ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐             │
@@ -359,7 +359,7 @@ NATIVE CODEGEN Complete (via LLVM IR)
 
     ┌─────────────────────────────────────────────────────────────────────┐
     │                                                                     │
-    │   compiler/*.tscl (scriptc)         Full native compiler            │
+    │   compiler/*.ot (oitec)         Full native compiler            │
     │   ═════════════════════════                                         │
     │                                                                     │
     │   ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐             │
@@ -399,42 +399,42 @@ BOOTSTRAP VERIFICATION In Progress
     │                                                                     │
     │   ┌───────────────────┐                                             │
     │   │                   │                                             │
-    │   │  tscl₀ = Rust     │  Original Rust compiler                     │
+    │   │  oite₀ = Rust     │  Original Rust compiler                     │
     │   │  compiler         │                                             │
     │   │                   │                                             │
     │   └─────────┬─────────┘                                             │
     │             │                                                       │
-    │             │ compiles compiler/*.tscl                              │
+    │             │ compiles compiler/*.ot                              │
     │             ▼                                                       │
     │   ┌───────────────────┐                                             │
     │   │                   │                                             │
-    │   │  tscl₁ = scriptc  │  First native scriptc                       │
+    │   │  oite₁ = oitec  │  First native oitec                       │
     │   │  (built by Rust)  │                                             │
     │   │                   │                                             │
     │   └─────────┬─────────┘                                             │
     │             │                                                       │
-    │             │ compiles compiler/*.tscl                              │
+    │             │ compiles compiler/*.ot                              │
     │             ▼                                                       │
     │   ┌───────────────────┐                                             │
     │   │                   │                                             │
-    │   │  tscl₂ = scriptc  │  Self-compiled scriptc                      │
-    │   │  (built by tscl₁) │                                             │
+    │   │  oite₂ = oitec  │  Self-compiled oitec                      │
+    │   │  (built by oite₁) │                                             │
     │   │                   │                                             │
     │   └─────────┬─────────┘                                             │
     │             │                                                       │
-    │             │ compiles compiler/*.tscl                              │
+    │             │ compiles compiler/*.ot                              │
     │             ▼                                                       │
     │   ┌───────────────────┐                                             │
     │   │                   │                                             │
-    │   │  tscl₃ = scriptc  │  Should be identical to tscl₂               │
-    │   │  (built by tscl₂) │                                             │
+    │   │  oite₃ = oitec  │  Should be identical to oite₂               │
+    │   │  (built by oite₂) │                                             │
     │   │                   │                                             │
     │   └───────────────────┘                                             │
     │                                                                     │
     │                                                                     │
     │   ┌─────────────────────────────────────────────────────────────┐   │
     │   │                                                             │   │
-    │   │   VERIFICATION:  sha256(tscl₂) == sha256(tscl₃)             │   │
+    │   │   VERIFICATION:  sha256(oite₂) == sha256(oite₃)             │   │
     │   │                                                             │   │
     │   │   If hashes match → Deterministic, reproducible compiler    │   │
     │   │   If hashes differ → Bug in codegen, must fix               │   │
@@ -445,7 +445,7 @@ BOOTSTRAP VERIFICATION In Progress
     │   FINAL STATE:                                                      │
     │   ════════════                                                      │
     │                                                                     │
-    │   scriptc compiles itself                                        │
+    │   oitec compiles itself                                        │
     │   No Rust compiler needed for development                        │
     │   Deterministic builds verified                                  │
     │   src/compiler/ (Rust) kept for reference/testing only           │
@@ -482,15 +482,15 @@ After bootstrap verification is complete:
 
 ```
 script/
-├── compiler/                     # THE compiler (scriptc) - MAIN
-│   ├── main.tscl                 # Entry point
+├── compiler/                     # THE compiler (oitec) - MAIN
+│   ├── main.ot                 # Entry point
 │   ├── lexer/                    # Tokenization
 │   ├── parser/                   # AST generation
 │   ├── ast/                      # AST types
 │   ├── passes/                   # Compiler passes
-│   │   ├── typecheck.tscl        # Type inference
-│   │   ├── opt.tscl              # Optimizations
-│   │   └── borrow_ck.tscl        # Ownership checking
+│   │   ├── typecheck.ot        # Type inference
+│   │   ├── opt.ot              # Optimizations
+│   │   └── borrow_ck.ot        # Ownership checking
 │   ├── ir/                       # SSA IR
 │   ├── backend/                  # Native codegen
 │   │   ├── x86_64/               # x86-64 backend
@@ -521,7 +521,7 @@ script/
 ## Key Principles
 
 ### 1. Minimal Core
-Script Core contains only what's necessary to run code:
+Oite Core contains only what's necessary to run code:
 - Compiler
 - Basic types
 - Memory allocation
@@ -548,7 +548,7 @@ Everything is deterministic:
 ### 5. Progressive Enhancement
 Use only what you need:
 ```
-Script Core only     → Minimal binary, ~100KB
+Oite Core only     → Minimal binary, ~100KB
 + Rolls              → Full-featured, ~1-5MB
 + NPM libraries      → Ecosystem access, varies
 ```
@@ -557,7 +557,7 @@ Script Core only     → Minimal binary, ~100KB
 
 ## Comparison with Other Ecosystems
 
-| Aspect | Script | Node.js | Go | Rust |
+| Aspect | Oite | Node.js | Go | Rust |
 |--------|--------|---------|-----|------|
 | Core without stdlib | Yes | No | No | Yes (#![no_std]) |
 | Static linking | Default | No | Default | Default |

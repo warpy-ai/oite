@@ -1,6 +1,6 @@
-// file_reader.tscl
+// file_reader.ot
 const fs: Dict = require("fs");
-let content: string = fs.readFileSync("./examples/file_reader.tscl");
+let content: string = fs.readFileSync("./examples/file_reader.ot");
 
 let i: number = 0;
 let charCount: number = 0;
