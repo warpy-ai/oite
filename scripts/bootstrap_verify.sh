@@ -2,7 +2,7 @@
 # ============================================================================
 # Bootstrap Verification Script
 # ============================================================================
-# Verifies that the Script compiler can compile itself and produce
+# Verifies that the Oite compiler can compile itself and produce
 # identical output across multiple generations (the "triple test").
 #
 # Stages:
@@ -22,8 +22,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_ROOT/target/release"
-VERIFY_DIR="/tmp/tscl_bootstrap_verify"
-SCRIPT_BIN="$BUILD_DIR/script"
+VERIFY_DIR="/tmp/oite_bootstrap_verify"
+OITE_BIN="$BUILD_DIR/oite"
 
 # Colors for output
 RED='\033[0;31m'
@@ -75,18 +75,18 @@ compute_hash() {
 check_build() {
     log_header "Checking Build"
 
-    if [[ ! -f "$SCRIPT_BIN" ]]; then
-        log_warn "Script binary not found, building..."
+    if [[ ! -f "$OITE_BIN" ]]; then
+        log_warn "Oite binary not found, building..."
         cd "$PROJECT_ROOT"
         cargo build --release
     fi
 
-    if [[ ! -f "$SCRIPT_BIN" ]]; then
-        log_error "Failed to build script binary"
+    if [[ ! -f "$OITE_BIN" ]]; then
+        log_error "Failed to build oite binary"
         exit 1
     fi
 
-    log_success "Script binary found: $SCRIPT_BIN"
+    log_success "Oite binary found: $OITE_BIN"
 }
 
 # ============================================================================
@@ -103,7 +103,7 @@ verify_bytecode_determinism() {
 
     # Run the existing test suite which verifies hash determinism
     cd "$PROJECT_ROOT"
-    "$SCRIPT_BIN" tests/compiler/test_pipeline.tscl 2>&1 | tee "$stage_dir/test_output.log"
+    "$OITE_BIN" tests/compiler/test_pipeline.ot 2>&1 | tee "$stage_dir/test_output.log"
 
     # Check if the test passed
     if grep -q "Hash Match Verification: PASS" "$stage_dir/test_output.log"; then
@@ -126,14 +126,14 @@ verify_bootstrap_loop() {
     mkdir -p "$stage_dir"
 
     local BOOTSTRAP_MODULES=(
-        "bootstrap/types.tscl"
-        "bootstrap/lexer.tscl"
-        "bootstrap/parser.tscl"
-        "bootstrap/emitter.tscl"
-        "bootstrap/ir.tscl"
-        "bootstrap/ir_builder.tscl"
-        "bootstrap/codegen.tscl"
-        "bootstrap/pipeline.tscl"
+        "bootstrap/types.ot"
+        "bootstrap/lexer.ot"
+        "bootstrap/parser.ot"
+        "bootstrap/emitter.ot"
+        "bootstrap/ir.ot"
+        "bootstrap/ir_builder.ot"
+        "bootstrap/codegen.ot"
+        "bootstrap/pipeline.ot"
     )
 
     cd "$PROJECT_ROOT"
@@ -144,11 +144,11 @@ verify_bootstrap_loop() {
     local total_bytes=0
 
     for module in "${BOOTSTRAP_MODULES[@]}"; do
-        local basename=$(basename "$module" .tscl)
+        local basename=$(basename "$module" .ot)
         local output="$stage_dir/${basename}.bc"
 
         # Compile using the VM
-        if "$SCRIPT_BIN" "$module" > "$output" 2>&1; then
+        if "$OITE_BIN" "$module" > "$output" 2>&1; then
             local size=$(wc -c < "$output" 2>/dev/null || echo "0")
             total_bytes=$((total_bytes + size))
             log_info "  $basename: $size bytes"
@@ -180,7 +180,7 @@ verify_llvm_determinism() {
     cd "$PROJECT_ROOT"
 
     # Test file for LLVM IR generation
-    local test_source="$stage_dir/test_source.tscl"
+    local test_source="$stage_dir/test_source.ot"
     cat > "$test_source" << 'EOF'
 function fibonacci(n) {
     if (n <= 1) {
@@ -194,13 +194,13 @@ console.log(result);
 EOF
 
     log_info "Generating LLVM IR (run 1)..."
-    "$SCRIPT_BIN" compiler/main.tscl llvm "$test_source" 2>/dev/null || true
+    "$OITE_BIN" compiler/main.ot llvm "$test_source" 2>/dev/null || true
     if [[ -f "${test_source}.ll" ]]; then
         mv "${test_source}.ll" "$stage_dir/run1/output.ll"
     fi
 
     log_info "Generating LLVM IR (run 2)..."
-    "$SCRIPT_BIN" compiler/main.tscl llvm "$test_source" 2>/dev/null || true
+    "$OITE_BIN" compiler/main.ot llvm "$test_source" 2>/dev/null || true
     if [[ -f "${test_source}.ll" ]]; then
         mv "${test_source}.ll" "$stage_dir/run2/output.ll"
     fi
@@ -247,7 +247,7 @@ verify_native_triple_test() {
     fi
 
     # Test with a simple program
-    local test_source="$stage_dir/fib.tscl"
+    local test_source="$stage_dir/fib.ot"
     cat > "$test_source" << 'EOF'
 function fib(n) {
     if (n <= 1) { return n; }
@@ -257,7 +257,7 @@ console.log(fib(25));
 EOF
 
     log_info "Generating LLVM IR..."
-    "$SCRIPT_BIN" compiler/main.tscl llvm "$test_source" 2>/dev/null || {
+    "$OITE_BIN" compiler/main.ot llvm "$test_source" 2>/dev/null || {
         log_warn "LLVM IR generation failed, skipping native test"
         return 0
     }
@@ -278,7 +278,7 @@ EOF
     local native_output=$("$stage_dir/fib_native" 2>&1 || true)
 
     log_info "Running via VM..."
-    local vm_output=$("$SCRIPT_BIN" "$test_source" 2>&1 | tail -1 || true)
+    local vm_output=$("$OITE_BIN" "$test_source" 2>&1 | tail -1 || true)
 
     log_info "Native output: $native_output"
     log_info "VM output: $vm_output"
@@ -305,15 +305,15 @@ verify_self_compilation() {
 
     log_info "Verifying self-compilation with representative module..."
 
-    # Use bootstrap/lexer.tscl as representative test (368 lines)
+    # Use bootstrap/lexer.ot as representative test (368 lines)
     # This proves the compiler can compile bootstrap code, which is the key verification
     # Full combined compilation (~5000 lines) is too slow for CI due to VM interpretation overhead
-    local test_source="bootstrap/lexer.tscl"
+    local test_source="bootstrap/lexer.ot"
     local output_bc="$stage_dir/lexer.bc"
 
     # Generation 0: Compile with self-hosted compiler
     log_info "Generation 0: Compiling $test_source..."
-    "$SCRIPT_BIN" compiler/main.tscl build "$test_source" -o "$output_bc" 2>&1 | tee "$stage_dir/gen0/compile.log" || true
+    "$OITE_BIN" compiler/main.ot build "$test_source" -o "$output_bc" 2>&1 | tee "$stage_dir/gen0/compile.log" || true
 
     if [[ -f "$output_bc" ]]; then
         cp "$output_bc" "$stage_dir/gen0/lexer.bc"
@@ -322,7 +322,7 @@ verify_self_compilation() {
 
         # Generation 1: Re-compile to verify determinism
         log_info "Generation 1: Re-compiling $test_source..."
-        "$SCRIPT_BIN" compiler/main.tscl build "$test_source" -o "$output_bc" 2>&1 | tee "$stage_dir/gen1/compile.log" || true
+        "$OITE_BIN" compiler/main.ot build "$test_source" -o "$output_bc" 2>&1 | tee "$stage_dir/gen1/compile.log" || true
 
         if [[ -f "$output_bc" ]]; then
             cp "$output_bc" "$stage_dir/gen1/lexer.bc"
@@ -375,7 +375,7 @@ EOF
 # ============================================================================
 
 main() {
-    log_header "Script Bootstrap Verification"
+    log_header "Oite Bootstrap Verification"
     echo "Project: $PROJECT_ROOT"
     echo "Output: $VERIFY_DIR"
 
@@ -436,8 +436,8 @@ main() {
     if $all_passed; then
         log_success "All verification stages passed!"
         echo ""
-        echo "The Script compiler has achieved bootstrap verification."
-        echo "hash(tscl₀) == hash(tscl₁) == hash(tscl₂)"
+        echo "The Oite compiler has achieved bootstrap verification."
+        echo "hash(oite₀) == hash(oite₁) == hash(oite₂)"
         exit 0
     else
         log_error "Some verification stages failed"
