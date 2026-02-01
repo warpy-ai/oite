@@ -10,21 +10,21 @@ export default function Home(): ReactNode {
   const {siteConfig} = useDocusaurusContext();
   return (
     <Layout
-      title="Script - High Performance Systems Language"
-      description="Script is a high-performance systems language with TypeScript syntax, compiling to native code via Cranelift JIT and LLVM AOT. Features self-hosting compiler, ownership model, and SSA IR optimizations.">
+      title="Oite - High Performance Systems Language"
+      description="Oite is a high-performance systems language with TypeScript syntax, compiling to native code via Cranelift JIT and LLVM AOT. Features self-hosting compiler, ownership model, and SSA IR optimizations.">
       <main className={clsx(styles.page)}>
         <section className={clsx(styles.heroShell)}>
           <div className="container">
             <div className={styles.heroInner}>
               <div>
-                <div className={styles.eyebrow}>Script Language</div>
+                <div className={styles.eyebrow}>Oite Language</div>
                 <h1 className={styles.title}>
                   TypeScript syntax.
                   <br />
                   Native performance.
                 </h1>
                 <p className={styles.subtitle}>
-                  Script is a high‑performance systems language with TypeScript syntax,
+                  Oite is a high‑performance systems language with TypeScript syntax,
                   compiling to native code via Cranelift JIT and LLVM AOT. Features a
                   self‑hosting compiler, Rust‑inspired ownership model, and SSA IR optimizations.
                 </p>
@@ -56,7 +56,7 @@ export default function Home(): ReactNode {
                   <div className={styles.heroAsideCard}>
                     <div className={styles.heroAsideCardTitle}>Self‑Hosting</div>
                     <div className={styles.heroAsideCardBody}>
-                      Compiler written in Script itself, generating LLVM IR for native binaries.
+                      Compiler written in Oite itself, generating LLVM IR for native binaries.
                     </div>
                   </div>
                   <div className={styles.heroAsideCard}>
@@ -80,7 +80,7 @@ export default function Home(): ReactNode {
         <section className={styles.sectionShell}>
           <div className="container">
             <div className={styles.sectionHeader}>
-              <div className={styles.sectionTitle}>Why Script</div>
+              <div className={styles.sectionTitle}>Why Oite</div>
               <p className={styles.sectionSubtitle}>
                 A minimal core language (like C without libc) with optional Rolls ecosystem libraries.
               </p>
@@ -112,7 +112,7 @@ export default function Home(): ReactNode {
                 <div className={styles.featureLabel}>Architecture</div>
                 <h3 className={styles.featureTitle}>Minimal core</h3>
                 <p className={styles.featureBody}>
-                  Script Core is self‑contained. Extended functionality via optional Rolls ecosystem libraries.
+                  Oite Core is self‑contained. Extended functionality via optional Rolls ecosystem libraries.
                 </p>
               </article>
             </div>
