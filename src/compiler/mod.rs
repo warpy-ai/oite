@@ -978,7 +978,8 @@ impl Codegen {
                 });
                 self.instructions.push(OpCode::Load(idx_name.clone()));
                 self.instructions.push(OpCode::Load(iter_name.clone()));
-                self.instructions.push(OpCode::GetProp("length".to_string()));
+                self.instructions
+                    .push(OpCode::GetProp("length".to_string()));
                 self.instructions.push(OpCode::Lt);
                 let exit_jump_idx = self.instructions.len();
                 self.instructions.push(OpCode::JumpIfFalse(0));
@@ -1044,7 +1045,8 @@ impl Codegen {
                 self.gen_expr(&do_while_stmt.test);
 
                 // Jump back to start if true
-                self.instructions.push(OpCode::JumpIfFalse(self.instructions.len() + 2));
+                self.instructions
+                    .push(OpCode::JumpIfFalse(self.instructions.len() + 2));
                 self.instructions.push(OpCode::Jump(loop_start));
 
                 // Backpatch breaks

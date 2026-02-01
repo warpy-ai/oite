@@ -1880,7 +1880,8 @@ impl VM {
                                 // Check for __type__ property first
                                 if let Some(JsValue::String(t)) = props.get("__type__") {
                                     t.clone()
-                                } else if props.contains_key("then") && props.contains_key("catch") {
+                                } else if props.contains_key("then") && props.contains_key("catch")
+                                {
                                     "Promise".to_string()
                                 } else {
                                     String::new()
@@ -2224,7 +2225,9 @@ impl VM {
                                 for _ in 1..arg_count {
                                     self.stack.pop();
                                 }
-                                let result = s.chars().nth(index)
+                                let result = s
+                                    .chars()
+                                    .nth(index)
                                     .map(|c| JsValue::String(c.to_string()))
                                     .unwrap_or(JsValue::String(String::new()));
                                 self.stack.push(result);
@@ -2260,7 +2263,8 @@ impl VM {
                                     (start, end)
                                 };
 
-                                let result: String = s.chars()
+                                let result: String = s
+                                    .chars()
                                     .skip(actual_start)
                                     .take(actual_end - actual_start)
                                     .collect();
@@ -2470,7 +2474,8 @@ impl VM {
                                         padding.push_str(&pad_str);
                                     }
                                     let padding: String = padding.chars().take(pad_len).collect();
-                                    self.stack.push(JsValue::String(s.clone() + padding.as_str()));
+                                    self.stack
+                                        .push(JsValue::String(s.clone() + padding.as_str()));
                                 }
                             }
                             _ => {
@@ -2634,18 +2639,18 @@ impl VM {
                                     for _ in 1..arg_count {
                                         self.stack.pop();
                                     }
-                                    let result = arr.iter().position(|v| {
-                                        match (v, &search) {
-                                            (JsValue::Number(a), JsValue::Number(b)) => a == b,
-                                            (JsValue::String(a), JsValue::String(b)) => a == b,
-                                            (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
-                                            (JsValue::Null, JsValue::Null) => true,
-                                            (JsValue::Undefined, JsValue::Undefined) => true,
-                                            (JsValue::Object(a), JsValue::Object(b)) => a == b,
-                                            _ => false,
-                                        }
+                                    let result = arr.iter().position(|v| match (v, &search) {
+                                        (JsValue::Number(a), JsValue::Number(b)) => a == b,
+                                        (JsValue::String(a), JsValue::String(b)) => a == b,
+                                        (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
+                                        (JsValue::Null, JsValue::Null) => true,
+                                        (JsValue::Undefined, JsValue::Undefined) => true,
+                                        (JsValue::Object(a), JsValue::Object(b)) => a == b,
+                                        _ => false,
                                     });
-                                    self.stack.push(JsValue::Number(result.map(|i| i as f64).unwrap_or(-1.0)));
+                                    self.stack.push(JsValue::Number(
+                                        result.map(|i| i as f64).unwrap_or(-1.0),
+                                    ));
                                     self.ip += 1;
                                     return ExecResult::Continue;
                                 }
@@ -2658,18 +2663,18 @@ impl VM {
                                     for _ in 1..arg_count {
                                         self.stack.pop();
                                     }
-                                    let result = arr.iter().rposition(|v| {
-                                        match (v, &search) {
-                                            (JsValue::Number(a), JsValue::Number(b)) => a == b,
-                                            (JsValue::String(a), JsValue::String(b)) => a == b,
-                                            (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
-                                            (JsValue::Null, JsValue::Null) => true,
-                                            (JsValue::Undefined, JsValue::Undefined) => true,
-                                            (JsValue::Object(a), JsValue::Object(b)) => a == b,
-                                            _ => false,
-                                        }
+                                    let result = arr.iter().rposition(|v| match (v, &search) {
+                                        (JsValue::Number(a), JsValue::Number(b)) => a == b,
+                                        (JsValue::String(a), JsValue::String(b)) => a == b,
+                                        (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
+                                        (JsValue::Null, JsValue::Null) => true,
+                                        (JsValue::Undefined, JsValue::Undefined) => true,
+                                        (JsValue::Object(a), JsValue::Object(b)) => a == b,
+                                        _ => false,
                                     });
-                                    self.stack.push(JsValue::Number(result.map(|i| i as f64).unwrap_or(-1.0)));
+                                    self.stack.push(JsValue::Number(
+                                        result.map(|i| i as f64).unwrap_or(-1.0),
+                                    ));
                                     self.ip += 1;
                                     return ExecResult::Continue;
                                 }
@@ -2682,16 +2687,14 @@ impl VM {
                                     for _ in 1..arg_count {
                                         self.stack.pop();
                                     }
-                                    let found = arr.iter().any(|v| {
-                                        match (v, &search) {
-                                            (JsValue::Number(a), JsValue::Number(b)) => a == b,
-                                            (JsValue::String(a), JsValue::String(b)) => a == b,
-                                            (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
-                                            (JsValue::Null, JsValue::Null) => true,
-                                            (JsValue::Undefined, JsValue::Undefined) => true,
-                                            (JsValue::Object(a), JsValue::Object(b)) => a == b,
-                                            _ => false,
-                                        }
+                                    let found = arr.iter().any(|v| match (v, &search) {
+                                        (JsValue::Number(a), JsValue::Number(b)) => a == b,
+                                        (JsValue::String(a), JsValue::String(b)) => a == b,
+                                        (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
+                                        (JsValue::Null, JsValue::Null) => true,
+                                        (JsValue::Undefined, JsValue::Undefined) => true,
+                                        (JsValue::Object(a), JsValue::Object(b)) => a == b,
+                                        _ => false,
                                     });
                                     self.stack.push(JsValue::Boolean(found));
                                     self.ip += 1;
@@ -2752,7 +2755,10 @@ impl VM {
                                     for _ in 0..arg_count {
                                         let arg = self.stack.pop().unwrap_or(JsValue::Undefined);
                                         if let JsValue::Object(other_ptr) = arg {
-                                            if let Some(HeapObject { data: HeapData::Array(other_arr) }) = self.heap.get(other_ptr) {
+                                            if let Some(HeapObject {
+                                                data: HeapData::Array(other_arr),
+                                            }) = self.heap.get(other_ptr)
+                                            {
                                                 result.extend(other_arr.clone());
                                             } else {
                                                 result.push(arg);
@@ -2812,7 +2818,8 @@ impl VM {
                                     } else {
                                         index as usize
                                     };
-                                    let result = arr.get(actual_idx).cloned().unwrap_or(JsValue::Undefined);
+                                    let result =
+                                        arr.get(actual_idx).cloned().unwrap_or(JsValue::Undefined);
                                     self.stack.push(result);
                                     self.ip += 1;
                                     return ExecResult::Continue;
@@ -2844,8 +2851,9 @@ impl VM {
                                     for _ in 1..arg_count {
                                         self.stack.pop();
                                     }
-                                    let result = map.iter().find(|(k, _)| {
-                                        match (k, &key) {
+                                    let result = map
+                                        .iter()
+                                        .find(|(k, _)| match (k, &key) {
                                             (JsValue::Number(a), JsValue::Number(b)) => a == b,
                                             (JsValue::String(a), JsValue::String(b)) => a == b,
                                             (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
@@ -2853,8 +2861,9 @@ impl VM {
                                             (JsValue::Undefined, JsValue::Undefined) => true,
                                             (JsValue::Object(a), JsValue::Object(b)) => a == b,
                                             _ => false,
-                                        }
-                                    }).map(|(_, v)| v.clone()).unwrap_or(JsValue::Undefined);
+                                        })
+                                        .map(|(_, v)| v.clone())
+                                        .unwrap_or(JsValue::Undefined);
                                     self.stack.push(result);
                                     self.ip += 1;
                                     return ExecResult::Continue;
@@ -2869,16 +2878,14 @@ impl VM {
                                     let value = args.get(1).cloned().unwrap_or(JsValue::Undefined);
 
                                     // Remove existing key if present
-                                    map.retain(|(k, _)| {
-                                        match (k, &key) {
-                                            (JsValue::Number(a), JsValue::Number(b)) => a != b,
-                                            (JsValue::String(a), JsValue::String(b)) => a != b,
-                                            (JsValue::Boolean(a), JsValue::Boolean(b)) => a != b,
-                                            (JsValue::Null, JsValue::Null) => false,
-                                            (JsValue::Undefined, JsValue::Undefined) => false,
-                                            (JsValue::Object(a), JsValue::Object(b)) => a != b,
-                                            _ => true,
-                                        }
+                                    map.retain(|(k, _)| match (k, &key) {
+                                        (JsValue::Number(a), JsValue::Number(b)) => a != b,
+                                        (JsValue::String(a), JsValue::String(b)) => a != b,
+                                        (JsValue::Boolean(a), JsValue::Boolean(b)) => a != b,
+                                        (JsValue::Null, JsValue::Null) => false,
+                                        (JsValue::Undefined, JsValue::Undefined) => false,
+                                        (JsValue::Object(a), JsValue::Object(b)) => a != b,
+                                        _ => true,
                                     });
                                     map.push((key, value));
                                     self.stack.push(JsValue::Object(ptr)); // Return the map itself
@@ -2894,16 +2901,14 @@ impl VM {
                                     for _ in 1..arg_count {
                                         self.stack.pop();
                                     }
-                                    let found = map.iter().any(|(k, _)| {
-                                        match (k, &key) {
-                                            (JsValue::Number(a), JsValue::Number(b)) => a == b,
-                                            (JsValue::String(a), JsValue::String(b)) => a == b,
-                                            (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
-                                            (JsValue::Null, JsValue::Null) => true,
-                                            (JsValue::Undefined, JsValue::Undefined) => true,
-                                            (JsValue::Object(a), JsValue::Object(b)) => a == b,
-                                            _ => false,
-                                        }
+                                    let found = map.iter().any(|(k, _)| match (k, &key) {
+                                        (JsValue::Number(a), JsValue::Number(b)) => a == b,
+                                        (JsValue::String(a), JsValue::String(b)) => a == b,
+                                        (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
+                                        (JsValue::Null, JsValue::Null) => true,
+                                        (JsValue::Undefined, JsValue::Undefined) => true,
+                                        (JsValue::Object(a), JsValue::Object(b)) => a == b,
+                                        _ => false,
                                     });
                                     self.stack.push(JsValue::Boolean(found));
                                     self.ip += 1;
@@ -2919,16 +2924,14 @@ impl VM {
                                         self.stack.pop();
                                     }
                                     let initial_len = map.len();
-                                    map.retain(|(k, _)| {
-                                        match (k, &key) {
-                                            (JsValue::Number(a), JsValue::Number(b)) => a != b,
-                                            (JsValue::String(a), JsValue::String(b)) => a != b,
-                                            (JsValue::Boolean(a), JsValue::Boolean(b)) => a != b,
-                                            (JsValue::Null, JsValue::Null) => false,
-                                            (JsValue::Undefined, JsValue::Undefined) => false,
-                                            (JsValue::Object(a), JsValue::Object(b)) => a != b,
-                                            _ => true,
-                                        }
+                                    map.retain(|(k, _)| match (k, &key) {
+                                        (JsValue::Number(a), JsValue::Number(b)) => a != b,
+                                        (JsValue::String(a), JsValue::String(b)) => a != b,
+                                        (JsValue::Boolean(a), JsValue::Boolean(b)) => a != b,
+                                        (JsValue::Null, JsValue::Null) => false,
+                                        (JsValue::Undefined, JsValue::Undefined) => false,
+                                        (JsValue::Object(a), JsValue::Object(b)) => a != b,
+                                        _ => true,
                                     });
                                     self.stack.push(JsValue::Boolean(map.len() < initial_len));
                                     self.ip += 1;
@@ -2978,16 +2981,14 @@ impl VM {
                                         self.stack.pop();
                                     }
                                     // Check if value already exists
-                                    let exists = set.iter().any(|v| {
-                                        match (v, &value) {
-                                            (JsValue::Number(a), JsValue::Number(b)) => a == b,
-                                            (JsValue::String(a), JsValue::String(b)) => a == b,
-                                            (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
-                                            (JsValue::Null, JsValue::Null) => true,
-                                            (JsValue::Undefined, JsValue::Undefined) => true,
-                                            (JsValue::Object(a), JsValue::Object(b)) => a == b,
-                                            _ => false,
-                                        }
+                                    let exists = set.iter().any(|v| match (v, &value) {
+                                        (JsValue::Number(a), JsValue::Number(b)) => a == b,
+                                        (JsValue::String(a), JsValue::String(b)) => a == b,
+                                        (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
+                                        (JsValue::Null, JsValue::Null) => true,
+                                        (JsValue::Undefined, JsValue::Undefined) => true,
+                                        (JsValue::Object(a), JsValue::Object(b)) => a == b,
+                                        _ => false,
                                     });
                                     if !exists {
                                         set.push(value);
@@ -3005,16 +3006,14 @@ impl VM {
                                     for _ in 1..arg_count {
                                         self.stack.pop();
                                     }
-                                    let found = set.iter().any(|v| {
-                                        match (v, &value) {
-                                            (JsValue::Number(a), JsValue::Number(b)) => a == b,
-                                            (JsValue::String(a), JsValue::String(b)) => a == b,
-                                            (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
-                                            (JsValue::Null, JsValue::Null) => true,
-                                            (JsValue::Undefined, JsValue::Undefined) => true,
-                                            (JsValue::Object(a), JsValue::Object(b)) => a == b,
-                                            _ => false,
-                                        }
+                                    let found = set.iter().any(|v| match (v, &value) {
+                                        (JsValue::Number(a), JsValue::Number(b)) => a == b,
+                                        (JsValue::String(a), JsValue::String(b)) => a == b,
+                                        (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
+                                        (JsValue::Null, JsValue::Null) => true,
+                                        (JsValue::Undefined, JsValue::Undefined) => true,
+                                        (JsValue::Object(a), JsValue::Object(b)) => a == b,
+                                        _ => false,
                                     });
                                     self.stack.push(JsValue::Boolean(found));
                                     self.ip += 1;
@@ -3030,16 +3029,14 @@ impl VM {
                                         self.stack.pop();
                                     }
                                     let initial_len = set.len();
-                                    set.retain(|v| {
-                                        match (v, &value) {
-                                            (JsValue::Number(a), JsValue::Number(b)) => a != b,
-                                            (JsValue::String(a), JsValue::String(b)) => a != b,
-                                            (JsValue::Boolean(a), JsValue::Boolean(b)) => a != b,
-                                            (JsValue::Null, JsValue::Null) => false,
-                                            (JsValue::Undefined, JsValue::Undefined) => false,
-                                            (JsValue::Object(a), JsValue::Object(b)) => a != b,
-                                            _ => true,
-                                        }
+                                    set.retain(|v| match (v, &value) {
+                                        (JsValue::Number(a), JsValue::Number(b)) => a != b,
+                                        (JsValue::String(a), JsValue::String(b)) => a != b,
+                                        (JsValue::Boolean(a), JsValue::Boolean(b)) => a != b,
+                                        (JsValue::Null, JsValue::Null) => false,
+                                        (JsValue::Undefined, JsValue::Undefined) => false,
+                                        (JsValue::Object(a), JsValue::Object(b)) => a != b,
+                                        _ => true,
                                     });
                                     self.stack.push(JsValue::Boolean(set.len() < initial_len));
                                     self.ip += 1;
