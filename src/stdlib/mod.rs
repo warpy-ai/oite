@@ -349,6 +349,8 @@ pub fn native_string_constructor(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
                     }
                     HeapData::Object(_) => "[object Object]".to_string(),
                     HeapData::ByteStream(_) => "[object ByteStream]".to_string(),
+                    HeapData::Map(_) => "[object Map]".to_string(),
+                    HeapData::Set(_) => "[object Set]".to_string(),
                 }
             } else {
                 "[object Object]".to_string()

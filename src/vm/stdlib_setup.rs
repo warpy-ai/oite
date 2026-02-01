@@ -17,6 +17,7 @@ pub fn setup_stdlib(vm: &mut VM) {
     setup_fs(vm);
     setup_json(vm);
     setup_globals(vm);
+    setup_map_set(vm);
 }
 
 fn setup_console(vm: &mut VM) {
@@ -201,6 +202,32 @@ fn setup_globals(vm: &mut VM) {
     vm.call_stack[0]
         .locals
         .insert("require".into(), JsValue::NativeFunction(require_idx));
+}
+
+fn setup_map_set(vm: &mut VM) {
+    // Create Map constructor object
+    let map_ptr = vm.heap.len();
+    let mut map_props = std::collections::HashMap::new();
+    // Mark this as a Map constructor for detection in Construct opcode
+    map_props.insert("__type__".to_string(), JsValue::String("Map".to_string()));
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(map_props),
+    });
+    vm.call_stack[0]
+        .locals
+        .insert("Map".into(), JsValue::Object(map_ptr));
+
+    // Create Set constructor object
+    let set_ptr = vm.heap.len();
+    let mut set_props = std::collections::HashMap::new();
+    // Mark this as a Set constructor for detection in Construct opcode
+    set_props.insert("__type__".to_string(), JsValue::String("Set".to_string()));
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(set_props),
+    });
+    vm.call_stack[0]
+        .locals
+        .insert("Set".into(), JsValue::Object(set_ptr));
 }
 
 /// Set script arguments as __args__ global variable.

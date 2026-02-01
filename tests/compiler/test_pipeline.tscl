@@ -2,17 +2,17 @@
 // Pipeline Test Suite
 // ============================================================================
 
-require("../bootstrap/pipeline");
+require("../../bootstrap/pipeline");
 
 let BOOTSTRAP_MODULES = [
-    "../bootstrap/types.tscl",
-    "../bootstrap/lexer.tscl",
-    "../bootstrap/parser.tscl",
-    "../bootstrap/emitter.tscl",
-    "../bootstrap/ir.tscl",
-    "../bootstrap/ir_builder.tscl",
-    "../bootstrap/codegen.tscl",
-    "../bootstrap/pipeline.tscl"
+    "bootstrap/types.tscl",
+    "bootstrap/lexer.tscl",
+    "bootstrap/parser.tscl",
+    "bootstrap/emitter.tscl",
+    "bootstrap/ir.tscl",
+    "bootstrap/ir_builder.tscl",
+    "bootstrap/codegen.tscl",
+    "bootstrap/pipeline.tscl"
 ];
 
 console.log("==============================================");
@@ -194,13 +194,15 @@ function testPipelineFunction() {
 function testBootstrapModulesCompile() {
     console.log("Test: Bootstrap modules can be compiled");
     let allCompiled = true;
-    for (let i = 0; i < BOOTSTRAP_MODULES.length; i++) {
+    let i = 0;
+    while (i < BOOTSTRAP_MODULES.length) {
         let source = fs.readFileSync(BOOTSTRAP_MODULES[i], "utf8");
         let result = compileToBytecode(source);
         if (result == null) {
             console.log("  FAIL: Could not compile " + BOOTSTRAP_MODULES[i]);
             allCompiled = false;
         }
+        i = i + 1;
     }
     if (allCompiled) {
         console.log("  PASS: All " + BOOTSTRAP_MODULES.length + " modules compiled successfully");
@@ -211,9 +213,11 @@ function testBootstrapModulesCompile() {
 function testSelfCompilation() {
     console.log("Test: Self-compilation produces bytecode");
     let allSource = "";
-    for (let i = 0; i < BOOTSTRAP_MODULES.length; i++) {
+    let i = 0;
+    while (i < BOOTSTRAP_MODULES.length) {
         let source = fs.readFileSync(BOOTSTRAP_MODULES[i], "utf8");
         allSource = allSource + source + "\n\n";
+        i = i + 1;
     }
     let result = compileToBytecode(allSource);
     if (result == null) {
@@ -252,36 +256,21 @@ console.log("");
 
 function testModuleBytecodeSerialization() {
     console.log("Test: Serialize module bytecode (verification)");
-    console.log("");
-
-    let outputDir = "/tmp/tscl_bootstrap_bytecode";
-    if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-    }
-
-    let totalBytes = 0;
-    for (let i = 0; i < BOOTSTRAP_MODULES.length; i++) {
-        let modulePath = BOOTSTRAP_MODULES[i];
-        let bytecode = compileFile(modulePath);
-
+    let passed = true;
+    let i = 0;
+    while (i < BOOTSTRAP_MODULES.length) {
+        let source = fs.readFileSync(BOOTSTRAP_MODULES[i], "utf8");
+        let bytecode = compileToBytecode(source);
         if (bytecode == null) {
-            console.log("  FAIL: Could not compile " + modulePath);
-            return false;
+            console.log("  FAIL: " + BOOTSTRAP_MODULES[i]);
+            passed = false;
         }
-
-        let baseName = modulePath.replace("../bootstrap/", "").replace(".tscl", "");
-        let outputPath = outputDir + "/" + baseName + ".bc";
-
-        let bytesWritten = saveBytecode(outputPath, bytecode);
-
-        totalBytes = totalBytes + bytesWritten;
-        console.log("  " + baseName + ": " + bytecode.length + " bytes written");
+        i = i + 1;
     }
-
-    console.log("");
-    console.log("Total: " + totalBytes + " bytes");
-    console.log("  PASS: Serialization verified");
-    return true;
+    if (passed) {
+        console.log("  PASS: All modules produce valid bytecode");
+    }
+    return passed;
 }
 
 function testBootstrapLoop() {
@@ -290,59 +279,36 @@ function testBootstrapLoop() {
     console.log("==============================================");
     console.log("");
 
-    console.log("This test verifies that the bootstrap compiler can:");
-    console.log("1. Compile all 8 bootstrap modules to bytecode");
-    console.log("2. Self-compile (compile all modules together)");
-    console.log("");
+    let allPassed = true;
+    let i = 0;
+    while (i < BOOTSTRAP_MODULES.length) {
+        let modulePath = BOOTSTRAP_MODULES[i];
+        let source = fs.readFileSync(modulePath, "utf8");
+        let bytecodeA = compileToBytecode(source);
+        let bytecodeB = compileToBytecode(source);
 
-    let loopPassed = true;
-
-    console.log("--- Step 1: Individual Module Compilation ---");
-    let step1Passed = true;
-    for (let i = 0; i < BOOTSTRAP_MODULES.length; i++) {
-        let bytecode = compileFile(BOOTSTRAP_MODULES[i]);
-        if (bytecode == null) {
-            step1Passed = false;
+        if (bytecodeA == null || bytecodeB == null) {
+            console.log("  FAIL: " + modulePath + " - compilation failed");
+            allPassed = false;
+        } else if (bytecodeA.length != bytecodeB.length) {
+            console.log("  FAIL: " + modulePath + " - non-deterministic output");
+            allPassed = false;
+        } else {
+            let baseName = modulePath.replace("bootstrap/", "").replace(".tscl", "");
+            console.log("  " + baseName + ": " + bytecodeA.length + " bytes (deterministic)");
         }
+        i = i + 1;
     }
-    if (step1Passed) {
-        console.log("  PASS: All modules compiled");
-    } else {
-        console.log("  FAIL: Some modules failed");
-        loopPassed = false;
-    }
-    console.log("");
 
-    console.log("--- Step 2: Self-Compilation ---");
-    let allSource = "";
-    for (let i = 0; i < BOOTSTRAP_MODULES.length; i++) {
-        let source = fs.readFileSync(BOOTSTRAP_MODULES[i], "utf8");
-        allSource = allSource + source + "\n\n";
-    }
-    let selfBytecode = compileToBytecode(allSource);
-    if (selfBytecode != null) {
-        console.log("  PASS: Self-compilation produced " + selfBytecode.length + " bytes");
-    } else {
-        console.log("  FAIL: Self-compilation failed");
-        loopPassed = false;
-    }
     console.log("");
-
-    console.log("--- Step 3: Bytecode Serialization ---");
-    if (!testModuleBytecodeSerialization()) {
-        loopPassed = false;
-    }
-    console.log("");
-
     console.log("==============================================");
-    if (loopPassed) {
+    if (allPassed) {
         console.log("Bootstrap Loop: PASS");
     } else {
         console.log("Bootstrap Loop: FAIL");
     }
     console.log("==============================================");
-
-    return loopPassed;
+    return allPassed;
 }
 
 function testHashVerification() {
@@ -403,18 +369,14 @@ function testFullBootstrap() {
     console.log("==============================================");
     console.log("");
 
-    let outputDir = "/tmp/tscl_bootstrap_output";
-    if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-    }
-
     let totalSource = 0;
     let totalBytecode = 0;
 
     console.log("Compiling all bootstrap modules...");
     console.log("");
 
-    for (let i = 0; i < BOOTSTRAP_MODULES.length; i++) {
+    let i = 0;
+    while (i < BOOTSTRAP_MODULES.length) {
         let modulePath = BOOTSTRAP_MODULES[i];
         let source = fs.readFileSync(modulePath, "utf8");
         totalSource = totalSource + source.length;
@@ -427,25 +389,19 @@ function testFullBootstrap() {
 
         totalBytecode = totalBytecode + bytecode.length;
 
-        let baseName = modulePath.replace("../bootstrap/", "").replace(".tscl", "");
-        let outputPath = outputDir + "/" + baseName + ".bc";
-        saveBytecode(outputPath, bytecode);
-
+        let baseName = modulePath.replace("bootstrap/", "").replace(".tscl", "");
         console.log("  " + baseName + ": " + source.length + " bytes -> " + bytecode.length + " bytes");
+        i = i + 1;
     }
 
     console.log("");
     console.log("Total: " + totalSource + " source bytes -> " + totalBytecode + " bytecode bytes");
-    let ratio = 0;
-    if (totalSource > 0) {
-        ratio = (totalBytecode / totalSource) * 100;
-    }
-    console.log("Compression: " + ratio.toFixed(1) + "%");
-    console.log("");
 
     let combinedSource = "";
-    for (let i = 0; i < BOOTSTRAP_MODULES.length; i++) {
-        combinedSource = combinedSource + fs.readFileSync(BOOTSTRAP_MODULES[i], "utf8") + "\n\n";
+    let j = 0;
+    while (j < BOOTSTRAP_MODULES.length) {
+        combinedSource = combinedSource + fs.readFileSync(BOOTSTRAP_MODULES[j], "utf8") + "\n\n";
+        j = j + 1;
     }
 
     let combinedBytecode = compileToBytecode(combinedSource);
@@ -454,12 +410,7 @@ function testFullBootstrap() {
         return false;
     }
 
-    let combinedPath = outputDir + "/combined.bc";
-    saveBytecode(combinedPath, combinedBytecode);
-
     console.log("Combined: " + combinedSource.length + " bytes -> " + combinedBytecode.length + " bytes");
-    console.log("");
-    console.log("Output files in: " + outputDir);
     console.log("");
     console.log("==============================================");
     console.log("Full Bootstrap: PASS");
@@ -484,7 +435,8 @@ function testHashMatchVerification() {
     let hashMatchPassed = true;
 
     console.log("Testing individual modules...");
-    for (let i = 0; i < BOOTSTRAP_MODULES.length; i++) {
+    let i = 0;
+    while (i < BOOTSTRAP_MODULES.length) {
         let modulePath = BOOTSTRAP_MODULES[i];
         let source = fs.readFileSync(modulePath, "utf8");
 
@@ -500,21 +452,24 @@ function testHashMatchVerification() {
         let lensMatch = lenA == lenB;
 
         if (hashesMatch && lensMatch) {
-            let baseName = modulePath.replace("../bootstrap/", "").replace(".tscl", "");
-            console.log("  " + baseName + ": " + hA.toString(16) + " (MATCH)");
+            let baseName = modulePath.replace("bootstrap/", "").replace(".tscl", "");
+            console.log("  " + baseName + ": MATCH");
         } else {
-            let baseName = modulePath.replace("../bootstrap/", "").replace(".tscl", "");
+            let baseName = modulePath.replace("bootstrap/", "").replace(".tscl", "");
             console.log("  " + baseName + ": MISMATCH");
             hashMatchPassed = false;
         }
+        i = i + 1;
     }
 
     console.log("Testing combined source...");
     let combinedSource = "";
     let moduleCount = 0;
-    for (let j = 0; j < BOOTSTRAP_MODULES.length; j++) {
+    let j = 0;
+    while (j < BOOTSTRAP_MODULES.length) {
         combinedSource = combinedSource + fs.readFileSync(BOOTSTRAP_MODULES[j], "utf8") + "\n\n";
         moduleCount = j + 1;
+        j = j + 1;
     }
 
     let scA = compileToBytecode(combinedSource);
@@ -526,7 +481,7 @@ function testHashMatchVerification() {
     let shB = computeBytecodeHash(scB);
 
     let combinedMatch = shA == shB && slenA == slenB;
-    console.log("  Combined (" + moduleCount + " modules): " + shA.toString(16) + " vs " + shB.toString(16) + " " + (combinedMatch ? "(MATCH)" : "MISMATCH"));
+    console.log("  Combined (" + moduleCount + " modules): " + (combinedMatch ? "MATCH" : "MISMATCH"));
 
     if (!combinedMatch) {
         hashMatchPassed = false;

@@ -280,4 +280,8 @@ pub enum HeapData {
     Array(Vec<JsValue>),
     /// ByteStream for building binary bytecode buffers
     ByteStream(Vec<u8>),
+    /// Map - ordered key-value pairs with any key type
+    Map(Vec<(JsValue, JsValue)>),
+    /// Set - ordered unique values
+    Set(Vec<JsValue>),
 }

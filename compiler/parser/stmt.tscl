@@ -123,8 +123,37 @@ function parseBaseType(parser) {
     if (tok != null && tok.type == "DELIMITER" && tok.value == "{") {
         parserAdvance(parser);
         let members = [];
+        let indexType = null;
+        let indexValueType = null;
         while (peekType(parser) != "DELIMITER" || peekValue(parser) != "}") {
             if (peekType(parser) == "EOF") break;
+
+            // Handle indexed type: [key: string]: valueType
+            if (peekType(parser) == "DELIMITER" && peekValue(parser) == "[") {
+                parserAdvance(parser); // consume '['
+                // Skip key name
+                if (peekType(parser) == "IDENTIFIER") {
+                    parserAdvance(parser);
+                }
+                // Expect ':'
+                if (peekType(parser) == "DELIMITER" && peekValue(parser) == ":") {
+                    parserAdvance(parser);
+                    indexType = parseTypeAnnotation(parser);
+                }
+                // Expect ']'
+                expect(parser, "DELIMITER", "]");
+                // Expect ':'
+                if (peekType(parser) == "DELIMITER" && peekValue(parser) == ":") {
+                    parserAdvance(parser);
+                    indexValueType = parseTypeAnnotation(parser);
+                }
+                // Skip optional semicolon or comma
+                if (peekType(parser) == "DELIMITER" && (peekValue(parser) == ";" || peekValue(parser) == ",")) {
+                    parserAdvance(parser);
+                }
+                continue;
+            }
+
             let memberName = "";
             let optional = false;
             if (peekType(parser) == "IDENTIFIER" || peekType(parser) == "KEYWORD") {
@@ -154,7 +183,23 @@ function parseBaseType(parser) {
         expect(parser, "DELIMITER", "}");
         return {
             type: "ObjectTypeAnnotation",
-            members: members
+            members: members,
+            indexType: indexType,
+            indexValueType: indexValueType
+        };
+    }
+
+    // Handle string literal types: "foo" | "bar"
+    if (tok != null && tok.type == "STRING") {
+        parserAdvance(parser);
+        return {
+            type: "TypeAnnotation",
+            typeKind: "literal",
+            literalValue: tok.value,
+            isArray: false,
+            elementType: null,
+            unionTypes: null,
+            genericParams: null
         };
     }
 

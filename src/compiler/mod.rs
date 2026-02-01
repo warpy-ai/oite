@@ -909,6 +909,159 @@ impl Codegen {
                     }
                 }
             }
+            Stmt::For(for_stmt) => {
+                self.scope_stack.push(Vec::new());
+                if let Some(init) = &for_stmt.init {
+                    match init {
+                        swc_ecma_ast::VarDeclOrExpr::VarDecl(var_decl) => {
+                            self.gen_var_decl(var_decl);
+                        }
+                        swc_ecma_ast::VarDeclOrExpr::Expr(expr) => {
+                            self.gen_expr(expr);
+                            self.instructions.push(OpCode::Pop);
+                        }
+                    }
+                }
+                let loop_start = self.instructions.len();
+                self.loop_stack.push(LoopContext {
+                    start_addr: loop_start,
+                    break_jumps: Vec::new(),
+                });
+                if let Some(test) = &for_stmt.test {
+                    self.gen_expr(test);
+                } else {
+                    self.instructions.push(OpCode::Push(JsValue::Boolean(true)));
+                }
+                let exit_jump_idx = self.instructions.len();
+                self.instructions.push(OpCode::JumpIfFalse(0));
+                self.gen_stmt(&for_stmt.body);
+                if let Some(update) = &for_stmt.update {
+                    self.gen_expr(update);
+                    self.instructions.push(OpCode::Pop);
+                }
+                self.instructions.push(OpCode::Jump(loop_start));
+                let loop_end = self.instructions.len();
+                if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
+                    *addr = loop_end;
+                }
+                if let Some(loop_ctx) = self.loop_stack.pop() {
+                    for break_idx in loop_ctx.break_jumps {
+                        if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
+                            *addr = loop_end;
+                        }
+                    }
+                }
+                if let Some(locals) = self.scope_stack.pop() {
+                    for name in locals.into_iter().rev() {
+                        self.instructions.push(OpCode::Drop(name));
+                    }
+                }
+            }
+            Stmt::ForOf(for_of_stmt) => {
+                self.scope_stack.push(Vec::new());
+                self.gen_expr(&for_of_stmt.right);
+                let iter_name = "__for_of_iter__".to_string();
+                self.instructions.push(OpCode::Let(iter_name.clone()));
+                if let Some(scope) = self.scope_stack.last_mut() {
+                    scope.push(iter_name.clone());
+                }
+                self.instructions.push(OpCode::Push(JsValue::Number(0.0)));
+                let idx_name = "__for_of_idx__".to_string();
+                self.instructions.push(OpCode::Let(idx_name.clone()));
+                if let Some(scope) = self.scope_stack.last_mut() {
+                    scope.push(idx_name.clone());
+                }
+                let loop_start = self.instructions.len();
+                self.loop_stack.push(LoopContext {
+                    start_addr: loop_start,
+                    break_jumps: Vec::new(),
+                });
+                self.instructions.push(OpCode::Load(idx_name.clone()));
+                self.instructions.push(OpCode::Load(iter_name.clone()));
+                self.instructions
+                    .push(OpCode::GetProp("length".to_string()));
+                self.instructions.push(OpCode::Lt);
+                let exit_jump_idx = self.instructions.len();
+                self.instructions.push(OpCode::JumpIfFalse(0));
+                self.instructions.push(OpCode::Load(iter_name.clone()));
+                self.instructions.push(OpCode::Load(idx_name.clone()));
+                self.instructions.push(OpCode::LoadElement);
+                if let Some(var_decl) = &for_of_stmt.left.as_var_decl()
+                    && let Some(decl) = var_decl.decls.first()
+                    && let Pat::Ident(id) = &decl.name
+                {
+                    let var_name = id.id.sym.to_string();
+                    self.instructions.push(OpCode::Let(var_name.clone()));
+                    if let Some(scope) = self.scope_stack.last_mut() {
+                        scope.push(var_name);
+                    }
+                }
+                self.gen_stmt(&for_of_stmt.body);
+                if let Some(var_decl) = &for_of_stmt.left.as_var_decl()
+                    && let Some(decl) = var_decl.decls.first()
+                    && let Pat::Ident(id) = &decl.name
+                {
+                    let var_name = id.id.sym.to_string();
+                    self.instructions.push(OpCode::Drop(var_name));
+                    if let Some(scope) = self.scope_stack.last_mut() {
+                        scope.retain(|n| n != &id.id.sym.to_string());
+                    }
+                }
+                self.instructions.push(OpCode::Load(idx_name.clone()));
+                self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
+                self.instructions.push(OpCode::Add);
+                self.instructions.push(OpCode::Store(idx_name.clone()));
+                self.instructions.push(OpCode::Jump(loop_start));
+                let loop_end = self.instructions.len();
+                if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
+                    *addr = loop_end;
+                }
+                if let Some(loop_ctx) = self.loop_stack.pop() {
+                    for break_idx in loop_ctx.break_jumps {
+                        if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
+                            *addr = loop_end;
+                        }
+                    }
+                }
+                if let Some(locals) = self.scope_stack.pop() {
+                    for name in locals.into_iter().rev() {
+                        self.instructions.push(OpCode::Drop(name));
+                    }
+                }
+            }
+            Stmt::ForIn(_) => {}
+            Stmt::DoWhile(do_while_stmt) => {
+                let loop_start = self.instructions.len();
+
+                self.loop_stack.push(LoopContext {
+                    start_addr: loop_start,
+                    break_jumps: Vec::new(),
+                });
+
+                // Compile body first
+                self.gen_stmt(&do_while_stmt.body);
+
+                // Compile condition
+                self.gen_expr(&do_while_stmt.test);
+
+                // Jump back to start if true
+                self.instructions
+                    .push(OpCode::JumpIfFalse(self.instructions.len() + 2));
+                self.instructions.push(OpCode::Jump(loop_start));
+
+                // Backpatch breaks
+                let loop_end = self.instructions.len();
+                if let Some(loop_ctx) = self.loop_stack.pop() {
+                    for break_idx in loop_ctx.break_jumps {
+                        if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
+                            *addr = loop_end;
+                        }
+                    }
+                }
+            }
+            Stmt::Empty(_) | Stmt::Debugger(_) | Stmt::With(_) => {
+                // Empty/debugger/with statements - do nothing
+            }
             _ => {}
         }
     }
@@ -1611,23 +1764,36 @@ impl Codegen {
                 }
             }
             Expr::Await(await_expr) => {
-                // await expression: await <promise>
-                // Compilation strategy:
-                // 1. Compile the promise expression
-                // 2. Emit Await opcode to suspend and wait for resolution
-
-                // Check if we're in an async function
                 if !self.in_async_function {
-                    // await outside async function - just compile the inner expression
-                    // This is technically a syntax error in strict mode, but we allow it
                     self.gen_expr(&await_expr.arg);
                 } else {
-                    // Compile the promise expression
                     self.gen_expr(&await_expr.arg);
-                    // Stack: [promise]
-                    // Emit Await opcode which will poll the promise
                     self.instructions.push(OpCode::Await);
-                    // Stack: [result]
+                }
+            }
+            Expr::Update(update_expr) => {
+                if let Expr::Ident(id) = update_expr.arg.as_ref() {
+                    let name = id.sym.to_string();
+                    self.instructions.push(OpCode::Load(name.clone()));
+                    if update_expr.prefix {
+                        self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
+                        if update_expr.op == UpdateOp::PlusPlus {
+                            self.instructions.push(OpCode::Add);
+                        } else {
+                            self.instructions.push(OpCode::Sub);
+                        }
+                        self.instructions.push(OpCode::Dup);
+                        self.instructions.push(OpCode::Store(name));
+                    } else {
+                        self.instructions.push(OpCode::Dup);
+                        self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
+                        if update_expr.op == UpdateOp::PlusPlus {
+                            self.instructions.push(OpCode::Add);
+                        } else {
+                            self.instructions.push(OpCode::Sub);
+                        }
+                        self.instructions.push(OpCode::Store(name));
+                    }
                 }
             }
             _ => {}
