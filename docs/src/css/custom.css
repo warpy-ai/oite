@@ -134,10 +134,14 @@ body {
 }
 
 .main-wrapper {
+  background: var(--background);
+  min-height: 100vh;
+}
+
+[data-theme='dark'] .main-wrapper {
   background: radial-gradient(circle at top left, oklch(0.2 0 0 / 0.8), transparent 55%),
     radial-gradient(circle at top right, oklch(0.2 0 0 / 0.7), transparent 50%),
     var(--background);
-  min-height: 100vh;
 }
 
 .navbar.navbar--fixed-top {

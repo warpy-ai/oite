@@ -180,8 +180,7 @@ const config: Config = {
       title: "Oite",
       logo: {
         alt: "Oite Logo",
-        src: "img/owl_light.png",
-        srcDark: "img/owl-light.svg",
+        src: "img/owl-light.svg",
       },
       hideOnScroll: false,
       items: [
