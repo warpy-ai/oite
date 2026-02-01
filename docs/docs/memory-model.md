@@ -1,14 +1,14 @@
 ---
 sidebar_position: 5
 title: Memory Model
-description: Understand Script's Rust-inspired memory model with ownership rules, borrow checking, and memory safety without garbage collection.
+description: Understand Oite's Rust-inspired memory model with ownership rules, borrow checking, and memory safety without garbage collection.
 keywords:
   [memory model, ownership, borrow checker, memory safety, no gc, rust-inspired]
 ---
 
 # Memory Model
 
-Script uses a Rust-inspired ownership system for memory safety without garbage collection.
+Oite uses a Rust-inspired ownership system for memory safety without garbage collection.
 
 ## Ownership Rules
 
@@ -33,7 +33,7 @@ console.log(x); // OK: 10
 
 ## Borrowing
 
-Script supports immutable and mutable references:
+Oite supports immutable and mutable references:
 
 ```javascript
 // Immutable reference

@@ -242,25 +242,25 @@ clang input.o -o output
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  tscl₀ = src/compiler/ (Rust)                               │
+│  oite₀ = src/compiler/ (Rust)                               │
 │         Original compiler written in Rust                   │
 └───────────────────────────┬─────────────────────────────────┘
                             │ compiles
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  tscl₁ = compiler/*.ot compiled by tscl₀                  │
+│  oite₁ = compiler/*.ot compiled by oite₀                  │
 │         First native oitec binary                         │
 └───────────────────────────┬─────────────────────────────────┘
                             │ compiles
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  tscl₂ = compiler/*.ot compiled by tscl₁                  │
+│  oite₂ = compiler/*.ot compiled by oite₁                  │
 │         Self-compiled oitec binary                        │
 └───────────────────────────┬─────────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  VERIFY: hash(tscl₁) == hash(tscl₂)                         │
+│  VERIFY: hash(oite₁) == hash(oite₂)                         │
 │          Proves deterministic compilation                   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -337,7 +337,7 @@ fi
 ### Bootstrap Verification (In Progress)
 
 - [x] `oitec` can compile itself (via LLVM IR)
-- [ ] `hash(tscl₁) == hash(tscl₂)` verified
+- [ ] `hash(oite₁) == hash(oite₂)` verified
 - [ ] CI integration for bootstrap verification
 
 ---

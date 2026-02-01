@@ -1,18 +1,18 @@
 ---
 sidebar_position: 7
 title: Standard Library Reference
-description: Complete reference for Script's minimal standard library including console, ByteStream, and basic file I/O. Extended functionality is provided by the Rolls ecosystem.
+description: Complete reference for Oite's minimal standard library including console, ByteStream, and basic file I/O. Extended functionality is provided by the Rolls ecosystem.
 keywords:
   [standard library, stdlib, console, ByteStream, file io, api reference]
 ---
 
 # Standard Library
 
-Script Core provides a **minimal** standard library — only essential primitives needed to run code. Extended functionality (HTTP, TLS, crypto, etc.) is provided by the **Rolls** ecosystem.
+Oite Core provides a **minimal** standard library — only essential primitives needed to run code. Extended functionality (HTTP, TLS, crypto, etc.) is provided by the **Rolls** ecosystem.
 
 ## Philosophy
 
-Script Core is like "C without libc" — minimal and self-contained:
+Oite Core is like "C without libc" — minimal and self-contained:
 
 | In Core       | Why                               |
 | ------------- | --------------------------------- |
@@ -68,7 +68,7 @@ fs.writeBinaryFile("data.bin", bytes);
 
 ## Module Loading
 
-Script supports both ES modules and require-style loading:
+Oite supports both ES modules and require-style loading:
 
 ```javascript
 // ES Modules (recommended)

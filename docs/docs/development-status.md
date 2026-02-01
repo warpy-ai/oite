@@ -48,7 +48,7 @@ The compiler written in Oite can now compile itself to native binaries:
 **Build Pipeline:**
 
 ```bash
-./target/release/script compiler/main.ot llvm input.ot  # → input.ot.ll
+./target/release/oite compiler/main.ot llvm input.ot  # → input.ot.ll
 clang input.ot.ll -c -o input.o                          # → input.o
 clang input.o -o output                                     # → native binary
 ```
@@ -114,7 +114,7 @@ Oite Core is like "C without libc" — minimal and self-contained. These feature
 1. **Rolls Ecosystem**: Build official system libraries (`@rolls/http`, `@rolls/fs`, etc.)
 2. **Unroll Package Manager**: Create build system and package management
 3. **Tooling**: Formatter, linter, LSP for IDE integration
-4. **Bootstrap Verification**: Verify `hash(tscl₁) == hash(tscl₂)` for deterministic self-hosting
+4. **Bootstrap Verification**: Verify `hash(oite₁) == hash(oite₂)` for deterministic self-hosting
 
 ## Contributing
 

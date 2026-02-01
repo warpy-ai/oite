@@ -1,6 +1,6 @@
 ---
 title: Unroll - Oite Package Manager and Tooling
-description: Design document for Unroll, Script's package manager, build system, and developer tooling ecosystem.
+description: Design document for Unroll, Oite's package manager, build system, and developer tooling ecosystem.
 keywords: [unroll, package manager, build system, tooling, future]
 ---
 
@@ -14,7 +14,7 @@ keywords: [unroll, package manager, build system, tooling, future]
 ## Overview
 
 **Unroll** is the package manager, build system, and developer tooling for
-Script. It manages Rolls dependencies, handles compilation, and provides
+Oite. It manages Rolls dependencies, handles compilation, and provides
 developer experience features.
 
 ```

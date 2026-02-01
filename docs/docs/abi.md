@@ -1,7 +1,7 @@
 ---
 sidebar_position: 11
 title: Oite ABI Specification
-description: Technical specification of Script's Application Binary Interface (ABI) including calling conventions, value representation, and runtime contracts.
+description: Technical specification of Oite's Application Binary Interface (ABI) including calling conventions, value representation, and runtime contracts.
 keywords: [abi, application binary interface, calling convention, runtime, low-level]
 ---
 
@@ -204,7 +204,7 @@ u64 oite_string_compare(u64 a, u64 b);
 ### 4.1 Object Header
 
 ```c
-struct TsclObject {
+struct OiteObject {
     // Header (16 bytes on 64-bit)
     uint32_t type_tag;      // Object type identifier
     uint32_t flags;         // Property attributes
@@ -218,7 +218,7 @@ struct TsclObject {
 ### 4.2 Array Layout
 
 ```c
-struct TsclArray {
+struct OiteArray {
     // Header (24 bytes on 64-bit)
     uint32_t type_tag;      // Always 1 for arrays
     uint32_t flags;
@@ -233,7 +233,7 @@ struct TsclArray {
 ### 4.3 String Layout
 
 ```c
-struct TsclString {
+struct OiteString {
     // Header (24 bytes on 64-bit)
     uint32_t type_tag;      // Always 2 for strings
     uint32_t flags;
@@ -250,10 +250,10 @@ struct TsclString {
 
 ```c
 // Native function (extern "C")
-typedef u64 (*TsclNativeFn)(u64 self, u64* args, u32 arg_count);
+typedef u64 (*OiteNativeFn)(u64 self, u64* args, u32 arg_count);
 
 // Closure (captures environment)
-struct TsclClosure {
+struct OiteClosure {
     uint64_t func_ptr;      // Pointer to function code
     uint64_t env_ptr;       // Pointer to captured environment
 };
@@ -280,11 +280,11 @@ Low addresses
 ### 6.1 Error Codes
 
 ```c
-#define TSCL_OK          0
-#define TSCL_ERROR       1
-#define TSCL TypeError   2
-#define TSCL_RANGE_ERROR 3
-#define TSCL_REF_ERROR   4
+#define OITE_OK          0
+#define OITE_ERROR       1
+#define OITE_TYPE_ERROR  2
+#define OITE_RANGE_ERROR 3
+#define OITE_REF_ERROR   4
 ```
 
 ### 6.2 Exception Propagation

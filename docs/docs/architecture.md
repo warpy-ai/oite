@@ -399,7 +399,7 @@ BOOTSTRAP VERIFICATION In Progress
     │                                                                     │
     │   ┌───────────────────┐                                             │
     │   │                   │                                             │
-    │   │  tscl₀ = Rust     │  Original Rust compiler                     │
+    │   │  oite₀ = Rust     │  Original Rust compiler                     │
     │   │  compiler         │                                             │
     │   │                   │                                             │
     │   └─────────┬─────────┘                                             │
@@ -408,7 +408,7 @@ BOOTSTRAP VERIFICATION In Progress
     │             ▼                                                       │
     │   ┌───────────────────┐                                             │
     │   │                   │                                             │
-    │   │  tscl₁ = oitec  │  First native oitec                       │
+    │   │  oite₁ = oitec  │  First native oitec                       │
     │   │  (built by Rust)  │                                             │
     │   │                   │                                             │
     │   └─────────┬─────────┘                                             │
@@ -417,8 +417,8 @@ BOOTSTRAP VERIFICATION In Progress
     │             ▼                                                       │
     │   ┌───────────────────┐                                             │
     │   │                   │                                             │
-    │   │  tscl₂ = oitec  │  Self-compiled oitec                      │
-    │   │  (built by tscl₁) │                                             │
+    │   │  oite₂ = oitec  │  Self-compiled oitec                      │
+    │   │  (built by oite₁) │                                             │
     │   │                   │                                             │
     │   └─────────┬─────────┘                                             │
     │             │                                                       │
@@ -426,15 +426,15 @@ BOOTSTRAP VERIFICATION In Progress
     │             ▼                                                       │
     │   ┌───────────────────┐                                             │
     │   │                   │                                             │
-    │   │  tscl₃ = oitec  │  Should be identical to tscl₂               │
-    │   │  (built by tscl₂) │                                             │
+    │   │  oite₃ = oitec  │  Should be identical to oite₂               │
+    │   │  (built by oite₂) │                                             │
     │   │                   │                                             │
     │   └───────────────────┘                                             │
     │                                                                     │
     │                                                                     │
     │   ┌─────────────────────────────────────────────────────────────┐   │
     │   │                                                             │   │
-    │   │   VERIFICATION:  sha256(tscl₂) == sha256(tscl₃)             │   │
+    │   │   VERIFICATION:  sha256(oite₂) == sha256(oite₃)             │   │
     │   │                                                             │   │
     │   │   If hashes match → Deterministic, reproducible compiler    │   │
     │   │   If hashes differ → Bug in codegen, must fix               │   │

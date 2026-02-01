@@ -1,7 +1,7 @@
 ---
 sidebar_position: 10
-title: Contributing to Script Language
-description: Guide for contributing to Script language development. Learn how to set up the development environment, submit PRs, and follow coding standards.
+title: Contributing to Oite Language
+description: Guide for contributing to Oite language development. Learn how to set up the development environment, submit PRs, and follow coding standards.
 keywords: [contributing, open source, pull request, development, community]
 ---
 

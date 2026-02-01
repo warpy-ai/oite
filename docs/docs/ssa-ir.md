@@ -1,14 +1,14 @@
 ---
 sidebar_position: 6
 title: SSA IR
-description: Learn about Script's Static Single Assignment (SSA) intermediate representation used for optimization and native code generation.
+description: Learn about Oite's Static Single Assignment (SSA) intermediate representation used for optimization and native code generation.
 keywords:
   [ssa, intermediate representation, ir, compiler optimization, code generation]
 ---
 
 # SSA IR
 
-Script compiles to a Static Single Assignment (SSA) intermediate representation for optimization and code generation.
+Oite compiles to a Static Single Assignment (SSA) intermediate representation for optimization and code generation.
 
 ## What is SSA?
 
@@ -79,10 +79,10 @@ The type inference pass specializes dynamic operations:
 
 ## Inspecting IR
 
-You can dump the IR for any Script program:
+You can dump the IR for any Oite program:
 
 ```bash
-./target/release/script ir myprogram.tscl
+./target/release/oite ir myprogram.ot
 ```
 
 This prints:
