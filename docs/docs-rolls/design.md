@@ -1,16 +1,16 @@
 ---
-title: Rolls - Oite System Libraries Design
-description: Design document for Rolls, the official system library ecosystem for Oite. Analogous to Rust's standard library crates.
-keywords: [rolls, system libraries, stdlib, packages, future]
+sidebar_position: 2
+title: Rolls Design
+description: Design document for Rolls, the official system library ecosystem for Oite.
+keywords: [rolls, system libraries, stdlib, design]
 ---
 
-# Rolls - Official System Libraries for Oite
+# Rolls Design
 
-> **Status**: Future Implementation - Archived Design Document
+> **Status**: Future Implementation - Design Document
 >
 > This document describes the planned architecture for Rolls, the official
-> system library ecosystem for the Oite language. Code has been removed
-> from Oite core to maintain a clean language/library separation.
+> system library ecosystem for the Oite language.
 
 ## Overview
 
@@ -23,7 +23,7 @@ User App Code
      │
      ▼
 ┌────────────────────────────────┐
-│  Rolls (official system libs)  │  ← THIS DOCUMENT
+│  Rolls (official system libs)  │
 │  @rolls/http, @rolls/tls, etc  │
 └────────────────────────────────┘
      │
@@ -256,10 +256,10 @@ Key Functions:
 @rolls/http/
 ├── roll.toml           # Roll manifest
 ├── src/
-│   ├── lib.ot        # Public API
-│   ├── request.ot    # HttpRequest type
-│   ├── response.ot   # HttpResponse type
-│   ├── server.ot     # HttpServer implementation
+│   ├── lib.ot          # Public API
+│   ├── request.ot      # HttpRequest type
+│   ├── response.ot     # HttpResponse type
+│   ├── server.ot       # HttpServer implementation
 │   └── internal/       # Private implementation
 │       ├── parser.ot
 │       └── h2.ot

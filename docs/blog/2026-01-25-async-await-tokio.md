@@ -446,5 +446,5 @@ EOF
 
 **Learn more:**
 - [Oite GitHub Repository](https://github.com/warpy-ai/script)
-- [Async/Await Documentation](/docs/language-features#async-await)
+- [Async/Await Documentation](/compiler/language-features#asyncawait)
 - [Tokio Documentation](https://tokio.rs/)

@@ -437,5 +437,5 @@ The 10 modules we built this week are just the beginning. As Oite grows, so will
 **Contribute to Oite's standard library:**
 
 - [GitHub Repository](https://github.com/warpy-ai/script)
-- [Standard Library Documentation](/docs/standard-library)
-- [Contributing Guide](/docs/contributing)
+- [Standard Library Documentation](/compiler/standard-library)
+- [Contributing Guide](/contributing)

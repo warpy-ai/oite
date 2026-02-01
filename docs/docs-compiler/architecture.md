@@ -1,6 +1,6 @@
 ---
 sidebar_position: 4
-title: Oite Compiler Architecture
+title: Architecture
 description: Learn about Oite's compiler architecture, including the lexer, parser, type checker, SSA IR, and native code generation via Cranelift and LLVM backends.
 keywords: [compiler architecture, lexer, parser, type checker, ssa, ir, cranelift, llvm, code generation]
 ---

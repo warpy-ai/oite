@@ -1,6 +1,6 @@
 ---
-sidebar_position: 11
-title: Oite ABI Specification
+sidebar_position: 7
+title: ABI Specification
 description: Technical specification of Oite's Application Binary Interface (ABI) including calling conventions, value representation, and runtime contracts.
 keywords: [abi, application binary interface, calling convention, runtime, low-level]
 ---

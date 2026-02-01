@@ -1,5 +1,5 @@
 ---
-sidebar_position: 3
+sidebar_position: 2
 title: Language Features
 description: Explore Oite's language features including JavaScript-like syntax, classes, closures, error handling, type annotations, decorators, and memory-safe programming.
 keywords:

@@ -1,6 +1,6 @@
 ---
-sidebar_position: 7
-title: Standard Library Reference
+sidebar_position: 6
+title: Standard Library
 description: Complete reference for Oite's minimal standard library including console, ByteStream, and basic file I/O. Extended functionality is provided by the Rolls ecosystem.
 keywords:
   [standard library, stdlib, console, ByteStream, file io, api reference]
@@ -96,4 +96,4 @@ Extended functionality will be provided by the Rolls ecosystem:
 | `@rolls/crypto` | Cryptographic operations    |
 | `@rolls/db`     | Database drivers            |
 
-See the [Architecture](/docs/architecture) for more details on the Rolls ecosystem.
+See the [Architecture](./architecture) for more details on the Rolls ecosystem, or visit the [Rolls documentation](/rolls/intro) for a complete overview.

@@ -24,7 +24,7 @@ Contributions are welcome! This guide will help you get started.
 
 ## Building
 
-See the [Getting Started](/docs/getting-started) guide for build instructions.
+See the [Getting Started](/getting-started) guide for build instructions.
 
 ## Testing
 

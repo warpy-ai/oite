@@ -118,4 +118,4 @@ Oite Core is like "C without libc" — minimal and self-contained. These feature
 
 ## Contributing
 
-Contributions are welcome! See the [Contributing Guide](/docs/contributing) for details.
+Contributions are welcome! See the [Contributing Guide](/contributing) for details.

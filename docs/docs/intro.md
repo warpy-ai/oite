@@ -1,4 +1,5 @@
 ---
+slug: /
 sidebar_position: 1
 title: Welcome to Oite
 description: Oite is a high-performance JavaScript-like programming language with native code execution, memory safety, and a self-hosting compiler. Get started with Oite today.
@@ -79,7 +80,7 @@ cargo build --release
 
 ## What's Next?
 
-- Read the [Getting Started](/docs/getting-started) guide
-- Explore [Language Features](/docs/language-features)
-- Learn about the [Architecture](/docs/architecture)
-- Check the [Development Status](/docs/development-status)
+- Read the [Getting Started](/getting-started) guide
+- Explore [Language Features](/compiler/language-features)
+- Learn about the [Architecture](/compiler/architecture)
+- Check the [Development Status](/development-status)

@@ -1,0 +1,74 @@
+/* Desktop two-row layout */
+.navbarDesktop {
+  display: none;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+@media screen and (min-width: 997px) {
+  .navbarDesktop {
+    display: block;
+  }
+}
+
+/* Row 1: Logo + Search + CTA */
+.row1 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 0;
+}
+
+.row1Right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Row 2: Tabs + Secondary links */
+.row2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+}
+
+.row2Left {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.row2Right {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+/* Color mode toggle */
+.colorModeToggle {
+  margin-left: 0.5rem;
+}
+
+/* Mobile layout */
+.navbarMobile {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 0.5rem 1rem;
+}
+
+@media screen and (min-width: 997px) {
+  .navbarMobile {
+    display: none;
+  }
+}
+
+.mobileRight {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}

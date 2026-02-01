@@ -516,5 +516,5 @@ EOF
 
 **Learn more:**
 - [Oite GitHub Repository](https://github.com/warpy-ai/script)
-- [Module System Documentation](/docs/language-features#modules)
-- [Standard Library](/docs/standard-library)
+- [Module System Documentation](/compiler/language-features#modules)
+- [Standard Library](/compiler/standard-library)

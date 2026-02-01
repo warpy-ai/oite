@@ -1,12 +1,13 @@
 ---
-title: Unroll - Oite Package Manager and Tooling
+sidebar_position: 2
+title: Unroll Design
 description: Design document for Unroll, Oite's package manager, build system, and developer tooling ecosystem.
-keywords: [unroll, package manager, build system, tooling, future]
+keywords: [unroll, package manager, build system, tooling, design]
 ---
 
-# Unroll - Runtime & Tooling for Oite
+# Unroll Design
 
-> **Status**: Future Implementation - Archived Design Document
+> **Status**: Future Implementation - Design Document
 >
 > This document describes the planned architecture for Unroll, the runtime
 > and tooling ecosystem for the Oite language.
@@ -28,12 +29,12 @@ developer experience features.
 └──────────────────┬──────────────────────┘
                    │
 ┌──────────────────▼──────────────────────┐
-│   Unroll (runtime + tooling)            │  ← THIS DOCUMENT
+│   Unroll (runtime + tooling)            │
 │   pkg manager, lockfiles, bundler, LSP  │
 └──────────────────┬──────────────────────┘
                    │
 ┌──────────────────▼──────────────────────┐
-│   Oite (language core)                │
+│   Oite (language core)                  │
 │   compiler, type system, ABI, bootstrap │
 └─────────────────────────────────────────┘
 ```
@@ -205,8 +206,8 @@ my-app/
 ├── unroll.toml         # Project manifest
 ├── unroll.lock         # Lockfile (auto-generated)
 ├── src/
-│   ├── main.ot       # Entry point (bin)
-│   └── lib.ot        # Library root (lib)
+│   ├── main.ot         # Entry point (bin)
+│   └── lib.ot          # Library root (lib)
 ├── tests/
 │   └── integration_test.ot
 ├── benches/

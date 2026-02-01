@@ -51,6 +51,9 @@
   --ifm-font-family-base: var(--font-sans);
   --ifm-font-family-monospace: var(--font-mono);
 
+  /* Two-row navbar height */
+  --ifm-navbar-height: 6.5rem;
+
   --ifm-background-color: var(--background);
   --ifm-background-surface-color: var(--card);
   --ifm-color-content: var(--foreground);
@@ -341,4 +344,48 @@ pre {
 /* Mobile sidebar overlay */
 .theme-doc-sidebar-menu.menu--responsive {
   background: var(--sidebar);
+}
+
+/* ========================================
+   Two-Row Navbar (Bun-style)
+   ======================================== */
+
+/* Tab styling (Compiler, Unroll, Rolls) - pill style like Bun */
+.navbar__item--tab {
+  margin: 0 0.125rem;
+}
+
+.navbar__item--tab .navbar__link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  font-size: 0.9rem;
+  color: var(--muted-foreground);
+  border-radius: 0.375rem;
+  transition: all 0.15s ease;
+  background: transparent;
+}
+
+.navbar__item--tab .navbar__link:hover {
+  color: var(--foreground);
+  background: var(--accent);
+}
+
+.navbar__item--tab .navbar__link--active,
+.navbar__item--tab.navbar__item--active .navbar__link {
+  color: var(--foreground);
+  background: var(--accent);
+  font-weight: 600;
+}
+
+/* Secondary links (Guides, Blog, GitHub) */
+.navbar__item--secondary .navbar__link {
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+  padding: 0.4rem 0.75rem;
+}
+
+.navbar__item--secondary .navbar__link:hover {
+  color: var(--foreground);
 }

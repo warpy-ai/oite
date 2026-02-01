@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 3
 title: Memory Model
 description: Understand Oite's Rust-inspired memory model with ownership rules, borrow checking, and memory safety without garbage collection.
 keywords:

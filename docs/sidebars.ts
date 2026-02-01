@@ -16,12 +16,6 @@ const sidebars: SidebarsConfig = {
   tutorialSidebar: [
     "intro",
     "getting-started",
-    "language-features",
-    "type-system",
-    "architecture",
-    "memory-model",
-    "ssa-ir",
-    "standard-library",
     "development-status",
     "contributing",
   ],

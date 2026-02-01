@@ -1,6 +1,6 @@
 ---
-sidebar_position: 9
-title: Self-Hosting Compiler
+sidebar_position: 8
+title: Self-Hosting
 description: Oite's self-hosting compiler is complete. The Oite compiler is written entirely in Oite itself and generates native binaries via LLVM IR.
 keywords: [self-hosting, bootstrap, compiler, oitec, self-compiling, llvm]
 ---

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 6
+sidebar_position: 5
 title: SSA IR
 description: Learn about Oite's Static Single Assignment (SSA) intermediate representation used for optimization and native code generation.
 keywords:

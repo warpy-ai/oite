@@ -87,12 +87,46 @@ const config: Config = {
     },
   ],
 
+  plugins: [
+    [
+      "@docusaurus/plugin-content-docs",
+      {
+        id: "compiler",
+        path: "docs-compiler",
+        routeBasePath: "compiler",
+        sidebarPath: "./sidebarsCompiler.ts",
+        editUrl: "https://github.com/warpy-ai/script/tree/main/docs",
+      },
+    ],
+    [
+      "@docusaurus/plugin-content-docs",
+      {
+        id: "unroll",
+        path: "docs-unroll",
+        routeBasePath: "unroll",
+        sidebarPath: "./sidebarsUnroll.ts",
+        editUrl: "https://github.com/warpy-ai/script/tree/main/docs",
+      },
+    ],
+    [
+      "@docusaurus/plugin-content-docs",
+      {
+        id: "rolls",
+        path: "docs-rolls",
+        routeBasePath: "rolls",
+        sidebarPath: "./sidebarsRolls.ts",
+        editUrl: "https://github.com/warpy-ai/script/tree/main/docs",
+      },
+    ],
+  ],
+
   presets: [
     [
       "classic",
       {
         docs: {
           sidebarPath: "./sidebars.ts",
+          routeBasePath: "/",
           editUrl: "https://github.com/warpy-ai/script/tree/main/docs",
           showLastUpdateTime: false,
           showLastUpdateAuthor: false,
@@ -184,41 +218,59 @@ const config: Config = {
       },
       hideOnScroll: false,
       items: [
+        // Secondary row - left side (doc tabs)
+        {
+          to: "/compiler/intro",
+          label: "Compiler",
+          position: "left",
+          className: "navbar__item--tab",
+          activeBaseRegex: "^/compiler/",
+        },
+        {
+          to: "/unroll/intro",
+          label: "Unroll",
+          position: "left",
+          className: "navbar__item--tab",
+          activeBaseRegex: "^/unroll/",
+        },
+        {
+          to: "/rolls/intro",
+          label: "Rolls",
+          position: "left",
+          className: "navbar__item--tab",
+          activeBaseRegex: "^/rolls/",
+        },
+        // Secondary row - right side
         {
           type: "docSidebar",
           sidebarId: "tutorialSidebar",
-          position: "left",
-          label: "Docs",
-        },
-        {
-          to: "/docs/getting-started",
+          position: "right",
           label: "Guides",
-          position: "left",
-        },
-        {
-          to: "/docs/standard-library",
-          label: "Reference",
-          position: "left",
+          className: "navbar__item--secondary",
         },
         {
           to: "/blog",
           label: "Blog",
-          position: "left",
-        },
-        {
-          type: "search",
           position: "right",
-        },
-        {
-          to: "/docs/getting-started",
-          label: "Get Started",
-          position: "right",
-          className: "navbar__item--cta",
+          className: "navbar__item--secondary",
         },
         {
           href: "https://github.com/warpy-ai/script",
           label: "GitHub",
           position: "right",
+          className: "navbar__item--secondary",
+        },
+        // Primary row - right side
+        {
+          type: "search",
+          position: "right",
+          className: "navbar__item--primary",
+        },
+        {
+          to: "/getting-started",
+          label: "Get Started",
+          position: "right",
+          className: "navbar__item--cta navbar__item--primary",
         },
       ],
     },
@@ -226,19 +278,23 @@ const config: Config = {
       style: "dark",
       links: [
         {
-          title: "Docs",
+          title: "Documentation",
           items: [
             {
               label: "Getting Started",
-              to: "/docs/getting-started",
+              to: "/getting-started",
             },
             {
-              label: "Language Features",
-              to: "/docs/language-features",
+              label: "Compiler",
+              to: "/compiler/intro",
             },
             {
-              label: "Architecture",
-              to: "/docs/architecture",
+              label: "Unroll",
+              to: "/unroll/intro",
+            },
+            {
+              label: "Rolls",
+              to: "/rolls/intro",
             },
           ],
         },
@@ -247,11 +303,11 @@ const config: Config = {
           items: [
             {
               label: "Development Status",
-              to: "/docs/development-status",
+              to: "/development-status",
             },
             {
               label: "Contributing",
-              to: "/docs/contributing",
+              to: "/contributing",
             },
           ],
         },

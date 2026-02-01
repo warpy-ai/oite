@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 3
 title: Type System
 description: Oite's structural type system with TypeScript-style annotations, type inference, and compile-time type checking.
 keywords: [type system, structural typing, type inference, type annotations, interfaces, generics]
