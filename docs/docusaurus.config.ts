@@ -224,21 +224,24 @@ const config: Config = {
           label: "Compiler",
           position: "left",
           className: "navbar__item--tab",
-          activeBaseRegex: "^/compiler/",
+          activeBasePath: "/compiler",
+          activeClassName: "navbar__link--active",
         },
         {
           to: "/unroll/intro",
           label: "Unroll",
           position: "left",
           className: "navbar__item--tab",
-          activeBaseRegex: "^/unroll/",
+          activeBasePath: "/unroll",
+          activeClassName: "navbar__link--active",
         },
         {
           to: "/rolls/intro",
           label: "Rolls",
           position: "left",
           className: "navbar__item--tab",
-          activeBaseRegex: "^/rolls/",
+          activeBasePath: "/rolls",
+          activeClassName: "navbar__link--active",
         },
         // Secondary row - right side
         {

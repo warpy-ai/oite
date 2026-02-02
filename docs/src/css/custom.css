@@ -54,7 +54,7 @@
     --ifm-font-family-monospace: var(--font-mono);
 
     /* Two-row navbar height */
-    --ifm-navbar-height: 6.5rem;
+    --ifm-navbar-height: 7rem;
 
     --ifm-background-color: var(--background);
     --ifm-background-surface-color: var(--card);
@@ -480,17 +480,28 @@ pre {
     background: var(--accent);
 }
 
-.navbar__item--tab .navbar__link--active,
-.navbar__item--tab.navbar__item--active .navbar__link {
-    color: var(--foreground);
-    background: var(--accent);
-    font-weight: 600;
-    position: relative;
+/* Active tab styling - multiple selector patterns */
+/* Pattern 1: Classes on wrapper div */
+.navbar__item--active.navbar__item--tab .navbar__link,
+/* Pattern 2: Classes directly on the link element */
+a.navbar__link.navbar__item--tab.navbar__item--active,
+.navbar__link.navbar__item--tab.navbar__item--active {
+    color: var(--color-coral) !important;
+    background: oklch(0.45 0.15 360 / 0.15) !important;
+    font-weight: 600 !important;
+}
+
+[data-theme="dark"] .navbar__item--active.navbar__item--tab .navbar__link,
+[data-theme="dark"] a.navbar__link.navbar__item--tab.navbar__item--active,
+[data-theme="dark"] .navbar__link.navbar__item--tab.navbar__item--active {
+    color: oklch(0.75 0.18 360) !important;
+    background: oklch(0.65 0.2 360 / 0.15) !important;
 }
 
 /* Active tab indicator line */
-.navbar__item--tab .navbar__link--active::after,
-.navbar__item--tab.navbar__item--active .navbar__link::after {
+.navbar__item--active.navbar__item--tab .navbar__link::after,
+a.navbar__link.navbar__item--tab.navbar__item--active::after,
+.navbar__link.navbar__item--tab.navbar__item--active::after {
     content: "";
     position: absolute;
     bottom: 0;
