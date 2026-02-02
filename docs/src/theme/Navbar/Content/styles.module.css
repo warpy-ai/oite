@@ -1,0 +1,117 @@
+/* Desktop two-row layout */
+.navbarDesktop {
+  display: none;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+@media screen and (min-width: 997px) {
+  .navbarDesktop {
+    display: block;
+  }
+}
+
+/* Row 1: Logo + Search + CTA */
+.row1 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 0;
+}
+
+.row1Right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Row 2: Tabs + Secondary links */
+.row2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0 0.75rem 0;
+}
+
+.row2Left {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.row2Right {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+/* Color mode toggle */
+.colorModeToggle {
+  margin-left: 0.5rem;
+}
+
+/* Mobile layout */
+.navbarMobile {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 0.5rem 1rem;
+}
+
+@media screen and (min-width: 997px) {
+  .navbarMobile {
+    display: none;
+  }
+}
+
+.mobileRight {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Tab styling */
+.navbarTab {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  font-size: 0.9rem;
+  color: var(--muted-foreground);
+  border-radius: 0.375rem;
+  transition: all 0.15s ease;
+  background: transparent;
+  position: relative;
+  text-decoration: none;
+}
+
+.navbarTab:hover {
+  color: var(--foreground);
+  background: var(--accent);
+  text-decoration: none;
+}
+
+/* Active tab state - just underline indicator */
+.navbarTabActive {
+  color: var(--foreground) !important;
+  font-weight: 600;
+}
+
+.navbarTabActive::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0.5rem;
+  right: 0.5rem;
+  height: 2px;
+  background: oklch(0.65 0.2 25);
+  border-radius: 1px;
+}
+
+/* Dark mode active tab */
+:global([data-theme="dark"]) .navbarTabActive::after {
+  background: oklch(0.75 0.18 25);
+}

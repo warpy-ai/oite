@@ -1,9 +1,9 @@
 <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
   <!-- Owl Body -->
-  <circle cx="256" cy="270" r="150" fill="#0A0A0A"/>
+  <circle cx="256" cy="270" r="150" fill="#0A0A0A" stroke="#FFFFFF" stroke-width="3"/>
 
   <!-- Owl Head -->
-  <circle cx="256" cy="190" r="130" fill="#0A0A0A"/>
+  <circle cx="256" cy="190" r="130" fill="#0A0A0A" stroke="#FFFFFF" stroke-width="3"/>
 
   <!-- Eyes -->
   <circle cx="210" cy="185" r="26" fill="#FFFFFF"/>

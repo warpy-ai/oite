@@ -229,8 +229,8 @@ export function helper(x: number): number {
 
 Now that you have Oite running, explore:
 
-- [Language Features](/docs/language-features) — Variables, functions, classes, and more
-- [Architecture](/docs/architecture) — How Oite works under the hood
-- [Standard Library](/docs/standard-library) — Built-in functions and modules
-- [Memory Model](/docs/memory-model) — Ownership and borrow checking
-- [Development Status](/docs/development-status) — Current state and roadmap
+- [Language Features](/compiler/language-features) — Variables, functions, classes, and more
+- [Architecture](/compiler/architecture) — How Oite works under the hood
+- [Standard Library](/compiler/standard-library) — Built-in functions and modules
+- [Memory Model](/rolls/memory-model) — Ownership and borrow checking
+- [Development Status](/development-status) — Current state and roadmap

@@ -268,9 +268,9 @@ So give it a try, and let me know what you think. This is just the beginning.
 **Get Started:**
 
 - [GitHub Repository](https://github.com/warpy-ai/script)
-- [Getting Started Guide](/docs/getting-started)
-- [Language Features](/docs/language-features)
-- [Architecture Overview](/docs/architecture)
+- [Getting Started Guide](/getting-started)
+- [Language Features](/compiler/language-features)
+- [Architecture Overview](/compiler/architecture)
 
 **Join the Community:**
 

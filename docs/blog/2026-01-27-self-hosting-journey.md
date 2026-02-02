@@ -327,5 +327,5 @@ cargo build --release
 
 **Learn more:**
 - [Oite GitHub Repository](https://github.com/warpy-ai/script)
-- [Architecture Documentation](/docs/architecture)
-- [Development Status](/docs/development-status)
+- [Architecture Documentation](/compiler/architecture)
+- [Development Status](/development-status)
