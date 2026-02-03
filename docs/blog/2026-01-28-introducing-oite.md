@@ -1,12 +1,17 @@
 ---
+slug: introducing-oite
 title: "Introducing Oite: JavaScript That Runs Like Rust"
 description: After years of development, Oite is here. A language that compiles JavaScript and TypeScript to native machine code with Rust-inspired memory safety and zero-overhead abstractions.
+authors: [lucas]
+tags: [release, announcement, performance, memory-safety, typescript]
+image: /img/owl-light.png
 ---
 
 NOTE: The project is currently in preview and it will change its name. You can give your suggestions about the name change here: https://github.com/warpy-ai/script/discussions/20
 
 NOTE2: Most of the code in this project is written by a human, me. AI is used selectively to speed up repetitive tasks, generate initial drafts, and it wrote most of the documentation ( which will be reviewed and edited by a human more the project advances). Architecture, system design, and implementation decisions were hand-written, even more on wrong implementation/bugs. If you're against "AI Slop", consider move away from this project.
 
+<!-- truncate -->
 
 ## Introduction
 
@@ -21,6 +26,7 @@ Oite compiles JavaScript and TypeScript to native machine code, without garbage 
 
 It compiles down to SSA-based IR and produces self-contained executables that run with native performance. As a result, we finally have a language that writes like JS but runs like Rust!
 
+<!-- truncate -->
 
 ## The Journey
 

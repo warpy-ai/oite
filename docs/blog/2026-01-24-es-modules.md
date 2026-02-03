@@ -1,10 +1,15 @@
 ---
+slug: es-modules
 title: "ES Modules in Oite: File-Based Resolution, Caching, and Cross-Module Calls"
 description: Learn how Oite implements ES module support with import/export statements, file-based resolution, SHA256 caching, and cross-module function calls.
+authors: [lucas]
+tags: [modules, es-modules, import, export, caching]
+image: /img/logo_bg.png
 ---
 
 Oite now has full ES module support with `import` and `export` statements, file-based resolution, SHA256 caching, and cross-module function calls. This post explains how we built it, the decisions we made, and what's coming next.
 
+<!-- truncate -->
 
 ## The Goal
 

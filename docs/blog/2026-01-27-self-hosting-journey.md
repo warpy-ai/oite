@@ -1,10 +1,15 @@
 ---
+slug: self-hosting-journey
 title: "Oite v0.4: From VM to Native - The Self-Hosting Journey Begins"
 description: Oite enters Phase 4 with the self-hosting compiler journey. Learn what self-hosting means, why it matters, and how Oite is becoming self-compiling.
+authors: [lucas]
+tags: [compiler, self-hosting, architecture, phase-4]
+image: /img/logo_bg.png
 ---
 
 This week marks a major milestone for Oite: we've officially begun **Phase 4 - Self-Hosting Compiler**. After completing Phase 3 (Language Completion), we're now taking the next step toward making Oite a truly self-contained language that can compile itself. This post explores what self-hosting means, why it matters, and how we're building toward it.
 
+<!-- truncate -->
 
 ## What is Self-Hosting?
 

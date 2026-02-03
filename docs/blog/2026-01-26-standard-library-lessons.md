@@ -1,10 +1,15 @@
 ---
+slug: standard-library-lessons
 title: "Building a Production-Ready Standard Library: Lessons from Implementing 10 Modules in One Week"
 description: Lessons learned from implementing 10 standard library modules in Oite including path, math, date, and fs. Patterns, design decisions, and best practices.
+authors: [lucas]
+tags: [standard-library, implementation, design, javascript]
+image: /img/logo_bg.png
 ---
 
 This week, we added 10 standard library modules to Oite in just 7 days. From `path` to `math`, from `date` to `fs`, we went from a minimal runtime to a production-ready standard library. This post shares the lessons we learned, the patterns we established, and the decisions we made along the way.
 
+<!-- truncate -->
 
 ## The Challenge
 

@@ -1,0 +1,84 @@
+compiler:
+  label: Compiler
+  permalink: /compiler
+  description: Posts about compiler implementation and architecture
+
+self-hosting:
+  label: Self-Hosting
+  permalink: /self-hosting
+  description: Posts about self-hosting compiler development
+
+architecture:
+  label: Architecture
+  permalink: /architecture
+  description: Posts about Script's system architecture
+
+phase-4:
+  label: Phase 4
+  permalink: /phase-4
+  description: Posts about Phase 4 development milestones
+
+standard-library:
+  label: Standard Library
+  permalink: /standard-library
+  description: Posts about standard library implementation
+
+implementation:
+  label: Implementation
+  permalink: /implementation
+  description: Posts about implementation details
+
+design:
+  label: Design
+  permalink: /design
+  description: Posts about design decisions and patterns
+
+javascript:
+  label: JavaScript
+  permalink: /javascript
+  description: Posts about JavaScript compatibility and features
+
+async:
+  label: Async
+  permalink: /async
+  description: Posts about async/await and asynchronous programming
+
+promises:
+  label: Promises
+  permalink: /promises
+  description: Posts about Promise implementation
+
+tokio:
+  label: Tokio
+  permalink: /tokio
+  description: Posts about Tokio runtime integration
+
+runtime:
+  label: Runtime
+  permalink: /runtime
+  description: Posts about runtime implementation
+
+modules:
+  label: Modules
+  permalink: /modules
+  description: Posts about ES modules and module systems
+
+es-modules:
+  label: ES Modules
+  permalink: /es-modules
+  description: Posts about ES module implementation
+
+import:
+  label: Import
+  permalink: /import
+  description: Posts about import statements and module loading
+
+export:
+  label: Export
+  permalink: /export
+  description: Posts about export statements and module exports
+
+caching:
+  label: Caching
+  permalink: /caching
+  description: Posts about module caching and performance optimization

@@ -1,9 +1,0 @@
-/* Push Blog tab to the right side */
-a[href="/blog"],
-a[href="/blog/2026-01-28-introducing-oite"] {
-  margin-left: auto !important;
-}
-
-.nav-tabs {
-  width: 100% !important;
-}
