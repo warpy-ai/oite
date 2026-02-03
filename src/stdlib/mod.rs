@@ -591,27 +591,25 @@ pub fn native_fetch(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     let mut body: Option<String> = None;
 
     // Parse options if provided
-    if let Some(JsValue::Object(opts_ptr)) = args.get(1) {
-        if let Some(HeapObject {
+    if let Some(JsValue::Object(opts_ptr)) = args.get(1)
+        && let Some(HeapObject {
             data: HeapData::Object(opts),
         }) = vm.heap.get(*opts_ptr)
+    {
+        if let Some(JsValue::String(m)) = opts.get("method") {
+            method = m.to_uppercase();
+        }
+        if let Some(JsValue::String(b)) = opts.get("body") {
+            body = Some(b.clone());
+        }
+        if let Some(JsValue::Object(hdrs_ptr)) = opts.get("headers")
+            && let Some(HeapObject {
+                data: HeapData::Object(hdrs),
+            }) = vm.heap.get(*hdrs_ptr)
         {
-            if let Some(JsValue::String(m)) = opts.get("method") {
-                method = m.to_uppercase();
-            }
-            if let Some(JsValue::String(b)) = opts.get("body") {
-                body = Some(b.clone());
-            }
-            if let Some(JsValue::Object(hdrs_ptr)) = opts.get("headers") {
-                if let Some(HeapObject {
-                    data: HeapData::Object(hdrs),
-                }) = vm.heap.get(*hdrs_ptr)
-                {
-                    for (k, v) in hdrs {
-                        if let JsValue::String(val) = v {
-                            headers.push((k.clone(), val.clone()));
-                        }
-                    }
+            for (k, v) in hdrs {
+                if let JsValue::String(val) = v {
+                    headers.push((k.clone(), val.clone()));
                 }
             }
         }
@@ -697,7 +695,7 @@ fn create_fetch_response(
     );
     response.insert(
         "ok".to_string(),
-        JsValue::Boolean(status >= 200 && status < 300),
+        JsValue::Boolean((200..300).contains(&status)),
     );
     response.insert("headers".to_string(), JsValue::Object(headers_ptr));
     response.insert("body".to_string(), JsValue::String(body.to_string()));

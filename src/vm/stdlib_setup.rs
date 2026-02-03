@@ -250,13 +250,12 @@ pub fn set_script_args(vm: &mut VM, args: Vec<String>) {
         .insert("__args__".into(), JsValue::Object(array_ptr));
 
     // Also set process.argv to the same array
-    if let Some(JsValue::Object(process_ptr)) = vm.call_stack[0].locals.get("process").cloned() {
-        if let Some(HeapObject {
+    if let Some(JsValue::Object(process_ptr)) = vm.call_stack[0].locals.get("process").cloned()
+        && let Some(HeapObject {
             data: HeapData::Object(props),
         }) = vm.heap.get_mut(process_ptr)
-        {
-            props.insert("argv".to_string(), JsValue::Object(array_ptr));
-        }
+    {
+        props.insert("argv".to_string(), JsValue::Object(array_ptr));
     }
 }
 
