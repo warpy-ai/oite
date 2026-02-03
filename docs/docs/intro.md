@@ -69,10 +69,10 @@ So give it a try, and let me know what you think.
 cargo build --release
 
 # Run a script
-./target/release/oite myprogram.ot
+./target/release/oite cmyprogram.ot
 
 # Build to native binary (requires LLVM)
-./target/release/oite build myprogram.ot --release -o myprogram
+./target/release/oitec build myprogram.ot --release -o myprogram
 
 # Run the compiled binary
 ./myprogram

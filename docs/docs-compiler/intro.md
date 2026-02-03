@@ -2,7 +2,8 @@
 sidebar_position: 1
 title: Oite Compiler
 description: Documentation for the Oite compiler including language syntax, type system, SSA IR, and native code generation.
-keywords: [oite compiler, language, syntax, type system, ssa ir, code generation]
+keywords:
+  [oite compiler, language, syntax, type system, ssa ir, code generation]
 ---
 
 # Oite Compiler
@@ -61,7 +62,7 @@ To compile an Oite program:
 cargo build --release
 
 # Compile to native binary
-./target/release/oite build myprogram.ot --release -o myprogram
+./target/release/oitec build myprogram.ot --release -o myprogram
 
 # Run the compiled binary
 ./myprogram

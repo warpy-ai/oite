@@ -11,8 +11,8 @@ Oite's core language is complete. Library functionality (HTTP, TLS, fs, etc.) wi
 
 ## Current Status
 
-| Component                                   | Status      |
-| ------------------------------------------- | ----------- |
+| Component                                   | Status   |
+| ------------------------------------------- | -------- |
 | Runtime kernel (NaN-boxing, allocator)      | Complete |
 | SSA IR + optimizations                      | Complete |
 | Native backends (Cranelift JIT, LLVM AOT)   | Complete |
@@ -39,8 +39,8 @@ Oite's core language is complete. Library functionality (HTTP, TLS, fs, etc.) wi
 
 The compiler written in Oite can now compile itself to native binaries:
 
-| Component                         | Status            | Output           |
-| --------------------------------- | ----------------- | ---------------- |
+| Component                         | Status         | Output           |
+| --------------------------------- | -------------- | ---------------- |
 | Rust Compiler (`src/compiler/`)   | Production     | Native binaries  |
 | Bootstrap Compiler (`bootstrap/`) | Reference      | Bytecode         |
 | Modular Compiler (`compiler/`)    | Self-Compiling | LLVM IR → Native |
@@ -48,7 +48,7 @@ The compiler written in Oite can now compile itself to native binaries:
 **Build Pipeline:**
 
 ```bash
-./target/release/oite compiler/main.ot llvm input.ot  # → input.ot.ll
+./target/release/oitec compiler/main.ot llvm input.ot  # → input.ot.ll
 clang input.ot.ll -c -o input.o                          # → input.o
 clang input.o -o output                                     # → native binary
 ```
@@ -92,9 +92,9 @@ Coverage includes:
 ### Performance Targets
 
 | Benchmark | Node.js | Bun   | Target Oite |
-| --------- | ------- | ----- | ------------- |
-| `fib(35)` | 50 ms   | 30 ms | 20 ms         |
-| Startup   | 30 ms   | 10 ms | 5 ms          |
+| --------- | ------- | ----- | ----------- |
+| `fib(35)` | 50 ms   | 30 ms | 20 ms       |
+| Startup   | 30 ms   | 10 ms | 5 ms        |
 
 ## What's Intentionally Minimal
 
@@ -104,7 +104,7 @@ Oite Core is like "C without libc" — minimal and self-contained. These feature
 | -------------------- | --------------------- | --------------------------- |
 | HTTP/TLS servers     | External dependencies | `@rolls/http`, `@rolls/tls` |
 | Database drivers     | Database-specific     | `@rolls/db`                 |
-| JSON parsing         | Can be pure Oite    | `@rolls/json`               |
+| JSON parsing         | Can be pure Oite      | `@rolls/json`               |
 | Math functions       | Standard library      | `@rolls/math`               |
 | Advanced file system | POSIX-specific        | `@rolls/fs`                 |
 | Crypto operations    | External libraries    | `@rolls/crypto`             |

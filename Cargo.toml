@@ -4,6 +4,10 @@ version = "0.6.0"
 edition = "2024"
 build = "build.rs"
 
+[[bin]]
+name = "oitec"
+path = "src/main.rs"
+
 [profile.release]
 # Disable LTO in release profile to avoid embed-bitcode conflicts
 # when building runtime as staticlib

@@ -72,7 +72,7 @@ cd oite
 cargo build --release
 
 # Verify installation
-./target/release/oite --help
+./target/release/oitec --help
 ```
 
 ### Step 3: Add to PATH (Optional)
@@ -99,7 +99,7 @@ console.log("Hello, Oite!");
 Run it:
 
 ```bash
-./target/release/oite hello.ot
+./target/release/oitec hello.ot
 ```
 
 ### A More Complete Example
@@ -120,13 +120,13 @@ Run with different backends:
 
 ```bash
 # VM (interpreted, good for debugging)
-./target/release/oite fibonacci.ot
+./target/release/oitec fibonacci.ot
 
 # JIT (fast compilation, good for development)
-./target/release/oite jit fibonacci.ot
+./target/release/oitec jit fibonacci.ot
 
 # AOT (native binary, best performance)
-./target/release/oite build fibonacci.ot --release -o fib
+./target/release/oitec build fibonacci.ot --release -o fib
 ./fib
 ```
 
@@ -134,17 +134,17 @@ Run with different backends:
 
 Oite provides multiple ways to run your code:
 
-| Mode | Command | Use Case | Performance |
-|------|---------|----------|-------------|
-| **VM** | `oite app.ot` | Debugging, REPL | Slowest |
-| **JIT** | `oite jit app.ot` | Development, testing | Fast |
-| **AOT Release** | `oite build app.ot --release -o app` | Production (ThinLTO) | Faster |
-| **AOT Dist** | `oite build app.ot --dist -o app` | Maximum optimization (Full LTO) | Fastest |
+| Mode            | Command                              | Use Case                        | Performance |
+| --------------- | ------------------------------------ | ------------------------------- | ----------- |
+| **VM**          | `oite app.ot`                        | Debugging, REPL                 | Slowest     |
+| **JIT**         | `oite jit app.ot`                    | Development, testing            | Fast        |
+| **AOT Release** | `oite build app.ot --release -o app` | Production (ThinLTO)            | Faster      |
+| **AOT Dist**    | `oite build app.ot --dist -o app`    | Maximum optimization (Full LTO) | Fastest     |
 
 ### JIT Compilation (Development)
 
 ```bash
-./target/release/oite jit app.ot
+./target/release/oitec jit app.ot
 ```
 
 Uses Cranelift for fast compilation. Perfect for rapid iteration.
@@ -153,10 +153,10 @@ Uses Cranelift for fast compilation. Perfect for rapid iteration.
 
 ```bash
 # Release build with ThinLTO
-./target/release/oite build app.ot --release -o app
+./target/release/oitec build app.ot --release -o app
 
 # Distribution build with Full LTO (slower compile, faster runtime)
-./target/release/oite build app.ot --dist -o app
+./target/release/oitec build app.ot --dist -o app
 
 # Run the native binary
 ./app
@@ -167,7 +167,7 @@ Produces standalone executables with no runtime dependencies.
 ### VM Execution (Debugging)
 
 ```bash
-./target/release/oite app.ot
+./target/release/oitec app.ot
 ```
 
 Interpreted execution for debugging and testing.

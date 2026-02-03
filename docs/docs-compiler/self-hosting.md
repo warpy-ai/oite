@@ -38,11 +38,11 @@ The Oite compiler (`oitec`) is now **fully self-hosting** — written entirely i
 
 ### All Components Working
 
-| Component          | Location                   | Status                                                  |
-| ------------------ | -------------------------- | ------------------------------------------------------- |
+| Component          | Location                   | Status                                               |
+| ------------------ | -------------------------- | ---------------------------------------------------- |
 | Rust Compiler      | `src/compiler/`            | Production: parse → bytecode → IR → native           |
-| Bootstrap Compiler | `bootstrap/*.ot`         | Reference: parse → bytecode                          |
-| Modular Compiler   | `compiler/*.ot`          | **Complete**: parse → IR → bytecode/LLVM IR → native |
+| Bootstrap Compiler | `bootstrap/*.ot`           | Reference: parse → bytecode                          |
+| Modular Compiler   | `compiler/*.ot`            | **Complete**: parse → IR → bytecode/LLVM IR → native |
 | VM                 | `src/vm/`                  | Full bytecode execution                              |
 | JIT                | `src/backend/cranelift.rs` | Cranelift codegen                                    |
 | AOT                | `src/backend/llvm/`        | LLVM with LTO                                        |
@@ -212,7 +212,7 @@ compiler/
 
 ```bash
 # Generate LLVM IR
-./target/release/oite compiler/main.ot llvm input.ot
+./target/release/oitec compiler/main.ot llvm input.ot
 
 # Compile to native
 clang input.ot.ll -c -o input.o
@@ -226,10 +226,10 @@ clang input.o -o output
 
 | Test          | Native Output | VM Output | Speedup     |
 | ------------- | ------------- | --------- | ----------- |
-| Objects       | Match      | Match  | ~4x faster  |
-| Functions     | Match      | Match  | ~4x faster  |
-| Recursion     | Match      | Match  | ~30x faster |
-| Loops         | Match      | Match  | ~30x faster |
+| Objects       | Match         | Match     | ~4x faster  |
+| Functions     | Match         | Match     | ~4x faster  |
+| Recursion     | Match         | Match     | ~30x faster |
+| Loops         | Match         | Match     | ~30x faster |
 | Fibonacci(25) | 75025         | 75025     | ~30x faster |
 
 ---
@@ -272,7 +272,7 @@ clang input.o -o output
 # bootstrap_verify.sh
 
 # Stage 1: Build oitec with Rust compiler
-./target/release/oite build compiler/main.ot -o oitec1 --dist
+./target/release/oitec build compiler/main.ot -o oitec1 --dist
 
 # Stage 2: Build oitec with oitec1
 ./oitec1 build compiler/main.ot -o oitec2 --dist
@@ -304,12 +304,12 @@ fi
 
 ## Progress Summary
 
-| Milestone | Status | Lines of Code |
-|-----------|--------|---------------|
-| Foundation | Complete | ~5,400 (bootstrap) |
-| Feature parity | Complete | ~10,500 (compiler) |
-| Native codegen | Complete | +1,348 (LLVM backend) |
-| Bootstrap verification | In Progress | ~500 lines + testing |
+| Milestone              | Status      | Lines of Code         |
+| ---------------------- | ----------- | --------------------- |
+| Foundation             | Complete    | ~5,400 (bootstrap)    |
+| Feature parity         | Complete    | ~10,500 (compiler)    |
+| Native codegen         | Complete    | +1,348 (LLVM backend) |
+| Bootstrap verification | In Progress | ~500 lines + testing  |
 
 **Total self-hosted code**: ~10,500 lines of .ot
 

@@ -330,13 +330,13 @@ The following layout is guaranteed stable:
 cargo test abi_compatibility
 
 # Verify ABI version in binary
-./oite build app.ot --dist -o app
+./oitec build app.ot --dist -o app
 strings app | grep ABI_VERSION
 # Expected: ABI_VERSION=1
 
 # Verify determinism
-./oite build app.ot --dist -o app1
-./oite build app.ot --dist -o app2
+./oitec build app.ot --dist -o app1
+./oitec build app.ot --dist -o app2
 diff <(sha256sum app1) <(sha256sum app2)
 # Must be identical
 ```

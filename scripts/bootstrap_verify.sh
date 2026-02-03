@@ -23,7 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_ROOT/target/release"
 VERIFY_DIR="/tmp/oite_bootstrap_verify"
-OITE_BIN="$BUILD_DIR/oite"
+OITE_BIN="$BUILD_DIR/oitec"
 
 # Colors for output
 RED='\033[0;31m'

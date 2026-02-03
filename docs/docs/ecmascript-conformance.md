@@ -21,6 +21,7 @@ Oite uses **JavaScript syntax** but implements **ownership semantics** rather th
 ## Oite is Not a JavaScript Runtime
 
 Oite is a new language that:
+
 - Uses JavaScript/TypeScript **syntax** (familiar to JS developers)
 - Implements **ownership-based memory management** (no garbage collector)
 - Compiles to **native code** (not interpreted)
@@ -49,12 +50,14 @@ Oite is a new language that:
 ### Why Full Test262 Compliance is Not a Goal
 
 Test262 tests assume:
+
 - **Reference semantics** — multiple variables can reference the same object
 - **Garbage collection** — memory is automatically reclaimed
 - **Specific coercion rules** — implicit type conversions
 - **Prototype-based inheritance** — object prototype chains
 
 Oite intentionally differs:
+
 - **Ownership semantics** — objects have a single owner
 - **No GC** — deterministic memory via ownership
 - **Explicit behavior** — minimal implicit conversions
@@ -62,18 +65,18 @@ Oite intentionally differs:
 
 ### Test Categories
 
-| Category | Expected Compatibility | Notes |
-|----------|----------------------|-------|
-| **Syntax** | High | Same parser (SWC) |
-| **Operators** | High | Arithmetic, logical, comparison |
-| **Primitives** | High | number, string, boolean |
-| **Control flow** | High | if, for, while, switch |
-| **Functions** | High | Declarations, arrows, closures |
-| **Classes** | High | ES6 class syntax |
-| **Object identity** | Low | Copy semantics differ |
-| **Reference mutation** | Low | No shared references |
-| **Built-in objects** | Medium | Implemented incrementally |
-| **Prototype chain** | Medium | Supported but less central |
+| Category               | Expected Compatibility | Notes                           |
+| ---------------------- | ---------------------- | ------------------------------- |
+| **Syntax**             | High                   | Same parser (SWC)               |
+| **Operators**          | High                   | Arithmetic, logical, comparison |
+| **Primitives**         | High                   | number, string, boolean         |
+| **Control flow**       | High                   | if, for, while, switch          |
+| **Functions**          | High                   | Declarations, arrows, closures  |
+| **Classes**            | High                   | ES6 class syntax                |
+| **Object identity**    | Low                    | Copy semantics differ           |
+| **Reference mutation** | Low                    | No shared references            |
+| **Built-in objects**   | Medium                 | Implemented incrementally       |
+| **Prototype chain**    | Medium                 | Supported but less central      |
 
 ## Semantic Differences
 
@@ -84,15 +87,15 @@ Oite intentionally differs:
 let a = { value: 1 };
 let b = a;
 b.value = 2;
-console.log(a.value);  // 2 (same object)
-console.log(a === b);  // true
+console.log(a.value); // 2 (same object)
+console.log(a === b); // true
 
 // Oite .js behavior:
 let a = { value: 1 };
-let b = a;             // COPY
+let b = a; // COPY
 b.value = 2;
-console.log(a.value);  // 1 (different objects)
-console.log(a === b);  // false
+console.log(a.value); // 1 (different objects)
+console.log(a === b); // false
 ```
 
 **Rationale:** Ownership semantics require clear ownership. Copy-by-default in `.js` mode ensures predictable behavior without GC.
@@ -102,19 +105,19 @@ console.log(a === b);  // false
 ```javascript
 // ECMAScript behavior:
 function modify(obj) {
-    obj.value = 99;
+  obj.value = 99;
 }
 let x = { value: 1 };
 modify(x);
-console.log(x.value);  // 99 (modified)
+console.log(x.value); // 99 (modified)
 
 // Oite .js behavior:
 function modify(obj) {
-    obj.value = 99;
+  obj.value = 99;
 }
 let x = { value: 1 };
-modify(x);             // COPY passed
-console.log(x.value);  // 1 (unchanged)
+modify(x); // COPY passed
+console.log(x.value); // 1 (unchanged)
 ```
 
 **Rationale:** Functions receive copies in `.js` mode. Use `.ot` with explicit borrows for in-place modification.
@@ -124,18 +127,18 @@ console.log(x.value);  // 1 (unchanged)
 ```javascript
 // Both behave similarly for most methods:
 let arr = [1, 2, 3];
-let doubled = arr.map(x => x * 2);  // [2, 4, 6]
+let doubled = arr.map((x) => x * 2); // [2, 4, 6]
 
 // But mutation methods differ:
 // ECMAScript:
 let items = [3, 1, 2];
 items.sort();
-console.log(items);  // [1, 2, 3] (mutated in place)
+console.log(items); // [1, 2, 3] (mutated in place)
 
 // Oite .js: same behavior (mutation is on owned copy)
 let items = [3, 1, 2];
-items.sort();        // Mutates the copy we own
-console.log(items);  // [1, 2, 3]
+items.sort(); // Mutates the copy we own
+console.log(items); // [1, 2, 3]
 ```
 
 ### 4. Closures and Captured Variables
@@ -143,22 +146,22 @@ console.log(items);  // [1, 2, 3]
 ```javascript
 // ECMAScript behavior:
 function counter() {
-    let count = 0;
-    return () => ++count;
+  let count = 0;
+  return () => ++count;
 }
 let c = counter();
-console.log(c());  // 1
-console.log(c());  // 2
+console.log(c()); // 1
+console.log(c()); // 2
 
 // Oite behavior: SAME
 // Closures capture ownership of their environment
 function counter() {
-    let count = 0;
-    return () => ++count;  // count is MOVED into closure
+  let count = 0;
+  return () => ++count; // count is MOVED into closure
 }
 let c = counter();
-console.log(c());  // 1
-console.log(c());  // 2
+console.log(c()); // 1
+console.log(c()); // 2
 ```
 
 Closures work as expected — captured variables are owned by the closure.
@@ -169,35 +172,35 @@ Oite implements JavaScript built-in objects incrementally:
 
 ### Fully Implemented
 
-| Object | Methods |
-|--------|---------|
-| `console` | `log`, `error`, `warn` |
-| `Array` | `push`, `pop`, `map`, `filter`, `reduce`, `forEach`, `find`, `join`, `length` |
-| `String` | `length`, `charAt`, `fromCharCode`, concatenation |
-| `Object` | Literal syntax, property access, computed properties |
-| `Promise` | `resolve`, `reject`, `then`, `catch`, `finally` |
-| `JSON` | `parse`, `stringify` |
+| Object    | Methods                                                                       |
+| --------- | ----------------------------------------------------------------------------- |
+| `console` | `log`, `error`, `warn`                                                        |
+| `Array`   | `push`, `pop`, `map`, `filter`, `reduce`, `forEach`, `find`, `join`, `length` |
+| `String`  | `length`, `charAt`, `fromCharCode`, concatenation                             |
+| `Object`  | Literal syntax, property access, computed properties                          |
+| `Promise` | `resolve`, `reject`, `then`, `catch`, `finally`                               |
+| `JSON`    | `parse`, `stringify`                                                          |
 
 ### Planned (via Rolls ecosystem)
 
-| Object | Location | Status |
-|--------|----------|--------|
-| `Math` | `@rolls/math` | Planned |
-| `Date` | `@rolls/date` | Planned |
-| `RegExp` | `@rolls/regex` | Planned |
+| Object       | Location             | Status  |
+| ------------ | -------------------- | ------- |
+| `Math`       | `@rolls/math`        | Planned |
+| `Date`       | `@rolls/date`        | Planned |
+| `RegExp`     | `@rolls/regex`       | Planned |
 | `Map`, `Set` | `@rolls/collections` | Planned |
-| `Buffer` | `@rolls/buffer` | Planned |
-| `crypto` | `@rolls/crypto` | Planned |
+| `Buffer`     | `@rolls/buffer`      | Planned |
+| `crypto`     | `@rolls/crypto`      | Planned |
 
 ### Not Planned
 
-| Object | Reason |
-|--------|--------|
-| `Proxy` | Conflicts with static ownership analysis |
-| `Reflect` | Limited use case without Proxy |
-| `eval()` | Security and optimization concerns |
-| `with` | Deprecated, scope confusion |
-| `WeakMap`, `WeakSet` | Requires GC semantics |
+| Object               | Reason                                   |
+| -------------------- | ---------------------------------------- |
+| `Proxy`              | Conflicts with static ownership analysis |
+| `Reflect`            | Limited use case without Proxy           |
+| `eval()`             | Security and optimization concerns       |
+| `with`               | Deprecated, scope confusion              |
+| `WeakMap`, `WeakSet` | Requires GC semantics                    |
 
 ## Oite262: Our Test Suite
 
@@ -215,7 +218,7 @@ Instead of Test262 compliance, Oite maintains **Oite262** — a test suite that:
 cargo test
 
 # Run Oite262 JavaScript compatibility tests
-./target/release/oite test tests/oite262/
+./target/release/oitec test tests/oite262/
 ```
 
 ### Test Structure
@@ -252,19 +255,26 @@ oite check --compat myfile.js
 
 ```javascript
 // Pure functions ✓
-function add(a, b) { return a + b; }
+function add(a, b) {
+  return a + b;
+}
 
 // Array transformations ✓
-let doubled = arr.map(x => x * 2);
+let doubled = arr.map((x) => x * 2);
 
 // Object creation ✓
 let user = { name: "Alice", age: 30 };
 
 // Closures ✓
-let counter = (() => { let n = 0; return () => ++n; })();
+let counter = (() => {
+  let n = 0;
+  return () => ++n;
+})();
 
 // Async/await ✓
-async function fetchData() { return await api.get(); }
+async function fetchData() {
+  return await api.get();
+}
 ```
 
 ### Patterns That Need Adjustment
@@ -299,13 +309,13 @@ class NewClass extends OldClass { ... }
 
 ## Summary
 
-| Aspect | Standard JavaScript | Oite |
-|--------|--------------------|----- |
-| **Goal** | ECMAScript compliance | Performance + Safety |
-| **Memory** | Garbage collected | Ownership-based |
-| **Assignment** | Reference copy | Value copy or move |
-| **Test suite** | Test262 | Oite262 |
-| **Compatibility** | 100% spec | Syntax + common patterns |
+| Aspect            | Standard JavaScript   | Oite                     |
+| ----------------- | --------------------- | ------------------------ |
+| **Goal**          | ECMAScript compliance | Performance + Safety     |
+| **Memory**        | Garbage collected     | Ownership-based          |
+| **Assignment**    | Reference copy        | Value copy or move       |
+| **Test suite**    | Test262               | Oite262                  |
+| **Compatibility** | 100% spec             | Syntax + common patterns |
 
 Oite prioritizes **predictable performance** and **memory safety** over strict ECMAScript compatibility. Most JavaScript code works unchanged; patterns relying on shared mutable references need adjustment.
 

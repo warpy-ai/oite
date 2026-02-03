@@ -10,13 +10,13 @@ High-performance systems language with **TypeScript syntax** compiling to **nati
 
 **Core language complete.** Library functionality (HTTP, TLS, fs, etc.) will be developed in the **Rolls** ecosystem (separate repository).
 
-| Component | Status |
-|-----------|--------|
-| Runtime kernel (NaN-boxing, allocator) | ✅ Complete |
-| SSA IR + optimizations | ✅ Complete |
+| Component                                 | Status      |
+| ----------------------------------------- | ----------- |
+| Runtime kernel (NaN-boxing, allocator)    | ✅ Complete |
+| SSA IR + optimizations                    | ✅ Complete |
 | Native backends (Cranelift JIT, LLVM AOT) | ✅ Complete |
-| Language features | ✅ Complete |
-| Self-hosting compiler | ✅ Complete |
+| Language features                         | ✅ Complete |
+| Self-hosting compiler                     | ✅ Complete |
 
 ---
 
@@ -55,8 +55,8 @@ tscl source → Compiler → SSA IR → Native Backend → CPU
 
 ### Execution Modes
 
-| Mode        | Command                                  | Use Case                        |
-| ----------- | ---------------------------------------- | ------------------------------- |
+| Mode        | Command                              | Use Case                        |
+| ----------- | ------------------------------------ | ------------------------------- |
 | JIT         | `oite jit app.ot`                    | Fast development, benchmarking  |
 | AOT Release | `oite build app.ot --release -o app` | Production (ThinLTO)            |
 | AOT Dist    | `oite build app.ot --dist -o app`    | Maximum optimization (Full LTO) |
@@ -191,9 +191,9 @@ Fully self-hosted compiler (`oitec`) written in Oite with TypeScript support.
 
 #### Current State
 
-| Compiler          | Location           | Status            | Output                   |
-| ----------------- | ------------------ | ----------------- | ------------------------ |
-| **Rust Compiler** | `src/compiler/`    | ✅ Production     | Native binaries          |
+| Compiler          | Location         | Status            | Output                   |
+| ----------------- | ---------------- | ----------------- | ------------------------ |
+| **Rust Compiler** | `src/compiler/`  | ✅ Production     | Native binaries          |
 | **Bootstrap**     | `bootstrap/*.ot` | ✅ Self-Compiling | Bytecode                 |
 | **Modular**       | `compiler/*.ot`  | ✅ Working        | Bytecode (VM executable) |
 
@@ -201,8 +201,8 @@ Fully self-hosted compiler (`oitec`) written in Oite with TypeScript support.
 
 The bootstrap compiler can now compile itself! All 8 modules successfully self-compile:
 
-| Module          | Compiled Size | Purpose                   |
-| --------------- | ------------- | ------------------------- |
+| Module        | Compiled Size | Purpose                   |
+| ------------- | ------------- | ------------------------- |
 | types.ot      | 37 bytes      | Type definitions          |
 | lexer.ot      | 1,325 bytes   | Tokenization              |
 | parser.ot     | 7,947 bytes   | AST generation            |
@@ -273,7 +273,7 @@ The self-hosted compiler now generates LLVM IR that compiles to native binaries:
 **Build Pipeline:**
 
 ```bash
-./target/release/oite compiler/main.ot llvm input.ot  # → input.ot.ll
+./target/release/oitec compiler/main.ot llvm input.ot  # → input.ot.ll
 clang input.ot.ll -c -o input.o                          # → input.o
 clang input.o -o output                                     # → native binary
 ```
@@ -298,12 +298,14 @@ tscl₀ (Rust) ──► tscl₁ (native oitec)
 ```
 
 **Verification Completed:**
+
 - Bytecode generation is deterministic (same source → same bytecode)
 - All 8 bootstrap modules compile successfully via self-hosted compiler
 - Self-compilation produces identical output across generations
 - hash(gen₀) == hash(gen₁) == hash(gen₂) verified
 
 **Verification Tools:**
+
 - `tests/compiler/bootstrap_verify.ot` - Comprehensive verification test suite
 - `scripts/bootstrap_verify.sh` - Shell script for end-to-end verification
 
@@ -514,13 +516,13 @@ cargo build --release
 
 ```bash
 # JIT execution
-./target/release/oite jit app.ot
+./target/release/oitec jit app.ot
 
 # VM execution
-./target/release/oite run app.ot
+./target/release/oitec run app.ot
 
 # Build native binary
-./target/release/oite build app.ot --release -o app
+./target/release/oitec build app.ot --release -o app
 
 # Run tests
 cargo test

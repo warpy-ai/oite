@@ -82,7 +82,7 @@ The type inference pass specializes dynamic operations:
 You can dump the IR for any Oite program:
 
 ```bash
-./target/release/oite ir myprogram.ot
+./target/release/oitec ir myprogram.ot
 ```
 
 This prints:
