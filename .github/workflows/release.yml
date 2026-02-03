@@ -23,18 +23,18 @@ jobs:
         include:
           - target: x86_64-apple-darwin
             os: macos-latest
-            artifact_name: oite
-            asset_name: oite-x86_64-apple-darwin
+            artifact_name: oitec
+            asset_name: oitec-x86_64-apple-darwin
 
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact_name: oite
-            asset_name: oite-aarch64-apple-darwin
+            artifact_name: oitec
+            asset_name: oitec-aarch64-apple-darwin
 
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact_name: oite
-            asset_name: oite-x86_64-unknown-linux-gnu
+            artifact_name: oitec
+            asset_name: oitec-x86_64-unknown-linux-gnu
 
     steps:
       - name: Checkout repository
