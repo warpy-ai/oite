@@ -704,12 +704,124 @@ impl Codegen {
     fn gen_var_decl(&mut self, var_decl: &VarDecl) {
         for decl in &var_decl.decls {
             if let Some(init) = &decl.init {
-                let name = decl.name.as_ident().unwrap().sym.to_string();
                 self.gen_expr(init);
-                // Use Let to create a new binding in current scope (shadows outer vars)
+                self.gen_pattern_binding(&decl.name);
+            }
+        }
+    }
+
+    /// Generate code to bind a pattern to a value on the stack.
+    /// The value to destructure should already be on top of the stack.
+    fn gen_pattern_binding(&mut self, pat: &Pat) {
+        match pat {
+            Pat::Ident(id) => {
+                // Simple variable binding
+                let name = id.id.sym.to_string();
                 self.instructions.push(OpCode::Let(name.clone()));
-                // Track this variable so inner functions can capture it
                 self.outer_scope_vars.insert(name);
+            }
+            Pat::Object(obj_pat) => {
+                // Object destructuring: let { x, y } = obj
+                for (i, prop) in obj_pat.props.iter().enumerate() {
+                    match prop {
+                        swc_ecma_ast::ObjectPatProp::KeyValue(kv) => {
+                            // { key: pattern } - extract key and bind to pattern
+                            // Dup the object for each property (except the last)
+                            if i < obj_pat.props.len() - 1 {
+                                self.instructions.push(OpCode::Dup);
+                            }
+                            // Get property name
+                            let key_name = match &kv.key {
+                                swc_ecma_ast::PropName::Ident(id) => id.sym.to_string(),
+                                swc_ecma_ast::PropName::Str(s) => s.value.to_string_lossy().into_owned(),
+                                _ => continue,
+                            };
+                            self.instructions.push(OpCode::GetProp(key_name));
+                            // Recursively bind the value pattern
+                            self.gen_pattern_binding(&kv.value);
+                        }
+                        swc_ecma_ast::ObjectPatProp::Assign(assign) => {
+                            // { x } or { x = default } - shorthand property
+                            // Dup the object for each property (except the last)
+                            if i < obj_pat.props.len() - 1 {
+                                self.instructions.push(OpCode::Dup);
+                            }
+                            let key_name = assign.key.sym.to_string();
+                            self.instructions.push(OpCode::GetProp(key_name.clone()));
+
+                            // Handle default value if present
+                            if let Some(default_val) = &assign.value {
+                                // Check if value is undefined, use default if so
+                                self.instructions.push(OpCode::Dup);
+                                self.instructions.push(OpCode::Push(JsValue::Undefined));
+                                self.instructions.push(OpCode::Eq);
+                                let jump_idx = self.instructions.len();
+                                self.instructions.push(OpCode::JumpIfFalse(0));
+                                // Pop undefined, push default
+                                self.instructions.push(OpCode::Pop);
+                                self.gen_expr(default_val);
+                                let end_addr = self.instructions.len();
+                                if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[jump_idx] {
+                                    *addr = end_addr;
+                                }
+                            }
+
+                            self.instructions.push(OpCode::Let(key_name.clone()));
+                            self.outer_scope_vars.insert(key_name);
+                        }
+                        swc_ecma_ast::ObjectPatProp::Rest(rest) => {
+                            // { ...rest } - not fully implemented yet
+                            if let Pat::Ident(id) = rest.arg.as_ref() {
+                                let name = id.id.sym.to_string();
+                                // For now, just bind the remaining object
+                                self.instructions.push(OpCode::Let(name.clone()));
+                                self.outer_scope_vars.insert(name);
+                            }
+                        }
+                    }
+                }
+            }
+            Pat::Array(arr_pat) => {
+                // Array destructuring: let [a, b] = arr
+                for (i, elem) in arr_pat.elems.iter().enumerate() {
+                    if let Some(elem_pat) = elem {
+                        // Dup the array for each element (except the last)
+                        let is_last = i == arr_pat.elems.len() - 1
+                            || arr_pat.elems.iter().skip(i + 1).all(|e| e.is_none());
+                        if !is_last {
+                            self.instructions.push(OpCode::Dup);
+                        }
+                        // Push index and load element
+                        self.instructions.push(OpCode::Push(JsValue::Number(i as f64)));
+                        self.instructions.push(OpCode::GetPropComputed);
+                        // Recursively bind the element pattern
+                        self.gen_pattern_binding(elem_pat);
+                    }
+                }
+            }
+            Pat::Rest(rest) => {
+                // ...rest pattern - bind remaining value
+                self.gen_pattern_binding(&rest.arg);
+            }
+            Pat::Assign(assign) => {
+                // pattern = default - handle default value
+                self.instructions.push(OpCode::Dup);
+                self.instructions.push(OpCode::Push(JsValue::Undefined));
+                self.instructions.push(OpCode::Eq);
+                let jump_idx = self.instructions.len();
+                self.instructions.push(OpCode::JumpIfFalse(0));
+                // Pop undefined, push default
+                self.instructions.push(OpCode::Pop);
+                self.gen_expr(&assign.right);
+                let end_addr = self.instructions.len();
+                if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[jump_idx] {
+                    *addr = end_addr;
+                }
+                self.gen_pattern_binding(&assign.left);
+            }
+            _ => {
+                // Unsupported pattern - just pop the value
+                self.instructions.push(OpCode::Pop);
             }
         }
     }
