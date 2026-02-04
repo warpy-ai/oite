@@ -514,19 +514,108 @@ function parseDoWhileStatement(parser) {
 function parseForStatement(parser) {
     parserAdvance(parser);
     expect(parser, "DELIMITER", "(");
-    let init = null;
+
+    // Check for for...in or for...of
+    let left = null;
+    let isForIn = false;
+    let isForOf = false;
+
+    // Parse the left side (variable declaration or identifier)
     if (peekType(parser) == "KEYWORD" && (peekValue(parser) == "let" || peekValue(parser) == "const" || peekValue(parser) == "var")) {
-        init = parseVariableDeclaration(parser);
+        let kind = peekValue(parser);
+        parserAdvance(parser);
+        let varName = peekValue(parser);
+        parserAdvance(parser);
+
+        // Check if this is for...in or for...of
+        if (peekType(parser) == "KEYWORD" && peekValue(parser) == "in") {
+            isForIn = true;
+            parserAdvance(parser);
+            left = {
+                type: "VariableDeclaration",
+                kind: kind,
+                declarations: [{
+                    type: "VariableDeclarator",
+                    id: { type: "Identifier", name: varName },
+                    init: null
+                }]
+            };
+        } else if (peekType(parser) == "KEYWORD" && peekValue(parser) == "of") {
+            isForOf = true;
+            parserAdvance(parser);
+            left = {
+                type: "VariableDeclaration",
+                kind: kind,
+                declarations: [{
+                    type: "VariableDeclarator",
+                    id: { type: "Identifier", name: varName },
+                    init: null
+                }]
+            };
+        } else {
+            // Regular for loop - need to parse the rest of the variable declaration
+            let init = null;
+            if (match(parser, "OPERATOR", "=")) {
+                init = parseExpression(parser);
+            }
+            left = {
+                type: "VariableDeclaration",
+                kind: kind,
+                declarations: [{
+                    type: "VariableDeclarator",
+                    id: { type: "Identifier", name: varName },
+                    init: init
+                }]
+            };
+        }
     } else {
-        init = parseExpression(parser);
+        left = parseExpression(parser);
+        // Check for for...in or for...of with existing variable
+        if (peekType(parser) == "KEYWORD" && peekValue(parser) == "in") {
+            isForIn = true;
+            parserAdvance(parser);
+        } else if (peekType(parser) == "KEYWORD" && peekValue(parser) == "of") {
+            isForOf = true;
+            parserAdvance(parser);
+        }
     }
+
+    // Handle for...in
+    if (isForIn) {
+        let right = parseExpression(parser);
+        expect(parser, "DELIMITER", ")");
+        let body = parseStatement(parser);
+        return {
+            type: "ForInStatement",
+            left: left,
+            right: right,
+            body: body
+        };
+    }
+
+    // Handle for...of
+    if (isForOf) {
+        let right = parseExpression(parser);
+        expect(parser, "DELIMITER", ")");
+        let body = parseStatement(parser);
+        return {
+            type: "ForOfStatement",
+            left: left,
+            right: right,
+            body: body
+        };
+    }
+
+    // Regular for loop
+    let init = left;
+    expect(parser, "DELIMITER", ";");
     let test = null;
-    if (peekType(parser) != "DELIMITER" && peekType(parser) != ";") {
+    if (peekType(parser) != "DELIMITER" || peekValue(parser) != ";") {
         test = parseExpression(parser);
     }
     expect(parser, "DELIMITER", ";");
     let update = null;
-    if (peekType(parser) != "DELIMITER" && peekValue(parser) != ")") {
+    if (peekType(parser) != "DELIMITER" || peekValue(parser) != ")") {
         update = parseExpression(parser);
     }
     expect(parser, "DELIMITER", ")");

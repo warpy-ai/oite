@@ -292,6 +292,14 @@ function emit(emitter, node) {
         emitForStatement(emitter, node);
         return;
     }
+    if (typeVal == "ForInStatement") {
+        emitForInStatement(emitter, node);
+        return;
+    }
+    if (typeVal == "ForOfStatement") {
+        emitForOfStatement(emitter, node);
+        return;
+    }
     if (typeVal == "BlockStatement") {
         emitBlockStatement(emitter, node);
         return;
@@ -681,6 +689,217 @@ function emitForStatement(emitter, node) {
     }
 }
 
+function emitForInStatement(emitter, node) {
+    // for (let key in obj) { ... }
+    // Implementation: iterate over Object.keys(obj)
+    pushLoop(emitter);
+
+    // 1. Evaluate the object and get its keys using Object.keys
+    emit(emitter, node.right);
+    // Load Object.keys
+    emitU8(emitter, OP.LOAD);
+    emitString(emitter, "Object");
+    emitU8(emitter, OP.GET_PROP);
+    emitString(emitter, "keys");
+    // Stack: [obj, Object.keys]
+    emitU8(emitter, OP.CALL);
+    emitU8(emitter, 1);
+    // Store keys array
+    emitU8(emitter, OP.LET);
+    emitString(emitter, "__for_in_keys__");
+
+    // 2. Initialize index to 0
+    emitU8(emitter, OP.PUSH);
+    emitU8(emitter, TYPE.NUMBER);
+    emitF64(emitter, 0);
+    emitU8(emitter, OP.LET);
+    emitString(emitter, "__for_in_idx__");
+
+    // 3. Loop start
+    let loopStart = currentOffset(emitter);
+    let loopInfo = currentLoop(emitter);
+    if (loopInfo != null) {
+        loopInfo.continueTarget = loopStart;
+    }
+
+    // 4. Check if idx < keys.length
+    emitU8(emitter, OP.LOAD);
+    emitString(emitter, "__for_in_idx__");
+    emitU8(emitter, OP.LOAD);
+    emitString(emitter, "__for_in_keys__");
+    emitU8(emitter, OP.GET_PROP);
+    emitString(emitter, "length");
+    emitU8(emitter, OP.LT);
+    emitU8(emitter, OP.JUMP_IF_FALSE);
+    let exitPatch = currentOffset(emitter);
+    emitU32(emitter, 0);
+
+    // 5. Load keys[idx] into the loop variable
+    emitU8(emitter, OP.LOAD);
+    emitString(emitter, "__for_in_keys__");
+    emitU8(emitter, OP.LOAD);
+    emitString(emitter, "__for_in_idx__");
+    emitU8(emitter, OP.GET_PROP_COMPUTED);
+
+    // 6. Bind the key to the loop variable
+    let varName = getLoopVarName(node.left);
+    if (varName != null) {
+        emitU8(emitter, OP.LET);
+        emitString(emitter, varName);
+    }
+
+    // 7. Execute loop body
+    emit(emitter, node.body);
+
+    // 8. Drop loop variable
+    if (varName != null) {
+        emitU8(emitter, OP.DROP);
+        emitString(emitter, varName);
+    }
+
+    // 9. Increment index
+    emitU8(emitter, OP.LOAD);
+    emitString(emitter, "__for_in_idx__");
+    emitU8(emitter, OP.PUSH);
+    emitU8(emitter, TYPE.NUMBER);
+    emitF64(emitter, 1);
+    emitU8(emitter, OP.ADD);
+    emitU8(emitter, OP.STORE);
+    emitString(emitter, "__for_in_idx__");
+
+    // 10. Jump back to loop start
+    emitU8(emitter, OP.JUMP);
+    emitU32(emitter, loopStart);
+
+    // 11. Patch exit jump
+    patchU32(emitter, exitPatch, currentOffset(emitter));
+
+    // 12. Clean up internal variables
+    emitU8(emitter, OP.DROP);
+    emitString(emitter, "__for_in_idx__");
+    emitU8(emitter, OP.DROP);
+    emitString(emitter, "__for_in_keys__");
+
+    // 13. Handle break jumps
+    let loopData = popLoop(emitter);
+    if (loopData != null) {
+        let j = 0;
+        while (j < loopData.breakPatches.length) {
+            patchU32(emitter, loopData.breakPatches[j], currentOffset(emitter));
+            j = j + 1;
+        }
+    }
+}
+
+function emitForOfStatement(emitter, node) {
+    // for (let item of arr) { ... }
+    // Implementation: iterate using index
+    pushLoop(emitter);
+
+    // 1. Evaluate the iterable and store it
+    emit(emitter, node.right);
+    emitU8(emitter, OP.LET);
+    emitString(emitter, "__for_of_iter__");
+
+    // 2. Initialize index to 0
+    emitU8(emitter, OP.PUSH);
+    emitU8(emitter, TYPE.NUMBER);
+    emitF64(emitter, 0);
+    emitU8(emitter, OP.LET);
+    emitString(emitter, "__for_of_idx__");
+
+    // 3. Loop start
+    let loopStart = currentOffset(emitter);
+    let loopInfo = currentLoop(emitter);
+    if (loopInfo != null) {
+        loopInfo.continueTarget = loopStart;
+    }
+
+    // 4. Check if idx < iter.length
+    emitU8(emitter, OP.LOAD);
+    emitString(emitter, "__for_of_idx__");
+    emitU8(emitter, OP.LOAD);
+    emitString(emitter, "__for_of_iter__");
+    emitU8(emitter, OP.GET_PROP);
+    emitString(emitter, "length");
+    emitU8(emitter, OP.LT);
+    emitU8(emitter, OP.JUMP_IF_FALSE);
+    let exitPatch = currentOffset(emitter);
+    emitU32(emitter, 0);
+
+    // 5. Load iter[idx] into the loop variable
+    emitU8(emitter, OP.LOAD);
+    emitString(emitter, "__for_of_iter__");
+    emitU8(emitter, OP.LOAD);
+    emitString(emitter, "__for_of_idx__");
+    emitU8(emitter, OP.GET_PROP_COMPUTED);
+
+    // 6. Bind the value to the loop variable
+    let varName = getLoopVarName(node.left);
+    if (varName != null) {
+        emitU8(emitter, OP.LET);
+        emitString(emitter, varName);
+    }
+
+    // 7. Execute loop body
+    emit(emitter, node.body);
+
+    // 8. Drop loop variable
+    if (varName != null) {
+        emitU8(emitter, OP.DROP);
+        emitString(emitter, varName);
+    }
+
+    // 9. Increment index
+    emitU8(emitter, OP.LOAD);
+    emitString(emitter, "__for_of_idx__");
+    emitU8(emitter, OP.PUSH);
+    emitU8(emitter, TYPE.NUMBER);
+    emitF64(emitter, 1);
+    emitU8(emitter, OP.ADD);
+    emitU8(emitter, OP.STORE);
+    emitString(emitter, "__for_of_idx__");
+
+    // 10. Jump back to loop start
+    emitU8(emitter, OP.JUMP);
+    emitU32(emitter, loopStart);
+
+    // 11. Patch exit jump
+    patchU32(emitter, exitPatch, currentOffset(emitter));
+
+    // 12. Clean up internal variables
+    emitU8(emitter, OP.DROP);
+    emitString(emitter, "__for_of_idx__");
+    emitU8(emitter, OP.DROP);
+    emitString(emitter, "__for_of_iter__");
+
+    // 13. Handle break jumps
+    let loopData = popLoop(emitter);
+    if (loopData != null) {
+        let j = 0;
+        while (j < loopData.breakPatches.length) {
+            patchU32(emitter, loopData.breakPatches[j], currentOffset(emitter));
+            j = j + 1;
+        }
+    }
+}
+
+// Helper function to extract variable name from for-in/for-of left side
+function getLoopVarName(left) {
+    if (left == null) return null;
+    if (left.type == "VariableDeclaration") {
+        if (left.declarations != null && left.declarations.length > 0) {
+            let decl = left.declarations[0];
+            if (decl.id != null && decl.id.name != null) {
+                return decl.id.name;
+            }
+        }
+    } else if (left.type == "Identifier") {
+        return left.name;
+    }
+    return null;
+}
+
 function emitBreakStatement(emitter, node) {
     let loopInfo = currentLoop(emitter);
     if (loopInfo == null) {
@@ -1052,24 +1271,55 @@ function emitLiteral(emitter, node) {
 }
 
 function emitArrayExpression(emitter, node) {
-    emitU8(emitter, OP.NEW_ARRAY);
-
+    // Check if any elements are spread elements
+    let hasSpread = false;
     let i = 0;
     while (i < node.elements.length) {
-        emitU8(emitter, OP.DUP);
-        // StoreElement expects stack: [array, value, index] (index at top)
-        let element = node.elements[i];
-        if (element != null) {
-            emit(emitter, element);
-        } else {
-            emitU8(emitter, OP.PUSH);
-            emitU8(emitter, TYPE.UNDEFINED);
+        let elem = node.elements[i];
+        if (elem != null && elem.type == "SpreadElement") {
+            hasSpread = true;
         }
-        emitU8(emitter, OP.PUSH);
-        emitU8(emitter, TYPE.NUMBER);
-        emitF64(emitter, i);
-        emitU8(emitter, OP.STORE_ELEMENT);
         i = i + 1;
+    }
+
+    if (hasSpread) {
+        // Use dynamic approach: create empty array, then push/spread each element
+        emitU8(emitter, OP.NEW_ARRAY);
+        i = 0;
+        while (i < node.elements.length) {
+            let element = node.elements[i];
+            if (element != null) {
+                if (element.type == "SpreadElement") {
+                    // Spread: emit source array, then ArraySpread
+                    emit(emitter, element.argument);
+                    emitU8(emitter, OP.ARRAY_SPREAD);
+                } else {
+                    // Regular element: emit value, then ArrayPush
+                    emit(emitter, element);
+                    emitU8(emitter, OP.ARRAY_PUSH);
+                }
+            }
+            i = i + 1;
+        }
+    } else {
+        // Use static approach: create array with known size
+        emitU8(emitter, OP.NEW_ARRAY);
+        i = 0;
+        while (i < node.elements.length) {
+            emitU8(emitter, OP.DUP);
+            let element = node.elements[i];
+            if (element != null) {
+                emit(emitter, element);
+            } else {
+                emitU8(emitter, OP.PUSH);
+                emitU8(emitter, TYPE.UNDEFINED);
+            }
+            emitU8(emitter, OP.PUSH);
+            emitU8(emitter, TYPE.NUMBER);
+            emitF64(emitter, i);
+            emitU8(emitter, OP.STORE_ELEMENT);
+            i = i + 1;
+        }
     }
     return;
 }
@@ -1080,16 +1330,32 @@ function emitObjectExpression(emitter, node) {
     let i = 0;
     while (i < node.properties.length) {
         let prop = node.properties[i];
-        emitU8(emitter, OP.DUP);
-        emit(emitter, prop.value);
-        emitU8(emitter, OP.SET_PROP);
-        let keyName = "";
-        if (prop.key.type == "Identifier") {
-            keyName = prop.key.name;
-        } else if (prop.key.type == "Literal" || prop.key.type == "StringLiteral") {
-            keyName = prop.key.value;
+
+        // Handle spread properties: { ...source }
+        if (prop.type == "SpreadElement") {
+            emit(emitter, prop.argument);
+            emitU8(emitter, OP.OBJECT_SPREAD);
+        } else {
+            emitU8(emitter, OP.DUP);
+            // Handle shorthand properties: { x } is equivalent to { x: x }
+            if (prop.shorthand == true && prop.key != null && prop.key.type == "Identifier") {
+                emitU8(emitter, OP.LOAD);
+                emitString(emitter, prop.key.name);
+            } else if (prop.value != null) {
+                emit(emitter, prop.value);
+            } else {
+                emitU8(emitter, OP.PUSH);
+                emitU8(emitter, TYPE.UNDEFINED);
+            }
+            emitU8(emitter, OP.SET_PROP);
+            let keyName = "";
+            if (prop.key != null && prop.key.type == "Identifier") {
+                keyName = prop.key.name;
+            } else if (prop.key != null && (prop.key.type == "Literal" || prop.key.type == "StringLiteral")) {
+                keyName = prop.key.value;
+            }
+            emitString(emitter, keyName);
         }
-        emitString(emitter, keyName);
         i = i + 1;
     }
     return;
