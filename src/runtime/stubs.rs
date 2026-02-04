@@ -413,6 +413,22 @@ pub extern "C" fn tscl_gt(a: u64, b: u64) -> u64 {
         .to_bits()
 }
 
+/// Dynamic less-than-or-equal comparison.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_lte(a: u64, b: u64) -> u64 {
+    TsclValue::from_bits(a)
+        .lte(TsclValue::from_bits(b))
+        .to_bits()
+}
+
+/// Dynamic greater-than-or-equal comparison.
+#[unsafe(no_mangle)]
+pub extern "C" fn tscl_gte(a: u64, b: u64) -> u64 {
+    TsclValue::from_bits(a)
+        .gte(TsclValue::from_bits(b))
+        .to_bits()
+}
+
 /// Logical NOT.
 #[unsafe(no_mangle)]
 pub extern "C" fn tscl_not(a: u64) -> u64 {

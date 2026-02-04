@@ -299,6 +299,26 @@ impl TsclValue {
             Self::boolean(false)
         }
     }
+
+    /// Less than or equal comparison.
+    #[inline]
+    pub fn lte(self, other: Self) -> Self {
+        if self.is_number() && other.is_number() {
+            Self::boolean(self.as_number_unchecked() <= other.as_number_unchecked())
+        } else {
+            Self::boolean(false)
+        }
+    }
+
+    /// Greater than or equal comparison.
+    #[inline]
+    pub fn gte(self, other: Self) -> Self {
+        if self.is_number() && other.is_number() {
+            Self::boolean(self.as_number_unchecked() >= other.as_number_unchecked())
+        } else {
+            Self::boolean(false)
+        }
+    }
 }
 
 impl std::fmt::Debug for TsclValue {

@@ -1634,43 +1634,47 @@ impl VM {
             }
 
             OpCode::Lt => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    self.stack.push(JsValue::Boolean(a < b));
-                } else {
-                    self.stack.push(JsValue::Boolean(false));
-                }
+                let b = self.stack.pop();
+                let a = self.stack.pop();
+                let result = match (a, b) {
+                    (Some(JsValue::Number(a)), Some(JsValue::Number(b))) => a < b,
+                    (Some(JsValue::String(a)), Some(JsValue::String(b))) => a < b,
+                    _ => false,
+                };
+                self.stack.push(JsValue::Boolean(result));
             }
 
             OpCode::LtEq => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    self.stack.push(JsValue::Boolean(a <= b));
-                } else {
-                    self.stack.push(JsValue::Boolean(false));
-                }
+                let b = self.stack.pop();
+                let a = self.stack.pop();
+                let result = match (a, b) {
+                    (Some(JsValue::Number(a)), Some(JsValue::Number(b))) => a <= b,
+                    (Some(JsValue::String(a)), Some(JsValue::String(b))) => a <= b,
+                    _ => false,
+                };
+                self.stack.push(JsValue::Boolean(result));
             }
 
             OpCode::Gt => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    self.stack.push(JsValue::Boolean(a > b));
-                } else {
-                    self.stack.push(JsValue::Boolean(false));
-                }
+                let b = self.stack.pop();
+                let a = self.stack.pop();
+                let result = match (a, b) {
+                    (Some(JsValue::Number(a)), Some(JsValue::Number(b))) => a > b,
+                    (Some(JsValue::String(a)), Some(JsValue::String(b))) => a > b,
+                    _ => false,
+                };
+                self.stack.push(JsValue::Boolean(result));
             }
 
             OpCode::GtEq => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    self.stack.push(JsValue::Boolean(a >= b));
-                } else {
-                    self.stack.push(JsValue::Boolean(false));
-                }
+                let b = self.stack.pop();
+                let a = self.stack.pop();
+                let result = match (a, b) {
+                    (Some(JsValue::Number(a)), Some(JsValue::Number(b))) => a >= b,
+                    (Some(JsValue::String(a)), Some(JsValue::String(b))) => a >= b,
+                    _ => false,
+                };
+                self.stack.push(JsValue::Boolean(result));
             }
 
             OpCode::Mod => {
