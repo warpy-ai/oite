@@ -1,0 +1,22 @@
+// Test try-catch blocks
+console.log("Testing try-catch:");
+
+let caught = false;
+try {
+    throw "test error";
+} catch (e) {
+    caught = true;
+    console.log("Caught:", e);
+}
+console.log("Was caught:", caught);
+
+// Test try-finally
+let finallyRan = false;
+try {
+    console.log("In try block");
+} finally {
+    finallyRan = true;
+}
+console.log("Finally ran:", finallyRan);
+
+console.log("Try-catch test done!");

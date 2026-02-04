@@ -1077,6 +1077,126 @@ impl Codegen {
             Stmt::Empty(_) | Stmt::Debugger(_) | Stmt::With(_) => {
                 // Empty/debugger/with statements - do nothing
             }
+            Stmt::Try(try_stmt) => {
+                // Try-catch-finally statement
+                //
+                // Control flow:
+                // - try-catch-finally: try -> PopTry -> finally -> end; on exception -> catch -> finally -> end
+                // - try-catch: try -> PopTry -> end; on exception -> catch -> end
+                // - try-finally: try -> PopTry -> finally -> end; on exception -> finally -> rethrow
+
+                let has_catch = try_stmt.handler.is_some();
+                let has_finally = try_stmt.finalizer.is_some();
+
+                // 1. Emit SetupTry with placeholder addresses (will backpatch)
+                let setup_try_idx = self.instructions.len();
+                self.instructions.push(OpCode::SetupTry {
+                    catch_addr: 0,
+                    finally_addr: 0,
+                });
+
+                // 2. Emit try block
+                self.scope_stack.push(Vec::new());
+                for s in &try_stmt.block.stmts {
+                    self.gen_stmt(s);
+                }
+                // Drop try block scope variables
+                if let Some(locals) = self.scope_stack.pop() {
+                    for name in locals.into_iter().rev() {
+                        self.instructions.push(OpCode::Drop(name));
+                    }
+                }
+
+                // 3. PopTry - remove exception handler if no exception occurred
+                self.instructions.push(OpCode::PopTry);
+
+                // 4. Jump after try block (target depends on structure)
+                let jump_after_try_idx = self.instructions.len();
+                self.instructions.push(OpCode::Jump(0)); // Will backpatch
+
+                // 5. Catch block (if present)
+                let catch_addr = if has_catch {
+                    let addr = self.instructions.len();
+                    if let Some(handler) = &try_stmt.handler {
+                        self.scope_stack.push(Vec::new());
+
+                        // Bind exception to catch parameter if present
+                        if let Some(param) = &handler.param {
+                            if let Pat::Ident(id) = param {
+                                let param_name = id.id.sym.to_string();
+                                // Exception value is on stack, bind it
+                                self.instructions.push(OpCode::Let(param_name.clone()));
+                                if let Some(scope) = self.scope_stack.last_mut() {
+                                    scope.push(param_name);
+                                }
+                            }
+                        } else {
+                            // No catch parameter, pop the exception
+                            self.instructions.push(OpCode::Pop);
+                        }
+
+                        // Generate catch block body
+                        for s in &handler.body.stmts {
+                            self.gen_stmt(s);
+                        }
+
+                        // Drop catch block scope variables
+                        if let Some(locals) = self.scope_stack.pop() {
+                            for name in locals.into_iter().rev() {
+                                self.instructions.push(OpCode::Drop(name));
+                            }
+                        }
+                    }
+                    addr
+                } else {
+                    0 // No catch block
+                };
+
+                // 6. Finally block (if present)
+                let finally_addr = if has_finally {
+                    let addr = self.instructions.len();
+                    if let Some(finalizer) = &try_stmt.finalizer {
+                        self.scope_stack.push(Vec::new());
+                        for s in &finalizer.stmts {
+                            self.gen_stmt(s);
+                        }
+                        // Drop finally block scope variables
+                        if let Some(locals) = self.scope_stack.pop() {
+                            for name in locals.into_iter().rev() {
+                                self.instructions.push(OpCode::Drop(name));
+                            }
+                        }
+                    }
+                    addr
+                } else {
+                    0 // No finally block
+                };
+
+                // 7. End address - where normal execution continues
+                let end_addr = self.instructions.len();
+
+                // Backpatch SetupTry addresses
+                if let OpCode::SetupTry {
+                    catch_addr: ref mut c,
+                    finally_addr: ref mut f,
+                } = self.instructions[setup_try_idx]
+                {
+                    *c = catch_addr;
+                    *f = finally_addr;
+                }
+
+                // Backpatch jump after try block
+                // - If has finally: jump to finally
+                // - If no finally: jump to end
+                if let OpCode::Jump(ref mut addr) = self.instructions[jump_after_try_idx] {
+                    *addr = if has_finally { finally_addr } else { end_addr };
+                }
+            }
+            Stmt::Throw(throw_stmt) => {
+                // Throw statement: push exception value and emit Throw opcode
+                self.gen_expr(&throw_stmt.arg);
+                self.instructions.push(OpCode::Throw);
+            }
             _ => {}
         }
     }
