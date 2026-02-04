@@ -66,6 +66,18 @@ let OP = {
     CONSTRUCT: 57,
     STORE_LOCAL: 58,
     LOAD_LOCAL: 59,
+    // Extended opcodes (60-79)
+    SWAP: 60,
+    TYPEOF: 61,
+    THROW: 62,
+    SETUP_TRY: 63,
+    POP_TRY: 64,
+    GET_PROP_COMPUTED: 65,
+    SET_PROP_COMPUTED: 66,
+    ARRAY_PUSH: 67,
+    ARRAY_SPREAD: 68,
+    OBJECT_SPREAD: 69,
+    LET: 70,
     // Halt (255)
     HALT: 255
 };
@@ -694,16 +706,113 @@ function emitContinueStatement(emitter, node) {
 
 function emitThrowStatement(emitter, node) {
     emit(emitter, node.argument);
-    // For now, just return the thrown value
-    emitU8(emitter, OP.RETURN);
+    emitU8(emitter, OP.THROW);
     return;
 }
 
 function emitTryStatement(emitter, node) {
-    // Simplified: just emit the try block
+    // Full try-catch-finally implementation
+    let hasCatch = node.handler != null;
+    let hasFinally = node.finalizer != null;
+
+    // Emit SetupTry with placeholder addresses
+    let setupTryPos = currentOffset(emitter);
+    emitU8(emitter, OP.SETUP_TRY);
+    let catchAddrPos = currentOffset(emitter);
+    emitU32(emitter, 0); // catch_addr placeholder
+    let finallyAddrPos = currentOffset(emitter);
+    emitU32(emitter, 0); // finally_addr placeholder
+
+    // Emit try block
     if (node.block != null) {
         emit(emitter, node.block);
     }
+
+    // Pop the try handler after successful try block
+    emitU8(emitter, OP.POP_TRY);
+
+    // Jump over catch block (to finally or end)
+    let jumpAfterTryPos = currentOffset(emitter);
+    emitU8(emitter, OP.JUMP);
+    emitU32(emitter, 0); // placeholder
+
+    // Catch block
+    let catchAddr = currentOffset(emitter);
+    if (hasCatch) {
+        // Bind exception to catch parameter
+        if (node.handler.param != null) {
+            let paramName = node.handler.param;
+            if (typeof paramName == "object" && paramName.name != null) {
+                paramName = paramName.name;
+            }
+            if (typeof paramName == "string") {
+                emitU8(emitter, OP.LET);
+                emitString(emitter, paramName);
+            }
+        }
+        // Emit catch body
+        if (node.handler.body != null) {
+            emit(emitter, node.handler.body);
+        }
+        // Drop catch parameter if present
+        if (node.handler.param != null) {
+            let paramName = node.handler.param;
+            if (typeof paramName == "object" && paramName.name != null) {
+                paramName = paramName.name;
+            }
+            if (typeof paramName == "string") {
+                emitU8(emitter, OP.DROP);
+                emitString(emitter, paramName);
+            }
+        }
+    }
+
+    // Jump to finally or end after catch
+    let jumpAfterCatchPos = currentOffset(emitter);
+    if (hasCatch) {
+        emitU8(emitter, OP.JUMP);
+        emitU32(emitter, 0); // placeholder
+    }
+
+    // Finally block
+    let finallyAddr = currentOffset(emitter);
+    if (hasFinally) {
+        emit(emitter, node.finalizer);
+    }
+
+    let endAddr = currentOffset(emitter);
+
+    // Patch addresses
+    // Patch catch_addr in SetupTry
+    if (hasCatch) {
+        patchU32(emitter, catchAddrPos, catchAddr);
+    } else {
+        patchU32(emitter, catchAddrPos, endAddr);
+    }
+
+    // Patch finally_addr in SetupTry
+    if (hasFinally) {
+        patchU32(emitter, finallyAddrPos, finallyAddr);
+    } else {
+        patchU32(emitter, finallyAddrPos, 0);
+    }
+
+    // Patch jump after try block
+    if (hasFinally) {
+        patchU32(emitter, jumpAfterTryPos + 1, finallyAddr);
+    } else {
+        patchU32(emitter, jumpAfterTryPos + 1, endAddr);
+    }
+
+    // Patch jump after catch block
+    if (hasCatch) {
+        if (hasFinally) {
+            patchU32(emitter, jumpAfterCatchPos + 1, finallyAddr);
+        } else {
+            patchU32(emitter, jumpAfterCatchPos + 1, endAddr);
+        }
+    }
+
     return;
 }
 

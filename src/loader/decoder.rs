@@ -393,6 +393,47 @@ impl<'a> BytecodeDecoder<'a> {
             // LoadLocal (indexed local variable load)
             59 => Ok(OpCode::LoadLocal(self.read_u32_le()?)),
 
+            // Extended opcodes (60-79)
+            // Swap
+            60 => Ok(OpCode::Swap),
+
+            // TypeOf
+            61 => Ok(OpCode::TypeOf),
+
+            // Throw
+            62 => Ok(OpCode::Throw),
+
+            // SetupTry (catch_addr, finally_addr)
+            63 => {
+                let catch_addr = self.read_u32_le()? as usize;
+                let finally_addr = self.read_u32_le()? as usize;
+                Ok(OpCode::SetupTry {
+                    catch_addr,
+                    finally_addr,
+                })
+            }
+
+            // PopTry
+            64 => Ok(OpCode::PopTry),
+
+            // GetPropComputed
+            65 => Ok(OpCode::GetPropComputed),
+
+            // SetPropComputed
+            66 => Ok(OpCode::SetPropComputed),
+
+            // ArrayPush
+            67 => Ok(OpCode::ArrayPush),
+
+            // ArraySpread
+            68 => Ok(OpCode::ArraySpread),
+
+            // ObjectSpread
+            69 => Ok(OpCode::ObjectSpread),
+
+            // Let (create new variable binding)
+            70 => Ok(OpCode::Let(self.read_string()?)),
+
             // Halt
             255 => Ok(OpCode::Halt),
 
