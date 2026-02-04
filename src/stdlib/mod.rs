@@ -510,3 +510,215 @@ pub fn native_json_parse(_vm: &mut VM, _args: Vec<JsValue>) -> JsValue {
     // The modular compiler doesn't need parse, just stringify
     JsValue::Undefined
 }
+
+// ============================================================================
+// Process Functions (for @rolls/process and unroll)
+// ============================================================================
+
+/// Get environment variable
+pub fn native_getenv(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let Some(JsValue::String(name)) = args.first() {
+        match std::env::var(name) {
+            Ok(value) => JsValue::String(value),
+            Err(_) => JsValue::Undefined,
+        }
+    } else {
+        JsValue::Undefined
+    }
+}
+
+/// Set environment variable
+pub fn native_setenv(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let (Some(JsValue::String(name)), Some(JsValue::String(value))) = (args.first(), args.get(1))
+    {
+        // SAFETY: Setting environment variables is inherently unsafe in multi-threaded contexts,
+        // but we control when this is called and it's a common operation in CLI tools.
+        unsafe {
+            std::env::set_var(name, value);
+        }
+        JsValue::Undefined
+    } else {
+        JsValue::Undefined
+    }
+}
+
+/// Get current working directory
+pub fn native_cwd(_vm: &mut VM, _args: Vec<JsValue>) -> JsValue {
+    match std::env::current_dir() {
+        Ok(path) => JsValue::String(path.to_string_lossy().to_string()),
+        Err(_) => JsValue::Undefined,
+    }
+}
+
+/// Change current working directory
+pub fn native_chdir(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    if let Some(JsValue::String(path)) = args.first() {
+        match std::env::set_current_dir(path) {
+            Ok(()) => JsValue::Boolean(true),
+            Err(_) => JsValue::Boolean(false),
+        }
+    } else {
+        JsValue::Boolean(false)
+    }
+}
+
+/// Exit the process with a status code
+pub fn native_exit(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    let code = if let Some(JsValue::Number(n)) = args.first() {
+        *n as i32
+    } else {
+        0
+    };
+    std::process::exit(code);
+}
+
+// ============================================================================
+// HTTP Fetch (for @rolls/http and unroll)
+// ============================================================================
+
+/// Synchronous HTTP fetch - returns response object
+/// Usage: __ffi_fetch(url, options?)
+/// options: { method?: string, headers?: object, body?: string }
+pub fn native_fetch(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    let url = match args.first() {
+        Some(JsValue::String(u)) => u.clone(),
+        _ => return create_fetch_error(vm, "fetch requires a URL string"),
+    };
+
+    // Default options
+    let mut method = "GET".to_string();
+    let mut headers: Vec<(String, String)> = Vec::new();
+    let mut body: Option<String> = None;
+
+    // Parse options if provided
+    if let Some(JsValue::Object(opts_ptr)) = args.get(1)
+        && let Some(HeapObject {
+            data: HeapData::Object(opts),
+        }) = vm.heap.get(*opts_ptr)
+    {
+        if let Some(JsValue::String(m)) = opts.get("method") {
+            method = m.to_uppercase();
+        }
+        if let Some(JsValue::String(b)) = opts.get("body") {
+            body = Some(b.clone());
+        }
+        if let Some(JsValue::Object(hdrs_ptr)) = opts.get("headers")
+            && let Some(HeapObject {
+                data: HeapData::Object(hdrs),
+            }) = vm.heap.get(*hdrs_ptr)
+        {
+            for (k, v) in hdrs {
+                if let JsValue::String(val) = v {
+                    headers.push((k.clone(), val.clone()));
+                }
+            }
+        }
+    }
+
+    // Build request
+    let mut request = match method.as_str() {
+        "GET" => ureq::get(&url),
+        "POST" => ureq::post(&url),
+        "PUT" => ureq::put(&url),
+        "DELETE" => ureq::delete(&url),
+        "PATCH" => ureq::patch(&url),
+        "HEAD" => ureq::head(&url),
+        _ => return create_fetch_error(vm, &format!("Unsupported HTTP method: {}", method)),
+    };
+
+    // Add headers
+    for (key, value) in &headers {
+        request = request.set(key, value);
+    }
+
+    // Send request
+    let response = if let Some(body_str) = body {
+        request.send_string(&body_str)
+    } else {
+        request.call()
+    };
+
+    match response {
+        Ok(resp) => {
+            let status = resp.status();
+            let status_text = resp.status_text().to_string();
+
+            // Collect response headers
+            let mut resp_headers = std::collections::HashMap::new();
+            for name in resp.headers_names() {
+                if let Some(value) = resp.header(&name) {
+                    resp_headers.insert(name.to_lowercase(), JsValue::String(value.to_string()));
+                }
+            }
+
+            // Read body
+            let body_text = resp.into_string().unwrap_or_default();
+
+            // Create response object
+            create_fetch_response(vm, status, &status_text, resp_headers, &body_text, false)
+        }
+        Err(ureq::Error::Status(code, resp)) => {
+            let status_text = resp.status_text().to_string();
+            let mut resp_headers = std::collections::HashMap::new();
+            for name in resp.headers_names() {
+                if let Some(value) = resp.header(&name) {
+                    resp_headers.insert(name.to_lowercase(), JsValue::String(value.to_string()));
+                }
+            }
+            let body_text = resp.into_string().unwrap_or_default();
+            create_fetch_response(vm, code, &status_text, resp_headers, &body_text, false)
+        }
+        Err(e) => create_fetch_error(vm, &format!("Fetch error: {}", e)),
+    }
+}
+
+fn create_fetch_response(
+    vm: &mut VM,
+    status: u16,
+    status_text: &str,
+    headers: std::collections::HashMap<String, JsValue>,
+    body: &str,
+    _redirected: bool,
+) -> JsValue {
+    // Create headers object
+    let headers_ptr = vm.heap.len();
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(headers),
+    });
+
+    // Create response object
+    let mut response = std::collections::HashMap::new();
+    response.insert("status".to_string(), JsValue::Number(status as f64));
+    response.insert(
+        "statusText".to_string(),
+        JsValue::String(status_text.to_string()),
+    );
+    response.insert(
+        "ok".to_string(),
+        JsValue::Boolean((200..300).contains(&status)),
+    );
+    response.insert("headers".to_string(), JsValue::Object(headers_ptr));
+    response.insert("body".to_string(), JsValue::String(body.to_string()));
+    response.insert("error".to_string(), JsValue::Undefined);
+
+    let response_ptr = vm.heap.len();
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(response),
+    });
+    JsValue::Object(response_ptr)
+}
+
+fn create_fetch_error(vm: &mut VM, message: &str) -> JsValue {
+    let mut response = std::collections::HashMap::new();
+    response.insert("status".to_string(), JsValue::Number(0.0));
+    response.insert("statusText".to_string(), JsValue::String("".to_string()));
+    response.insert("ok".to_string(), JsValue::Boolean(false));
+    response.insert("body".to_string(), JsValue::String("".to_string()));
+    response.insert("error".to_string(), JsValue::String(message.to_string()));
+
+    let response_ptr = vm.heap.len();
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(response),
+    });
+    JsValue::Object(response_ptr)
+}

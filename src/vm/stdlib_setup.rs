@@ -18,6 +18,8 @@ pub fn setup_stdlib(vm: &mut VM) {
     setup_json(vm);
     setup_globals(vm);
     setup_map_set(vm);
+    setup_process(vm);
+    setup_fetch(vm);
 }
 
 fn setup_console(vm: &mut VM) {
@@ -246,4 +248,77 @@ pub fn set_script_args(vm: &mut VM, args: Vec<String>) {
     vm.call_stack[0]
         .locals
         .insert("__args__".into(), JsValue::Object(array_ptr));
+
+    // Also set process.argv to the same array
+    if let Some(JsValue::Object(process_ptr)) = vm.call_stack[0].locals.get("process").cloned()
+        && let Some(HeapObject {
+            data: HeapData::Object(props),
+        }) = vm.heap.get_mut(process_ptr)
+    {
+        props.insert("argv".to_string(), JsValue::Object(array_ptr));
+    }
+}
+
+fn setup_process(vm: &mut VM) {
+    use crate::stdlib::{native_chdir, native_cwd, native_exit, native_getenv, native_setenv};
+
+    // Register native functions
+    let getenv_idx = vm.register_native(native_getenv);
+    let setenv_idx = vm.register_native(native_setenv);
+    let cwd_idx = vm.register_native(native_cwd);
+    let chdir_idx = vm.register_native(native_chdir);
+    let exit_idx = vm.register_native(native_exit);
+
+    // Create process.env object with get/set methods
+    let env_ptr = vm.heap.len();
+    let mut env_props = std::collections::HashMap::new();
+    env_props.insert("get".to_string(), JsValue::NativeFunction(getenv_idx));
+    env_props.insert("set".to_string(), JsValue::NativeFunction(setenv_idx));
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(env_props),
+    });
+
+    // Create empty argv array (will be populated by set_script_args)
+    let argv_ptr = vm.heap.len();
+    vm.heap.push(HeapObject {
+        data: HeapData::Array(Vec::new()),
+    });
+
+    // Create process object
+    let process_ptr = vm.heap.len();
+    let mut process_props = std::collections::HashMap::new();
+    process_props.insert("env".to_string(), JsValue::Object(env_ptr));
+    process_props.insert("argv".to_string(), JsValue::Object(argv_ptr));
+    process_props.insert("cwd".to_string(), JsValue::NativeFunction(cwd_idx));
+    process_props.insert("chdir".to_string(), JsValue::NativeFunction(chdir_idx));
+    process_props.insert("exit".to_string(), JsValue::NativeFunction(exit_idx));
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(process_props),
+    });
+
+    // Add process to global scope
+    vm.call_stack[0]
+        .locals
+        .insert("process".into(), JsValue::Object(process_ptr));
+
+    // Also expose getenv directly as __ffi_getenv for @rolls/process
+    vm.call_stack[0]
+        .locals
+        .insert("__ffi_getenv".into(), JsValue::NativeFunction(getenv_idx));
+}
+
+fn setup_fetch(vm: &mut VM) {
+    use crate::stdlib::native_fetch;
+
+    let fetch_idx = vm.register_native(native_fetch);
+
+    // Add fetch as global function
+    vm.call_stack[0]
+        .locals
+        .insert("fetch".into(), JsValue::NativeFunction(fetch_idx));
+
+    // Also expose as __ffi_fetch for @rolls/http
+    vm.call_stack[0]
+        .locals
+        .insert("__ffi_fetch".into(), JsValue::NativeFunction(fetch_idx));
 }
