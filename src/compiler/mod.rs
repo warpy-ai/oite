@@ -733,7 +733,9 @@ impl Codegen {
                             // Get property name
                             let key_name = match &kv.key {
                                 swc_ecma_ast::PropName::Ident(id) => id.sym.to_string(),
-                                swc_ecma_ast::PropName::Str(s) => s.value.to_string_lossy().into_owned(),
+                                swc_ecma_ast::PropName::Str(s) => {
+                                    s.value.to_string_lossy().into_owned()
+                                }
                                 _ => continue,
                             };
                             self.instructions.push(OpCode::GetProp(key_name));
@@ -761,7 +763,9 @@ impl Codegen {
                                 self.instructions.push(OpCode::Pop);
                                 self.gen_expr(default_val);
                                 let end_addr = self.instructions.len();
-                                if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[jump_idx] {
+                                if let OpCode::JumpIfFalse(ref mut addr) =
+                                    self.instructions[jump_idx]
+                                {
                                     *addr = end_addr;
                                 }
                             }
@@ -792,7 +796,8 @@ impl Codegen {
                             self.instructions.push(OpCode::Dup);
                         }
                         // Push index and load element
-                        self.instructions.push(OpCode::Push(JsValue::Number(i as f64)));
+                        self.instructions
+                            .push(OpCode::Push(JsValue::Number(i as f64)));
                         self.instructions.push(OpCode::GetPropComputed);
                         // Recursively bind the element pattern
                         self.gen_pattern_binding(elem_pat);
@@ -1196,7 +1201,8 @@ impl Codegen {
                 // 5. Check if idx < keys.length
                 self.instructions.push(OpCode::Load(idx_name.clone()));
                 self.instructions.push(OpCode::Load(keys_name.clone()));
-                self.instructions.push(OpCode::GetProp("length".to_string()));
+                self.instructions
+                    .push(OpCode::GetProp("length".to_string()));
                 self.instructions.push(OpCode::Lt);
                 let exit_jump_idx = self.instructions.len();
                 self.instructions.push(OpCode::JumpIfFalse(0));
@@ -1796,23 +1802,22 @@ impl Codegen {
             }
             Expr::Array(arr_lit) => {
                 // Check if any elements are spread elements
-                let has_spread = arr_lit.elems.iter().any(|elem| {
-                    elem.as_ref().map_or(false, |e| e.spread.is_some())
-                });
+                let has_spread = arr_lit
+                    .elems
+                    .iter()
+                    .any(|elem| elem.as_ref().is_some_and(|e| e.spread.is_some()));
 
                 if has_spread {
                     // Use dynamic approach: create empty array, then push/spread each element
                     self.instructions.push(OpCode::NewArray(0));
-                    for elem in arr_lit.elems.iter() {
-                        if let Some(expr_or_spread) = elem {
-                            self.gen_expr(&expr_or_spread.expr);
-                            if expr_or_spread.spread.is_some() {
-                                // Spread: Stack is [array, source_array]
-                                self.instructions.push(OpCode::ArraySpread);
-                            } else {
-                                // Regular element: Stack is [array, value]
-                                self.instructions.push(OpCode::ArrayPush);
-                            }
+                    for expr_or_spread in arr_lit.elems.iter().flatten() {
+                        self.gen_expr(&expr_or_spread.expr);
+                        if expr_or_spread.spread.is_some() {
+                            // Spread: Stack is [array, source_array]
+                            self.instructions.push(OpCode::ArraySpread);
+                        } else {
+                            // Regular element: Stack is [array, value]
+                            self.instructions.push(OpCode::ArrayPush);
                         }
                     }
                 } else {
@@ -1966,9 +1971,11 @@ impl Codegen {
                                 Prop::KeyValue(kv) => {
                                     let key = match &kv.key {
                                         PropName::Ident(id) => id.sym.to_string(),
-                                        PropName::Str(s) => {
-                                            s.value.as_str().expect("Invalid string key").to_string()
-                                        }
+                                        PropName::Str(s) => s
+                                            .value
+                                            .as_str()
+                                            .expect("Invalid string key")
+                                            .to_string(),
                                         _ => continue,
                                     };
 

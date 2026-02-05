@@ -1766,7 +1766,8 @@ impl VM {
                                 }
                                 HeapData::Object(props) => {
                                     // Object property access by string key
-                                    let val = props.get(&idx_str).cloned().unwrap_or(JsValue::Undefined);
+                                    let val =
+                                        props.get(&idx_str).cloned().unwrap_or(JsValue::Undefined);
                                     self.stack.push(val);
                                 }
                                 _ => {
@@ -1797,7 +1798,10 @@ impl VM {
                 let value = self.stack.pop().expect("ArrayPush: missing value");
                 let arr_val = self.stack.pop().expect("ArrayPush: missing array");
                 if let JsValue::Object(ptr) = arr_val {
-                    if let Some(HeapObject { data: HeapData::Array(arr) }) = self.heap.get_mut(ptr) {
+                    if let Some(HeapObject {
+                        data: HeapData::Array(arr),
+                    }) = self.heap.get_mut(ptr)
+                    {
                         arr.push(value);
                     }
                     self.stack.push(JsValue::Object(ptr));
@@ -1811,15 +1815,23 @@ impl VM {
                 let source_val = self.stack.pop().expect("ArraySpread: missing source");
                 let target_val = self.stack.pop().expect("ArraySpread: missing target");
 
-                if let (JsValue::Object(target_ptr), JsValue::Object(source_ptr)) = (target_val, source_val) {
+                if let (JsValue::Object(target_ptr), JsValue::Object(source_ptr)) =
+                    (target_val, source_val)
+                {
                     // First, collect elements from source array
-                    let source_elements: Vec<JsValue> = if let Some(HeapObject { data: HeapData::Array(arr) }) = self.heap.get(source_ptr) {
+                    let source_elements: Vec<JsValue> = if let Some(HeapObject {
+                        data: HeapData::Array(arr),
+                    }) = self.heap.get(source_ptr)
+                    {
                         arr.clone()
                     } else {
                         Vec::new()
                     };
                     // Then, append to target array
-                    if let Some(HeapObject { data: HeapData::Array(target_arr) }) = self.heap.get_mut(target_ptr) {
+                    if let Some(HeapObject {
+                        data: HeapData::Array(target_arr),
+                    }) = self.heap.get_mut(target_ptr)
+                    {
                         target_arr.extend(source_elements);
                     }
                     self.stack.push(JsValue::Object(target_ptr));
@@ -1833,15 +1845,23 @@ impl VM {
                 let source_val = self.stack.pop().expect("ObjectSpread: missing source");
                 let target_val = self.stack.pop().expect("ObjectSpread: missing target");
 
-                if let (JsValue::Object(target_ptr), JsValue::Object(source_ptr)) = (target_val, source_val) {
+                if let (JsValue::Object(target_ptr), JsValue::Object(source_ptr)) =
+                    (target_val, source_val)
+                {
                     // First, collect properties from source object
-                    let source_props: HashMap<String, JsValue> = if let Some(HeapObject { data: HeapData::Object(props) }) = self.heap.get(source_ptr) {
+                    let source_props: HashMap<String, JsValue> = if let Some(HeapObject {
+                        data: HeapData::Object(props),
+                    }) = self.heap.get(source_ptr)
+                    {
                         props.clone()
                     } else {
                         HashMap::new()
                     };
                     // Then, insert into target object
-                    if let Some(HeapObject { data: HeapData::Object(target_props) }) = self.heap.get_mut(target_ptr) {
+                    if let Some(HeapObject {
+                        data: HeapData::Object(target_props),
+                    }) = self.heap.get_mut(target_ptr)
+                    {
                         for (key, value) in source_props {
                             target_props.insert(key, value);
                         }

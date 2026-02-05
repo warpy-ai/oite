@@ -187,17 +187,28 @@ pub fn native_stat_sync(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
 
                 let (is_dir_fn, is_file_fn) = if metadata.is_dir() {
                     (
-                        vm.register_native(|_vm: &mut VM, _args: Vec<JsValue>| JsValue::Boolean(true)),
-                        vm.register_native(|_vm: &mut VM, _args: Vec<JsValue>| JsValue::Boolean(false)),
+                        vm.register_native(|_vm: &mut VM, _args: Vec<JsValue>| {
+                            JsValue::Boolean(true)
+                        }),
+                        vm.register_native(|_vm: &mut VM, _args: Vec<JsValue>| {
+                            JsValue::Boolean(false)
+                        }),
                     )
                 } else {
                     (
-                        vm.register_native(|_vm: &mut VM, _args: Vec<JsValue>| JsValue::Boolean(false)),
-                        vm.register_native(|_vm: &mut VM, _args: Vec<JsValue>| JsValue::Boolean(true)),
+                        vm.register_native(|_vm: &mut VM, _args: Vec<JsValue>| {
+                            JsValue::Boolean(false)
+                        }),
+                        vm.register_native(|_vm: &mut VM, _args: Vec<JsValue>| {
+                            JsValue::Boolean(true)
+                        }),
                     )
                 };
 
-                stat_props.insert("isDirectory".to_string(), JsValue::NativeFunction(is_dir_fn));
+                stat_props.insert(
+                    "isDirectory".to_string(),
+                    JsValue::NativeFunction(is_dir_fn),
+                );
                 stat_props.insert("isFile".to_string(), JsValue::NativeFunction(is_file_fn));
                 stat_props.insert("size".to_string(), JsValue::Number(metadata.len() as f64));
 
@@ -863,21 +874,21 @@ fn create_fetch_error(vm: &mut VM, message: &str) -> JsValue {
 
 /// Object.keys(obj) - Returns an array of the object's own enumerable property names
 pub fn native_object_keys(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let Some(JsValue::Object(ptr)) = args.first() {
-        if let Some(HeapObject { data }) = vm.heap.get(*ptr) {
-            let keys: Vec<JsValue> = match data {
-                HeapData::Object(props) => props.keys().map(|k| JsValue::String(k.clone())).collect(),
-                HeapData::Array(arr) => (0..arr.len())
-                    .map(|i| JsValue::String(i.to_string()))
-                    .collect(),
-                _ => Vec::new(),
-            };
-            let arr_ptr = vm.heap.len();
-            vm.heap.push(HeapObject {
-                data: HeapData::Array(keys),
-            });
-            return JsValue::Object(arr_ptr);
-        }
+    if let Some(JsValue::Object(ptr)) = args.first()
+        && let Some(HeapObject { data }) = vm.heap.get(*ptr)
+    {
+        let keys: Vec<JsValue> = match data {
+            HeapData::Object(props) => props.keys().map(|k| JsValue::String(k.clone())).collect(),
+            HeapData::Array(arr) => (0..arr.len())
+                .map(|i| JsValue::String(i.to_string()))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let arr_ptr = vm.heap.len();
+        vm.heap.push(HeapObject {
+            data: HeapData::Array(keys),
+        });
+        return JsValue::Object(arr_ptr);
     }
     // Return empty array for non-objects
     let arr_ptr = vm.heap.len();
