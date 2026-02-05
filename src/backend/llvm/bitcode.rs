@@ -4,7 +4,7 @@
 //! which are used for link-time optimization (LTO).
 
 use llvm_sys::prelude::*;
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 use std::path::Path;
 
 use crate::backend::BackendError;

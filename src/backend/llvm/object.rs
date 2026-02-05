@@ -5,7 +5,7 @@
 use llvm_sys::analysis::*;
 use llvm_sys::prelude::*;
 use llvm_sys::target_machine::*;
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 use std::path::Path;
 use std::ptr;
 

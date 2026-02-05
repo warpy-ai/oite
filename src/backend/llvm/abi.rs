@@ -10,7 +10,7 @@
 use llvm_sys::core::*;
 use llvm_sys::prelude::*;
 use std::collections::BTreeMap;
-use std::ffi::{c_char, CString};
+use std::ffi::{CString, c_char};
 use std::ptr;
 
 use crate::backend::BackendError;
@@ -277,8 +277,18 @@ where
         let b_i64 = LLVMGetParam(func, 1);
 
         // Bitcast i64 to double
-        let a_fp = LLVMBuildBitCast(builder, a_i64, double_ty, b"a_fp\0".as_ptr() as *const c_char);
-        let b_fp = LLVMBuildBitCast(builder, b_i64, double_ty, b"b_fp\0".as_ptr() as *const c_char);
+        let a_fp = LLVMBuildBitCast(
+            builder,
+            a_i64,
+            double_ty,
+            b"a_fp\0".as_ptr() as *const c_char,
+        );
+        let b_fp = LLVMBuildBitCast(
+            builder,
+            b_i64,
+            double_ty,
+            b"b_fp\0".as_ptr() as *const c_char,
+        );
 
         // Perform operation
         let result_fp = op(builder, a_fp, b_fp, context);
@@ -331,7 +341,12 @@ where
         let a_i64 = LLVMGetParam(func, 0);
 
         // Bitcast i64 to double
-        let a_fp = LLVMBuildBitCast(builder, a_i64, double_ty, b"a_fp\0".as_ptr() as *const c_char);
+        let a_fp = LLVMBuildBitCast(
+            builder,
+            a_i64,
+            double_ty,
+            b"a_fp\0".as_ptr() as *const c_char,
+        );
 
         // Perform operation
         let result_fp = op(builder, a_fp, context);

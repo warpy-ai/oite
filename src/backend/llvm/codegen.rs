@@ -8,7 +8,7 @@
 
 use llvm_sys::prelude::*;
 use std::collections::{BTreeMap, HashMap};
-use std::ffi::{c_char, CString};
+use std::ffi::{CString, c_char};
 
 use crate::backend::BackendError;
 use crate::ir::{
@@ -1130,8 +1130,12 @@ unsafe fn bool_to_ot_value(
             llvm_sys::core::LLVMInt64TypeInContext(ctx.context),
             b"zext\0".as_ptr() as *const c_char,
         );
-        let result =
-            llvm_sys::core::LLVMBuildOr(ctx.builder, base, b_i64, b"bool\0".as_ptr() as *const c_char);
+        let result = llvm_sys::core::LLVMBuildOr(
+            ctx.builder,
+            base,
+            b_i64,
+            b"bool\0".as_ptr() as *const c_char,
+        );
         Ok(result)
     }
 }
