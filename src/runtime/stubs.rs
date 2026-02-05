@@ -397,36 +397,93 @@ pub extern "C" fn tscl_eq_strict(a: u64, b: u64) -> u64 {
         .to_bits()
 }
 
+/// Try to extract string refs from two pointer TsclValues for comparison.
+/// Returns None if either value is not a string pointer.
+unsafe fn try_get_string_pair(va: TsclValue, vb: TsclValue) -> Option<(*const u8, usize, *const u8, usize)> {
+    let ptr_a = va.as_pointer()?;
+    let ptr_b = vb.as_pointer()?;
+    let header_a = ptr_a.as_ref::<ObjectHeader>();
+    let header_b = ptr_b.as_ref::<ObjectHeader>();
+    if header_a.kind != ObjectKind::String || header_b.kind != ObjectKind::String {
+        return None;
+    }
+    let sa = ptr_a.as_ref::<NativeString>();
+    let sb = ptr_b.as_ref::<NativeString>();
+    let str_a = sa.as_str();
+    let str_b = sb.as_str();
+    Some((str_a.as_ptr(), str_a.len(), str_b.as_ptr(), str_b.len()))
+}
+
 /// Dynamic less-than comparison.
 #[unsafe(no_mangle)]
 pub extern "C" fn tscl_lt(a: u64, b: u64) -> u64 {
-    TsclValue::from_bits(a)
-        .lt(TsclValue::from_bits(b))
-        .to_bits()
+    let va = TsclValue::from_bits(a);
+    let vb = TsclValue::from_bits(b);
+    if va.is_number() && vb.is_number() {
+        return TsclValue::boolean(va.as_number_unchecked() < vb.as_number_unchecked()).to_bits();
+    }
+    unsafe {
+        if let Some((pa, la, pb, lb)) = try_get_string_pair(va, vb) {
+            let sa = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pa, la));
+            let sb = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pb, lb));
+            return TsclValue::boolean(sa < sb).to_bits();
+        }
+    }
+    TsclValue::boolean(false).to_bits()
 }
 
 /// Dynamic greater-than comparison.
 #[unsafe(no_mangle)]
 pub extern "C" fn tscl_gt(a: u64, b: u64) -> u64 {
-    TsclValue::from_bits(a)
-        .gt(TsclValue::from_bits(b))
-        .to_bits()
+    let va = TsclValue::from_bits(a);
+    let vb = TsclValue::from_bits(b);
+    if va.is_number() && vb.is_number() {
+        return TsclValue::boolean(va.as_number_unchecked() > vb.as_number_unchecked()).to_bits();
+    }
+    unsafe {
+        if let Some((pa, la, pb, lb)) = try_get_string_pair(va, vb) {
+            let sa = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pa, la));
+            let sb = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pb, lb));
+            return TsclValue::boolean(sa > sb).to_bits();
+        }
+    }
+    TsclValue::boolean(false).to_bits()
 }
 
 /// Dynamic less-than-or-equal comparison.
 #[unsafe(no_mangle)]
 pub extern "C" fn tscl_lte(a: u64, b: u64) -> u64 {
-    TsclValue::from_bits(a)
-        .lte(TsclValue::from_bits(b))
-        .to_bits()
+    let va = TsclValue::from_bits(a);
+    let vb = TsclValue::from_bits(b);
+    if va.is_number() && vb.is_number() {
+        return TsclValue::boolean(va.as_number_unchecked() <= vb.as_number_unchecked()).to_bits();
+    }
+    unsafe {
+        if let Some((pa, la, pb, lb)) = try_get_string_pair(va, vb) {
+            let sa = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pa, la));
+            let sb = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pb, lb));
+            return TsclValue::boolean(sa <= sb).to_bits();
+        }
+    }
+    TsclValue::boolean(false).to_bits()
 }
 
 /// Dynamic greater-than-or-equal comparison.
 #[unsafe(no_mangle)]
 pub extern "C" fn tscl_gte(a: u64, b: u64) -> u64 {
-    TsclValue::from_bits(a)
-        .gte(TsclValue::from_bits(b))
-        .to_bits()
+    let va = TsclValue::from_bits(a);
+    let vb = TsclValue::from_bits(b);
+    if va.is_number() && vb.is_number() {
+        return TsclValue::boolean(va.as_number_unchecked() >= vb.as_number_unchecked()).to_bits();
+    }
+    unsafe {
+        if let Some((pa, la, pb, lb)) = try_get_string_pair(va, vb) {
+            let sa = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pa, la));
+            let sb = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pb, lb));
+            return TsclValue::boolean(sa >= sb).to_bits();
+        }
+    }
+    TsclValue::boolean(false).to_bits()
 }
 
 /// Logical NOT.

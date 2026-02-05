@@ -101,6 +101,8 @@ impl CraneliftCodegen {
         builder.symbol("tscl_eq_strict", tscl_eq_strict as *const u8);
         builder.symbol("tscl_lt", tscl_lt as *const u8);
         builder.symbol("tscl_gt", tscl_gt as *const u8);
+        builder.symbol("tscl_lte", tscl_lte as *const u8);
+        builder.symbol("tscl_gte", tscl_gte as *const u8);
         builder.symbol("tscl_not", tscl_not as *const u8);
         builder.symbol("tscl_neg", tscl_neg as *const u8);
 
@@ -549,44 +551,24 @@ fn translate_op(
         }
 
         // === Comparison Operations ===
+        // Use runtime stubs to handle both number and string comparisons.
         IrOp::Lt(dst, a, b) => {
-            let va = get_value(ctx, *a)?;
-            let vb = get_value(ctx, *b)?;
-            let fa = builder.ins().bitcast(types::F64, MemFlags::new(), va);
-            let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
-            let cmp = builder.ins().fcmp(FloatCC::LessThan, fa, fb);
-            // Convert bool to NaN-boxed boolean
-            let result = bool_to_tscl_value(builder, cmp);
+            let result = call_stub(builder, module, ctx, "tscl_lt", &[*a, *b])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::LtEq(dst, a, b) => {
-            let va = get_value(ctx, *a)?;
-            let vb = get_value(ctx, *b)?;
-            let fa = builder.ins().bitcast(types::F64, MemFlags::new(), va);
-            let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
-            let cmp = builder.ins().fcmp(FloatCC::LessThanOrEqual, fa, fb);
-            let result = bool_to_tscl_value(builder, cmp);
+            let result = call_stub(builder, module, ctx, "tscl_lte", &[*a, *b])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::Gt(dst, a, b) => {
-            let va = get_value(ctx, *a)?;
-            let vb = get_value(ctx, *b)?;
-            let fa = builder.ins().bitcast(types::F64, MemFlags::new(), va);
-            let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
-            let cmp = builder.ins().fcmp(FloatCC::GreaterThan, fa, fb);
-            let result = bool_to_tscl_value(builder, cmp);
+            let result = call_stub(builder, module, ctx, "tscl_gt", &[*a, *b])?;
             ctx.values.insert(*dst, result);
         }
 
         IrOp::GtEq(dst, a, b) => {
-            let va = get_value(ctx, *a)?;
-            let vb = get_value(ctx, *b)?;
-            let fa = builder.ins().bitcast(types::F64, MemFlags::new(), va);
-            let fb = builder.ins().bitcast(types::F64, MemFlags::new(), vb);
-            let cmp = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, fa, fb);
-            let result = bool_to_tscl_value(builder, cmp);
+            let result = call_stub(builder, module, ctx, "tscl_gte", &[*a, *b])?;
             ctx.values.insert(*dst, result);
         }
 
@@ -1044,12 +1026,10 @@ fn translate_literal(builder: &mut FunctionBuilder, lit: &Literal) -> Value {
             let bits = QNAN | TAG_UNDEFINED;
             builder.ins().iconst(types::I64, bits as i64)
         }
-        Literal::String(_s) => {
-            // TODO: Allocate string and return pointer
-            // For now, return undefined
-            const QNAN: u64 = 0x7FFC_0000_0000_0000;
-            const TAG_UNDEFINED: u64 = 0x0003_0000_0000_0000;
-            let bits = QNAN | TAG_UNDEFINED;
+        Literal::String(s) => {
+            // Allocate the string on the runtime heap at JIT compile time.
+            // The resulting NaN-boxed pointer is embedded as a constant.
+            let bits = crate::runtime::stubs::tscl_alloc_string(s.as_ptr(), s.len());
             builder.ins().iconst(types::I64, bits as i64)
         }
     }

@@ -1,0 +1,12 @@
+console.log("String comparison tests:");
+console.log("b > a: " + ("b" > "a"));
+console.log("a < b: " + ("a" < "b"));
+console.log("a >= a: " + ("a" >= "a"));
+console.log("b >= a: " + ("b" >= "a"));
+console.log("a <= a: " + ("a" <= "a"));
+console.log("a <= b: " + ("a" <= "b"));
+
+let c = "m";
+console.log("m >= a: " + (c >= "a"));
+console.log("m <= z: " + (c <= "z"));
+console.log("m >= a && m <= z: " + (c >= "a" && c <= "z"));
