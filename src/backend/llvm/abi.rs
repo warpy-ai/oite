@@ -10,7 +10,7 @@
 use llvm_sys::core::*;
 use llvm_sys::prelude::*;
 use std::collections::BTreeMap;
-use std::ffi::CString;
+use std::ffi::{c_char, CString};
 use std::ptr;
 
 use crate::backend::BackendError;
@@ -120,7 +120,7 @@ unsafe fn define_ot_call(
                 builder,
                 func_ptr_param,
                 callee_ptr_ty,
-                b"callee\0".as_ptr() as *const i8,
+                b"callee\0".as_ptr() as *const c_char,
             );
             let call_name = CString::new("result0").unwrap();
             let result = LLVMBuildCall2(
@@ -206,15 +206,15 @@ unsafe fn define_ot_console_log(
             builder,
             value_param,
             double_ty,
-            b"dval\0".as_ptr() as *const i8,
+            b"dval\0".as_ptr() as *const c_char,
         );
 
         // Create format string "%g\n" as a global constant
         // Use LLVMBuildGlobalStringPtr for simpler string handling
         let fmt_ptr = LLVMBuildGlobalStringPtr(
             builder,
-            b"%g\n\0".as_ptr() as *const i8,
-            b".fmt\0".as_ptr() as *const i8,
+            b"%g\n\0".as_ptr() as *const c_char,
+            b".fmt\0".as_ptr() as *const c_char,
         );
 
         // Call printf
@@ -229,7 +229,7 @@ unsafe fn define_ot_console_log(
                 printf_func,
                 printf_args.as_mut_ptr(),
                 2,
-                b"printf_result\0".as_ptr() as *const i8,
+                b"printf_result\0".as_ptr() as *const c_char,
             );
         }
 
@@ -277,8 +277,8 @@ where
         let b_i64 = LLVMGetParam(func, 1);
 
         // Bitcast i64 to double
-        let a_fp = LLVMBuildBitCast(builder, a_i64, double_ty, b"a_fp\0".as_ptr() as *const i8);
-        let b_fp = LLVMBuildBitCast(builder, b_i64, double_ty, b"b_fp\0".as_ptr() as *const i8);
+        let a_fp = LLVMBuildBitCast(builder, a_i64, double_ty, b"a_fp\0".as_ptr() as *const c_char);
+        let b_fp = LLVMBuildBitCast(builder, b_i64, double_ty, b"b_fp\0".as_ptr() as *const c_char);
 
         // Perform operation
         let result_fp = op(builder, a_fp, b_fp, context);
@@ -288,7 +288,7 @@ where
             builder,
             result_fp,
             i64_ty,
-            b"result\0".as_ptr() as *const i8,
+            b"result\0".as_ptr() as *const c_char,
         );
 
         LLVMBuildRet(builder, result_i64);
@@ -331,7 +331,7 @@ where
         let a_i64 = LLVMGetParam(func, 0);
 
         // Bitcast i64 to double
-        let a_fp = LLVMBuildBitCast(builder, a_i64, double_ty, b"a_fp\0".as_ptr() as *const i8);
+        let a_fp = LLVMBuildBitCast(builder, a_i64, double_ty, b"a_fp\0".as_ptr() as *const c_char);
 
         // Perform operation
         let result_fp = op(builder, a_fp, context);
@@ -341,7 +341,7 @@ where
             builder,
             result_fp,
             i64_ty,
-            b"result\0".as_ptr() as *const i8,
+            b"result\0".as_ptr() as *const c_char,
         );
 
         LLVMBuildRet(builder, result_i64);
@@ -456,7 +456,7 @@ unsafe fn define_simple_stubs(
         stubs.insert(
             "ot_add_any".to_string(),
             create_binary_fp_op(module, context, "ot_add_any", |builder, a, b, _ctx| {
-                LLVMBuildFAdd(builder, a, b, b"add\0".as_ptr() as *const i8)
+                LLVMBuildFAdd(builder, a, b, b"add\0".as_ptr() as *const c_char)
             })?,
         );
 
@@ -464,7 +464,7 @@ unsafe fn define_simple_stubs(
         stubs.insert(
             "ot_sub_any".to_string(),
             create_binary_fp_op(module, context, "ot_sub_any", |builder, a, b, _ctx| {
-                LLVMBuildFSub(builder, a, b, b"sub\0".as_ptr() as *const i8)
+                LLVMBuildFSub(builder, a, b, b"sub\0".as_ptr() as *const c_char)
             })?,
         );
 
@@ -472,7 +472,7 @@ unsafe fn define_simple_stubs(
         stubs.insert(
             "ot_mul_any".to_string(),
             create_binary_fp_op(module, context, "ot_mul_any", |builder, a, b, _ctx| {
-                LLVMBuildFMul(builder, a, b, b"mul\0".as_ptr() as *const i8)
+                LLVMBuildFMul(builder, a, b, b"mul\0".as_ptr() as *const c_char)
             })?,
         );
 
@@ -480,7 +480,7 @@ unsafe fn define_simple_stubs(
         stubs.insert(
             "ot_div_any".to_string(),
             create_binary_fp_op(module, context, "ot_div_any", |builder, a, b, _ctx| {
-                LLVMBuildFDiv(builder, a, b, b"div\0".as_ptr() as *const i8)
+                LLVMBuildFDiv(builder, a, b, b"div\0".as_ptr() as *const c_char)
             })?,
         );
 
@@ -488,7 +488,7 @@ unsafe fn define_simple_stubs(
         stubs.insert(
             "ot_mod_any".to_string(),
             create_binary_fp_op(module, context, "ot_mod_any", |builder, a, b, _ctx| {
-                LLVMBuildFRem(builder, a, b, b"mod\0".as_ptr() as *const i8)
+                LLVMBuildFRem(builder, a, b, b"mod\0".as_ptr() as *const c_char)
             })?,
         );
 
@@ -498,7 +498,7 @@ unsafe fn define_simple_stubs(
             create_unary_fp_op(module, context, "ot_neg", |builder, a, ctx| {
                 let double_ty = LLVMDoubleTypeInContext(ctx);
                 let zero = LLVMConstReal(double_ty, 0.0);
-                LLVMBuildFSub(builder, zero, a, b"neg\0".as_ptr() as *const i8)
+                LLVMBuildFSub(builder, zero, a, b"neg\0".as_ptr() as *const c_char)
             })?,
         );
 

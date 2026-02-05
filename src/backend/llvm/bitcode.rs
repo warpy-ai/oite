@@ -4,7 +4,7 @@
 //! which are used for link-time optimization (LTO).
 
 use llvm_sys::prelude::*;
-use std::ffi::{CStr, CString};
+use std::ffi::{c_char, CStr, CString};
 use std::path::Path;
 
 use crate::backend::BackendError;
@@ -19,7 +19,7 @@ pub unsafe fn emit_bitcode_file(module: LLVMModuleRef, path: &Path) -> Result<()
         }
 
         let path_cstr = CString::new(path.to_str().unwrap()).unwrap();
-        let error_msg: *mut i8 = std::ptr::null_mut();
+        let error_msg: *mut c_char = std::ptr::null_mut();
 
         let result = llvm_sys::bit_writer::LLVMWriteBitcodeToFile(module, path_cstr.as_ptr());
 
@@ -54,7 +54,7 @@ pub unsafe fn read_bitcode_file(
         }
 
         let path_cstr = CString::new(path.to_str().unwrap()).unwrap();
-        let mut error_msg: *mut i8 = std::ptr::null_mut();
+        let mut error_msg: *mut c_char = std::ptr::null_mut();
         let mut mem_buf: LLVMMemoryBufferRef = std::ptr::null_mut();
 
         // Create a memory buffer from the bitcode file

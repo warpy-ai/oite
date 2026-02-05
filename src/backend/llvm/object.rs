@@ -5,7 +5,7 @@
 use llvm_sys::analysis::*;
 use llvm_sys::prelude::*;
 use llvm_sys::target_machine::*;
-use std::ffi::{CStr, CString};
+use std::ffi::{c_char, CStr, CString};
 use std::path::Path;
 use std::ptr;
 
@@ -41,7 +41,7 @@ pub unsafe fn create_target_machine(
         let triple_cstr = CString::new(target_triple).unwrap();
 
         let mut target: LLVMTargetRef = ptr::null_mut();
-        let mut error_msg: *mut i8 = ptr::null_mut();
+        let mut error_msg: *mut c_char = ptr::null_mut();
 
         if llvm_sys::target_machine::LLVMGetTargetFromTriple(
             triple_cstr.as_ptr(),
@@ -139,12 +139,12 @@ pub unsafe fn emit_object_file(
 
         // Emit object file
         let path_cstr = CString::new(path.to_str().unwrap()).unwrap();
-        let mut error_msg: *mut i8 = ptr::null_mut();
+        let mut error_msg: *mut c_char = ptr::null_mut();
 
         let result = llvm_sys::target_machine::LLVMTargetMachineEmitToFile(
             target_machine,
             module,
-            path_cstr.as_ptr() as *mut i8,
+            path_cstr.as_ptr() as *mut c_char,
             LLVMCodeGenFileType::LLVMObjectFile,
             &mut error_msg,
         );

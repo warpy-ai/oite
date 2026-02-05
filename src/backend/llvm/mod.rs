@@ -21,6 +21,7 @@ pub mod types;
 
 pub use codegen::LlvmCodegen;
 
+use std::ffi::c_char;
 use std::path::Path;
 
 use crate::backend::{BackendConfig, BackendError};
@@ -147,7 +148,7 @@ pub fn compile_to_llvm_ir_file(
     let output_path_c = std::ffi::CString::new(output_path.to_string_lossy().as_ref())
         .map_err(|e| BackendError::AotError(format!("Invalid output path: {}", e)))?;
 
-    let mut error_msg: *mut i8 = std::ptr::null_mut();
+    let mut error_msg: *mut c_char = std::ptr::null_mut();
     let result = unsafe {
         llvm_sys::core::LLVMPrintModuleToFile(
             codegen.module,

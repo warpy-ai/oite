@@ -8,7 +8,7 @@
 
 use llvm_sys::prelude::*;
 use std::collections::{BTreeMap, HashMap};
-use std::ffi::CString;
+use std::ffi::{c_char, CString};
 
 use crate::backend::BackendError;
 use crate::ir::{
@@ -163,14 +163,14 @@ impl LlvmCodegen {
                         );
                         llvm_sys::core::LLVMSetSection(
                             used_global,
-                            b"llvm.metadata\0".as_ptr() as *const i8,
+                            b"llvm.metadata\0".as_ptr() as *const c_char,
                         );
                     }
 
                     // Create entry block and call ot_main
                     let entry = llvm_sys::core::LLVMAppendBasicBlock(
                         c_main,
-                        b"entry\0".as_ptr() as *const i8,
+                        b"entry\0".as_ptr() as *const c_char,
                     );
                     let builder = llvm_sys::core::LLVMCreateBuilderInContext(self.context);
                     llvm_sys::core::LLVMPositionBuilderAtEnd(builder, entry);
@@ -182,7 +182,7 @@ impl LlvmCodegen {
                         ot_main,
                         std::ptr::null_mut(),
                         0,
-                        b"call\0".as_ptr() as *const i8,
+                        b"call\0".as_ptr() as *const c_char,
                     );
 
                     // If there's a user-defined main() function, call it
@@ -207,7 +207,7 @@ impl LlvmCodegen {
                                 user_main_func,
                                 std::ptr::null_mut(),
                                 0,
-                                b"user_main_call\0".as_ptr() as *const i8,
+                                b"user_main_call\0".as_ptr() as *const c_char,
                             );
                         }
                     }
@@ -334,7 +334,7 @@ impl LlvmCodegen {
                 let block_name = format!("bb{}\0", block.id.0);
                 let llvm_block = llvm_sys::core::LLVMAppendBasicBlock(
                     func_val,
-                    block_name.as_ptr() as *const i8,
+                    block_name.as_ptr() as *const c_char,
                 );
                 if llvm_block.is_null() {
                     llvm_sys::core::LLVMDisposeBuilder(builder);
@@ -356,7 +356,7 @@ impl LlvmCodegen {
                     let alloca = llvm_sys::core::LLVMBuildAlloca(
                         ctx.builder,
                         i64_ty,
-                        b"local\0".as_ptr() as *const i8,
+                        b"local\0".as_ptr() as *const c_char,
                     );
                     ctx.locals.push(alloca);
                 }
@@ -476,7 +476,7 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                                 ctx.builder,
                                 func_ptr,
                                 i64_ty,
-                                b"func_addr\0".as_ptr() as *const i8,
+                                b"func_addr\0".as_ptr() as *const c_char,
                             );
                             ctx.values.insert(*dst, ptr_as_int);
                             return Ok(());
@@ -496,26 +496,26 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     ctx.builder,
                     va,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let fb = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     vb,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let result_fp = llvm_sys::core::LLVMBuildFAdd(
                     ctx.builder,
                     fa,
                     fb,
-                    b"add\0".as_ptr() as *const i8,
+                    b"add\0".as_ptr() as *const c_char,
                 );
                 // Bitcast back to i64 (NaN-boxed)
                 let result = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     result_fp,
                     i64_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 ctx.values.insert(*dst, result);
             }
@@ -528,25 +528,25 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     ctx.builder,
                     va,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let fb = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     vb,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let result_fp = llvm_sys::core::LLVMBuildFSub(
                     ctx.builder,
                     fa,
                     fb,
-                    b"sub\0".as_ptr() as *const i8,
+                    b"sub\0".as_ptr() as *const c_char,
                 );
                 let result = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     result_fp,
                     i64_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 ctx.values.insert(*dst, result);
             }
@@ -559,25 +559,25 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     ctx.builder,
                     va,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let fb = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     vb,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let result_fp = llvm_sys::core::LLVMBuildFMul(
                     ctx.builder,
                     fa,
                     fb,
-                    b"mul\0".as_ptr() as *const i8,
+                    b"mul\0".as_ptr() as *const c_char,
                 );
                 let result = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     result_fp,
                     i64_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 ctx.values.insert(*dst, result);
             }
@@ -590,25 +590,25 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     ctx.builder,
                     va,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let fb = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     vb,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let result_fp = llvm_sys::core::LLVMBuildFDiv(
                     ctx.builder,
                     fa,
                     fb,
-                    b"div\0".as_ptr() as *const i8,
+                    b"div\0".as_ptr() as *const c_char,
                 );
                 let result = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     result_fp,
                     i64_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 ctx.values.insert(*dst, result);
             }
@@ -621,25 +621,25 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     ctx.builder,
                     va,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let fb = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     vb,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let result_fp = llvm_sys::core::LLVMBuildFRem(
                     ctx.builder,
                     fa,
                     fb,
-                    b"mod\0".as_ptr() as *const i8,
+                    b"mod\0".as_ptr() as *const c_char,
                 );
                 let result = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     result_fp,
                     i64_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 ctx.values.insert(*dst, result);
             }
@@ -651,20 +651,20 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     ctx.builder,
                     va,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let zero = llvm_sys::core::LLVMConstReal(double_ty, 0.0);
                 let result_fp = llvm_sys::core::LLVMBuildFSub(
                     ctx.builder,
                     zero,
                     fa,
-                    b"neg\0".as_ptr() as *const i8,
+                    b"neg\0".as_ptr() as *const c_char,
                 );
                 let result = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     result_fp,
                     i64_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 ctx.values.insert(*dst, result);
             }
@@ -676,7 +676,7 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                         ctx.builder,
                         i64_ty,
                         alloca,
-                        b"load\0".as_ptr() as *const i8,
+                        b"load\0".as_ptr() as *const c_char,
                     );
                     ctx.values.insert(*dst, val);
                 } else {
@@ -699,20 +699,20 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     ctx.builder,
                     va,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let fb = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     vb,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let cmp = llvm_sys::core::LLVMBuildFCmp(
                     ctx.builder,
                     llvm_sys::LLVMRealPredicate::LLVMRealOLT,
                     fa,
                     fb,
-                    b"cmp\0".as_ptr() as *const i8,
+                    b"cmp\0".as_ptr() as *const c_char,
                 );
                 let result = bool_to_ot_value(ctx, cmp)?;
                 ctx.values.insert(*dst, result);
@@ -725,20 +725,20 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     ctx.builder,
                     va,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let fb = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     vb,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let cmp = llvm_sys::core::LLVMBuildFCmp(
                     ctx.builder,
                     llvm_sys::LLVMRealPredicate::LLVMRealOLE,
                     fa,
                     fb,
-                    b"cmp\0".as_ptr() as *const i8,
+                    b"cmp\0".as_ptr() as *const c_char,
                 );
                 let result = bool_to_ot_value(ctx, cmp)?;
                 ctx.values.insert(*dst, result);
@@ -751,20 +751,20 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     ctx.builder,
                     va,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let fb = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     vb,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let cmp = llvm_sys::core::LLVMBuildFCmp(
                     ctx.builder,
                     llvm_sys::LLVMRealPredicate::LLVMRealOGT,
                     fa,
                     fb,
-                    b"cmp\0".as_ptr() as *const i8,
+                    b"cmp\0".as_ptr() as *const c_char,
                 );
                 let result = bool_to_ot_value(ctx, cmp)?;
                 ctx.values.insert(*dst, result);
@@ -777,20 +777,20 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     ctx.builder,
                     va,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let fb = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     vb,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let cmp = llvm_sys::core::LLVMBuildFCmp(
                     ctx.builder,
                     llvm_sys::LLVMRealPredicate::LLVMRealOGE,
                     fa,
                     fb,
-                    b"cmp\0".as_ptr() as *const i8,
+                    b"cmp\0".as_ptr() as *const c_char,
                 );
                 let result = bool_to_ot_value(ctx, cmp)?;
                 ctx.values.insert(*dst, result);
@@ -805,20 +805,20 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     ctx.builder,
                     va,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let fb = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     vb,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let cmp = llvm_sys::core::LLVMBuildFCmp(
                     ctx.builder,
                     llvm_sys::LLVMRealPredicate::LLVMRealOEQ,
                     fa,
                     fb,
-                    b"cmp\0".as_ptr() as *const i8,
+                    b"cmp\0".as_ptr() as *const c_char,
                 );
                 let result = bool_to_ot_value(ctx, cmp)?;
                 ctx.values.insert(*dst, result);
@@ -832,20 +832,20 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     ctx.builder,
                     va,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let fb = llvm_sys::core::LLVMBuildBitCast(
                     ctx.builder,
                     vb,
                     double_ty,
-                    b"bitcast\0".as_ptr() as *const i8,
+                    b"bitcast\0".as_ptr() as *const c_char,
                 );
                 let cmp = llvm_sys::core::LLVMBuildFCmp(
                     ctx.builder,
                     llvm_sys::LLVMRealPredicate::LLVMRealONE,
                     fa,
                     fb,
-                    b"cmp\0".as_ptr() as *const i8,
+                    b"cmp\0".as_ptr() as *const c_char,
                 );
                 let result = bool_to_ot_value(ctx, cmp)?;
                 ctx.values.insert(*dst, result);
@@ -861,7 +861,7 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     ctx.builder,
                     va,
                     one,
-                    b"mask\0".as_ptr() as *const i8,
+                    b"mask\0".as_ptr() as *const c_char,
                 );
                 // Check if it's zero (falsy)
                 let is_falsy = llvm_sys::core::LLVMBuildICmp(
@@ -869,7 +869,7 @@ unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), Ba
                     llvm_sys::LLVMIntPredicate::LLVMIntEQ,
                     masked,
                     llvm_sys::core::LLVMConstInt(i64_ty, 0, 0),
-                    b"is_falsy\0".as_ptr() as *const i8,
+                    b"is_falsy\0".as_ptr() as *const c_char,
                 );
                 let result = bool_to_ot_value(ctx, is_falsy)?;
                 ctx.values.insert(*dst, result);
@@ -1018,14 +1018,14 @@ unsafe fn translate_terminator(
                     ctx.builder,
                     cond_val,
                     one,
-                    b"mask\0".as_ptr() as *const i8,
+                    b"mask\0".as_ptr() as *const c_char,
                 );
                 let bool_val = llvm_sys::core::LLVMBuildICmp(
                     ctx.builder,
                     llvm_sys::LLVMIntPredicate::LLVMIntNE,
                     masked,
                     llvm_sys::core::LLVMConstInt(i64_ty, 0, 0),
-                    b"bool\0".as_ptr() as *const i8,
+                    b"bool\0".as_ptr() as *const c_char,
                 );
                 let true_block = ctx.blocks[true_block];
                 let false_block = ctx.blocks[false_block];
@@ -1128,10 +1128,10 @@ unsafe fn bool_to_ot_value(
             ctx.builder,
             b,
             llvm_sys::core::LLVMInt64TypeInContext(ctx.context),
-            b"zext\0".as_ptr() as *const i8,
+            b"zext\0".as_ptr() as *const c_char,
         );
         let result =
-            llvm_sys::core::LLVMBuildOr(ctx.builder, base, b_i64, b"bool\0".as_ptr() as *const i8);
+            llvm_sys::core::LLVMBuildOr(ctx.builder, base, b_i64, b"bool\0".as_ptr() as *const c_char);
         Ok(result)
     }
 }
@@ -1197,7 +1197,7 @@ unsafe fn call_indirect(
             ctx.builder,
             func_ptr,
             func_ptr_ty,
-            b"callee\0".as_ptr() as *const i8,
+            b"callee\0".as_ptr() as *const c_char,
         );
 
         // Build the call with actual arguments
