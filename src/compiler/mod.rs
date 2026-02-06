@@ -632,11 +632,8 @@ impl Codegen {
             let before = self.instructions.len();
             self.gen_stmt(s);
             // Check if the last instruction emitted was a Return
-            if self.instructions.len() > before
-                && let Some(OpCode::Return) = self.instructions.last()
-            {
-                last_instr_was_return = true;
-            }
+            last_instr_was_return = self.instructions.len() > before
+                && matches!(self.instructions.last(), Some(OpCode::Return));
         }
 
         self.in_function = false;
@@ -1460,11 +1457,8 @@ impl Codegen {
                     for s in stmts {
                         let before = self.instructions.len();
                         self.gen_stmt(s);
-                        if self.instructions.len() > before
-                            && let Some(OpCode::Return) = self.instructions.last()
-                        {
-                            last_instr_was_return = true;
-                        }
+                        last_instr_was_return = self.instructions.len() > before
+                            && matches!(self.instructions.last(), Some(OpCode::Return));
                     }
 
                     // For async functions with no return statement at the end, wrap the result
@@ -1618,11 +1612,8 @@ impl Codegen {
                         for s in stmts {
                             let before = self.instructions.len();
                             self.gen_stmt(s);
-                            if self.instructions.len() > before
-                                && let Some(OpCode::Return) = self.instructions.last()
-                            {
-                                last_instr_was_return = true;
-                            }
+                            last_instr_was_return = self.instructions.len() > before
+                                && matches!(self.instructions.last(), Some(OpCode::Return));
                         }
 
                         if stmts.is_empty() {
@@ -2162,6 +2153,102 @@ impl Codegen {
                             self.instructions.push(OpCode::Sub);
                         }
                         self.instructions.push(OpCode::Store(name));
+                    }
+                } else if let Expr::Member(member) = update_expr.arg.as_ref() {
+                    // Member expression: obj.prop++ / ++obj.prop / obj[key]++ / ++obj[key]
+                    let op = update_expr.op;
+                    if update_expr.prefix {
+                        // ++obj.prop: compute new value, store it, leave new value on stack
+                        // Stack: [obj, obj] -> GetProp -> [obj, old] -> +1 -> [obj, new] -> SetProp -> []
+                        // Then reload to get new value on stack
+                        self.gen_expr(&member.obj);
+                        self.instructions.push(OpCode::Dup);
+                        match &member.prop {
+                            MemberProp::Ident(id) => {
+                                self.instructions.push(OpCode::GetProp(id.sym.to_string()));
+                            }
+                            MemberProp::Computed(c) => {
+                                self.gen_expr(&c.expr);
+                                self.instructions.push(OpCode::GetPropComputed);
+                            }
+                            _ => {}
+                        }
+                        self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
+                        if op == UpdateOp::PlusPlus {
+                            self.instructions.push(OpCode::Add);
+                        } else {
+                            self.instructions.push(OpCode::Sub);
+                        }
+                        // Stack: [obj, new_val] -> SetProp -> []
+                        match &member.prop {
+                            MemberProp::Ident(id) => {
+                                self.instructions.push(OpCode::SetProp(id.sym.to_string()));
+                            }
+                            MemberProp::Computed(c) => {
+                                self.gen_expr(&c.expr);
+                                self.instructions.push(OpCode::SetPropComputed);
+                            }
+                            _ => {}
+                        }
+                        // Reload the new value
+                        self.gen_expr(&member.obj);
+                        match &member.prop {
+                            MemberProp::Ident(id) => {
+                                self.instructions.push(OpCode::GetProp(id.sym.to_string()));
+                            }
+                            MemberProp::Computed(c) => {
+                                self.gen_expr(&c.expr);
+                                self.instructions.push(OpCode::GetPropComputed);
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        // obj.prop++: get old value, save it, compute new, store back
+                        // Stack: [obj, obj] -> GetProp -> [obj, old] -> Swap -> [old, obj]
+                        // -> Dup -> [old, obj, obj] -> GetProp -> [old, obj, old2]
+                        // -> +1 -> [old, obj, new] -> SetProp -> [old]
+                        self.gen_expr(&member.obj);
+                        self.instructions.push(OpCode::Dup);
+                        match &member.prop {
+                            MemberProp::Ident(id) => {
+                                self.instructions.push(OpCode::GetProp(id.sym.to_string()));
+                            }
+                            MemberProp::Computed(c) => {
+                                self.gen_expr(&c.expr);
+                                self.instructions.push(OpCode::GetPropComputed);
+                            }
+                            _ => {}
+                        }
+                        // Stack: [obj, old_val] -> Swap -> [old_val, obj]
+                        self.instructions.push(OpCode::Swap);
+                        self.instructions.push(OpCode::Dup);
+                        match &member.prop {
+                            MemberProp::Ident(id) => {
+                                self.instructions.push(OpCode::GetProp(id.sym.to_string()));
+                            }
+                            MemberProp::Computed(c) => {
+                                self.gen_expr(&c.expr);
+                                self.instructions.push(OpCode::GetPropComputed);
+                            }
+                            _ => {}
+                        }
+                        self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
+                        if op == UpdateOp::PlusPlus {
+                            self.instructions.push(OpCode::Add);
+                        } else {
+                            self.instructions.push(OpCode::Sub);
+                        }
+                        // Stack: [old_val, obj, new_val] -> SetProp -> [old_val]
+                        match &member.prop {
+                            MemberProp::Ident(id) => {
+                                self.instructions.push(OpCode::SetProp(id.sym.to_string()));
+                            }
+                            MemberProp::Computed(c) => {
+                                self.gen_expr(&c.expr);
+                                self.instructions.push(OpCode::SetPropComputed);
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }

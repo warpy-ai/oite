@@ -206,6 +206,10 @@ function emit(emitter: Emitter, node: Node | null): void {
         emitUnaryExpression(emitter, node);
         return;
     }
+    if (typeVal == "UpdateExpression") {
+        emitUpdateExpression(emitter, node);
+        return;
+    }
     if (typeVal == "AssignmentExpression") {
         emitAssignmentExpression(emitter, node);
         return;
@@ -534,6 +538,157 @@ function emitUnaryExpression(emitter: Emitter, node: UnaryExpression): void {
         return;
     }
     emitU8(emitter, opcode);
+    return;
+}
+
+function emitUpdateExpression(emitter: Emitter, node: UpdateExpression): void {
+    // ++x or x++, and obj.prop++ / ++obj.prop
+    let addOpcode: number = 2;  // binary ADD
+    let subOpcode: number = 3;  // binary SUB
+
+    if (node.argument.type == "Identifier") {
+        let isLocal: boolean = false;
+        let slot: number = -1;
+        if (emitter.scope != null) {
+            slot = scopeResolve(emitter.scope, node.argument.name);
+            if (slot != -1) {
+                isLocal = true;
+            }
+        }
+
+        if (isLocal) {
+            emitLoadLocal(emitter, slot);
+        } else {
+            emitU8(emitter, OP.LOAD);
+            emitString(emitter, node.argument.name);
+        }
+
+        if (!node.prefix) {
+            emitU8(emitter, OP.DUP);
+        }
+
+        emitU8(emitter, OP.PUSH);
+        emitU8(emitter, TYPE.NUMBER);
+        emitF64(emitter, 1);
+
+        if (node.operator == "++") {
+            emitU8(emitter, addOpcode);
+        } else {
+            emitU8(emitter, subOpcode);
+        }
+
+        if (node.prefix) {
+            emitU8(emitter, OP.DUP);
+        }
+
+        if (isLocal) {
+            emitStoreLocal(emitter, slot);
+        } else {
+            emitU8(emitter, OP.STORE);
+            emitString(emitter, node.argument.name);
+        }
+    } else if (node.argument.type == "MemberExpression") {
+        let memberNode: MemberExpression = node.argument;
+
+        if (node.prefix) {
+            // ++obj.prop
+            emit(emitter, memberNode.object);
+            emitU8(emitter, OP.DUP);
+            if (memberNode.computed) {
+                emit(emitter, memberNode.property);
+                emitU8(emitter, OP.LOAD_ELEMENT);
+            } else {
+                emitU8(emitter, OP.GET_PROP);
+                let propName: string = "";
+                if (memberNode.property.type == "Identifier") {
+                    propName = memberNode.property.name;
+                }
+                emitString(emitter, propName);
+            }
+            emitU8(emitter, OP.PUSH);
+            emitU8(emitter, TYPE.NUMBER);
+            emitF64(emitter, 1);
+            if (node.operator == "++") {
+                emitU8(emitter, addOpcode);
+            } else {
+                emitU8(emitter, subOpcode);
+            }
+            // Stack: [obj, new_val] -> SET_PROP -> []
+            if (memberNode.computed) {
+                emit(emitter, memberNode.property);
+                emitU8(emitter, OP.STORE_ELEMENT);
+            } else {
+                emitU8(emitter, OP.SET_PROP);
+                let propName2: string = "";
+                if (memberNode.property.type == "Identifier") {
+                    propName2 = memberNode.property.name;
+                }
+                emitString(emitter, propName2);
+            }
+            // Reload the new value
+            emit(emitter, memberNode.object);
+            if (memberNode.computed) {
+                emit(emitter, memberNode.property);
+                emitU8(emitter, OP.LOAD_ELEMENT);
+            } else {
+                emitU8(emitter, OP.GET_PROP);
+                let propName3: string = "";
+                if (memberNode.property.type == "Identifier") {
+                    propName3 = memberNode.property.name;
+                }
+                emitString(emitter, propName3);
+            }
+        } else {
+            // obj.prop++
+            emit(emitter, memberNode.object);
+            if (memberNode.computed) {
+                emit(emitter, memberNode.property);
+                emitU8(emitter, OP.LOAD_ELEMENT);
+            } else {
+                emitU8(emitter, OP.GET_PROP);
+                let propName4: string = "";
+                if (memberNode.property.type == "Identifier") {
+                    propName4 = memberNode.property.name;
+                }
+                emitString(emitter, propName4);
+            }
+            // Stack: [old_val] - this is the return value
+            // Now store new value back
+            emit(emitter, memberNode.object);
+            emitU8(emitter, OP.DUP);
+            if (memberNode.computed) {
+                emit(emitter, memberNode.property);
+                emitU8(emitter, OP.LOAD_ELEMENT);
+            } else {
+                emitU8(emitter, OP.GET_PROP);
+                let propName5: string = "";
+                if (memberNode.property.type == "Identifier") {
+                    propName5 = memberNode.property.name;
+                }
+                emitString(emitter, propName5);
+            }
+            emitU8(emitter, OP.PUSH);
+            emitU8(emitter, TYPE.NUMBER);
+            emitF64(emitter, 1);
+            if (node.operator == "++") {
+                emitU8(emitter, addOpcode);
+            } else {
+                emitU8(emitter, subOpcode);
+            }
+            // Stack: [old_val, obj, new_val] -> SET_PROP -> [old_val]
+            if (memberNode.computed) {
+                emit(emitter, memberNode.property);
+                emitU8(emitter, OP.STORE_ELEMENT);
+            } else {
+                emitU8(emitter, OP.SET_PROP);
+                let propName6: string = "";
+                if (memberNode.property.type == "Identifier") {
+                    propName6 = memberNode.property.name;
+                }
+                emitString(emitter, propName6);
+            }
+        }
+    }
     return;
 }
 

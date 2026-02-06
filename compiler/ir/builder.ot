@@ -914,6 +914,42 @@ function lowerExpression(ctx, node) {
                     return currentVal;
                 }
             }
+        } else if (node.argument.type == "MemberExpression") {
+            // obj.prop++ / ++obj.prop / obj[key]++ / ++obj[key]
+            let objReg = lowerExpression(ctx, node.argument.object);
+            let currentVal;
+            if (node.argument.computed) {
+                let indexReg = lowerExpression(ctx, node.argument.property);
+                currentVal = irBuilderEmitLoadElement(builder, objReg, indexReg);
+            } else {
+                let propName = node.argument.property.name;
+                if (propName == null) {
+                    propName = String(node.argument.property);
+                }
+                currentVal = irBuilderEmitLoadProp(builder, objReg, propName);
+            }
+            let one = irBuilderEmitConst(builder, 1);
+            let newVal;
+            if (node.operator == "++") {
+                newVal = irBuilderEmitAdd(builder, currentVal, one);
+            } else {
+                newVal = irBuilderEmitSub(builder, currentVal, one);
+            }
+            if (node.argument.computed) {
+                let indexReg2 = lowerExpression(ctx, node.argument.property);
+                irBuilderEmitStoreElement(builder, objReg, indexReg2, newVal);
+            } else {
+                let propName2 = node.argument.property.name;
+                if (propName2 == null) {
+                    propName2 = String(node.argument.property);
+                }
+                irBuilderEmitStoreProp(builder, objReg, propName2, newVal);
+            }
+            if (node.prefix) {
+                return newVal;
+            } else {
+                return currentVal;
+            }
         }
         return irBuilderEmitConst(builder, 0);
     }

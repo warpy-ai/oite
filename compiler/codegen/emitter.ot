@@ -1107,6 +1107,109 @@ function emitUpdateExpression(emitter, node) {
             emitU8(emitter, OP.STORE);
             emitString(emitter, node.argument.name);
         }
+    } else if (node.argument.type == "MemberExpression") {
+        // obj.prop++ / ++obj.prop / obj[key]++ / ++obj[key]
+        let memberNode = node.argument;
+
+        if (node.prefix) {
+            // ++obj.prop: compute new value, store, reload new value
+            emitNode(emitter, memberNode.object);
+            emitU8(emitter, OP.DUP);
+            if (memberNode.computed) {
+                emitNode(emitter, memberNode.property);
+                emitU8(emitter, OP.GET_PROP_COMPUTED);
+            } else {
+                emitU8(emitter, OP.GET_PROP);
+                let propName = "";
+                if (memberNode.property.type == "Identifier") {
+                    propName = memberNode.property.name;
+                }
+                emitString(emitter, propName);
+            }
+            // Stack: [obj, old_val]
+            emitU8(emitter, OP.PUSH);
+            emitU8(emitter, TYPE.NUMBER);
+            emitF64(emitter, 1);
+            if (node.operator == "++") {
+                emitU8(emitter, OP.ADD);
+            } else {
+                emitU8(emitter, OP.SUB);
+            }
+            // Stack: [obj, new_val] -> SetProp -> []
+            if (memberNode.computed) {
+                emitNode(emitter, memberNode.property);
+                emitU8(emitter, OP.SET_PROP_COMPUTED);
+            } else {
+                emitU8(emitter, OP.SET_PROP);
+                let propName2 = "";
+                if (memberNode.property.type == "Identifier") {
+                    propName2 = memberNode.property.name;
+                }
+                emitString(emitter, propName2);
+            }
+            // Reload the new value
+            emitNode(emitter, memberNode.object);
+            if (memberNode.computed) {
+                emitNode(emitter, memberNode.property);
+                emitU8(emitter, OP.GET_PROP_COMPUTED);
+            } else {
+                emitU8(emitter, OP.GET_PROP);
+                let propName3 = "";
+                if (memberNode.property.type == "Identifier") {
+                    propName3 = memberNode.property.name;
+                }
+                emitString(emitter, propName3);
+            }
+        } else {
+            // obj.prop++: save old value, compute new, store back
+            emitNode(emitter, memberNode.object);
+            emitU8(emitter, OP.DUP);
+            if (memberNode.computed) {
+                emitNode(emitter, memberNode.property);
+                emitU8(emitter, OP.GET_PROP_COMPUTED);
+            } else {
+                emitU8(emitter, OP.GET_PROP);
+                let propName4 = "";
+                if (memberNode.property.type == "Identifier") {
+                    propName4 = memberNode.property.name;
+                }
+                emitString(emitter, propName4);
+            }
+            // Stack: [obj, old_val] -> Swap -> [old_val, obj]
+            emitU8(emitter, OP.SWAP);
+            emitU8(emitter, OP.DUP);
+            if (memberNode.computed) {
+                emitNode(emitter, memberNode.property);
+                emitU8(emitter, OP.GET_PROP_COMPUTED);
+            } else {
+                emitU8(emitter, OP.GET_PROP);
+                let propName5 = "";
+                if (memberNode.property.type == "Identifier") {
+                    propName5 = memberNode.property.name;
+                }
+                emitString(emitter, propName5);
+            }
+            emitU8(emitter, OP.PUSH);
+            emitU8(emitter, TYPE.NUMBER);
+            emitF64(emitter, 1);
+            if (node.operator == "++") {
+                emitU8(emitter, OP.ADD);
+            } else {
+                emitU8(emitter, OP.SUB);
+            }
+            // Stack: [old_val, obj, new_val] -> SetProp -> [old_val]
+            if (memberNode.computed) {
+                emitNode(emitter, memberNode.property);
+                emitU8(emitter, OP.SET_PROP_COMPUTED);
+            } else {
+                emitU8(emitter, OP.SET_PROP);
+                let propName6 = "";
+                if (memberNode.property.type == "Identifier") {
+                    propName6 = memberNode.property.name;
+                }
+                emitString(emitter, propName6);
+            }
+        }
     }
 }
 

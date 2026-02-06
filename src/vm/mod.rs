@@ -928,6 +928,35 @@ impl VM {
                                         self.stack.push(val);
                                     } else if key_name == "length" {
                                         self.stack.push(JsValue::Number(arr.len() as f64));
+                                    } else if matches!(
+                                        key_name.as_str(),
+                                        "push"
+                                            | "pop"
+                                            | "shift"
+                                            | "unshift"
+                                            | "splice"
+                                            | "slice"
+                                            | "concat"
+                                            | "join"
+                                            | "indexOf"
+                                            | "lastIndexOf"
+                                            | "includes"
+                                            | "reverse"
+                                            | "fill"
+                                            | "at"
+                                            | "map"
+                                            | "filter"
+                                            | "forEach"
+                                            | "reduce"
+                                            | "find"
+                                            | "findIndex"
+                                            | "some"
+                                            | "every"
+                                            | "flat"
+                                            | "flatMap"
+                                            | "sort"
+                                    ) {
+                                        self.stack.push(JsValue::NativeFunction(0));
                                     } else {
                                         self.stack.push(JsValue::Undefined);
                                     }
@@ -1014,6 +1043,37 @@ impl VM {
                                 HeapData::Array(arr) => {
                                     if name == "length" {
                                         self.stack.push(JsValue::Number(arr.len() as f64));
+                                    } else if matches!(
+                                        name.as_str(),
+                                        "push"
+                                            | "pop"
+                                            | "shift"
+                                            | "unshift"
+                                            | "splice"
+                                            | "slice"
+                                            | "concat"
+                                            | "join"
+                                            | "indexOf"
+                                            | "lastIndexOf"
+                                            | "includes"
+                                            | "reverse"
+                                            | "fill"
+                                            | "at"
+                                            | "map"
+                                            | "filter"
+                                            | "forEach"
+                                            | "reduce"
+                                            | "find"
+                                            | "findIndex"
+                                            | "some"
+                                            | "every"
+                                            | "flat"
+                                            | "flatMap"
+                                            | "sort"
+                                    ) {
+                                        // Array methods are handled by CallMethod;
+                                        // return a function-typed value so typeof reports "function"
+                                        self.stack.push(JsValue::NativeFunction(0));
                                     } else {
                                         self.stack.push(JsValue::Undefined);
                                     }
@@ -1256,14 +1316,7 @@ impl VM {
             }
 
             OpCode::Drop(name) => {
-                if let Some(JsValue::Object(ptr)) =
-                    self.call_stack.last_mut().unwrap().locals.remove(&name)
-                    && let Some(HeapObject {
-                        data: HeapData::Object(props),
-                    }) = self.heap.get_mut(ptr)
-                {
-                    props.clear();
-                }
+                self.call_stack.last_mut().unwrap().locals.remove(&name);
             }
 
             OpCode::Add => {
