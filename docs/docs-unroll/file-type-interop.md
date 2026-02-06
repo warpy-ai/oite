@@ -1,5 +1,5 @@
 ---
-sidebar_position: 4
+sidebar_position: 18
 title: File Type Interoperability
 description: How Unroll handles different file types (.ot, .ts, .js, .nroll) with ownership-based memory management. No garbage collection.
 keywords:

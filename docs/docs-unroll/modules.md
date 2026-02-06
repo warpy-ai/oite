@@ -1,5 +1,5 @@
 ---
-sidebar_position: 3
+sidebar_position: 17
 title: Module System
 description: Oite module resolution, linking, and import/export system.
 keywords: [modules, imports, exports, module resolution, linking]
