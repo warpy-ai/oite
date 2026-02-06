@@ -95,12 +95,10 @@ impl Compiler {
     }
 }
 
-/// Tracks loop context for break/continue statements
 struct LoopContext {
-    /// Address of the loop condition (for continue)
     start_addr: usize,
-    /// Addresses of break jumps that need to be backpatched
     break_jumps: Vec<usize>,
+    continue_jumps: Vec<usize>,
 }
 
 pub struct Codegen {
@@ -945,73 +943,54 @@ impl Codegen {
                 // expressions that expect the stack to be clean.
                 self.instructions.push(OpCode::Pop);
             }
-            // Inside gen_stmt match block
             Stmt::While(while_stmt) => {
-                // 1. Record the start position (where we check the condition)
                 let loop_start = self.instructions.len();
-
-                // 2. Push loop context for break/continue support
                 self.loop_stack.push(LoopContext {
                     start_addr: loop_start,
                     break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
                 });
-
-                // 3. Compile the condition
                 self.gen_expr(&while_stmt.test);
-
-                // 4. Jump to the end if the condition is false
                 let exit_jump_idx = self.instructions.len();
-                self.instructions.push(OpCode::JumpIfFalse(0)); // Placeholder
-
-                // 5. Compile the loop body
+                self.instructions.push(OpCode::JumpIfFalse(0));
                 self.gen_stmt(&while_stmt.body);
-
-                // 6. Jump back to the start to re-check the condition
                 self.instructions.push(OpCode::Jump(loop_start));
-
-                // 7. Backpatch the exit jump and all break jumps
                 let loop_end = self.instructions.len();
                 if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
                     *addr = loop_end;
                 }
-
-                // 8. Pop loop context and backpatch break jumps
                 if let Some(loop_ctx) = self.loop_stack.pop() {
                     for break_idx in loop_ctx.break_jumps {
                         if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
                             *addr = loop_end;
                         }
                     }
+                    for cont_idx in loop_ctx.continue_jumps {
+                        if let OpCode::Jump(ref mut addr) = self.instructions[cont_idx] {
+                            *addr = loop_start;
+                        }
+                    }
                 }
             }
             Stmt::Break(_) => {
-                // Break: jump to end of current loop (address will be backpatched)
                 if let Some(loop_ctx) = self.loop_stack.last_mut() {
                     let jump_idx = self.instructions.len();
-                    self.instructions.push(OpCode::Jump(0)); // Placeholder, will be backpatched
+                    self.instructions.push(OpCode::Jump(0));
                     loop_ctx.break_jumps.push(jump_idx);
                 }
-                // If not in a loop, silently ignore (could add error handling)
             }
             Stmt::Continue(_) => {
-                // Continue: jump back to loop condition
-                if let Some(loop_ctx) = self.loop_stack.last() {
-                    self.instructions.push(OpCode::Jump(loop_ctx.start_addr));
+                if let Some(loop_ctx) = self.loop_stack.last_mut() {
+                    let jump_idx = self.instructions.len();
+                    self.instructions.push(OpCode::Jump(0));
+                    loop_ctx.continue_jumps.push(jump_idx);
                 }
-                // If not in a loop, silently ignore (could add error handling)
             }
             Stmt::If(if_stmt) => {
-                // Compile the condition
                 self.gen_expr(&if_stmt.test);
-
-                // Jump to else branch (or end) if condition is false
                 let else_jump_idx = self.instructions.len();
-                self.instructions.push(OpCode::JumpIfFalse(0)); // Placeholder
-
-                // Compile the if body
+                self.instructions.push(OpCode::JumpIfFalse(0));
                 self.gen_stmt(&if_stmt.cons);
-
-                // If there's an else branch, we need to jump over it after the if body
                 let has_else = if_stmt.alt.is_some();
                 let end_jump_idx = if has_else {
                     Some(self.instructions.len())
@@ -1019,21 +998,15 @@ impl Codegen {
                     None
                 };
                 if has_else {
-                    self.instructions.push(OpCode::Jump(0)); // Placeholder - jump to end
+                    self.instructions.push(OpCode::Jump(0));
                 }
-
-                // Backpatch the jump to else branch (or end if no else)
                 let else_start = self.instructions.len();
                 if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[else_jump_idx] {
                     *addr = else_start;
                 }
-
-                // Compile the else branch if it exists
                 if let Some(alt) = &if_stmt.alt {
                     self.gen_stmt(alt);
                 }
-
-                // Backpatch the jump over else branch (if it exists)
                 if let Some(end_idx) = end_jump_idx {
                     let end_addr = self.instructions.len();
                     if let OpCode::Jump(ref mut addr) = self.instructions[end_idx] {
@@ -1058,6 +1031,7 @@ impl Codegen {
                 self.loop_stack.push(LoopContext {
                     start_addr: loop_start,
                     break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
                 });
                 if let Some(test) = &for_stmt.test {
                     self.gen_expr(test);
@@ -1067,6 +1041,7 @@ impl Codegen {
                 let exit_jump_idx = self.instructions.len();
                 self.instructions.push(OpCode::JumpIfFalse(0));
                 self.gen_stmt(&for_stmt.body);
+                let continue_target = self.instructions.len();
                 if let Some(update) = &for_stmt.update {
                     self.gen_expr(update);
                     self.instructions.push(OpCode::Pop);
@@ -1080,6 +1055,11 @@ impl Codegen {
                     for break_idx in loop_ctx.break_jumps {
                         if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
                             *addr = loop_end;
+                        }
+                    }
+                    for cont_idx in loop_ctx.continue_jumps {
+                        if let OpCode::Jump(ref mut addr) = self.instructions[cont_idx] {
+                            *addr = continue_target;
                         }
                     }
                 }
@@ -1107,6 +1087,7 @@ impl Codegen {
                 self.loop_stack.push(LoopContext {
                     start_addr: loop_start,
                     break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
                 });
                 self.instructions.push(OpCode::Load(idx_name.clone()));
                 self.instructions.push(OpCode::Load(iter_name.clone()));
@@ -1129,6 +1110,7 @@ impl Codegen {
                     }
                 }
                 self.gen_stmt(&for_of_stmt.body);
+                let continue_target = self.instructions.len();
                 if let Some(var_decl) = &for_of_stmt.left.as_var_decl()
                     && let Some(decl) = var_decl.decls.first()
                     && let Pat::Ident(id) = &decl.name
@@ -1154,6 +1136,11 @@ impl Codegen {
                             *addr = loop_end;
                         }
                     }
+                    for cont_idx in loop_ctx.continue_jumps {
+                        if let OpCode::Jump(ref mut addr) = self.instructions[cont_idx] {
+                            *addr = continue_target;
+                        }
+                    }
                 }
                 if let Some(locals) = self.scope_stack.pop() {
                     for name in locals.into_iter().rev() {
@@ -1162,43 +1149,28 @@ impl Codegen {
                 }
             }
             Stmt::ForIn(for_in_stmt) => {
-                // for (let key in obj) { ... }
-                // Implementation: Convert to iteration over Object.keys(obj)
                 self.scope_stack.push(Vec::new());
-
-                // 1. Evaluate the object and get its keys using Object.keys
-                // Stack layout for Call: [arg1, arg2, ..., callee]
-                // So we push the argument (obj) first, then the function
                 self.gen_expr(&for_in_stmt.right);
-                // Call Object.keys(obj)
                 self.instructions.push(OpCode::Load("Object".to_string()));
                 self.instructions.push(OpCode::GetProp("keys".to_string()));
-                // Stack: [obj, Object.keys]
-                self.instructions.push(OpCode::Call(1)); // Call Object.keys(obj)
-
-                // 2. Store the keys array
+                self.instructions.push(OpCode::Call(1));
                 let keys_name = "__for_in_keys__".to_string();
                 self.instructions.push(OpCode::Let(keys_name.clone()));
                 if let Some(scope) = self.scope_stack.last_mut() {
                     scope.push(keys_name.clone());
                 }
-
-                // 3. Initialize index to 0
                 self.instructions.push(OpCode::Push(JsValue::Number(0.0)));
                 let idx_name = "__for_in_idx__".to_string();
                 self.instructions.push(OpCode::Let(idx_name.clone()));
                 if let Some(scope) = self.scope_stack.last_mut() {
                     scope.push(idx_name.clone());
                 }
-
-                // 4. Loop start
                 let loop_start = self.instructions.len();
                 self.loop_stack.push(LoopContext {
                     start_addr: loop_start,
                     break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
                 });
-
-                // 5. Check if idx < keys.length
                 self.instructions.push(OpCode::Load(idx_name.clone()));
                 self.instructions.push(OpCode::Load(keys_name.clone()));
                 self.instructions
@@ -1206,13 +1178,9 @@ impl Codegen {
                 self.instructions.push(OpCode::Lt);
                 let exit_jump_idx = self.instructions.len();
                 self.instructions.push(OpCode::JumpIfFalse(0));
-
-                // 6. Load keys[idx] into the loop variable
                 self.instructions.push(OpCode::Load(keys_name.clone()));
                 self.instructions.push(OpCode::Load(idx_name.clone()));
                 self.instructions.push(OpCode::LoadElement);
-
-                // 7. Bind the key to the loop variable
                 if let Some(var_decl) = &for_in_stmt.left.as_var_decl()
                     && let Some(decl) = var_decl.decls.first()
                     && let Pat::Ident(id) = &decl.name
@@ -1223,11 +1191,8 @@ impl Codegen {
                         scope.push(var_name);
                     }
                 }
-
-                // 8. Execute loop body
                 self.gen_stmt(&for_in_stmt.body);
-
-                // 9. Drop loop variable
+                let continue_target = self.instructions.len();
                 if let Some(var_decl) = &for_in_stmt.left.as_var_decl()
                     && let Some(decl) = var_decl.decls.first()
                     && let Pat::Ident(id) = &decl.name
@@ -1238,32 +1203,27 @@ impl Codegen {
                         scope.retain(|n| n != &id.id.sym.to_string());
                     }
                 }
-
-                // 10. Increment index
                 self.instructions.push(OpCode::Load(idx_name.clone()));
                 self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
                 self.instructions.push(OpCode::Add);
                 self.instructions.push(OpCode::Store(idx_name.clone()));
-
-                // 11. Jump back to loop start
                 self.instructions.push(OpCode::Jump(loop_start));
-
-                // 12. Backpatch exit jump
                 let loop_end = self.instructions.len();
                 if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
                     *addr = loop_end;
                 }
-
-                // 13. Handle break jumps
                 if let Some(loop_ctx) = self.loop_stack.pop() {
                     for break_idx in loop_ctx.break_jumps {
                         if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
                             *addr = loop_end;
                         }
                     }
+                    for cont_idx in loop_ctx.continue_jumps {
+                        if let OpCode::Jump(ref mut addr) = self.instructions[cont_idx] {
+                            *addr = continue_target;
+                        }
+                    }
                 }
-
-                // 14. Clean up scope
                 if let Some(locals) = self.scope_stack.pop() {
                     for name in locals.into_iter().rev() {
                         self.instructions.push(OpCode::Drop(name));
@@ -1272,29 +1232,27 @@ impl Codegen {
             }
             Stmt::DoWhile(do_while_stmt) => {
                 let loop_start = self.instructions.len();
-
                 self.loop_stack.push(LoopContext {
                     start_addr: loop_start,
                     break_jumps: Vec::new(),
+                    continue_jumps: Vec::new(),
                 });
-
-                // Compile body first
                 self.gen_stmt(&do_while_stmt.body);
-
-                // Compile condition
+                let continue_target = self.instructions.len();
                 self.gen_expr(&do_while_stmt.test);
-
-                // Jump back to start if true
                 self.instructions
                     .push(OpCode::JumpIfFalse(self.instructions.len() + 2));
                 self.instructions.push(OpCode::Jump(loop_start));
-
-                // Backpatch breaks
                 let loop_end = self.instructions.len();
                 if let Some(loop_ctx) = self.loop_stack.pop() {
                     for break_idx in loop_ctx.break_jumps {
                         if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
                             *addr = loop_end;
+                        }
+                    }
+                    for cont_idx in loop_ctx.continue_jumps {
+                        if let OpCode::Jump(ref mut addr) = self.instructions[cont_idx] {
+                            *addr = continue_target;
                         }
                     }
                 }

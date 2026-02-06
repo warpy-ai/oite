@@ -148,12 +148,22 @@ function patchU32(emitter, offset, value) {
 function pushLoop(emitter) {
     emitter.loopStack.push({
         breakPatches: [],
+        continuePatches: [],
         continueTarget: -1
     });
 }
 
 function popLoop(emitter) {
     return emitter.loopStack.pop();
+}
+
+function patchContinueJumps(emitter, loopData, target) {
+    if (loopData == null) return;
+    let j = 0;
+    while (j < loopData.continuePatches.length) {
+        patchU32(emitter, loopData.continuePatches[j], target);
+        j = j + 1;
+    }
 }
 
 function currentLoop(emitter) {
@@ -599,6 +609,7 @@ function emitWhileStatement(emitter, node) {
             patchU32(emitter, loopData.breakPatches[j], currentOffset(emitter));
             j = j + 1;
         }
+        patchContinueJumps(emitter, loopData, loopStart);
     }
 }
 
@@ -609,9 +620,10 @@ function emitDoWhileStatement(emitter, node) {
 
     emitNode(emitter, node.body);
 
+    let continueTarget = currentOffset(emitter);
     let loopInfo = currentLoop(emitter);
     if (loopInfo != null) {
-        loopInfo.continueTarget = currentOffset(emitter);
+        loopInfo.continueTarget = continueTarget;
     }
 
     emitNode(emitter, node.test);
@@ -632,6 +644,7 @@ function emitDoWhileStatement(emitter, node) {
             patchU32(emitter, loopData.breakPatches[j], currentOffset(emitter));
             j = j + 1;
         }
+        patchContinueJumps(emitter, loopData, continueTarget);
     }
 }
 
@@ -653,12 +666,13 @@ function emitForStatement(emitter, node) {
         let endPatch = currentOffset(emitter);
         emitU32(emitter, 0);
 
+        emitNode(emitter, node.body);
+
+        let continueTarget = currentOffset(emitter);
         let loopInfo = currentLoop(emitter);
         if (loopInfo != null) {
-            loopInfo.continueTarget = loopStart;
+            loopInfo.continueTarget = continueTarget;
         }
-
-        emitNode(emitter, node.body);
 
         if (node.update != null) {
             emitNode(emitter, node.update);
@@ -671,6 +685,13 @@ function emitForStatement(emitter, node) {
         patchU32(emitter, endPatch, currentOffset(emitter));
     } else {
         emitNode(emitter, node.body);
+
+        let continueTarget = currentOffset(emitter);
+        let loopInfo = currentLoop(emitter);
+        if (loopInfo != null) {
+            loopInfo.continueTarget = continueTarget;
+        }
+
         if (node.update != null) {
             emitNode(emitter, node.update);
             emitU8(emitter, OP.POP);
@@ -686,43 +707,31 @@ function emitForStatement(emitter, node) {
             patchU32(emitter, loopData.breakPatches[j], currentOffset(emitter));
             j = j + 1;
         }
+        patchContinueJumps(emitter, loopData, loopData.continueTarget);
     }
 }
 
 function emitForInStatement(emitter, node) {
-    // for (let key in obj) { ... }
-    // Implementation: iterate over Object.keys(obj)
     pushLoop(emitter);
 
-    // 1. Evaluate the object and get its keys using Object.keys
     emitNode(emitter, node.right);
-    // Load Object.keys
     emitU8(emitter, OP.LOAD);
     emitString(emitter, "Object");
     emitU8(emitter, OP.GET_PROP);
     emitString(emitter, "keys");
-    // Stack: [obj, Object.keys]
     emitU8(emitter, OP.CALL);
     emitU8(emitter, 1);
-    // Store keys array
     emitU8(emitter, OP.LET);
     emitString(emitter, "__for_in_keys__");
 
-    // 2. Initialize index to 0
     emitU8(emitter, OP.PUSH);
     emitU8(emitter, TYPE.NUMBER);
     emitF64(emitter, 0);
     emitU8(emitter, OP.LET);
     emitString(emitter, "__for_in_idx__");
 
-    // 3. Loop start
     let loopStart = currentOffset(emitter);
-    let loopInfo = currentLoop(emitter);
-    if (loopInfo != null) {
-        loopInfo.continueTarget = loopStart;
-    }
 
-    // 4. Check if idx < keys.length
     emitU8(emitter, OP.LOAD);
     emitString(emitter, "__for_in_idx__");
     emitU8(emitter, OP.LOAD);
@@ -734,30 +743,31 @@ function emitForInStatement(emitter, node) {
     let exitPatch = currentOffset(emitter);
     emitU32(emitter, 0);
 
-    // 5. Load keys[idx] into the loop variable
     emitU8(emitter, OP.LOAD);
     emitString(emitter, "__for_in_keys__");
     emitU8(emitter, OP.LOAD);
     emitString(emitter, "__for_in_idx__");
     emitU8(emitter, OP.GET_PROP_COMPUTED);
 
-    // 6. Bind the key to the loop variable
     let varName = getLoopVarName(node.left);
     if (varName != null) {
         emitU8(emitter, OP.LET);
         emitString(emitter, varName);
     }
 
-    // 7. Execute loop body
     emitNode(emitter, node.body);
 
-    // 8. Drop loop variable
+    let continueTarget = currentOffset(emitter);
+    let loopInfo = currentLoop(emitter);
+    if (loopInfo != null) {
+        loopInfo.continueTarget = continueTarget;
+    }
+
     if (varName != null) {
         emitU8(emitter, OP.DROP);
         emitString(emitter, varName);
     }
 
-    // 9. Increment index
     emitU8(emitter, OP.LOAD);
     emitString(emitter, "__for_in_idx__");
     emitU8(emitter, OP.PUSH);
@@ -767,20 +777,16 @@ function emitForInStatement(emitter, node) {
     emitU8(emitter, OP.STORE);
     emitString(emitter, "__for_in_idx__");
 
-    // 10. Jump back to loop start
     emitU8(emitter, OP.JUMP);
     emitU32(emitter, loopStart);
 
-    // 11. Patch exit jump
     patchU32(emitter, exitPatch, currentOffset(emitter));
 
-    // 12. Clean up internal variables
     emitU8(emitter, OP.DROP);
     emitString(emitter, "__for_in_idx__");
     emitU8(emitter, OP.DROP);
     emitString(emitter, "__for_in_keys__");
 
-    // 13. Handle break jumps
     let loopData = popLoop(emitter);
     if (loopData != null) {
         let j = 0;
@@ -788,34 +794,25 @@ function emitForInStatement(emitter, node) {
             patchU32(emitter, loopData.breakPatches[j], currentOffset(emitter));
             j = j + 1;
         }
+        patchContinueJumps(emitter, loopData, continueTarget);
     }
 }
 
 function emitForOfStatement(emitter, node) {
-    // for (let item of arr) { ... }
-    // Implementation: iterate using index
     pushLoop(emitter);
 
-    // 1. Evaluate the iterable and store it
     emitNode(emitter, node.right);
     emitU8(emitter, OP.LET);
     emitString(emitter, "__for_of_iter__");
 
-    // 2. Initialize index to 0
     emitU8(emitter, OP.PUSH);
     emitU8(emitter, TYPE.NUMBER);
     emitF64(emitter, 0);
     emitU8(emitter, OP.LET);
     emitString(emitter, "__for_of_idx__");
 
-    // 3. Loop start
     let loopStart = currentOffset(emitter);
-    let loopInfo = currentLoop(emitter);
-    if (loopInfo != null) {
-        loopInfo.continueTarget = loopStart;
-    }
 
-    // 4. Check if idx < iter.length
     emitU8(emitter, OP.LOAD);
     emitString(emitter, "__for_of_idx__");
     emitU8(emitter, OP.LOAD);
@@ -827,30 +824,31 @@ function emitForOfStatement(emitter, node) {
     let exitPatch = currentOffset(emitter);
     emitU32(emitter, 0);
 
-    // 5. Load iter[idx] into the loop variable
     emitU8(emitter, OP.LOAD);
     emitString(emitter, "__for_of_iter__");
     emitU8(emitter, OP.LOAD);
     emitString(emitter, "__for_of_idx__");
     emitU8(emitter, OP.GET_PROP_COMPUTED);
 
-    // 6. Bind the value to the loop variable
     let varName = getLoopVarName(node.left);
     if (varName != null) {
         emitU8(emitter, OP.LET);
         emitString(emitter, varName);
     }
 
-    // 7. Execute loop body
     emitNode(emitter, node.body);
 
-    // 8. Drop loop variable
+    let continueTarget = currentOffset(emitter);
+    let loopInfo = currentLoop(emitter);
+    if (loopInfo != null) {
+        loopInfo.continueTarget = continueTarget;
+    }
+
     if (varName != null) {
         emitU8(emitter, OP.DROP);
         emitString(emitter, varName);
     }
 
-    // 9. Increment index
     emitU8(emitter, OP.LOAD);
     emitString(emitter, "__for_of_idx__");
     emitU8(emitter, OP.PUSH);
@@ -860,20 +858,16 @@ function emitForOfStatement(emitter, node) {
     emitU8(emitter, OP.STORE);
     emitString(emitter, "__for_of_idx__");
 
-    // 10. Jump back to loop start
     emitU8(emitter, OP.JUMP);
     emitU32(emitter, loopStart);
 
-    // 11. Patch exit jump
     patchU32(emitter, exitPatch, currentOffset(emitter));
 
-    // 12. Clean up internal variables
     emitU8(emitter, OP.DROP);
     emitString(emitter, "__for_of_idx__");
     emitU8(emitter, OP.DROP);
     emitString(emitter, "__for_of_iter__");
 
-    // 13. Handle break jumps
     let loopData = popLoop(emitter);
     if (loopData != null) {
         let j = 0;
@@ -881,10 +875,10 @@ function emitForOfStatement(emitter, node) {
             patchU32(emitter, loopData.breakPatches[j], currentOffset(emitter));
             j = j + 1;
         }
+        patchContinueJumps(emitter, loopData, continueTarget);
     }
 }
 
-// Helper function to extract variable name from for-in/for-of left side
 function getLoopVarName(left) {
     if (left == null) return null;
     if (left.type == "VariableDeclaration") {
@@ -919,7 +913,12 @@ function emitContinueStatement(emitter, node) {
         return;
     }
     emitU8(emitter, OP.JUMP);
-    emitU32(emitter, loopInfo.continueTarget);
+    if (loopInfo.continueTarget == -1) {
+        loopInfo.continuePatches.push(currentOffset(emitter));
+        emitU32(emitter, 0);
+    } else {
+        emitU32(emitter, loopInfo.continueTarget);
+    }
     return;
 }
 
