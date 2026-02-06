@@ -1,202 +1,263 @@
 ---
-sidebar_position: 2
-title: Unroll Design
-description: Design document for Unroll, Oite's package manager, build system, and developer tooling ecosystem.
-keywords: [unroll, package manager, build system, tooling, design]
+sidebar_position: 16
+title: Architecture & Design
+description: Architecture and design document for Unroll, Oite's package manager, build system, and developer tooling ecosystem.
+keywords: [unroll, architecture, design, internals, package manager, build system]
 ---
 
-# Unroll Design
+# Architecture & Design
 
-> **Status**: Future Implementation - Design Document
->
-> This document describes the planned architecture for Unroll, the runtime
-> and tooling ecosystem for the Oite language.
+This document describes the architecture and internal design of Unroll.
 
 ## Overview
 
-**Unroll** is the package manager, build system, and developer tooling for
-Oite. It manages Rolls dependencies, handles compilation, and provides
-developer experience features.
+Unroll is itself written in Oite (`.ot` files) and runs on the oitec interpreter. It manages the full lifecycle of Oite projects: creation, dependency resolution, building, testing, formatting, linting, publishing, and toolchain management.
+
+## Source Structure
 
 ```
-┌─────────────────────────────────────────┐
-│            User App Code                │
-└──────────────────┬──────────────────────┘
-                   │
-┌──────────────────▼──────────────────────┐
-│   Rolls (official system libs)          │
-│   @rolls/http, @rolls/tls, @rolls/db    │
-└──────────────────┬──────────────────────┘
-                   │
-┌──────────────────▼──────────────────────┐
-│   Unroll (runtime + tooling)            │
-│   pkg manager, lockfiles, bundler, LSP  │
-└──────────────────┬──────────────────────┘
-                   │
-┌──────────────────▼──────────────────────┐
-│   Oite (language core)                  │
-│   compiler, type system, ABI, bootstrap │
-└─────────────────────────────────────────┘
+unroll/
+├── src/
+│   ├── main.ot              # Entry point, command dispatch
+│   ├── cli/                  # CLI command implementations
+│   │   ├── args.ot           # Argument parsing, help text
+│   │   ├── new.ot            # Project creation
+│   │   ├── init.ot           # Directory initialization
+│   │   ├── deps.ot           # add, remove, update commands
+│   │   ├── build.ot          # build, run, watch, clean
+│   │   ├── test.ot           # Test runner
+│   │   ├── fmt.ot            # Code formatter
+│   │   ├── lint.ot           # Linter
+│   │   ├── check.ot          # Type checker
+│   │   ├── doc.ot            # Documentation generator
+│   │   ├── registry.ot       # search, info, publish, yank, login
+│   │   └── upgrade.ot        # Self-upgrade, version check
+│   ├── config/               # Configuration and manifest handling
+│   │   ├── manifest.ot       # TOML parser for unroll.toml / roll.toml
+│   │   ├── lockfile.ot       # Lockfile parser and writer
+│   │   └── scaffold.ot       # Project templates and scaffolding
+│   ├── build/                # Build system
+│   │   ├── compiler.ot       # Compiler interface (oitec invocation)
+│   │   ├── linker.ot         # Linker interface
+│   │   └── test_discovery.ot # Test file discovery
+│   ├── registry/             # Registry client
+│   │   ├── config.ot         # Registry configuration and credentials
+│   │   └── client.ot         # HTTP client, JSON parser, API calls
+│   └── resolver/             # Dependency resolution
+│       └── mod.ot            # Version resolution algorithm
+└── unroll.toml               # Unroll's own manifest
 ```
 
-## CLI Commands
+## Command Dispatch
 
-### Project Management
+The entry point (`main.ot`) uses a linear if/else chain to dispatch commands:
 
-```bash
-# Create new project
-unroll new my-app
-unroll new my-lib --lib
-
-# Initialize in existing directory
-unroll init
+```
+process.argv
+    → parseArgs()
+    → if "new" → runNew()
+    → if "add" → runAdd()
+    → if "build" → runBuild()
+    → ...
+    → Unknown command error
 ```
 
-### Dependency Management
+Before dispatch, `checkForUpdates(VERSION)` runs to notify users of available updates (cached, non-blocking).
 
-```bash
-# Add dependencies
-unroll add @rolls/http
-unroll add @rolls/tls --optional
+## TOML Parser
 
-# Add dev dependencies
-unroll add --dev @rolls/test
+Unroll implements its own TOML parser in `manifest.ot` since oitec doesn't have a built-in TOML library. The parser handles:
 
-# Remove dependencies
-unroll remove @rolls/http
+- `[section]` headers (e.g., `[package]`, `[roll]`, `[dependencies]`)
+- Key-value pairs with string, number, and boolean values
+- Quoted keys (required for scoped package names like `"@rolls/http"`)
+- Array values
+- Nested sections (e.g., `[profile.release]`)
+- Comments (lines starting with `#`)
 
-# Update dependencies
-unroll update
-unroll update @rolls/http
+The parser tracks the current section and maps fields to the `Manifest` interface.
+
+## Dependency Resolution
+
+The resolver (`resolver/mod.ot`) implements a depth-first resolution algorithm:
+
+```
+resolveDependencies(manifest)
+    │
+    ├── Inject @rolls/std (unless no-std)
+    │
+    ├── For each dependency:
+    │   ├── Check visited set (cycle detection)
+    │   ├── Fetch versions from registry
+    │   ├── Select best matching version
+    │   ├── Recursively resolve transitive deps
+    │   └── Add to resolved set
+    │
+    └── Sort alphabetically → write lockfile
 ```
 
-### Build & Run
+### Version Selection
 
-```bash
-# Build project
-unroll build
-unroll build --release
-unroll build --target wasm32
+Version matching uses caret semantics:
 
-# Run project
-unroll run
-unroll run --release
+- `"0.1"` matches `>=0.1.0, <0.2.0` (patch updates only for 0.x)
+- `"1.0"` matches `>=1.0.0, <2.0.0` (minor + patch updates)
+- `"*"` matches any version (picks latest)
+- `"=0.1.5"` matches exactly `0.1.5`
 
-# Watch mode (rebuild on changes)
-unroll watch
+### Cycle Detection
 
-# Clean build artifacts
-unroll clean
+The resolver maintains a `visited` set of package names. If a package is encountered again during resolution, it's skipped to prevent infinite recursion.
+
+## Registry Client
+
+The registry client (`registry/client.ot`) communicates with the rolls-registry server via HTTP:
+
+- **HTTP layer**: Uses `curl` via `process.exec()` for all HTTP operations
+- **JSON parser**: Custom recursive-descent parser in `client.ot` (handles objects, arrays, strings, numbers, booleans, null, escape sequences)
+- **Authentication**: Bearer tokens passed via `Authorization` header
+
+### Device Authorization Flow
+
+```
+Client                      Registry                    Browser
+  │                           │                           │
+  ├── POST /auth/device ──────►│                           │
+  │◄── device_code, user_code──┤                           │
+  │                            │                           │
+  ├── Open browser ────────────┼──────────────────────────►│
+  │                            │          User authorizes  │
+  │                            │◄──────────────────────────┤
+  │                            │                           │
+  ├── POST /auth/device/poll──►│                           │
+  │◄── status: pending ───────┤                           │
+  │    (repeat every N sec)    │                           │
+  │                            │                           │
+  ├── POST /auth/device/poll──►│                           │
+  │◄── status: complete, token─┤                           │
+  │                            │                           │
+  └── Save to credentials      │                           │
 ```
 
-### Testing
+## Build System
 
-```bash
-# Run tests
-unroll test
-unroll test --filter "http*"
-unroll test --coverage
+The build pipeline has two modes:
+
+### Interpreted Mode (`unroll run`)
+
+Source files are executed directly by oitec:
+
+```
+oitec src/main.ot -- [args]
 ```
 
-### Developer Tools
+No compilation or linking step. This is the current default for `unroll run`.
 
-```bash
-# Format code
-unroll fmt
-unroll fmt --check
+### Compiled Mode (`unroll build`)
 
-# Lint code
-unroll lint
-unroll lint --fix
+Full compilation pipeline:
 
-# Type check
-unroll check
-
-# Generate documentation
-unroll doc
-unroll doc --open
+```
+Source (.ot) → oitec build → Objects (.o) → Linker → Binary
 ```
 
-### Publishing
+1. **Discovery**: Recursively find all `.ot` files in `./src/`
+2. **Compilation**: Invoke `oitec build <source> -o <output>` for each file
+3. **Dependencies**: Compile dependencies from lockfile
+4. **Linking**: Link all objects into a binary
 
-```bash
-# Login to registry
-unroll login
+### Profile Flags
 
-# Publish Roll
-unroll publish
+| Profile | oitec flags | Linker flags |
+|---------|------------|--------------|
+| dev | `-O0 -g` | Default |
+| release | `-O3 --lto=thin` | `-flto=thin` |
+| dist | `-O3 --lto=fat` | `-flto -s` (strip) |
 
-# Deprecate version
-unroll deprecate 0.1.0 --message "Use 0.2.0 instead"
+## Self-Upgrade Mechanism
+
+The upgrade system (`upgrade.ot`) mirrors the installer script logic:
+
+1. **Version check**: `curl` to GitHub API → extract `tag_name`
+2. **Platform detection**: `uname -s` + `uname -m` → target triple
+3. **Download**: `curl` + `tar` from GitHub releases
+4. **Install**: Replace files in `~/.oite/`
+
+The 24-hour cache prevents excessive API calls during normal usage.
+
+## Error Handling Pattern
+
+All functions return result objects instead of throwing exceptions:
+
+```typescript
+interface Result {
+    success: boolean;
+    error: string;
+}
 ```
 
-## Project Manifest (unroll.toml)
+This pattern is used consistently across:
+- File operations (read, write, delete)
+- Network operations (HTTP requests)
+- Build operations (compile, link)
+- Registry operations (publish, yank)
 
-```toml
-[package]
-name = "my-app"
-version = "0.1.0"
-edition = "2025"
-license = "MIT"
-description = "My awesome app"
-repository = "https://github.com/warpy-ai/script"
-keywords = ["web", "server"]
+## Key Interfaces
 
-[dependencies]
-"@rolls/http" = "0.1"
-"@rolls/json" = "0.1"
+### Manifest
 
-[dev-dependencies]
-"@rolls/test" = "0.1"
-
-[features]
-default = ["json"]
-json = ["@rolls/json"]
-full = ["json", "@rolls/tls"]
-
-[build]
-target = "native"           # native | wasm32
-optimization = "release"    # debug | release
-lto = true                  # Link-time optimization
-
-[profile.release]
-opt-level = 3
-lto = "thin"
-
-[profile.dev]
-opt-level = 0
-debug = true
+```typescript
+interface Manifest {
+    name: string;
+    version: string;
+    edition: string;
+    license: string;
+    description: string;
+    repository: string;
+    keywords: string[];
+    authors: string[];
+    dependencies: Dependency[];
+    devDependencies: Dependency[];
+    features: Feature[];
+    build: BuildConfig;
+    profiles: Profile[];
+    noStd: boolean;
+}
 ```
 
-## Lockfile (unroll.lock)
+### Dependency
 
-```toml
-# This file is auto-generated by Unroll. Do not edit.
-# unroll.lock format version 1
+```typescript
+interface Dependency {
+    name: string;
+    version: string;
+    optional: boolean;
+    features: string[];
+    git: string;
+    branch: string;
+    path: string;
+}
+```
 
-[[package]]
-name = "@rolls/http"
-version = "0.1.5"
-source = "registry+https://rolls.script-lang.org"
-checksum = "sha256:abcd1234..."
-dependencies = [
-    "@rolls/async 0.1.2",
-    "@rolls/tls 0.1.0 (optional)",
-]
+### LockedPackage
 
-[[package]]
-name = "@rolls/async"
-version = "0.1.2"
-source = "registry+https://rolls.script-lang.org"
-checksum = "sha256:efgh5678..."
-dependencies = []
+```typescript
+interface LockedPackage {
+    name: string;
+    version: string;
+    source: string;
+    checksum: string;
+    dependencies: string[];
+}
+```
 
-[[package]]
-name = "@rolls/tls"
-version = "0.1.0"
-source = "registry+https://rolls.script-lang.org"
-checksum = "sha256:ijkl9012..."
-dependencies = []
+### RegistryConfig
+
+```typescript
+interface RegistryConfig {
+    url: string;
+    token: string;
+}
 ```
 
 ## Project Structure
@@ -206,139 +267,41 @@ my-app/
 ├── unroll.toml         # Project manifest
 ├── unroll.lock         # Lockfile (auto-generated)
 ├── src/
-│   ├── main.ot         # Entry point (bin)
-│   └── lib.ot          # Library root (lib)
+│   ├── main.ot         # Entry point (binary)
+│   └── lib.ot          # Library root (library)
 ├── tests/
-│   └── integration_test.ot
-├── benches/
-│   └── perf_bench.ot
+│   └── test.ot         # Integration tests
 ├── examples/
-│   └── basic_usage.ot
+│   └── example.ot      # Example programs
 └── target/
-    ├── debug/
-    │   └── my-app      # Debug binary
-    └── release/
-        └── my-app      # Release binary
+    ├── dev/            # Debug output
+    ├── release/        # Release output
+    ├── dist/           # Distribution output
+    └── doc/            # Generated documentation
 ```
 
-## Language Server Protocol (LSP)
+## Cross-Compilation
 
-Unroll includes an LSP server for IDE integration:
-
-### Features
-
-- **Completion**: Auto-complete for types, functions, imports
-- **Hover**: Type information and documentation
-- **Go to Definition**: Jump to source
-- **Find References**: Find all usages
-- **Rename**: Refactor symbols
-- **Diagnostics**: Real-time error reporting
-- **Code Actions**: Quick fixes and refactors
-- **Formatting**: Integrated with `unroll fmt`
-
-### Configuration
-
-```json
-// VS Code settings.json
-{
-    "unroll.path": "/usr/local/bin/unroll",
-    "unroll.trace.server": "verbose",
-    "unroll.inlayHints.enabled": true,
-    "unroll.checkOnSave": true
-}
-```
-
-## Registry
-
-### Public Registry
-
-The default Roll registry at `https://rolls.script-lang.org`:
-
-```bash
-# Search for packages
-unroll search http
-
-# View package info
-unroll info @rolls/http
-
-# View package versions
-unroll info @rolls/http --versions
-```
-
-### Private Registry
-
-For enterprise use:
-
-```toml
-# .unroll/config.toml
-[registries]
-default = "https://rolls.script-lang.org"
-company = "https://rolls.company.internal"
-
-[registries.company]
-token = "env:COMPANY_REGISTRY_TOKEN"
-```
-
-## Build Pipeline
-
-```
-Source Files (.ot)
-        │
-        ▼
-┌───────────────────┐
-│   Parse & Check   │  ← Syntax, types, borrow check
-└─────────┬─────────┘
-          │
-          ▼
-┌───────────────────┐
-│   Bundle & Link   │  ← Resolve imports, tree-shake
-└─────────┬─────────┘
-          │
-          ▼
-┌───────────────────┐
-│    Compile IR     │  ← SSA IR generation
-└─────────┬─────────┘
-          │
-          ▼
-┌───────────────────┐
-│   Native Code     │  ← Cranelift JIT / LLVM AOT
-└─────────┬─────────┘
-          │
-          ▼
-    Binary / WASM
-```
-
-## Cross-Compilation Targets
+Supported targets:
 
 | Target | Description |
 |--------|-------------|
+| `native` | Host platform (default) |
 | `x86_64-unknown-linux-gnu` | Linux x64 (glibc) |
 | `x86_64-unknown-linux-musl` | Linux x64 (static) |
 | `aarch64-unknown-linux-gnu` | Linux ARM64 |
 | `x86_64-apple-darwin` | macOS x64 |
-| `aarch64-apple-darwin` | macOS ARM64 (Apple Silicon) |
+| `aarch64-apple-darwin` | macOS ARM64 |
 | `x86_64-pc-windows-msvc` | Windows x64 |
 | `wasm32-unknown-unknown` | WebAssembly |
 | `wasm32-wasi` | WASM + WASI |
 
-```bash
-# Cross-compile
-unroll build --target aarch64-unknown-linux-gnu
-```
+## Future Work
 
-## Performance Targets
-
-| Metric | Target |
-|--------|--------|
-| Cold start | &lt;100ms |
-| Incremental build | &lt;500ms |
-| LSP response | &lt;50ms |
-| Dependency resolution | &lt;1s (cached) |
-
-## Future Features
-
-1. **Workspaces**: Monorepo support with shared dependencies
-2. **Plugins**: Build-time code generation
-3. **Profiles**: Custom build configurations
-4. **Caching**: Distributed build cache
-5. **WASM**: First-class WebAssembly support
+- **Workspaces**: Monorepo support with shared dependencies
+- **Build cache**: Incremental and distributed compilation cache
+- **LSP**: Language server protocol integration for IDE support
+- **Plugins**: Build-time code generation
+- **Git/Path dependencies**: Resolve from git repos and local paths
+- **Feature resolution**: Conditional compilation based on features
+- **Coverage reports**: Code coverage during testing
