@@ -158,9 +158,7 @@ fn run_binary_file(vm: &mut VM, path: &str) -> Result<(), String> {
                 }
             }
             let offset = vm.append_program(program);
-            println!("Running from offset {}...", offset);
             vm.run_event_loop();
-            println!("Execution complete.");
             Ok(())
         }
         Err(e) => Err(format!("Failed to decode bytecode: {}", e)),
@@ -261,7 +259,7 @@ fn main() {
 
     // Binary mode: load and run pre-compiled bytecode directly
     if run_binary {
-        println!("Running bytecode file: {}", filename);
+        // Running bytecode file
         if let Err(e) = run_binary_file(&mut vm, filename) {
             eprintln!("{}", e);
         }
@@ -271,7 +269,7 @@ fn main() {
     // 1. Load and run prelude first (if exists)
     // This sets up global constants (OP, TOKEN, TYPE) and utility functions
     if Path::new(PRELUDE_PATH).exists() {
-        println!("Loading prelude...");
+        // Loading prelude
         if let Err(e) = load_and_run_script(&mut vm, &mut compiler, PRELUDE_PATH, false) {
             eprintln!("{}", e);
             return;
@@ -283,7 +281,7 @@ fn main() {
     let is_modular_compiler = filename.contains("compiler/") && !filename.contains("bootstrap/");
 
     if is_bootstrap {
-        println!("Loading bootstrap compiler modules...");
+        // Loading bootstrap compiler modules
         for bootstrap_file in BOOTSTRAP_FILES {
             if Path::new(bootstrap_file).exists() {
                 if let Err(e) = load_and_run_script(&mut vm, &mut compiler, bootstrap_file, true) {
@@ -297,7 +295,7 @@ fn main() {
     }
 
     if is_modular_compiler {
-        println!("Loading modular compiler modules...");
+        // Loading modular compiler modules
         for modular_file in MODULAR_COMPILER_FILES {
             // Skip the main file being run if it's in the list
             if modular_file == filename {
@@ -315,7 +313,6 @@ fn main() {
     }
 
     // 3. Load and run the main script
-    println!("Loading main script: {}", filename);
     let main_source = match fs::read_to_string(filename) {
         Ok(s) => s,
         Err(e) => {
@@ -354,7 +351,6 @@ fn main() {
             let script_args: Vec<String> = args[2..].to_vec();
             vm.set_script_args(script_args);
 
-            println!("Running from offset {}...", offset);
             vm.run_event_loop();
         }
         Err(e) => {
