@@ -124,6 +124,29 @@ interface Promise<T> {
 }
 
 // ============================================================================
+// Process I/O (runtime-provided)
+// ============================================================================
+
+declare namespace process {
+    namespace stdin {
+        function readLine(): string | null;
+        function readBytes(n: number): string | null;
+    }
+    namespace stdout {
+        function write(data: string): void;
+    }
+    function exec(command: string, args?: string[]): any;
+    function exit(code: number): void;
+    function cwd(): string;
+    function chdir(path: string): boolean;
+    namespace env {
+        function get(name: string): string | undefined;
+        function set(name: string, value: string): void;
+    }
+    const argv: string[];
+}
+
+// ============================================================================
 // ByteStream (runtime-provided)
 // ============================================================================
 

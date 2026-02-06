@@ -273,6 +273,7 @@ pub fn set_script_args(vm: &mut VM, args: Vec<String>) {
 fn setup_process(vm: &mut VM) {
     use crate::stdlib::{
         native_chdir, native_cwd, native_exec, native_exit, native_getenv, native_setenv,
+        native_stdin_read_bytes, native_stdin_read_line, native_stdout_write,
     };
 
     // Register native functions
@@ -282,6 +283,9 @@ fn setup_process(vm: &mut VM) {
     let chdir_idx = vm.register_native(native_chdir);
     let exit_idx = vm.register_native(native_exit);
     let exec_idx = vm.register_native(native_exec);
+    let stdin_read_line_idx = vm.register_native(native_stdin_read_line);
+    let stdin_read_bytes_idx = vm.register_native(native_stdin_read_bytes);
+    let stdout_write_idx = vm.register_native(native_stdout_write);
 
     // Create process.env object with get/set methods
     let env_ptr = vm.heap.len();
@@ -290,6 +294,32 @@ fn setup_process(vm: &mut VM) {
     env_props.insert("set".to_string(), JsValue::NativeFunction(setenv_idx));
     vm.heap.push(HeapObject {
         data: HeapData::Object(env_props),
+    });
+
+    // Create process.stdin object
+    let stdin_ptr = vm.heap.len();
+    let mut stdin_props = std::collections::HashMap::new();
+    stdin_props.insert(
+        "readLine".to_string(),
+        JsValue::NativeFunction(stdin_read_line_idx),
+    );
+    stdin_props.insert(
+        "readBytes".to_string(),
+        JsValue::NativeFunction(stdin_read_bytes_idx),
+    );
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(stdin_props),
+    });
+
+    // Create process.stdout object
+    let stdout_ptr = vm.heap.len();
+    let mut stdout_props = std::collections::HashMap::new();
+    stdout_props.insert(
+        "write".to_string(),
+        JsValue::NativeFunction(stdout_write_idx),
+    );
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(stdout_props),
     });
 
     // Create empty argv array (will be populated by set_script_args)
@@ -302,6 +332,8 @@ fn setup_process(vm: &mut VM) {
     let process_ptr = vm.heap.len();
     let mut process_props = std::collections::HashMap::new();
     process_props.insert("env".to_string(), JsValue::Object(env_ptr));
+    process_props.insert("stdin".to_string(), JsValue::Object(stdin_ptr));
+    process_props.insert("stdout".to_string(), JsValue::Object(stdout_ptr));
     process_props.insert("argv".to_string(), JsValue::Object(argv_ptr));
     process_props.insert("cwd".to_string(), JsValue::NativeFunction(cwd_idx));
     process_props.insert("chdir".to_string(), JsValue::NativeFunction(chdir_idx));

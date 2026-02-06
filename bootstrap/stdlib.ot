@@ -108,6 +108,37 @@ interface ByteStreamInstance {
 declare const ByteStream: ByteStreamStatic;
 
 // ============================================================================
+// Process I/O (runtime-provided)
+// ============================================================================
+
+interface ProcessStdin {
+    readLine(): string | null;
+    readBytes(n: number): string | null;
+}
+
+interface ProcessStdout {
+    write(data: string): void;
+}
+
+interface ProcessEnv {
+    get(name: string): string | undefined;
+    set(name: string, value: string): void;
+}
+
+interface Process {
+    stdin: ProcessStdin;
+    stdout: ProcessStdout;
+    env: ProcessEnv;
+    argv: Array<string>;
+    exec(command: string, args?: Array<string>): any;
+    exit(code: number): void;
+    cwd(): string;
+    chdir(path: string): boolean;
+}
+
+declare const process: Process;
+
+// ============================================================================
 // String Extensions (runtime-provided)
 // ============================================================================
 

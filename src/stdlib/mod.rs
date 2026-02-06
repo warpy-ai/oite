@@ -869,6 +869,57 @@ fn create_fetch_error(vm: &mut VM, message: &str) -> JsValue {
 }
 
 // ============================================================================
+// Stdin/Stdout Functions (for LSP server and interactive tools)
+// ============================================================================
+
+/// Read a line from stdin, stripping trailing \r\n
+/// Returns null on EOF
+pub fn native_stdin_read_line(_vm: &mut VM, _args: Vec<JsValue>) -> JsValue {
+    let mut line = String::new();
+    match std::io::stdin().read_line(&mut line) {
+        Ok(0) => JsValue::Null, // EOF
+        Ok(_) => {
+            let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
+            JsValue::String(trimmed.to_string())
+        }
+        Err(_) => JsValue::Null,
+    }
+}
+
+/// Read exactly n bytes from stdin, returns as string
+/// Returns null on EOF or error
+pub fn native_stdin_read_bytes(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    let n = match args.first() {
+        Some(JsValue::Number(n)) => *n as usize,
+        _ => return JsValue::Null,
+    };
+    let mut buf = vec![0u8; n];
+    use std::io::Read;
+    match std::io::stdin().read_exact(&mut buf) {
+        Ok(()) => JsValue::String(String::from_utf8_lossy(&buf).to_string()),
+        Err(_) => JsValue::Null,
+    }
+}
+
+/// Write string to stdout WITHOUT trailing newline
+pub fn native_stdout_write(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    use std::io::Write;
+    if let Some(val) = args.first() {
+        let s = match val {
+            JsValue::String(s) => s.clone(),
+            JsValue::Number(n) => n.to_string(),
+            JsValue::Boolean(b) => b.to_string(),
+            JsValue::Null => "null".to_string(),
+            JsValue::Undefined => "undefined".to_string(),
+            _ => String::new(),
+        };
+        let _ = std::io::stdout().write_all(s.as_bytes());
+        let _ = std::io::stdout().flush();
+    }
+    JsValue::Undefined
+}
+
+// ============================================================================
 // Object Functions
 // ============================================================================
 
