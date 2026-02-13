@@ -483,4 +483,4 @@ let TypeCheck = {
     formatError: formatTypeError
 };
 
-console.log("TypeCheck pass loaded");
+console.error("TypeCheck pass loaded");

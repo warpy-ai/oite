@@ -416,4 +416,4 @@ type Codegen = {
     compileSource: typeof compileSourceToBytecode
 };
 
-console.log("Codegen module loaded");
+console.error("Codegen module loaded");

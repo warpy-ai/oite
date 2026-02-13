@@ -186,4 +186,4 @@ declare namespace fs {
     function renameSync(oldPath: string, newPath: string): void;
 }
 
-console.log("Built-in functions loaded");
+console.error("Built-in functions loaded");

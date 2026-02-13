@@ -1362,4 +1362,4 @@ function emitMainWrapper(emitter: LlvmEmitter): void {
     return;
 }
 
-console.log("LLVM emitter module loaded");
+console.error("LLVM emitter module loaded");

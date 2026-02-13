@@ -107,4 +107,4 @@ function formatParseError(error: ParseError): string {
     return "Parse Error [" + error.type + "]" + loc + ": " + error.message;
 }
 
-console.log("Parser errors module loaded");
+console.error("Parser errors module loaded");

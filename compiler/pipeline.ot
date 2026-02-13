@@ -9,7 +9,7 @@ require ./ir/mod;
 require ./ir/builder;
 require ./passes/mod;
 require ./codegen/mod;
-require ./codegen/emitter;
+import * from "./codegen/emiter.ot"
 
 // ============================================================================
 // Compilation Pipeline (IR-based)
@@ -19,27 +19,27 @@ function compileToBytecodeViaIr(source) {
     // Tokenize
     let tokens = tokenize(source);
     if (tokens == null) {
-        console.log("Error: Lexing failed");
+        console.error("Error: Lexing failed");
         return null;
     }
 
     // Parse
     let ast = parseSource(source);
     if (ast == null) {
-        console.log("Error: Parsing failed");
+        console.error("Error: Parsing failed");
         return null;
     }
 
     // Lower to IR
     let irModule = lowerProgramToIr(ast);
     if (irModule == null) {
-        console.log("Error: IR lowering failed");
+        console.error("Error: IR lowering failed");
         return null;
     }
 
     // Verify IR
     if (!verifyIrModule(irModule)) {
-        console.log("Error: IR verification failed");
+        console.error("Error: IR verification failed");
         return null;
     }
 
@@ -60,79 +60,79 @@ function compileWithOptimization(source, options) {
     let strictTypes = options != null && options.strictTypes == true;
 
     // Parse
-    if (verbose) console.log("[Pipeline] Parsing...");
+    if (verbose) console.error("[Pipeline] Parsing...");
     let ast = parseSource(source);
     if (ast == null) {
-        console.log("Error: Parsing failed");
+        console.error("Error: Parsing failed");
         return null;
     }
-    if (verbose) console.log("[Pipeline] AST: " + ast.body.length + " statements");
+    if (verbose) console.error("[Pipeline] AST: " + ast.body.length + " statements");
 
     // Structural type checking on AST (if enabled)
     if (!skipTypeCheck) {
-        if (verbose) console.log("[Pipeline] Running structural type check...");
+        if (verbose) console.error("[Pipeline] Running structural type check...");
         let typeResult = Passes.structuralTypeCheck(ast);
         if (typeResult.errors.length > 0) {
-            console.log("Type errors:");
+            console.error("Type errors:");
             let i = 0;
             while (i < typeResult.errors.length) {
-                console.log("  " + typeResult.errors[i].message);
+                console.error("  " + typeResult.errors[i].message);
                 i = i + 1;
             }
             if (strictTypes) {
                 return null;  // Fail compilation in strict mode
             }
         } else {
-            if (verbose) console.log("[Pipeline] Structural type check passed");
+            if (verbose) console.error("[Pipeline] Structural type check passed");
         }
     }
 
     // Borrow check on AST first (if enabled)
     if (!skipBorrowCheck) {
-        if (verbose) console.log("[Pipeline] Running AST borrow check...");
+        if (verbose) console.error("[Pipeline] Running AST borrow check...");
         let astResult = Passes.checkAst(ast);
         if (astResult.errors.length > 0) {
-            console.log("Borrow check errors:");
+            console.error("Borrow check errors:");
             let i = 0;
             while (i < astResult.errors.length) {
-                console.log("  " + BorrowCheck.formatError(astResult.errors[i]));
+                console.error("  " + BorrowCheck.formatError(astResult.errors[i]));
                 i = i + 1;
             }
             return null;
         }
-        if (verbose) console.log("[Pipeline] AST borrow check passed");
+        if (verbose) console.error("[Pipeline] AST borrow check passed");
     }
 
     // Lower to IR
-    if (verbose) console.log("[Pipeline] Lowering to IR...");
+    if (verbose) console.error("[Pipeline] Lowering to IR...");
     let irModule = lowerProgramToIr(ast);
     if (irModule == null) {
-        console.log("Error: IR lowering failed");
+        console.error("Error: IR lowering failed");
         return null;
     }
-    if (verbose) console.log("[Pipeline] IR: " + irModule.functions.length + " functions");
+    if (verbose) console.error("[Pipeline] IR: " + irModule.functions.length + " functions");
 
     // Verify IR
-    if (verbose) console.log("[Pipeline] Verifying IR...");
+    if (verbose) console.error("[Pipeline] Verifying IR...");
     if (!verifyIrModule(irModule)) {
-        console.log("Error: IR verification failed");
+        console.error("Error: IR verification failed");
         return null;
     }
 
     // Type checking and specialization
-    if (verbose) console.log("[Pipeline] Running type inference...");
+    if (verbose) console.error("[Pipeline] Running type inference...");
     Passes.typecheck(irModule);
-    if (verbose) console.log("[Pipeline] Type inference complete");
+    if (verbose) console.error("[Pipeline] Type inference complete");
 
     // Optimization passes
-    if (verbose) console.log("[Pipeline] Running optimizer...");
+    if (verbose) console.error("[Pipeline] Running optimizer...");
     Passes.optimize(irModule);
-    if (verbose) console.log("[Pipeline] Optimization complete");
+    if (verbose) console.error("[Pipeline] Optimization complete");
 
     // Generate bytecode
-    if (verbose) console.log("[Pipeline] Generating bytecode...");
+    if (verbose) console.error("[Pipeline] Generating bytecode...");
     let result = codegenIrModule(irModule);
-    if (verbose) console.log("[Pipeline] Bytecode: " + result.length + " bytes");
+    if (verbose) console.error("[Pipeline] Bytecode: " + result.length + " bytes");
 
     return result;
 }
@@ -146,13 +146,13 @@ function compileVerbose(source) {
 function compileToOptimizedIr(source) {
     let ast = parseSource(source);
     if (ast == null) {
-        console.log("Error: Parsing failed");
+        console.error("Error: Parsing failed");
         return null;
     }
 
     let irModule = lowerProgramToIr(ast);
     if (irModule == null) {
-        console.log("Error: IR lowering failed");
+        console.error("Error: IR lowering failed");
         return null;
     }
 
@@ -180,7 +180,7 @@ function compileToBytecode(source) {
     // Use direct AST → Bytecode path for VM compatibility
     let ast = parseSource(source);
     if (ast == null) {
-        console.log("Error: Parsing failed");
+        console.error("Error: Parsing failed");
         return null;
     }
 
@@ -197,7 +197,7 @@ function compileModule(source) {
 
 function compileFile(filePath) {
     if (!fs.existsSync(filePath)) {
-        console.log("Error: File not found: " + filePath);
+        console.error("Error: File not found: " + filePath);
         return null;
     }
     let source = fs.readFileSync(filePath, "utf8");
@@ -217,11 +217,11 @@ function saveBytecode(filePath, bytecode) {
 function compileToFile(inputPath, outputPath) {
     let bytecode = compileFile(inputPath);
     if (bytecode == null) {
-        console.log("Error: Compilation failed for " + inputPath);
+        console.error("Error: Compilation failed for " + inputPath);
         return null;
     }
     let bytesWritten = saveBytecode(outputPath, bytecode);
-    console.log("Compiled: " + inputPath + " -> " + outputPath + " (" + bytesWritten + " bytes)");
+    console.error("Compiled: " + inputPath + " -> " + outputPath + " (" + bytesWritten + " bytes)");
     return bytecode;
 }
 
@@ -232,13 +232,13 @@ function compileToFile(inputPath, outputPath) {
 function compileToIr(source) {
     let ast = parseSource(source);
     if (ast == null) {
-        console.log("Error: Parsing failed");
+        console.error("Error: Parsing failed");
         return null;
     }
 
     let irModule = lowerProgramToIr(ast);
     if (irModule == null) {
-        console.log("Error: IR lowering failed");
+        console.error("Error: IR lowering failed");
         return null;
     }
 
@@ -405,6 +405,6 @@ let Pipeline = {
     pipeline: "lexer -> parser -> ir -> typecheck -> optimize -> codegen"
 };
 
-console.log("Compiler Pipeline loaded");
-console.log("Version: " + Pipeline.version);
-console.log("Pipeline: " + Pipeline.pipeline);
+console.error("Compiler Pipeline loaded");
+console.error("Version: " + Pipeline.version);
+console.error("Pipeline: " + Pipeline.pipeline);

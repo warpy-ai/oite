@@ -273,7 +273,7 @@ function verifyIrModule(module: IrModule): boolean {
     while (i < module.functions.length) {
         let func = module.functions[i];
         if (!verifyIrFunction(func)) {
-            console.log("IR verification failed for function: " + func.name);
+            console.error("IR verification failed for function: " + func.name);
             return false;
         }
         i = i + 1;
@@ -283,18 +283,18 @@ function verifyIrModule(module: IrModule): boolean {
 
 function verifyIrFunction(func: IrFunction): boolean {
     if (func.name == null || func.name == "") {
-        console.log("Function name is empty");
+        console.error("Function name is empty");
         return false;
     }
     if (func.entry_block == null) {
-        console.log("Function " + func.name + " has no entry block");
+        console.error("Function " + func.name + " has no entry block");
         return false;
     }
     let i = 0;
     while (i < func.blocks.length) {
         let block = func.blocks[i];
         if (!verifyIrBlock(block)) {
-            console.log("IR verification failed for block: " + block.label);
+            console.error("IR verification failed for block: " + block.label);
             return false;
         }
         i = i + 1;
@@ -304,14 +304,14 @@ function verifyIrFunction(func: IrFunction): boolean {
 
 function verifyIrBlock(block: IrBlock): boolean {
     if (block.label == null || block.label == "") {
-        console.log("Block label is empty");
+        console.error("Block label is empty");
         return false;
     }
     let i = 0;
     while (i < block.ops.length) {
         let op = block.ops[i];
         if (op.opcode == null) {
-            console.log("Block " + block.label + " has instruction with null opcode");
+            console.error("Block " + block.label + " has instruction with null opcode");
             return false;
         }
         i = i + 1;
@@ -495,4 +495,4 @@ let IR = {
     formatInstruction: formatInstruction
 };
 
-console.log("IR module loaded");
+console.error("IR module loaded");

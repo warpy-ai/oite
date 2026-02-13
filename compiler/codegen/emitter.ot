@@ -402,7 +402,7 @@ function emitNode(emitter, node) {
         return;
     }
 
-    console.log("Unknown node type: " + typeVal);
+    console.error("Unknown node type: " + typeVal);
 }
 
 // ============================================================================
@@ -897,7 +897,7 @@ function getLoopVarName(left) {
 function emitBreakStatement(emitter, node) {
     let loopInfo = currentLoop(emitter);
     if (loopInfo == null) {
-        console.log("Error: break outside of loop");
+        console.error("Error: break outside of loop");
         return;
     }
     emitU8(emitter, OP.JUMP);
@@ -909,7 +909,7 @@ function emitBreakStatement(emitter, node) {
 function emitContinueStatement(emitter, node) {
     let loopInfo = currentLoop(emitter);
     if (loopInfo == null) {
-        console.log("Error: continue outside of loop");
+        console.error("Error: continue outside of loop");
         return;
     }
     emitU8(emitter, OP.JUMP);
@@ -1044,7 +1044,7 @@ function emitBinaryExpression(emitter, node) {
 
     let opcode = getOpCodeForBinaryOp(node.operator);
     if (opcode == -1) {
-        console.log("Unknown binary operator: " + node.operator);
+        console.error("Unknown binary operator: " + node.operator);
         return;
     }
     emitU8(emitter, opcode);
@@ -1056,7 +1056,7 @@ function emitUnaryExpression(emitter, node) {
 
     let opcode = getOpCodeForUnaryOp(node.operator);
     if (opcode == -1) {
-        console.log("Unknown unary operator: " + node.operator);
+        console.error("Unknown unary operator: " + node.operator);
         return;
     }
     emitU8(emitter, opcode);
@@ -1253,7 +1253,7 @@ function emitAssignmentExpression(emitter, node) {
             emitString(emitter, propName);
         }
     } else {
-        console.log("Invalid assignment target: " + leftNode.type);
+        console.error("Invalid assignment target: " + leftNode.type);
     }
 }
 
@@ -1570,7 +1570,7 @@ function emitConditionalExpression(emitter, node) {
 function compile(source) {
     let ast = parseSource(source);
     if (ast == null) {
-        console.log("Parse error");
+        console.error("Parse error");
         return null;
     }
 
@@ -1634,4 +1634,4 @@ let Emitter = {
     emit: emitNode
 };
 
-console.log("Emitter module loaded");
+console.error("Emitter module loaded");

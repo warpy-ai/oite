@@ -359,4 +359,4 @@ function tokenize(source: string): Array<Token> {
     return lexer.tokens;
 }
 
-console.log("Lexer module loaded");
+console.error("Lexer module loaded");

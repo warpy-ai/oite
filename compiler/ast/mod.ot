@@ -10,4 +10,4 @@ type Program = types.Program;
 type Statement = types.Statement;
 type Expression = types.Expression;
 
-console.log("AST module loaded");
+console.error("AST module loaded");
