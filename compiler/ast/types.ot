@@ -349,4 +349,4 @@ interface TypedParam {
     typeAnnotation: TypeAnnotation | null;
 }
 
-console.log("AST types loaded");
+console.error("AST types loaded");

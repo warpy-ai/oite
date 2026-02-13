@@ -494,4 +494,4 @@ let LifetimeConstraints = {
     errorCycleDetected: errorCycleDetected
 };
 
-  console.log("Lifetime constraints module loaded.");
+  console.error("Lifetime constraints module loaded.");

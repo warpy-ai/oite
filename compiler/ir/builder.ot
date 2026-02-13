@@ -1206,4 +1206,4 @@ function irBuilderFinish(builder) {
     return module;
 }
 
-console.log("IR builder loaded");
+console.error("IR builder loaded");

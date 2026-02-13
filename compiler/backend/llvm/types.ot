@@ -74,4 +74,4 @@ function formatNullConstant(): string {
     return "i64 " + String(NULL_VALUE);
 }
 
-console.log("LLVM types module loaded");
+console.error("LLVM types module loaded");

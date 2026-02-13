@@ -1577,7 +1577,7 @@ impl Codegen {
                         let param_name = id.id.sym.to_string();
                         self.instructions.push(OpCode::Let(param_name));
                     } else {
-                        println!("Warning: Non-identifier arrow params not supported yet.");
+                        eprintln!("Warning: Non-identifier arrow params not supported yet.");
                     }
                 }
 
@@ -1700,7 +1700,7 @@ impl Codegen {
                     BinaryOp::RShift => self.instructions.push(OpCode::ShiftRight),
                     BinaryOp::ZeroFillRShift => self.instructions.push(OpCode::ShiftRightUnsigned),
                     BinaryOp::Exp => self.instructions.push(OpCode::Pow),
-                    _ => println!("Warning: Operator {:?} not supported", bin.op),
+                    _ => eprintln!("Warning: Operator {:?} not supported", bin.op),
                 }
             }
             Expr::Unary(unary) => {
@@ -1744,7 +1744,7 @@ impl Codegen {
                                 self.instructions.push(OpCode::Pop);
                                 self.instructions.push(OpCode::Push(JsValue::Undefined));
                             }
-                            _ => println!("Warning: Unary operator {:?} not supported", unary.op),
+                            _ => eprintln!("Warning: Unary operator {:?} not supported", unary.op),
                         }
                     }
                 }
@@ -1890,7 +1890,7 @@ impl Codegen {
                                         self.instructions
                                             .push(OpCode::SetPrivateProp(*field_index));
                                     } else {
-                                        println!(
+                                        eprintln!(
                                             "Warning: Private field '{}' not found",
                                             field_name
                                         );
@@ -1900,9 +1900,9 @@ impl Codegen {
                                 }
                             }
                         }
-                        _ => println!("Warning: Complex assignment target not supported."),
+                        _ => eprintln!("Warning: Complex assignment target not supported."),
                     },
-                    _ => println!("Warning: Complex assignment targets not supported yet."),
+                    _ => eprintln!("Warning: Complex assignment targets not supported yet."),
                 }
             }
             Expr::Object(obj_lit) => {
@@ -2006,7 +2006,7 @@ impl Codegen {
                         if let Some(field_index) = self.private_field_indices.get(&field_name) {
                             self.instructions.push(OpCode::GetPrivateProp(*field_index));
                         } else {
-                            println!("Warning: Private field '{}' not found", field_name);
+                            eprintln!("Warning: Private field '{}' not found", field_name);
                             self.instructions.push(OpCode::Push(JsValue::Undefined));
                         }
                     }

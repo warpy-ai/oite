@@ -90,5 +90,5 @@ let Passes = {
     version: "0.2.0"
 };
 
-console.log("Compiler passes loaded");
-console.log("Available: TypeCheck, Optimizer, BorrowCheck");
+console.error("Compiler passes loaded");
+console.error("Available: TypeCheck, Optimizer, BorrowCheck");

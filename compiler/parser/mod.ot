@@ -32,4 +32,4 @@ type Parser = {
     pos: number
 };
 
-console.log("Parser module loaded");
+console.error("Parser module loaded");

@@ -64,4 +64,4 @@ function formatLexerError(error: LexerError): string {
     return "Lexer Error [" + error.type + "] at line " + error.line + ", col " + error.col + ": " + error.message;
 }
 
-console.log("Lexer errors module loaded");
+console.error("Lexer errors module loaded");

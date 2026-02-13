@@ -62,29 +62,29 @@ function parseArgs(args: string[]): CliArgs {
 }
 
 function printUsage() {
-    console.log("oitec - Oite Compiler");
-    console.log("");
-    console.log("Usage: oitec <command> [options] <input>");
-    console.log("");
-    console.log("Commands:");
-    console.log("  run <file>      Run the file");
-    console.log("  build <file>    Compile to bytecode");
-    console.log("  llvm <file>     Generate LLVM IR (.ll file)");
-    console.log("  check <file>    Type check and borrow check");
-    console.log("  ir <file>       Output Oite IR");
-    console.log("  ast <file>      Output AST");
-    console.log("");
-    console.log("Options:");
-    console.log("  -o, --output    Output file");
-    console.log("  --emit-ir       Emit IR to file");
-    console.log("  --emit-ast      Emit AST to file");
-    console.log("  -v, --verbose   Verbose output");
-    console.log("  --help          Show this help");
+    console.error("oitec - Oite Compiler");
+    console.error("");
+    console.error("Usage: oitec <command> [options] <input>");
+    console.error("");
+    console.error("Commands:");
+    console.error("  run <file>      Run the file");
+    console.error("  build <file>    Compile to bytecode");
+    console.error("  llvm <file>     Generate LLVM IR (.ll file)");
+    console.error("  check <file>    Type check and borrow check");
+    console.error("  ir <file>       Output Oite IR");
+    console.error("  ast <file>      Output AST");
+    console.error("");
+    console.error("Options:");
+    console.error("  -o, --output    Output file");
+    console.error("  --emit-ir       Emit IR to file");
+    console.error("  --emit-ast      Emit AST to file");
+    console.error("  -v, --verbose   Verbose output");
+    console.error("  --help          Show this help");
 }
 
 function logVerbose(verbose: boolean, message: string) {
     if (verbose) {
-        console.log(message);
+        console.error(message);
     }
 }
 
@@ -100,7 +100,7 @@ function compileSource(source: string, verbose: boolean): any {
     logVerbose(verbose, "Parsing...");
     let ast = parseSource(source);
     if (ast == null) {
-        console.log("Parse error");
+        console.error("Parse error");
         return null;
     }
     logVerbose(verbose, "  " + ast.body.length + " statements");
@@ -108,14 +108,14 @@ function compileSource(source: string, verbose: boolean): any {
     logVerbose(verbose, "Lowering to IR...");
     let irModule = lowerProgramToIr(ast);
     if (irModule == null) {
-        console.log("IR lowering error");
+        console.error("IR lowering error");
         return null;
     }
     logVerbose(verbose, "  " + irModule.functions.length + " functions");
 
     logVerbose(verbose, "Verifying IR...");
     if (!verifyIrModule(irModule)) {
-        console.log("IR verification failed");
+        console.error("IR verification failed");
         return null;
     }
 
@@ -139,12 +139,12 @@ function main(args: string[]) {
     let parsed = parseArgs(args);
 
     if (parsed.inputFile == "") {
-        console.log("Error: No input file specified");
+        console.error("Error: No input file specified");
         return;
     }
 
     if (!fs.existsSync(parsed.inputFile)) {
-        console.log("Error: File not found: " + parsed.inputFile);
+        console.error("Error: File not found: " + parsed.inputFile);
         return;
     }
 
@@ -163,7 +163,7 @@ function main(args: string[]) {
 
         let ast = parseSource(source);
         if (ast == null) {
-            console.log("Parse error");
+            console.error("Parse error");
             return;
         }
         logVerbose(parsed.verbose, "  Parsed " + ast.body.length + " statements");
@@ -171,10 +171,10 @@ function main(args: string[]) {
         // Run AST-level borrow checking
         let astResult = Passes.checkAst(ast);
         if (astResult.errors.length > 0) {
-            console.log("Borrow check errors:");
+            console.error("Borrow check errors:");
             let i = 0;
             while (i < astResult.errors.length) {
-                console.log("  " + BorrowCheck.formatError(astResult.errors[i]));
+                console.error("  " + BorrowCheck.formatError(astResult.errors[i]));
                 i = i + 1;
             }
             return;
@@ -183,7 +183,7 @@ function main(args: string[]) {
         // Lower to IR and run additional passes
         let irModule = lowerProgramToIr(ast);
         if (irModule == null) {
-            console.log("IR lowering error");
+            console.error("IR lowering error");
             return;
         }
 
@@ -196,14 +196,14 @@ function main(args: string[]) {
         logVerbose(parsed.verbose, "  Optimization passed");
 
         // Verify IR
-        console.log("  Verifying IR...");
+        console.error("  Verifying IR...");
         if (!verifyIrModule(irModule)) {
-            console.log("IR verification failed");
+            console.error("IR verification failed");
             return;
         }
-        console.log("  IR verified");
+        console.error("  IR verified");
 
-        console.log("Check passed: " + parsed.inputFile);
+        console.error("Check passed: " + parsed.inputFile);
         return;
     }
 
@@ -225,7 +225,7 @@ function main(args: string[]) {
 
         let irModule = compileSource(source, parsed.verbose);
         if (irModule == null) {
-            console.log("Compilation failed");
+            console.error("Compilation failed");
             return;
         }
 
@@ -243,11 +243,11 @@ function main(args: string[]) {
         }
 
         fs.writeFileSync(outputFile, llvmIr);
-        console.log("Generated: " + outputFile);
-        console.log("");
-        console.log("To compile to native binary:");
-        console.log("  llc -filetype=obj " + outputFile + " -o output.o");
-        console.log("  clang output.o -o output");
+        console.error("Generated: " + outputFile);
+        console.error("");
+        console.error("To compile to native binary:");
+        console.error("  llc -filetype=obj " + outputFile + " -o output.o");
+        console.error("  clang output.o -o output");
         return;
     }
 
@@ -256,7 +256,7 @@ function main(args: string[]) {
 
         let ast = parseSource(source);
         if (ast == null) {
-            console.log("Parse error");
+            console.error("Parse error");
             return;
         }
         logVerbose(parsed.verbose, "  Parsed " + ast.body.length + " statements");
@@ -264,7 +264,7 @@ function main(args: string[]) {
         // Use direct emitter for VM-compatible bytecode
         let result = Emitter.compileAst(ast);
         if (result == null) {
-            console.log("Bytecode generation failed");
+            console.error("Bytecode generation failed");
             return;
         }
         logVerbose(parsed.verbose, "  Generated " + result.length + " bytes");
@@ -276,7 +276,7 @@ function main(args: string[]) {
 
         // fs.writeBinaryFile expects a ByteStream object directly
         fs.writeBinaryFile(outputFile, result.bytecode);
-        console.log("Compiled: " + parsed.inputFile + " -> " + outputFile + " (" + result.length + " bytes)");
+        console.error("Compiled: " + parsed.inputFile + " -> " + outputFile + " (" + result.length + " bytes)");
         return;
     }
 
@@ -285,19 +285,19 @@ function main(args: string[]) {
 
     let ast = parseSource(source);
     if (ast == null) {
-        console.log("Parse error");
+        console.error("Parse error");
         return;
     }
 
     // Generate bytecode
     let result = Emitter.compileAst(ast);
     if (result == null) {
-        console.log("Bytecode generation failed");
+        console.error("Bytecode generation failed");
         return;
     }
 
-    console.log("Bytecode generated (" + result.length + " bytes)");
-    console.log("To run, use the VM: ./target/release/script --run-binary <file.bc>");
+    console.error("Bytecode generated (" + result.length + " bytes)");
+    console.error("To run, use the VM: ./target/release/script --run-binary <file.bc>");
     return;
 }
 
@@ -331,7 +331,7 @@ let Compiler = {
     version: "0.5.0"
 };
 
-console.log("Oite compiler loaded (v" + Compiler.version + ")");
+console.error("Oite compiler loaded (v" + Compiler.version + ")");
 
 // ============================================================================
 // Auto-invoke main() with command-line arguments

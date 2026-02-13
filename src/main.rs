@@ -143,18 +143,18 @@ fn run_binary_file(vm: &mut VM, path: &str) -> Result<(), String> {
 
     match decoder.decode_all() {
         Ok(program) => {
-            println!("Loaded {} instructions from binary file", program.len());
+            eprintln!("Loaded {} instructions from binary file", program.len());
             // Debug: print each instruction
             for (i, op) in program.iter().enumerate() {
-                println!("  [{}] {:?}", i, op);
+                eprintln!("  [{}] {:?}", i, op);
             }
             // Debug: check if console is in global frame
             if let Some(frame) = vm.call_stack.first() {
-                println!("Global frame has {} locals", frame.locals.len());
+                eprintln!("Global frame has {} locals", frame.locals.len());
                 if frame.locals.contains_key("console") {
-                    println!("  - console: found");
+                    eprintln!("  - console: found");
                 } else {
-                    println!("  - console: NOT FOUND!");
+                    eprintln!("  - console: NOT FOUND!");
                 }
             }
             let offset = vm.append_program(program);

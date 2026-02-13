@@ -712,4 +712,4 @@ let Optimizer = {
     optimizeModule: optimizeModule
 };
 
-console.log("Optimizer pass loaded");
+console.error("Optimizer pass loaded");

@@ -875,4 +875,4 @@ let BorrowCheck = {
     getLifetimeConstraints: getLifetimeConstraints
 };
 
-console.log("BorrowCheck pass loaded");
+console.error("BorrowCheck pass loaded");

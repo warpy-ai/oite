@@ -1135,4 +1135,4 @@ function isAtEnd(parser) {
     return peekType(parser) == "EOF";
 }
 
-console.log("Statement parsers loaded");
+console.error("Statement parsers loaded");

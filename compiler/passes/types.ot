@@ -1909,7 +1909,7 @@ function getErrors(checker) {
 function printErrors(checker) {
     let i = 0;
     while (i < checker.errors.length) {
-        console.log("TypeError: " + checker.errors[i].message);
+        console.error("TypeError: " + checker.errors[i].message);
         i = i + 1;
     }
 }
@@ -1961,4 +1961,4 @@ let Types = {
     lifetimeOutlives: lifetimeOutlives,
 };
 
-console.log("Structural type checker loaded");
+console.error("Structural type checker loaded");

@@ -203,4 +203,4 @@ function getKeywordType(value: string): string {
     return "Unknown";
 }
 
-console.log("Token types loaded");
+console.error("Token types loaded");
