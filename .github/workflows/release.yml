@@ -122,6 +122,10 @@ jobs:
           # Remove arm64 zstd to prevent linker from finding it
           sudo rm -rf /opt/homebrew/opt/zstd
 
+          # Remove dynamic zstd libs from x86_64 install so the linker uses the static archive,
+          # preventing a runtime dependency on libzstd.1.dylib
+          rm -f /usr/local/opt/zstd/lib/libzstd*.dylib
+
           export MACOSX_DEPLOYMENT_TARGET=14.0
 
           # Use x86_64 clang wrapper so the linker runs as x86_64 and picks up x86_64 libs
@@ -129,12 +133,24 @@ jobs:
 
           # Ensure the linker sees the x86_64 zstd and llvm libs
           export LIBRARY_PATH="/usr/local/opt/zstd/lib:/usr/local/opt/llvm@18/lib"
-          export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/usr/local/opt/zstd/lib -C link-arg=-lzstd -C link-arg=-L/usr/local/opt/llvm@18/lib -C link-arg=-mmacosx-version-min=14.0"
+          export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/usr/local/opt/zstd/lib -C link-arg=-L/usr/local/opt/llvm@18/lib -C link-arg=-mmacosx-version-min=14.0"
+
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Build release binary (aarch64 macOS)
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: |
+          # Remove dynamic zstd libs so the linker uses the static archive,
+          # preventing a runtime dependency on /opt/homebrew/opt/zstd/lib/libzstd.1.dylib
+          rm -f /opt/homebrew/opt/zstd/lib/libzstd*.dylib
+
+          export MACOSX_DEPLOYMENT_TARGET=14.0
+          export LIBRARY_PATH="/opt/homebrew/opt/zstd/lib:/opt/homebrew/opt/llvm@18/lib"
 
           cargo build --release --target ${{ matrix.target }}
 
       - name: Build release binary
-        if: matrix.target != 'x86_64-apple-darwin'
+        if: matrix.target != 'x86_64-apple-darwin' && matrix.target != 'aarch64-apple-darwin'
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Run tests
