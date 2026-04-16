@@ -122,30 +122,37 @@ jobs:
           # Remove arm64 zstd to prevent linker from finding it
           sudo rm -rf /opt/homebrew/opt/zstd
 
-          # Remove dynamic zstd libs from x86_64 install so the linker uses the static archive,
-          # preventing a runtime dependency on libzstd.1.dylib
-          rm -f /usr/local/opt/zstd/lib/libzstd*.dylib
+          # Copy only the static zstd archive to an isolated directory.
+          # The linker will find libzstd.a here (no .dylib), producing a
+          # self-contained binary without a runtime dependency on libzstd.1.dylib.
+          # We cannot remove the original .dylib because llvm-config needs it.
+          mkdir -p /tmp/zstd-static
+          cp /usr/local/opt/zstd/lib/libzstd.a /tmp/zstd-static/
 
           export MACOSX_DEPLOYMENT_TARGET=14.0
 
           # Use x86_64 clang wrapper so the linker runs as x86_64 and picks up x86_64 libs
           export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=/usr/local/bin/clang-x86_64
 
-          # Ensure the linker sees the x86_64 zstd and llvm libs
-          export LIBRARY_PATH="/usr/local/opt/zstd/lib:/usr/local/opt/llvm@18/lib"
-          export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/usr/local/opt/zstd/lib -C link-arg=-L/usr/local/opt/llvm@18/lib -C link-arg=-mmacosx-version-min=14.0"
+          # Point to static-only dir first so linker prefers libzstd.a over the .dylib
+          export LIBRARY_PATH="/tmp/zstd-static:/usr/local/opt/llvm@18/lib"
+          export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/tmp/zstd-static -C link-arg=-L/usr/local/opt/llvm@18/lib -C link-arg=-mmacosx-version-min=14.0"
 
           cargo build --release --target ${{ matrix.target }}
 
       - name: Build release binary (aarch64 macOS)
         if: matrix.target == 'aarch64-apple-darwin'
         run: |
-          # Remove dynamic zstd libs so the linker uses the static archive,
-          # preventing a runtime dependency on /opt/homebrew/opt/zstd/lib/libzstd.1.dylib
-          rm -f /opt/homebrew/opt/zstd/lib/libzstd*.dylib
+          # Copy only the static zstd archive to an isolated directory.
+          # The linker will find libzstd.a here (no .dylib), producing a
+          # self-contained binary without a runtime dependency on libzstd.1.dylib.
+          # We cannot remove the original .dylib because llvm-config needs it.
+          mkdir -p /tmp/zstd-static
+          cp /opt/homebrew/opt/zstd/lib/libzstd.a /tmp/zstd-static/
 
           export MACOSX_DEPLOYMENT_TARGET=14.0
-          export LIBRARY_PATH="/opt/homebrew/opt/zstd/lib:/opt/homebrew/opt/llvm@18/lib"
+          export LIBRARY_PATH="/tmp/zstd-static:/opt/homebrew/opt/llvm@18/lib"
+          export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS="-L /tmp/zstd-static"
 
           cargo build --release --target ${{ matrix.target }}
 
@@ -160,6 +167,16 @@ jobs:
       - name: Strip binary (Linux)
         if: runner.os == 'Linux'
         run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+
+      - name: Verify no dynamic zstd dependency (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          if otool -L target/${{ matrix.target }}/release/${{ matrix.artifact_name }} | grep -q libzstd; then
+            echo "ERROR: binary still dynamically links to libzstd" >&2
+            otool -L target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+            exit 1
+          fi
+          echo "OK: no dynamic zstd dependency"
 
       - name: Strip binary (macOS)
         if: runner.os == 'macOS'
