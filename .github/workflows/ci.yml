@@ -27,14 +27,33 @@ env:
 
 jobs:
   test:
-    name: Test (${{ matrix.os }})
+    name: Test (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     # Limit job execution time to prevent resource abuse
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact_name: oitec
+            asset_name: oitec-x86_64-apple-darwin
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact_name: oitec
+            asset_name: oitec-aarch64-apple-darwin
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact_name: oitec
+            asset_name: oitec-x86_64-unknown-linux-gnu
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            artifact_name: oitec
+            asset_name: oitec-aarch64-unknown-linux-gnu
 
     steps:
       - name: Checkout repository
@@ -53,7 +72,7 @@ jobs:
           wget -qO- https://apt.llvm.org/llvm.sh -O llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 18
-          sudo apt-get install -y libpolly-18-dev
+          sudo apt-get install -y libzstd-dev libpolly-18-dev
           echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
 
       - name: Install LLVM 18 (macOS)
@@ -69,9 +88,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ matrix.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ matrix.os }}-${{ matrix.target }}-cargo-
 
       - name: Build
         run: cargo build --release
