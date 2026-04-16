@@ -27,7 +27,7 @@ env:
 
 jobs:
   test:
-    name: Test (${{ matrix.target }})
+    name: Test (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     # Limit job execution time to prevent resource abuse
     timeout-minutes: 30
@@ -35,25 +35,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            artifact_name: oitec
-            asset_name: oitec-x86_64-apple-darwin
-
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            artifact_name: oitec
-            asset_name: oitec-aarch64-apple-darwin
-
-          - target: x86_64-unknown-linux-gnu
+          # Native builds only — x86_64-apple-darwin cross-compile is tested in release.yml
+          - name: linux-x86_64
             os: ubuntu-latest
-            artifact_name: oitec
-            asset_name: oitec-x86_64-unknown-linux-gnu
-
-          - target: aarch64-unknown-linux-gnu
+          - name: linux-aarch64
             os: ubuntu-24.04-arm
-            artifact_name: oitec
-            asset_name: oitec-aarch64-unknown-linux-gnu
+          - name: macos-aarch64
+            os: macos-latest
 
     steps:
       - name: Checkout repository
@@ -88,15 +76,26 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ matrix.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ matrix.os }}-${{ matrix.name }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ matrix.os }}-${{ matrix.target }}-cargo-
+            ${{ matrix.os }}-${{ matrix.name }}-cargo-
 
       - name: Build
         run: cargo build --release
 
       - name: Run Rust tests
         run: cargo test --release
+
+      - name: Verify no Homebrew dynamic dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "=== Dynamic libraries ==="
+          otool -L target/release/oitec
+
+          FAIL=0
+          if otool -L target/release/oitec | grep -q '/opt/homebrew'; then
+            echo "WARNING: binary references /opt/homebrew paths (expected in dev, blocked in release)" >&2
+          fi
 
       - name: Run bootstrap verification
         run: |

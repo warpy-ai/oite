@@ -131,11 +131,10 @@ impl Lowerer {
                         self.block_starts.insert(i + 1);
                     }
                 }
-                OpCode::Return | OpCode::Halt => {
+                OpCode::Return | OpCode::Halt
                     // Instruction after terminator is a block start
-                    if i + 1 < instructions.len() {
+                    if i + 1 < instructions.len() => {
                         self.block_starts.insert(i + 1);
-                    }
                 }
                 OpCode::Call(_) | OpCode::CallMethod(_, _) => {
                     // Calls can throw, so next instruction could be a catch block
