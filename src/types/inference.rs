@@ -611,10 +611,9 @@ fn collect_lifetimes_from_type(ty: &Type, lifetimes: &mut Vec<LifetimeId>) {
                 lifetimes.push(fresh);
             }
         }
-        Type::RefWithLifetime(id, _) | Type::MutRefWithLifetime(id, _) => {
-            if !lifetimes.contains(id) {
+        Type::RefWithLifetime(id, _) | Type::MutRefWithLifetime(id, _)
+            if !lifetimes.contains(id) => {
                 lifetimes.push(*id);
-            }
         }
         Type::Array(inner) => collect_lifetimes_from_type(inner, lifetimes),
         Type::Object(obj) => {
