@@ -1,5 +1,5 @@
 [target.aarch64-apple-darwin]
-rustflags = ["-L", "/opt/homebrew/opt/zstd/lib"]
+rustflags = ["-C", "link-arg=/opt/homebrew/opt/zstd/lib/libzstd.a"]
 
 [target.x86_64-apple-darwin]
-rustflags = ["-L", "/opt/homebrew/opt/zstd/lib"]
+rustflags = ["-C", "link-arg=/usr/local/opt/zstd/lib/libzstd.a"]
