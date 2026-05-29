@@ -141,6 +141,29 @@ jobs:
         if: matrix.target != 'x86_64-apple-darwin'
         run: cargo test --release --target ${{ matrix.target }}
 
+      - name: Force static libzstd (macOS aarch64)
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: |
+          # llvm-sys links zstd via `-lzstd`; macOS ld prefers libzstd.dylib over
+          # libzstd.a when both exist, baking a dependency on the Homebrew path
+          # /opt/homebrew/opt/zstd/lib/libzstd.1.dylib that is absent on end-user
+          # machines. llvm-config itself loads libzstd at runtime, so the dylib
+          # must stay until after build/test; only then can we remove it and relink
+          # the final binary so ld falls back to the static libzstd.a.
+          sudo rm -f /opt/homebrew/opt/zstd/lib/libzstd*.dylib /opt/homebrew/lib/libzstd*.dylib
+          touch src/main.rs
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Verify no dynamic zstd dependency (macOS aarch64)
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: |
+          otool -L target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          if otool -L target/${{ matrix.target }}/release/${{ matrix.artifact_name }} | grep -q libzstd; then
+            echo "ERROR: binary still dynamically links to libzstd" >&2
+            exit 1
+          fi
+          echo "OK: no dynamic zstd dependency"
+
       - name: Strip binary (Linux)
         if: runner.os == 'Linux'
         run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
