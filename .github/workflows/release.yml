@@ -11,6 +11,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # crates.io downloads occasionally return partial files ([18] curl error);
+  # retry instead of failing the whole build.
+  CARGO_NET_RETRY: 10
 
 jobs:
   build:
@@ -122,14 +125,21 @@ jobs:
           # Remove arm64 zstd to prevent linker from finding it
           sudo rm -rf /opt/homebrew/opt/zstd
 
+          # Copy only the static zstd archive to an isolated directory.
+          # The linker will find libzstd.a here (no .dylib), producing a
+          # self-contained binary without a runtime dependency on libzstd.1.dylib.
+          # We cannot remove the original .dylib because llvm-config needs it.
+          mkdir -p /tmp/zstd-static
+          cp /usr/local/opt/zstd/lib/libzstd.a /tmp/zstd-static/
+
           export MACOSX_DEPLOYMENT_TARGET=14.0
 
           # Use x86_64 clang wrapper so the linker runs as x86_64 and picks up x86_64 libs
           export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=/usr/local/bin/clang-x86_64
 
-          # Ensure the linker sees the x86_64 zstd and llvm libs
-          export LIBRARY_PATH="/usr/local/opt/zstd/lib:/usr/local/opt/llvm@18/lib"
-          export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/usr/local/opt/zstd/lib -C link-arg=-lzstd -C link-arg=-L/usr/local/opt/llvm@18/lib -C link-arg=-mmacosx-version-min=14.0"
+          # Point to static-only dir first so linker prefers libzstd.a over the .dylib
+          export LIBRARY_PATH="/tmp/zstd-static:/usr/local/opt/llvm@18/lib"
+          export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L/tmp/zstd-static -C link-arg=-L/usr/local/opt/llvm@18/lib -C link-arg=-mmacosx-version-min=14.0"
 
           cargo build --release --target ${{ matrix.target }}
 
@@ -145,28 +155,28 @@ jobs:
         if: matrix.target == 'aarch64-apple-darwin'
         run: |
           # llvm-sys links zstd via `-lzstd`; macOS ld prefers libzstd.dylib over
-          # libzstd.a when both exist, baking a dependency on the Homebrew path
+          # libzstd.a when both are present, baking a dependency on the Homebrew path
           # /opt/homebrew/opt/zstd/lib/libzstd.1.dylib that is absent on end-user
-          # machines. llvm-config itself loads libzstd at runtime, so the dylib
-          # must stay until after build/test; only then can we remove it and relink
-          # the final binary so ld falls back to the static libzstd.a.
+          # machines. llvm-config itself loads libzstd at runtime, so the dylib must
+          # stay until after the build/test phase; only then can we remove it and
+          # relink the final binary so ld falls back to the static libzstd.a.
           sudo rm -f /opt/homebrew/opt/zstd/lib/libzstd*.dylib /opt/homebrew/lib/libzstd*.dylib
           touch src/main.rs
           cargo build --release --target ${{ matrix.target }}
 
-      - name: Verify no dynamic zstd dependency (macOS aarch64)
-        if: matrix.target == 'aarch64-apple-darwin'
-        run: |
-          otool -L target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
-          if otool -L target/${{ matrix.target }}/release/${{ matrix.artifact_name }} | grep -q libzstd; then
-            echo "ERROR: binary still dynamically links to libzstd" >&2
-            exit 1
-          fi
-          echo "OK: no dynamic zstd dependency"
-
       - name: Strip binary (Linux)
         if: runner.os == 'Linux'
         run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+
+      - name: Verify no dynamic zstd dependency (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          if otool -L target/${{ matrix.target }}/release/${{ matrix.artifact_name }} | grep -q libzstd; then
+            echo "ERROR: binary still dynamically links to libzstd" >&2
+            otool -L target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+            exit 1
+          fi
+          echo "OK: no dynamic zstd dependency"
 
       - name: Strip binary (macOS)
         if: runner.os == 'macOS'
