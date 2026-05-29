@@ -11,6 +11,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # crates.io downloads occasionally return partial files ([18] curl error);
+  # retry instead of failing the whole build.
+  CARGO_NET_RETRY: 10
 
 jobs:
   build:
@@ -56,11 +59,13 @@ jobs:
       - name: Install LLVM 18 (Ubuntu)
         if: runner.os == 'Linux'
         run: |
-          wget -qO- https://apt.llvm.org/llvm.sh -O llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 18
-          sudo apt-get install -y libzstd-dev libpolly-18-dev
-          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+          # Install LLVM 18 dev headers, Polly, and zstd from the distro repo.
+          # See ci.yml for why we avoid apt.llvm.org's llvm.sh (it upgrades libllvm18
+          # to a snapshot that Breaks the distro llvm-18-dev). The arm64 runner image
+          # preinstalls no LLVM, so the dev headers must be installed explicitly.
+          sudo apt-get update
+          sudo apt-get install -y llvm-18-dev libpolly-18-dev libzstd-dev
+          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
 
       - name: Install LLVM 18 (macOS aarch64)
         if: runner.os == 'macOS' && matrix.target == 'aarch64-apple-darwin'
@@ -140,22 +145,6 @@ jobs:
 
           cargo build --release --target ${{ matrix.target }}
 
-      - name: Build release binary (aarch64 macOS)
-        if: matrix.target == 'aarch64-apple-darwin'
-        run: |
-          # Copy only the static zstd archive to an isolated directory.
-          # The linker will find libzstd.a here (no .dylib), producing a
-          # self-contained binary without a runtime dependency on libzstd.1.dylib.
-          # We cannot remove the original .dylib because llvm-config needs it.
-          mkdir -p /tmp/zstd-static
-          cp /opt/homebrew/opt/zstd/lib/libzstd.a /tmp/zstd-static/
-
-          export MACOSX_DEPLOYMENT_TARGET=14.0
-          export LIBRARY_PATH="/tmp/zstd-static:/opt/homebrew/opt/llvm@18/lib"
-          export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS="-L /tmp/zstd-static"
-
-          cargo build --release --target ${{ matrix.target }}
-
       - name: Build release binary
         if: matrix.target != 'x86_64-apple-darwin' && matrix.target != 'aarch64-apple-darwin'
         run: cargo build --release --target ${{ matrix.target }}
@@ -163,6 +152,19 @@ jobs:
       - name: Run tests
         if: matrix.target != 'x86_64-apple-darwin'
         run: cargo test --release --target ${{ matrix.target }}
+
+      - name: Force static libzstd (macOS aarch64)
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: |
+          # llvm-sys links zstd via `-lzstd`; macOS ld prefers libzstd.dylib over
+          # libzstd.a when both are present, baking a dependency on the Homebrew path
+          # /opt/homebrew/opt/zstd/lib/libzstd.1.dylib that is absent on end-user
+          # machines. llvm-config itself loads libzstd at runtime, so the dylib must
+          # stay until after the build/test phase; only then can we remove it and
+          # relink the final binary so ld falls back to the static libzstd.a.
+          sudo rm -f /opt/homebrew/opt/zstd/lib/libzstd*.dylib /opt/homebrew/lib/libzstd*.dylib
+          touch src/main.rs
+          cargo build --release --target ${{ matrix.target }}
 
       - name: Strip binary (Linux)
         if: runner.os == 'Linux'
