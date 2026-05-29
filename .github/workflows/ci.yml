@@ -72,14 +72,15 @@ jobs:
       - name: Install LLVM 18 (Ubuntu)
         if: runner.os == 'Linux'
         run: |
-          wget -qO- https://apt.llvm.org/llvm.sh -O llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 18
-          # llvm-18-dev provides the LLVM C headers (llvm-c/Target.h) that llvm-sys
-          # compiles against. llvm.sh does not install it, and the arm64 runner image
-          # has no preinstalled LLVM, so without this the aarch64 build fails.
-          sudo apt-get install -y llvm-18-dev libzstd-dev libpolly-18-dev
-          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+          # Ubuntu 24.04 (noble) ships LLVM 18 natively, so install the dev headers
+          # (llvm-c/Target.h, needed by llvm-sys), Polly, and zstd from the distro repo.
+          # We deliberately avoid apt.llvm.org's llvm.sh: it upgrades libllvm18 to a
+          # snapshot build that Breaks the distro llvm-18-dev, which produces
+          # unmet-dependency failures (notably on the arm64 runner, whose image
+          # preinstalls no LLVM).
+          sudo apt-get update
+          sudo apt-get install -y llvm-18-dev libpolly-18-dev libzstd-dev
+          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
 
       - name: Install LLVM 18 (macOS)
         if: runner.os == 'macOS'
@@ -128,11 +129,10 @@ jobs:
 
       - name: Install LLVM 18
         run: |
-          wget -qO- https://apt.llvm.org/llvm.sh -O llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 18
-          sudo apt-get install -y llvm-18-dev libzstd-dev libpolly-18-dev
-          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+          # Use the distro's native LLVM 18 (see the test job for why we avoid llvm.sh).
+          sudo apt-get update
+          sudo apt-get install -y llvm-18-dev libpolly-18-dev libzstd-dev
+          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
 
       - name: Cache cargo registry
         uses: actions/cache@v4 # v4.2.3

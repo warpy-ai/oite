@@ -59,11 +59,13 @@ jobs:
       - name: Install LLVM 18 (Ubuntu)
         if: runner.os == 'Linux'
         run: |
-          wget -qO- https://apt.llvm.org/llvm.sh -O llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 18
-          sudo apt-get install -y libzstd-dev libpolly-18-dev
-          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+          # Install LLVM 18 dev headers, Polly, and zstd from the distro repo.
+          # See ci.yml for why we avoid apt.llvm.org's llvm.sh (it upgrades libllvm18
+          # to a snapshot that Breaks the distro llvm-18-dev). The arm64 runner image
+          # preinstalls no LLVM, so the dev headers must be installed explicitly.
+          sudo apt-get update
+          sudo apt-get install -y llvm-18-dev libpolly-18-dev libzstd-dev
+          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
 
       - name: Install LLVM 18 (macOS aarch64)
         if: runner.os == 'macOS' && matrix.target == 'aarch64-apple-darwin'
