@@ -3,15 +3,18 @@
 
 use oite::compiler::Compiler;
 
+/// The real aphorio lib/index.ts (github.com/prettydiff/aphorio).
+const APHORIO_INDEX: &str = include_str!("fixtures/aphorio_index.ts");
+
 fn compile(src: &str) -> Result<(), String> {
     Compiler::new().compile(src).map(|_| ())
 }
 
-/// The real aphorio lib/index.ts (github.com/prettydiff/aphorio).
 #[test]
-fn issue_39_aphorio_index_compiles() {
-    let r = compile(include_str!("fixtures/aphorio_index.ts"));
-    assert!(r.is_ok(), "expected clean compile, got: {:?}", r);
+fn issue_39_process_path_is_not_moved() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile(APHORIO_INDEX);
+    assert!(result.is_ok(), "expected clean compile, got: {:?}", result);
 }
 
 /// Passing a variable to a function borrows it only for that statement, so a
