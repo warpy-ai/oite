@@ -97,11 +97,21 @@ jobs:
           echo "LLVM_SYS_180_PREFIX=/usr/local/opt/llvm@18" >> $GITHUB_ENV
           rustup target add x86_64-apple-darwin
 
+          # Homebrew's clang has no built-in SDK: Homebrew normally injects -isysroot
+          # through its own build environment, which a direct invocation bypasses. Without
+          # it the linker gets no -syslibroot and fails to find libm/libSystem, which only
+          # exist inside the SDK as .tbd stubs. Pin the SDK explicitly.
+          SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          if [ ! -d "$SDKROOT" ]; then
+            echo "macOS SDK not found (xcrun returned '$SDKROOT')" >&2
+            exit 1
+          fi
+
           # Create a linker wrapper that forces clang to run under x86_64 (Rosetta)
           # This ensures the linker itself runs as x86_64 and properly links x86_64 libraries
-          sudo tee /usr/local/bin/clang-x86_64 >/dev/null <<'EOF'
+          sudo tee /usr/local/bin/clang-x86_64 >/dev/null <<EOF
           #!/bin/sh
-          exec arch -x86_64 /usr/local/opt/llvm@18/bin/clang "$@"
+          exec arch -x86_64 /usr/local/opt/llvm@18/bin/clang -isysroot "$SDKROOT" "\$@"
           EOF
           sudo chmod +x /usr/local/bin/clang-x86_64
 
