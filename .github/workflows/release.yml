@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v*"
+  # Build-only dry run: lets the build matrix be exercised from any branch without
+  # burning a tag. The release job is tag-gated, so nothing is published.
+  workflow_dispatch:
 
 # Restrict permissions - only release job needs write access
 permissions:
@@ -201,6 +204,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Publish only for tag pushes. A workflow_dispatch run has no tag, so the version
+    # below would resolve to a branch ref and cut a bogus release.
+    if: startsWith(github.ref, 'refs/tags/')
     # Only this job needs write permissions
     permissions:
       contents: write
