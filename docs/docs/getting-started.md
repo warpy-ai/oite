@@ -17,6 +17,19 @@ keywords:
 
 This guide will help you install Oite and build your first program.
 
+## Supported Platforms
+
+Oite builds on **macOS** and **Linux**. These are the platforms covered by CI.
+
+Native Windows (`x86_64-pc-windows-msvc`) is **not supported yet** — build Oite under
+[WSL2](#windows-wsl2) instead.
+
+:::info LLVM 18 is required to build Oite at all
+Oite depends on `llvm-sys`, which is a mandatory dependency — not an optional one. Even
+though the Cranelift JIT backend does not *use* LLVM at runtime, LLVM 18 and its development
+libraries must be present to **compile** Oite. `cargo build` will fail without them.
+:::
+
 ## Installation
 
 ### Step 1: Install Prerequisites
@@ -27,38 +40,74 @@ This guide will help you install Oite and build your first program.
 # Install Rust (if not already installed)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Install LLVM 18 (required for AOT compilation)
-brew install llvm@18
-
-# Install zstd (required for linking)
-brew install zstd
+# Install LLVM 18 and zstd (required for linking)
+brew install llvm@18 zstd
 
 # Set LLVM environment variable (add to ~/.zshrc or ~/.bashrc)
 echo 'export LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-**Linux (Ubuntu/Debian):**
+**Linux (Ubuntu 24.04 / Debian 13+):**
+
+Ubuntu 24.04 (noble) and Debian 13 (trixie) ship LLVM 18 in their own repositories, so the
+development packages can be installed directly. This is the path CI uses.
 
 ```bash
 # Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Install LLVM 18
-wget https://apt.llvm.org/llvm.sh
-chmod +x llvm.sh
-sudo ./llvm.sh 18
-
-# Install zstd
-sudo apt install libzstd-dev
+# Install LLVM 18 development headers, Polly, and zstd
+sudo apt update
+sudo apt install -y llvm-18-dev libpolly-18-dev libzstd-dev
 
 # Set LLVM path
 echo 'export LLVM_SYS_180_PREFIX=/usr/lib/llvm-18' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-:::note
-The Cranelift JIT backend works without LLVM. LLVM is only required for AOT (ahead-of-time) compilation to native binaries.
+:::caution Older distributions
+If your distribution has no `llvm-18-dev` package (for example Debian 12 "bookworm", which
+ships LLVM 14), use the official packages from [apt.llvm.org](https://apt.llvm.org/) to
+install LLVM 18.
+
+Prefer installing the `llvm-18-dev` package from that repository over running the
+`llvm.sh` convenience script. On distributions that already ship LLVM 18, `llvm.sh` upgrades
+`libllvm18` to a snapshot build that conflicts with the distro's `llvm-18-dev`, producing
+unmet-dependency errors.
+:::
+
+### Windows (WSL2)
+
+Oite cannot currently be built natively on Windows, for two independent reasons:
+
+1. **The official LLVM installer is unusable with `llvm-sys`.** `llvm-sys` needs
+   `llvm-config` to discover which libraries and compiler flags to link. As the
+   [llvm-sys documentation](https://crates.io/crates/llvm-sys) states, binary distributions
+   of LLVM — including the official release packages and the `winget` LLVM package — generally
+   **do not ship `llvm-config`**, along with the static libraries and headers it reports. This
+   is why installing LLVM from the official Windows installer and adding
+   `C:\Program Files\LLVM\bin` to `PATH` does not work: the files `llvm-sys` needs were never
+   installed, so no amount of `PATH` or `LLVM_SYS_180_PREFIX` configuration will find them.
+   The official installers also track the latest LLVM release, whereas Oite requires 18.x.
+2. **Oite's runtime is currently Unix-only.** The async reactor
+   (`src/runtime/async/reactor.rs`) imports `std::os::unix::io::RawFd` unconditionally, which
+   does not exist on Windows targets. So even with a hand-built LLVM 18, the build would still
+   fail to compile.
+
+**Use WSL2**, which runs a real Linux toolchain and needs no LLVM build from source:
+
+```powershell
+# In PowerShell (as Administrator), install WSL2 with Ubuntu 24.04
+wsl --install -d Ubuntu-24.04
+```
+
+Then open the Ubuntu shell and follow the **Linux (Ubuntu 24.04 / Debian 13+)** instructions
+above verbatim. Everything from Step 2 onward works unchanged.
+
+:::tip
+Keep the repository inside the Linux filesystem (e.g. `~/oite`) rather than under `/mnt/c/`.
+Building on the Windows-mounted drive is dramatically slower.
 :::
 
 ### Step 2: Clone and Build Oite

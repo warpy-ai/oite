@@ -121,20 +121,61 @@ See [docs/ARCHITECTURE.md](docs/docs/architecture.md) for detailed diagrams and 
 
 ### Prerequisites
 
-**Required for LLVM AOT backend:**
+Oite builds on **macOS** and **Linux**. Native Windows is not supported yet — use
+[WSL2](#windows-wsl2).
+
+> **LLVM 18 is required to build Oite at all.** `llvm-sys` is a mandatory dependency, so
+> LLVM 18 and its development libraries must be installed even if you only intend to use the
+> Cranelift JIT backend. `cargo build` fails without them.
+
+**macOS:**
 
 ```bash
-# Install LLVM 18 (required for AOT compilation)
-brew install llvm@18
-
-# Install zstd (required for linking)
-brew install zstd
+# Install LLVM 18 and zstd (required for linking)
+brew install llvm@18 zstd
 
 # Set LLVM environment variable (add to ~/.zshrc or ~/.bashrc for persistence)
 export LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)
 ```
 
-**Note:** The Cranelift JIT backend works without LLVM. LLVM is only required if you want to use the AOT compilation backend.
+**Linux (Ubuntu 24.04 / Debian 13+):**
+
+```bash
+# Install LLVM 18 development headers, Polly, and zstd
+sudo apt update
+sudo apt install -y llvm-18-dev libpolly-18-dev libzstd-dev
+
+# Set LLVM environment variable (add to ~/.bashrc for persistence)
+export LLVM_SYS_180_PREFIX=/usr/lib/llvm-18
+```
+
+If your distribution has no `llvm-18-dev` package (e.g. Debian 12 "bookworm"), install LLVM 18
+from [apt.llvm.org](https://apt.llvm.org/). Prefer its `llvm-18-dev` package over the `llvm.sh`
+script — on distros that already ship LLVM 18, `llvm.sh` upgrades `libllvm18` to a snapshot
+build that conflicts with `llvm-18-dev`.
+
+<a id="windows-wsl2"></a>
+
+**Windows (WSL2):**
+
+Oite cannot currently be built natively on Windows, for two reasons:
+
+1. `llvm-sys` requires `llvm-config`, which the official LLVM Windows installer and the
+   `winget` package **do not ship** (nor the static libs and headers it reports). Adding
+   `C:\Program Files\LLVM\bin` to `PATH` therefore cannot work — the needed files are not
+   there. Those installers also track the newest LLVM, while Oite needs 18.x.
+2. Oite's async reactor imports `std::os::unix::io::RawFd` unconditionally, which does not
+   exist on Windows targets.
+
+Use WSL2 and follow the Linux instructions inside it:
+
+```powershell
+# In PowerShell (as Administrator)
+wsl --install -d Ubuntu-24.04
+```
+
+Keep the repo in the Linux filesystem (e.g. `~/oite`), not under `/mnt/c/`, for much faster
+builds.
 
 ### Building
 
