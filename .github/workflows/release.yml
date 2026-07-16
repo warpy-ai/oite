@@ -97,23 +97,11 @@ jobs:
           echo "LLVM_SYS_180_PREFIX=/usr/local/opt/llvm@18" >> $GITHUB_ENV
           rustup target add x86_64-apple-darwin
 
-          # Homebrew's clang has no built-in SDK: Homebrew normally injects -isysroot
-          # through its own build environment, which a direct invocation bypasses. Without
-          # it the linker gets no -syslibroot and fails to find libm/libSystem, which only
-          # exist inside the SDK as .tbd stubs. Pin the SDK explicitly.
-          SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
-          if [ ! -d "$SDKROOT" ]; then
-            echo "macOS SDK not found (xcrun returned '$SDKROOT')" >&2
-            exit 1
-          fi
-
-          # Create a linker wrapper that forces clang to run under x86_64 (Rosetta)
-          # This ensures the linker itself runs as x86_64 and properly links x86_64 libraries
-          sudo tee /usr/local/bin/clang-x86_64 >/dev/null <<EOF
-          #!/bin/sh
-          exec arch -x86_64 /usr/local/opt/llvm@18/bin/clang -isysroot "$SDKROOT" "\$@"
-          EOF
-          sudo chmod +x /usr/local/bin/clang-x86_64
+          # Note: do NOT use Homebrew's x86_64 clang as the linker. Apple's clang links
+          # x86_64 from an arm64 host natively (rustc passes -arch x86_64), and it locates
+          # the macOS SDK on its own. A brewed clang has no SDK of its own -- Homebrew
+          # injects -isysroot via its build env, which a direct call bypasses -- so it
+          # cannot find libm/libSystem, which exist only as .tbd stubs inside the SDK.
 
           # Debug: show installed zstd architecture
           file /usr/local/opt/zstd/lib/libzstd.dylib || true
@@ -146,8 +134,9 @@ jobs:
 
           export MACOSX_DEPLOYMENT_TARGET=14.0
 
-          # Use x86_64 clang wrapper so the linker runs as x86_64 and picks up x86_64 libs
-          export CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER=/usr/local/bin/clang-x86_64
+          # Link with Apple's clang (rustc's default `cc`). It cross-links x86_64 from an
+          # arm64 host and finds the SDK by itself; the -L flags below point it at the
+          # x86_64 zstd/LLVM libs, and ld only accepts matching-arch slices anyway.
 
           # Point to static-only dir first so linker prefers libzstd.a over the .dylib
           export LIBRARY_PATH="/tmp/zstd-static:/usr/local/opt/llvm@18/lib"
