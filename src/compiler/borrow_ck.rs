@@ -93,6 +93,10 @@ pub struct BorrowChecker {
     errors: TypeErrors,
     scope_depth: usize,
     scope_stack: Vec<HashSet<String>>,
+    /// Borrows taken while analyzing the current statement, as (name, mutable).
+    /// Reads like `foo(x)` and `x.y` borrow only for the duration of the
+    /// statement, so these are released once the statement finishes.
+    stmt_borrows: Vec<(String, bool)>,
 }
 
 impl Default for BorrowChecker {
@@ -109,6 +113,7 @@ impl BorrowChecker {
             errors: TypeErrors::new(),
             scope_depth: 0,
             scope_stack: vec![HashSet::new()],
+            stmt_borrows: Vec::new(),
         }
     }
 
@@ -119,6 +124,7 @@ impl BorrowChecker {
             errors: TypeErrors::new(),
             scope_depth: 0,
             scope_stack: vec![HashSet::new()],
+            stmt_borrows: Vec::new(),
         }
     }
 
@@ -164,7 +170,25 @@ impl BorrowChecker {
         self.errors.has_errors()
     }
 
+    /// Analyze a statement, releasing any borrows it took once it completes.
+    /// Nested statements release their own borrows via the same marker.
     pub fn analyze_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        let mark = self.stmt_borrows.len();
+        let result = self.analyze_stmt_inner(stmt);
+        self.release_stmt_borrows(mark);
+        result
+    }
+
+    /// Release every borrow recorded past `mark`, restoring the counts that
+    /// `process_borrow` incremented.
+    fn release_stmt_borrows(&mut self, mark: usize) {
+        while self.stmt_borrows.len() > mark {
+            let (name, mutable) = self.stmt_borrows.pop().expect("len > mark");
+            self.release_borrow(&name, mutable);
+        }
+    }
+
+    fn analyze_stmt_inner(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
             Stmt::Decl(Decl::Var(var_decl)) => {
                 for decl in &var_decl.decls {
@@ -467,6 +491,7 @@ impl BorrowChecker {
                     ));
                 }
                 info.mut_borrow = true;
+                self.stmt_borrows.push((name.to_string(), true));
             } else {
                 if info.mut_borrow {
                     self.errors.push(TypeError::BorrowConflict {
@@ -481,6 +506,7 @@ impl BorrowChecker {
                     ));
                 }
                 info.immut_borrows += 1;
+                self.stmt_borrows.push((name.to_string(), false));
             }
         }
         Ok(())
