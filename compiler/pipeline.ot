@@ -9,7 +9,7 @@ require ./ir/mod;
 require ./ir/builder;
 require ./passes/mod;
 require ./codegen/mod;
-import * from "./codegen/emiter.ot"
+require ./codegen/emitter;
 
 // ============================================================================
 // Compilation Pipeline (IR-based)
