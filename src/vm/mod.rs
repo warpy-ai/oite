@@ -3484,10 +3484,8 @@ impl VM {
                 // pending when the finally was entered (try/finally with no
                 // catch, or a throw from inside the catch block), re-throw it
                 // now that the finally has completed.
-                if rethrow {
-                    if let Some(exc) = self.current_exception.take() {
-                        return self.throw_exception(exc);
-                    }
+                if rethrow && let Some(exc) = self.current_exception.take() {
+                    return self.throw_exception(exc);
                 }
                 // No pending exception - fall through to the next instruction
             }
