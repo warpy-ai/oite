@@ -780,6 +780,51 @@ impl VM {
         }
     }
 
+    /// Unwind to the innermost exception handler and transfer control to its
+    /// catch or finally block. Panics if no handler is installed. Every
+    /// handled path sets `self.ip` and returns `ContinueNoIpInc`, so callers
+    /// in `exec_one` must return the result as-is.
+    fn throw_exception(&mut self, exception: JsValue) -> ExecResult {
+        if let Some(handler) = self.exception_handlers.pop() {
+            // Unwind the stack to the handler's saved state
+            self.stack.truncate(handler.stack_depth);
+
+            // Unwind call stack if needed
+            while self.call_stack.len() > handler.call_stack_depth {
+                self.call_stack.pop();
+            }
+
+            if handler.catch_addr != 0 {
+                // We have a catch block - push exception and jump there
+                self.stack.push(exception);
+                self.ip = handler.catch_addr;
+
+                // If there's a finally, we need to remember to run it
+                // after the catch completes
+                if handler.finally_addr != 0 {
+                    // Re-push a handler for finally (catch_addr=0 means no catch, just finally)
+                    self.exception_handlers.push(ExceptionHandler {
+                        catch_addr: 0,
+                        finally_addr: handler.finally_addr,
+                        stack_depth: self.stack.len() - 1, // Exclude the exception value
+                        call_stack_depth: handler.call_stack_depth,
+                    });
+                }
+                return ExecResult::ContinueNoIpInc;
+            } else if handler.finally_addr != 0 {
+                // No catch, but there's a finally block. Store the exception;
+                // the EnterFinally(true) at the end of the finally block
+                // re-throws it once the finally has run.
+                self.current_exception = Some(exception);
+                self.ip = handler.finally_addr;
+                return ExecResult::ContinueNoIpInc;
+            }
+        }
+
+        // No handler found - panic with uncaught exception
+        panic!("Uncaught exception: {:?}", exception);
+    }
+
     fn exec_one(&mut self) -> ExecResult {
         if self.ip >= self.program.len() {
             return ExecResult::Stop;
@@ -3454,60 +3499,20 @@ impl VM {
             OpCode::Throw => {
                 // Pop the exception value
                 let exception = self.stack.pop().unwrap_or(JsValue::Undefined);
-
-                // Find a handler
-                if let Some(handler) = self.exception_handlers.pop() {
-                    // Unwind the stack to the handler's saved state
-                    self.stack.truncate(handler.stack_depth);
-
-                    // Unwind call stack if needed
-                    while self.call_stack.len() > handler.call_stack_depth {
-                        self.call_stack.pop();
-                    }
-
-                    if handler.catch_addr != 0 {
-                        // We have a catch block - push exception and jump there
-                        self.stack.push(exception);
-                        self.ip = handler.catch_addr;
-
-                        // If there's a finally, we need to remember to run it
-                        // after the catch completes
-                        if handler.finally_addr != 0 {
-                            // Re-push a handler for finally (catch_addr=0 means no catch, just finally)
-                            self.exception_handlers.push(ExceptionHandler {
-                                catch_addr: 0,
-                                finally_addr: handler.finally_addr,
-                                stack_depth: self.stack.len() - 1, // Exclude the exception value
-                                call_stack_depth: handler.call_stack_depth,
-                            });
-                        }
-                        return ExecResult::ContinueNoIpInc;
-                    } else if handler.finally_addr != 0 {
-                        // No catch, but there's a finally block
-                        // Store exception for rethrow after finally
-                        self.current_exception = Some(exception);
-                        self.ip = handler.finally_addr;
-                        return ExecResult::ContinueNoIpInc;
-                    }
-                }
-
-                // No handler found - panic with uncaught exception
-                panic!("Uncaught exception: {:?}", exception);
+                return self.throw_exception(exception);
             }
 
             OpCode::EnterFinally(rethrow) => {
-                // This opcode is emitted at the end of catch/try blocks
-                // to ensure finally runs
+                // Emitted at the end of a finally block. If an exception was
+                // pending when the finally was entered (try/finally with no
+                // catch, or a throw from inside the catch block), re-throw it
+                // now that the finally has completed.
                 if rethrow {
-                    // Rethrow the stored exception after finally completes
                     if let Some(exc) = self.current_exception.take() {
-                        self.stack.push(exc);
-                        // This will trigger another Throw
-                        self.ip += 1;
-                        return ExecResult::Continue;
+                        return self.throw_exception(exc);
                     }
                 }
-                // Just continue to finally block
+                // No pending exception - fall through to the next instruction
             }
 
             // === Class inheritance ===
