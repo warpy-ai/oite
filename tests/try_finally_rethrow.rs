@@ -7,8 +7,8 @@
 //! global `log` string mutated by each block.
 
 use oite::compiler::Compiler;
-use oite::vm::value::JsValue;
 use oite::vm::VM;
+use oite::vm::value::JsValue;
 
 fn run(src: &str) -> VM {
     let mut compiler = Compiler::new();
@@ -30,8 +30,7 @@ fn global_str(vm: &VM, name: &str) -> String {
 /// propagate to the caller's catch after the finally runs.
 #[test]
 fn throw_in_try_finally_propagates_to_caller() {
-    let vm = run(
-        r#"
+    let vm = run(r#"
         let log = "";
         function nested() {
             try {
@@ -45,16 +44,14 @@ fn throw_in_try_finally_propagates_to_caller() {
         } catch (e) {
             log = log + "C:" + e;
         }
-        "#,
-    );
+        "#);
     assert_eq!(global_str(&vm, "log"), "FC:inner");
 }
 
 /// Same-frame version: the code after the inner try must not run.
 #[test]
 fn throw_in_try_finally_propagates_same_frame() {
-    let vm = run(
-        r#"
+    let vm = run(r#"
         let log = "";
         try {
             try {
@@ -66,8 +63,7 @@ fn throw_in_try_finally_propagates_same_frame() {
         } catch (e) {
             log = log + "C:" + e;
         }
-        "#,
-    );
+        "#);
     assert_eq!(global_str(&vm, "log"), "FC:boom");
 }
 
@@ -75,8 +71,7 @@ fn throw_in_try_finally_propagates_same_frame() {
 /// propagate the new exception outward.
 #[test]
 fn throw_in_catch_runs_finally_then_propagates() {
-    let vm = run(
-        r#"
+    let vm = run(r#"
         let log = "";
         try {
             try {
@@ -89,8 +84,7 @@ fn throw_in_catch_runs_finally_then_propagates() {
         } catch (e) {
             log = log + "C:" + e;
         }
-        "#,
-    );
+        "#);
     assert_eq!(global_str(&vm, "log"), "FC:b");
 }
 
@@ -98,8 +92,7 @@ fn throw_in_catch_runs_finally_then_propagates() {
 /// end of the finally must not re-throw anything.
 #[test]
 fn finally_without_exception_runs_once() {
-    let vm = run(
-        r#"
+    let vm = run(r#"
         let log = "";
         try {
             log = log + "T";
@@ -107,8 +100,7 @@ fn finally_without_exception_runs_once() {
             log = log + "F";
         }
         log = log + "E";
-        "#,
-    );
+        "#);
     assert_eq!(global_str(&vm, "log"), "TFE");
 }
 
@@ -116,8 +108,7 @@ fn finally_without_exception_runs_once() {
 /// propagates.
 #[test]
 fn catch_handles_then_finally_runs() {
-    let vm = run(
-        r#"
+    let vm = run(r#"
         let log = "";
         try {
             throw "x";
@@ -127,8 +118,7 @@ fn catch_handles_then_finally_runs() {
             log = log + "F";
         }
         log = log + "E";
-        "#,
-    );
+        "#);
     assert_eq!(global_str(&vm, "log"), "CFE");
 }
 
@@ -136,8 +126,7 @@ fn catch_handles_then_finally_runs() {
 /// it must be popped — a later throw must not jump back into the old finally.
 #[test]
 fn no_stale_handler_after_catch_completes() {
-    let vm = run(
-        r#"
+    let vm = run(r#"
         let log = "";
         function f() {
             try {
@@ -154,8 +143,7 @@ fn no_stale_handler_after_catch_completes() {
         } catch (e) {
             log = log + "B:" + e;
         }
-        "#,
-    );
+        "#);
     assert_eq!(global_str(&vm, "log"), "AF1B:b");
 }
 
@@ -164,12 +152,10 @@ fn no_stale_handler_after_catch_completes() {
 #[test]
 #[should_panic(expected = "Uncaught exception")]
 fn uncaught_after_finally_still_panics() {
-    run(
-        r#"
+    run(r#"
         try {
             throw "boom";
         } finally {
         }
-        "#,
-    );
+        "#);
 }
