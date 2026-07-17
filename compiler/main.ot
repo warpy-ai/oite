@@ -140,11 +140,13 @@ function main(args: string[]) {
 
     if (parsed.inputFile == "") {
         console.error("Error: No input file specified");
+        process.exit(1);
         return;
     }
 
     if (!fs.existsSync(parsed.inputFile)) {
         console.error("Error: File not found: " + parsed.inputFile);
+        process.exit(1);
         return;
     }
 
@@ -152,9 +154,12 @@ function main(args: string[]) {
 
     if (parsed.command == "ast") {
         let ast = parseSource(source);
-        if (ast != null) {
-            console.log(JSON.stringify(ast, null, 2));
+        if (ast == null) {
+            console.error("Parse error");
+            process.exit(1);
+            return;
         }
+        console.log(JSON.stringify(ast, null, 2));
         return;
     }
 
@@ -164,6 +169,7 @@ function main(args: string[]) {
         let ast = parseSource(source);
         if (ast == null) {
             console.error("Parse error");
+            process.exit(1);
             return;
         }
         logVerbose(parsed.verbose, "  Parsed " + ast.body.length + " statements");
@@ -177,6 +183,7 @@ function main(args: string[]) {
                 console.error("  " + BorrowCheck.formatError(astResult.errors[i]));
                 i = i + 1;
             }
+            process.exit(1);
             return;
         }
 
@@ -184,6 +191,7 @@ function main(args: string[]) {
         let irModule = lowerProgramToIr(ast);
         if (irModule == null) {
             console.error("IR lowering error");
+            process.exit(1);
             return;
         }
 
@@ -199,6 +207,7 @@ function main(args: string[]) {
         console.error("  Verifying IR...");
         if (!verifyIrModule(irModule)) {
             console.error("IR verification failed");
+            process.exit(1);
             return;
         }
         console.error("  IR verified");
@@ -209,13 +218,16 @@ function main(args: string[]) {
 
     if (parsed.command == "ir") {
         let irModule = compileSource(source, parsed.verbose);
-        if (irModule != null) {
-            let irText = serializeIrModule(irModule);
-            if (parsed.outputFile != "") {
-                fs.writeFileSync(parsed.outputFile, irText);
-            } else {
-                console.log(irText);
-            }
+        if (irModule == null) {
+            console.error("Compilation failed");
+            process.exit(1);
+            return;
+        }
+        let irText = serializeIrModule(irModule);
+        if (parsed.outputFile != "") {
+            fs.writeFileSync(parsed.outputFile, irText);
+        } else {
+            console.log(irText);
         }
         return;
     }
@@ -226,11 +238,17 @@ function main(args: string[]) {
         let irModule = compileSource(source, parsed.verbose);
         if (irModule == null) {
             console.error("Compilation failed");
+            process.exit(1);
             return;
         }
 
         logVerbose(parsed.verbose, "Generating LLVM IR...");
         let llvmIr = emitLlvmModule(irModule);
+        if (llvmIr == null) {
+            console.error("LLVM IR generation failed");
+            process.exit(1);
+            return;
+        }
 
         let outputFile = parsed.outputFile;
         if (outputFile == "") {
@@ -257,6 +275,7 @@ function main(args: string[]) {
         let ast = parseSource(source);
         if (ast == null) {
             console.error("Parse error");
+            process.exit(1);
             return;
         }
         logVerbose(parsed.verbose, "  Parsed " + ast.body.length + " statements");
@@ -265,6 +284,7 @@ function main(args: string[]) {
         let result = Emitter.compileAst(ast);
         if (result == null) {
             console.error("Bytecode generation failed");
+            process.exit(1);
             return;
         }
         logVerbose(parsed.verbose, "  Generated " + result.length + " bytes");
@@ -286,6 +306,7 @@ function main(args: string[]) {
     let ast = parseSource(source);
     if (ast == null) {
         console.error("Parse error");
+        process.exit(1);
         return;
     }
 
@@ -293,6 +314,7 @@ function main(args: string[]) {
     let result = Emitter.compileAst(ast);
     if (result == null) {
         console.error("Bytecode generation failed");
+        process.exit(1);
         return;
     }
 
