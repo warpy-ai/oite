@@ -451,6 +451,9 @@ impl<'a> BytecodeDecoder<'a> {
             // Let (create new variable binding)
             70 => Ok(OpCode::Let(self.read_string()?)),
 
+            // EnterFinally (rethrow flag)
+            71 => Ok(OpCode::EnterFinally(self.read_u8()? != 0)),
+
             // Halt
             255 => Ok(OpCode::Halt),
 

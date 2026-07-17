@@ -1328,6 +1328,13 @@ impl Codegen {
                                 self.instructions.push(OpCode::Drop(name));
                             }
                         }
+
+                        // The VM re-arms a finally-only handler when it
+                        // dispatches to catch; pop it if the catch completes
+                        // without throwing (it then falls through to finally).
+                        if has_finally {
+                            self.instructions.push(OpCode::PopTry);
+                        }
                     }
                     addr
                 } else {
@@ -1349,6 +1356,9 @@ impl Codegen {
                             }
                         }
                     }
+                    // Re-throw a pending exception (throw with no catch, or a
+                    // throw from inside catch) once the finally has run.
+                    self.instructions.push(OpCode::EnterFinally(true));
                     addr
                 } else {
                     0 // No finally block
