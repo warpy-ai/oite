@@ -272,7 +272,7 @@ fn main() {
         // Loading prelude
         if let Err(e) = load_and_run_script(&mut vm, &mut compiler, PRELUDE_PATH, false) {
             eprintln!("{}", e);
-            return;
+            std::process::exit(1);
         }
     }
 
@@ -286,7 +286,7 @@ fn main() {
             if Path::new(bootstrap_file).exists() {
                 if let Err(e) = load_and_run_script(&mut vm, &mut compiler, bootstrap_file, true) {
                     eprintln!("{}", e);
-                    return;
+                    std::process::exit(1);
                 }
             } else {
                 eprintln!("Warning: Bootstrap file not found: {}", bootstrap_file);
@@ -304,7 +304,7 @@ fn main() {
             if Path::new(modular_file).exists() {
                 if let Err(e) = load_and_run_script(&mut vm, &mut compiler, modular_file, true) {
                     eprintln!("{}", e);
-                    return;
+                    std::process::exit(1);
                 }
             } else {
                 eprintln!("Warning: Modular compiler file not found: {}", modular_file);
@@ -317,7 +317,7 @@ fn main() {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Failed to read {}: {}", filename, e);
-            return;
+            std::process::exit(1);
         }
     };
 
@@ -355,6 +355,7 @@ fn main() {
         }
         Err(e) => {
             eprintln!("Compilation failed: {}", e);
+            std::process::exit(1);
         }
     }
 }

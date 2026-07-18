@@ -202,6 +202,10 @@ pub struct Frame {
     pub super_called: bool,
     /// For async functions: where to resume after await
     pub resume_ip: Option<usize>,
+    /// Captured-environment heap object for closures. Load/Store resolve
+    /// through this pointer so mutations to captured variables are shared
+    /// across calls and visible to every reference to the same closure.
+    pub env: Option<usize>,
 }
 
 pub struct Task {
@@ -280,6 +284,7 @@ impl VM {
                 new_target: None,
                 super_called: false,
                 resume_ip: None,
+                env: None,
             }],
             heap: Vec::new(),
             native_functions: Vec::new(),
@@ -718,7 +723,7 @@ impl VM {
                     self.stack.push(arg);
                 }
 
-                let mut frame = Frame {
+                let frame = Frame {
                     return_address: usize::MAX, // sentinel: stop when returning
                     locals: HashMap::new(),
                     indexed_locals: Vec::new(),
@@ -726,19 +731,10 @@ impl VM {
                     new_target: None,
                     super_called: false,
                     resume_ip: None,
+                    // Captured variables stay in the heap env object; Load/Store
+                    // resolve through it so mutations are shared across calls.
+                    env,
                 };
-
-                // CLOSURE MAGIC: If this function has captured variables (env),
-                // load them into the new frame's locals. This is the key to
-                // surviving the Stack Frame Paradox!
-                if let Some(HeapObject {
-                    data: HeapData::Object(props),
-                }) = env.and_then(|ptr| self.heap.get(ptr))
-                {
-                    for (name, value) in props {
-                        frame.locals.insert(name.clone(), value.clone());
-                    }
-                }
 
                 self.call_stack.push(frame);
                 self.ip = address;
@@ -778,6 +774,51 @@ impl VM {
                 break;
             }
         }
+    }
+
+    /// Unwind to the innermost exception handler and transfer control to its
+    /// catch or finally block. Panics if no handler is installed. Every
+    /// handled path sets `self.ip` and returns `ContinueNoIpInc`, so callers
+    /// in `exec_one` must return the result as-is.
+    fn throw_exception(&mut self, exception: JsValue) -> ExecResult {
+        if let Some(handler) = self.exception_handlers.pop() {
+            // Unwind the stack to the handler's saved state
+            self.stack.truncate(handler.stack_depth);
+
+            // Unwind call stack if needed
+            while self.call_stack.len() > handler.call_stack_depth {
+                self.call_stack.pop();
+            }
+
+            if handler.catch_addr != 0 {
+                // We have a catch block - push exception and jump there
+                self.stack.push(exception);
+                self.ip = handler.catch_addr;
+
+                // If there's a finally, we need to remember to run it
+                // after the catch completes
+                if handler.finally_addr != 0 {
+                    // Re-push a handler for finally (catch_addr=0 means no catch, just finally)
+                    self.exception_handlers.push(ExceptionHandler {
+                        catch_addr: 0,
+                        finally_addr: handler.finally_addr,
+                        stack_depth: self.stack.len() - 1, // Exclude the exception value
+                        call_stack_depth: handler.call_stack_depth,
+                    });
+                }
+                return ExecResult::ContinueNoIpInc;
+            } else if handler.finally_addr != 0 {
+                // No catch, but there's a finally block. Store the exception;
+                // the EnterFinally(true) at the end of the finally block
+                // re-throws it once the finally has run.
+                self.current_exception = Some(exception);
+                self.ip = handler.finally_addr;
+                return ExecResult::ContinueNoIpInc;
+            }
+        }
+
+        // No handler found - panic with uncaught exception
+        panic!("Uncaught exception: {:?}", exception);
     }
 
     fn exec_one(&mut self) -> ExecResult {
@@ -826,7 +867,7 @@ impl VM {
                     if let Some((address, env)) = setter_addr_and_env {
                         self.stack.push(value.clone());
                         let this_context = JsValue::Object(ptr);
-                        let mut frame = Frame {
+                        let frame = Frame {
                             return_address: self.ip + 1,
                             locals: HashMap::new(),
                             indexed_locals: Vec::new(),
@@ -834,16 +875,8 @@ impl VM {
                             new_target: None,
                             super_called: false,
                             resume_ip: None,
+                            env,
                         };
-
-                        if let Some(HeapObject {
-                            data: HeapData::Object(env_props),
-                        }) = env.and_then(|ptr| self.heap.get(ptr))
-                        {
-                            for (n, v) in env_props {
-                                frame.locals.insert(n.clone(), v.clone());
-                            }
-                        }
 
                         self.call_stack.push(frame);
                         self.ip = address;
@@ -1013,7 +1046,7 @@ impl VM {
                                     if let JsValue::Function { address, env } = val {
                                         let this_context = JsValue::Object(ptr);
 
-                                        let mut frame = Frame {
+                                        let frame = Frame {
                                             return_address: self.ip + 1,
                                             locals: HashMap::new(),
                                             indexed_locals: Vec::new(),
@@ -1021,16 +1054,8 @@ impl VM {
                                             new_target: None,
                                             super_called: false,
                                             resume_ip: None,
+                                            env,
                                         };
-
-                                        if let Some(HeapObject {
-                                            data: HeapData::Object(env_props),
-                                        }) = env.and_then(|ptr| self.heap.get(ptr))
-                                        {
-                                            for (n, v) in env_props {
-                                                frame.locals.insert(n.clone(), v.clone());
-                                            }
-                                        }
 
                                         self.call_stack.push(frame);
                                         self.ip = address;
@@ -1142,24 +1167,63 @@ impl VM {
             OpCode::Store(name) => {
                 let val = self.stack.pop().unwrap_or(JsValue::Undefined);
                 // Assign to an existing binding if found, otherwise create in current frame.
-                let mut stored = false;
-                for frame in self.call_stack.iter_mut().rev() {
+                // A frame's locals shadow its captured environment; captured variables
+                // are written through to the heap env object so the mutation is shared.
+                enum Slot {
+                    Local(usize),
+                    Env(usize),
+                }
+                let mut slot = None;
+                for (i, frame) in self.call_stack.iter().enumerate().rev() {
                     if frame.locals.contains_key(&name) {
-                        frame.locals.insert(name.clone(), val.clone());
-                        stored = true;
+                        slot = Some(Slot::Local(i));
+                        break;
+                    }
+                    if let Some(env_ptr) = frame.env
+                        && let Some(HeapObject {
+                            data: HeapData::Object(props),
+                        }) = self.heap.get(env_ptr)
+                        && props.contains_key(&name)
+                    {
+                        slot = Some(Slot::Env(env_ptr));
                         break;
                     }
                 }
-                if !stored {
-                    self.call_stack.last_mut().unwrap().locals.insert(name, val);
+                match slot {
+                    Some(Slot::Local(i)) => {
+                        self.call_stack[i].locals.insert(name, val);
+                    }
+                    Some(Slot::Env(env_ptr)) => {
+                        if let Some(HeapObject {
+                            data: HeapData::Object(props),
+                        }) = self.heap.get_mut(env_ptr)
+                        {
+                            props.insert(name, val);
+                        }
+                    }
+                    None => {
+                        self.call_stack.last_mut().unwrap().locals.insert(name, val);
+                    }
                 }
             }
 
             OpCode::Load(name) => {
                 // Search for variable from innermost to outermost frame.
+                // Locals shadow the frame's captured environment; captured
+                // variables are read from the heap env object so mutations
+                // made through the closure are visible.
                 let mut found = None;
                 for frame in self.call_stack.iter().rev() {
                     if let Some(v) = frame.locals.get(&name) {
+                        found = Some(v.clone());
+                        break;
+                    }
+                    if let Some(env_ptr) = frame.env
+                        && let Some(HeapObject {
+                            data: HeapData::Object(props),
+                        }) = self.heap.get(env_ptr)
+                        && let Some(v) = props.get(&name)
+                    {
                         found = Some(v.clone());
                         break;
                     }
@@ -1202,7 +1266,10 @@ impl VM {
                             self.stack.push(arg.clone());
                         }
 
-                        let mut frame = Frame {
+                        // CLOSURE CONTEXT SWITCH: The frame keeps a pointer to the
+                        // environment heap object. Load/Store resolve captured
+                        // variables through it, so mutations persist across calls.
+                        let frame = Frame {
                             return_address: self.ip + 1,
                             locals: HashMap::new(),
                             indexed_locals: Vec::new(),
@@ -1210,19 +1277,8 @@ impl VM {
                             new_target: None,
                             super_called: false,
                             resume_ip: None,
+                            env,
                         };
-
-                        // CLOSURE CONTEXT SWITCH: Load captured variables from
-                        // the environment heap object into the new frame's locals.
-                        // This makes them available to the function body.
-                        if let Some(HeapObject {
-                            data: HeapData::Object(props),
-                        }) = env.and_then(|ptr| self.heap.get(ptr))
-                        {
-                            for (name, value) in props {
-                                frame.locals.insert(name.clone(), value.clone());
-                            }
-                        }
 
                         self.call_stack.push(frame);
                         self.ip = address;
@@ -1254,7 +1310,7 @@ impl VM {
                                 for arg in &args {
                                     self.stack.push(arg.clone());
                                 }
-                                let mut frame = Frame {
+                                let frame = Frame {
                                     return_address: self.ip + 1,
                                     locals: HashMap::new(),
                                     indexed_locals: Vec::new(),
@@ -1262,15 +1318,8 @@ impl VM {
                                     new_target: None,
                                     super_called: false,
                                     resume_ip: None,
+                                    env,
                                 };
-                                if let Some(HeapObject {
-                                    data: HeapData::Object(env_props),
-                                }) = env.and_then(|ptr| self.heap.get(ptr))
-                                {
-                                    for (name, value) in env_props {
-                                        frame.locals.insert(name.clone(), value.clone());
-                                    }
-                                }
                                 self.call_stack.push(frame);
                                 self.ip = address;
                                 return ExecResult::ContinueNoIpInc;
@@ -2035,7 +2084,7 @@ impl VM {
                 }
 
                 // Create frame with `this` bound to the new object
-                let mut frame = Frame {
+                let frame = Frame {
                     return_address: self.ip + 1,
                     locals: HashMap::new(),
                     indexed_locals: Vec::new(),
@@ -2043,17 +2092,8 @@ impl VM {
                     new_target: Some(new_target_val.clone()),
                     super_called: false,
                     resume_ip: None,
+                    env,
                 };
-
-                // Load captured environment if present
-                if let Some(HeapObject {
-                    data: HeapData::Object(props),
-                }) = env.and_then(|ptr| self.heap.get(ptr))
-                {
-                    for (name, value) in props {
-                        frame.locals.insert(name.clone(), value.clone());
-                    }
-                }
 
                 // Check if this is a native function constructor
                 if address == 0 {
@@ -2149,6 +2189,7 @@ impl VM {
                                 new_target: Some(executor.clone()),
                                 super_called: false,
                                 resume_ip: None,
+                                env,
                             };
 
                             // Set up locals: resolve and reject
@@ -2159,17 +2200,6 @@ impl VM {
                             exec_frame
                                 .locals
                                 .insert("reject".to_string(), JsValue::NativeFunction(reject_idx));
-
-                            // Load captured environment
-                            if let Some(env_ptr) = env
-                                && let Some(HeapObject {
-                                    data: HeapData::Object(props),
-                                }) = self.heap.get(env_ptr)
-                            {
-                                for (name, value) in props {
-                                    exec_frame.locals.insert(name.clone(), value.clone());
-                                }
-                            }
 
                             // Push the frame and jump to executor
                             self.call_stack.push(exec_frame);
@@ -2189,6 +2219,7 @@ impl VM {
                             new_target: Some(new_target_val.clone()),
                             super_called: false,
                             resume_ip: None,
+                            env: None,
                         };
                         self.call_stack.push(native_frame);
 
@@ -3352,7 +3383,7 @@ impl VM {
                             }
 
                             // Create new frame with `this` bound to the receiver object
-                            let mut frame = Frame {
+                            let frame = Frame {
                                 return_address: self.ip + 1,
                                 locals: HashMap::new(),
                                 indexed_locals: Vec::new(),
@@ -3360,17 +3391,8 @@ impl VM {
                                 new_target: None,
                                 super_called: false,
                                 resume_ip: None,
+                                env,
                             };
-
-                            // Load captured variables from environment
-                            if let Some(HeapObject {
-                                data: HeapData::Object(props),
-                            }) = env.and_then(|ptr| self.heap.get(ptr))
-                            {
-                                for (name, value) in props {
-                                    frame.locals.insert(name.clone(), value.clone());
-                                }
-                            }
 
                             self.call_stack.push(frame);
                             self.ip = address;
@@ -3454,60 +3476,18 @@ impl VM {
             OpCode::Throw => {
                 // Pop the exception value
                 let exception = self.stack.pop().unwrap_or(JsValue::Undefined);
-
-                // Find a handler
-                if let Some(handler) = self.exception_handlers.pop() {
-                    // Unwind the stack to the handler's saved state
-                    self.stack.truncate(handler.stack_depth);
-
-                    // Unwind call stack if needed
-                    while self.call_stack.len() > handler.call_stack_depth {
-                        self.call_stack.pop();
-                    }
-
-                    if handler.catch_addr != 0 {
-                        // We have a catch block - push exception and jump there
-                        self.stack.push(exception);
-                        self.ip = handler.catch_addr;
-
-                        // If there's a finally, we need to remember to run it
-                        // after the catch completes
-                        if handler.finally_addr != 0 {
-                            // Re-push a handler for finally (catch_addr=0 means no catch, just finally)
-                            self.exception_handlers.push(ExceptionHandler {
-                                catch_addr: 0,
-                                finally_addr: handler.finally_addr,
-                                stack_depth: self.stack.len() - 1, // Exclude the exception value
-                                call_stack_depth: handler.call_stack_depth,
-                            });
-                        }
-                        return ExecResult::ContinueNoIpInc;
-                    } else if handler.finally_addr != 0 {
-                        // No catch, but there's a finally block
-                        // Store exception for rethrow after finally
-                        self.current_exception = Some(exception);
-                        self.ip = handler.finally_addr;
-                        return ExecResult::ContinueNoIpInc;
-                    }
-                }
-
-                // No handler found - panic with uncaught exception
-                panic!("Uncaught exception: {:?}", exception);
+                return self.throw_exception(exception);
             }
 
             OpCode::EnterFinally(rethrow) => {
-                // This opcode is emitted at the end of catch/try blocks
-                // to ensure finally runs
-                if rethrow {
-                    // Rethrow the stored exception after finally completes
-                    if let Some(exc) = self.current_exception.take() {
-                        self.stack.push(exc);
-                        // This will trigger another Throw
-                        self.ip += 1;
-                        return ExecResult::Continue;
-                    }
+                // Emitted at the end of a finally block. If an exception was
+                // pending when the finally was entered (try/finally with no
+                // catch, or a throw from inside the catch block), re-throw it
+                // now that the finally has completed.
+                if rethrow && let Some(exc) = self.current_exception.take() {
+                    return self.throw_exception(exc);
                 }
-                // Just continue to finally block
+                // No pending exception - fall through to the next instruction
             }
 
             // === Class inheritance ===
@@ -3604,7 +3584,7 @@ impl VM {
                         self.stack.push(arg.clone());
                     }
 
-                    let mut frame = Frame {
+                    let frame = Frame {
                         return_address: self.ip + 1,
                         locals: HashMap::new(),
                         indexed_locals: Vec::new(),
@@ -3612,17 +3592,8 @@ impl VM {
                         new_target: None,
                         super_called: false,
                         resume_ip: None,
+                        env,
                     };
-
-                    // Load captured variables from closure environment
-                    if let Some(HeapObject {
-                        data: HeapData::Object(props),
-                    }) = env.and_then(|ptr| self.heap.get(ptr))
-                    {
-                        for (name, value) in props {
-                            frame.locals.insert(name.clone(), value.clone());
-                        }
-                    }
 
                     self.call_stack.push(frame);
                     self.ip = address;
@@ -3899,7 +3870,7 @@ impl VM {
                         self.stack.push(target);
 
                         // Create a frame for the decorator call
-                        let mut frame = Frame {
+                        let frame = Frame {
                             return_address: self.ip + 1,
                             locals: HashMap::new(),
                             indexed_locals: Vec::new(),
@@ -3907,17 +3878,8 @@ impl VM {
                             new_target: Some(target_for_frame),
                             super_called: false,
                             resume_ip: None,
+                            env,
                         };
-
-                        // Load captured variables from environment
-                        if let Some(HeapObject {
-                            data: HeapData::Object(props),
-                        }) = env.and_then(|ptr| self.heap.get(ptr))
-                        {
-                            for (name, value) in props {
-                                frame.locals.insert(name.clone(), value.clone());
-                            }
-                        }
 
                         self.call_stack.push(frame);
                         self.ip = address;

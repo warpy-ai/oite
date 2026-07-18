@@ -622,7 +622,9 @@ impl Codegen {
                 let param_name = id.id.sym.to_string();
                 // The value is already on the stack from the Caller
                 // Parameters are new bindings in the function scope
-                self.instructions.push(OpCode::Let(param_name));
+                self.instructions.push(OpCode::Let(param_name.clone()));
+                // Params are capturable by nested closures
+                self.outer_scope_vars.insert(param_name);
             }
         }
         let stmts = &fn_decl.body.as_ref().unwrap().stmts;
@@ -1326,6 +1328,13 @@ impl Codegen {
                                 self.instructions.push(OpCode::Drop(name));
                             }
                         }
+
+                        // The VM re-arms a finally-only handler when it
+                        // dispatches to catch; pop it if the catch completes
+                        // without throwing (it then falls through to finally).
+                        if has_finally {
+                            self.instructions.push(OpCode::PopTry);
+                        }
                     }
                     addr
                 } else {
@@ -1347,6 +1356,9 @@ impl Codegen {
                             }
                         }
                     }
+                    // Re-throw a pending exception (throw with no catch, or a
+                    // throw from inside catch) once the finally has run.
+                    self.instructions.push(OpCode::EnterFinally(true));
                     addr
                 } else {
                     0 // No finally block
@@ -1446,7 +1458,9 @@ impl Codegen {
                 for param in fn_expr.function.params.iter().rev() {
                     if let Pat::Ident(id) = &param.pat {
                         let param_name = id.id.sym.to_string();
-                        self.instructions.push(OpCode::Let(param_name));
+                        self.instructions.push(OpCode::Let(param_name.clone()));
+                        // Params are capturable by nested closures
+                        self.outer_scope_vars.insert(param_name);
                     }
                 }
 
@@ -1575,7 +1589,9 @@ impl Codegen {
                 for param in arrow.params.iter().rev() {
                     if let Pat::Ident(id) = param {
                         let param_name = id.id.sym.to_string();
-                        self.instructions.push(OpCode::Let(param_name));
+                        self.instructions.push(OpCode::Let(param_name.clone()));
+                        // Params are capturable by nested closures
+                        self.outer_scope_vars.insert(param_name);
                     } else {
                         eprintln!("Warning: Non-identifier arrow params not supported yet.");
                     }
