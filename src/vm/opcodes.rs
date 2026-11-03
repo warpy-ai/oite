@@ -39,10 +39,13 @@ pub enum OpCode {
     GtEq, // >=
     Mod,  // %
     And,
-    Or,              // ||
-    Not,             // ! (logical not)
-    Neg,             // - (unary negation)
-    TypeOf,          // typeof operator - returns type string
+    Or,     // ||
+    Not,    // ! (logical not)
+    Neg,    // - (unary negation)
+    TypeOf, // typeof operator - returns type string
+    /// `typeof name` for a plain variable: like `Load(name)` then `TypeOf`,
+    /// except that an unbound name gives "undefined" instead of throwing.
+    TypeOfName(String),
     Delete(String),  // delete operator - removes property from object
     NewArray(usize), // Creates array of size N
     StoreElement,    // Pops index, value, and array_ptr -> arr[idx] = val
@@ -114,6 +117,10 @@ pub enum OpCode {
     LoadSuper,
     /// Call super constructor: pops [args...] and calls __super__ with current this context
     CallSuper(usize),
+    /// First instruction of a derived class's implicit constructor: call the
+    /// super constructor with every argument. The caller pushes all the
+    /// arguments, then their count: [args..., count] -> [result]
+    SuperForward,
     /// Get property from super's prototype: pops super object, pushes property value
     GetSuperProp(String),
 

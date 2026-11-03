@@ -18,6 +18,7 @@ pub fn setup_stdlib(vm: &mut VM) {
     setup_json(vm);
     setup_globals(vm);
     setup_map_set(vm);
+    setup_math_date(vm);
     setup_process(vm);
     setup_fetch(vm);
     setup_object(vm);
@@ -254,6 +255,7 @@ fn setup_globals(vm: &mut VM) {
 
     let globals = &mut vm.call_stack[0].locals;
     globals.insert("require".into(), JsValue::NativeFunction(require_idx));
+    globals.insert("undefined".into(), JsValue::Undefined);
     globals.insert("NaN".into(), JsValue::Number(f64::NAN));
     globals.insert("Infinity".into(), JsValue::Number(f64::INFINITY));
 }
@@ -427,4 +429,60 @@ fn setup_object(vm: &mut VM) {
     vm.call_stack[0]
         .locals
         .insert("Object".into(), JsValue::Object(object_ptr));
+}
+
+/// `Math` and `Date.now`, computed by the code native programs use
+/// (`runtime::builtins`).
+fn setup_math_date(vm: &mut VM) {
+    use crate::runtime::builtins::{MATH_CONSTANTS, MATH_FUNCTIONS, date_now, math_call};
+    use crate::vm::value::NativeFn;
+
+    fn numbers(vm: &VM, args: &[JsValue]) -> Vec<f64> {
+        args.iter()
+            .map(|a| match a {
+                JsValue::Object(_) => {
+                    crate::vm::errors::to_number(&JsValue::String(vm.to_js_string(a)))
+                }
+                other => crate::vm::errors::to_number(other),
+            })
+            .collect()
+    }
+    macro_rules! math_fns {
+        ($($name:literal),* $(,)?) => {
+            [$(($name, (|vm: &mut VM, args: Vec<JsValue>| {
+                JsValue::Number(math_call($name, &numbers(vm, &args)))
+            }) as NativeFn)),*]
+        };
+    }
+    let fns = math_fns![
+        "abs", "ceil", "floor", "round", "trunc", "sign", "sqrt", "cbrt", "pow", "exp", "log",
+        "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "hypot", "min",
+        "max", "random",
+    ];
+    debug_assert_eq!(fns.len(), MATH_FUNCTIONS.len());
+
+    let mut math = std::collections::HashMap::new();
+    for (name, f) in fns {
+        let idx = vm.register_native(f);
+        math.insert(name.to_string(), JsValue::NativeFunction(idx));
+    }
+    for (name, value) in MATH_CONSTANTS {
+        math.insert(name.to_string(), JsValue::Number(*value));
+    }
+    let math_ptr = vm.heap.len();
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(math),
+    });
+
+    let now_idx = vm.register_native(|_vm, _args| JsValue::Number(date_now()));
+    let mut date = std::collections::HashMap::new();
+    date.insert("now".to_string(), JsValue::NativeFunction(now_idx));
+    let date_ptr = vm.heap.len();
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(date),
+    });
+
+    let globals = &mut vm.call_stack[0].locals;
+    globals.insert("Math".into(), JsValue::Object(math_ptr));
+    globals.insert("Date".into(), JsValue::Object(date_ptr));
 }

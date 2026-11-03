@@ -50,6 +50,7 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_array_len,
         ot_array_push,
         ot_get_global,
+        ot_typeof_global,
         ot_set_global,
         ot_call,
         ot_call_method,
@@ -626,6 +627,11 @@ impl Fx<'_> {
             IrOp::LoadGlobal(d, name) => {
                 let (p, n) = self.name(b, name);
                 let r = self.rt_v(b, "ot_get_global", &[p, n]);
+                self.values.insert(*d, r);
+            }
+            IrOp::TypeOfGlobal(d, name) => {
+                let (p, n) = self.name(b, name);
+                let r = self.rt_v(b, "ot_typeof_global", &[p, n]);
                 self.values.insert(*d, r);
             }
             IrOp::StoreGlobal(name, v) => {

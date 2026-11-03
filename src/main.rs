@@ -125,13 +125,29 @@ fn load_and_run_script(
         let offset = vm.append_program(bytecode);
         eprintln!("  {} ({} ops at offset {})", path, bytecode_len, offset);
     } else {
-        let path_buf = PathBuf::from(path);
-        vm.load_program_with_path(bytecode, path_buf);
+        // After the core library (`load_core`), with this file as the
+        // current module.
+        vm.append_program(bytecode);
+        vm.set_current_module_path(PathBuf::from(path));
         eprintln!("  {} ({} ops)", path, bytecode_len);
     }
 
     vm.run_until_halt();
     Ok(())
+}
+
+/// Run the core library written in Oite (the error classes) on a fresh
+/// VM, before the prelude and the program.
+fn load_core(vm: &mut VM, compiler: &mut Compiler) {
+    let bytecode = match compiler.compile(vm::errors::CORE_ERRORS) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("Failed to compile the core library: {}", e);
+            std::process::exit(1);
+        }
+    };
+    vm.load_program(bytecode);
+    vm.run_until_halt();
 }
 
 /// Load and run a pre-compiled bytecode file
@@ -256,6 +272,8 @@ fn main() {
 
     // Setup standard library
     vm.setup_stdlib();
+    vm.exit_on_uncaught = true;
+    load_core(&mut vm, &mut compiler);
 
     // Binary mode: load and run pre-compiled bytecode directly
     if run_binary {

@@ -534,6 +534,19 @@ impl Lowerer {
                 self.push(dst);
             }
 
+            OpCode::TypeOfName(name) => match self.names.resolve(name)? {
+                NameRef::Global => {
+                    let dst = self.alloc_value(IrType::String);
+                    self.emit(IrOp::TypeOfGlobal(dst, name.clone()));
+                    self.push(dst);
+                }
+                // A local or function is always bound.
+                _ => {
+                    self.lower_instruction(idx, &OpCode::Load(name.clone()))?;
+                    self.lower_instruction(idx, &OpCode::TypeOf)?;
+                }
+            },
+
             OpCode::TypeOf => {
                 let a = self.pop()?;
                 let dst = self.alloc_value(IrType::String);
@@ -872,6 +885,7 @@ impl Lowerer {
             OpCode::SetProto
             | OpCode::LoadSuper
             | OpCode::CallSuper(_)
+            | OpCode::SuperForward
             | OpCode::GetSuperProp(_) => {
                 return Err(native_unsupported("class inheritance (`extends`, `super`)"));
             }
@@ -999,6 +1013,7 @@ fn native_refusal(op: &OpCode) -> Option<&'static str> {
         | OpCode::SetProto
         | OpCode::LoadSuper
         | OpCode::CallSuper(_)
+        | OpCode::SuperForward
         | OpCode::GetSuperProp(_)
         | OpCode::GetPrivateProp(_)
         | OpCode::SetPrivateProp(_) => "classes",
@@ -1270,7 +1285,7 @@ fn detect_self_reference(
 ) -> bool {
     for i in start..=end.min(instructions.len().saturating_sub(1)) {
         match &instructions[i] {
-            OpCode::Load(name) if name == var_name => return true,
+            OpCode::Load(name) | OpCode::TypeOfName(name) if name == var_name => return true,
             OpCode::CallMethod(name, _) if name == var_name => return true,
             _ => {}
         }

@@ -36,18 +36,12 @@ fn format_log_args(vm: &VM, args: &[JsValue]) -> String {
         .join(" ")
 }
 
-/// Convert a number to its string form: `NaN`, `Infinity`, `-Infinity`,
-/// otherwise the shortest round-tripping decimal (`3`, `3.5`,
-/// `0.30000000000000004`).
+/// Convert a number to its string form, as JavaScript does: `NaN`,
+/// `Infinity`, the shortest round-tripping decimal (`3`, `3.5`,
+/// `0.30000000000000004`), and exponent form outside 1e-6..1e21 (`1e+21`).
+/// Shared with native code (`runtime::builtins`).
 pub fn number_to_string(n: impl std::borrow::Borrow<f64>) -> String {
-    let n = *n.borrow();
-    if n.is_nan() {
-        "NaN".to_string()
-    } else if n.is_infinite() {
-        if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string()
-    } else {
-        n.to_string()
-    }
+    crate::runtime::builtins::number_to_string(*n.borrow())
 }
 
 /// Nesting depth beyond which objects print as `[Object]` / `[Array]`.
@@ -108,6 +102,26 @@ fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) 
                         .map(|v| inspect_inner(vm, v, depth + 1, seen))
                         .collect();
                     format!("[ {} ]", parts.join(", "))
+                }
+                HeapData::Object(props) if vm.is_error(*ptr) => {
+                    // `TypeError: message`, then any other own properties.
+                    let summary = vm.error_summary(*ptr);
+                    let mut keys: Vec<&String> = props
+                        .keys()
+                        .filter(|k| !k.starts_with("__") && *k != "message")
+                        .collect();
+                    keys.sort();
+                    if keys.is_empty() || too_deep {
+                        summary
+                    } else {
+                        let parts: Vec<String> = keys
+                            .into_iter()
+                            .map(|k| {
+                                format!("{}: {}", k, inspect_inner(vm, &props[k], depth + 1, seen))
+                            })
+                            .collect();
+                        format!("{} {{ {} }}", summary, parts.join(", "))
+                    }
                 }
                 HeapData::Object(props) => {
                     let mut keys: Vec<&String> =
@@ -522,46 +536,18 @@ pub fn native_byte_stream_to_array(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
 
 /// String constructor - converts any value to a string
 pub fn native_string_constructor(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if args.is_empty() {
+    let Some(value) = args.first() else {
         return JsValue::String(String::new());
-    }
-    let value = &args[0];
+    };
     let result = match value {
-        JsValue::String(s) => s.clone(),
-        JsValue::Number(n) => n.to_string(),
-        JsValue::Boolean(b) => b.to_string(),
-        JsValue::Null => "null".to_string(),
-        JsValue::Undefined => "undefined".to_string(),
-        JsValue::Object(ptr) => {
-            if let Some(HeapObject { data }) = vm.heap.get(*ptr) {
-                match data {
-                    HeapData::Array(arr) => {
-                        let parts: Vec<String> = arr
-                            .iter()
-                            .map(|v| match v {
-                                JsValue::String(s) => s.clone(),
-                                JsValue::Number(n) => n.to_string(),
-                                JsValue::Boolean(b) => b.to_string(),
-                                JsValue::Null => "null".to_string(),
-                                JsValue::Undefined => "".to_string(),
-                                _ => String::new(),
-                            })
-                            .collect();
-                        parts.join(",")
-                    }
-                    HeapData::Object(_) => "[object Object]".to_string(),
-                    HeapData::ByteStream(_) => "[object ByteStream]".to_string(),
-                    HeapData::Map(_) => "[object Map]".to_string(),
-                    HeapData::Set(_) => "[object Set]".to_string(),
-                }
-            } else {
-                "[object Object]".to_string()
-            }
-        }
-        JsValue::Function { .. } => "function".to_string(),
-        JsValue::NativeFunction(_) => "function".to_string(),
+        JsValue::Object(ptr) => match vm.heap.get(*ptr).map(|o| &o.data) {
+            Some(HeapData::ByteStream(_)) => "[object ByteStream]".to_string(),
+            Some(HeapData::Map(_)) => "[object Map]".to_string(),
+            Some(HeapData::Set(_)) => "[object Set]".to_string(),
+            _ => vm.to_js_string(value),
+        },
         JsValue::Promise(_) => "[object Promise]".to_string(),
-        JsValue::Accessor(_, _) => "".to_string(),
+        other => vm.to_js_string(other),
     };
     JsValue::String(result)
 }

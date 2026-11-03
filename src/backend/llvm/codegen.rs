@@ -689,6 +689,11 @@ impl Fx<'_> {
                     let r = self.rt("ot_get_global", &[p, n]);
                     self.set(*d, r);
                 }
+                IrOp::TypeOfGlobal(d, name) => {
+                    let (p, n) = self.string(name);
+                    let r = self.rt("ot_typeof_global", &[p, n]);
+                    self.set(*d, r);
+                }
                 IrOp::StoreGlobal(name, v) => {
                     let (p, n) = self.string(name);
                     let v = self.get(*v)?;

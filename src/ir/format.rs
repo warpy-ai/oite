@@ -161,6 +161,7 @@ fn serialize_op(output: &mut String, op: &IrOp) {
         IrOp::LoadLocal(d, slot) => output.push_str(&format!("{} = load.local ${}", d, slot)),
         IrOp::StoreLocal(slot, v) => output.push_str(&format!("store.local ${}, {}", slot, v)),
         IrOp::LoadGlobal(d, name) => output.push_str(&format!("{} = load.global @{}", d, name)),
+        IrOp::TypeOfGlobal(d, name) => output.push_str(&format!("{} = typeof.global @{}", d, name)),
         IrOp::StoreGlobal(name, v) => output.push_str(&format!("store.global @{}, {}", name, v)),
         IrOp::NewObject(d) => output.push_str(&format!("{} = new.object", d)),
         IrOp::GetProp(d, obj, name) => {

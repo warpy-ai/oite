@@ -246,6 +246,9 @@ pub struct Codegen {
     try_stack: Vec<TryRegion>,
     /// Labels of the loop about to be compiled (`outer: for (...)`).
     pending_labels: Vec<String>,
+    /// Function declarations already defined at the top of their
+    /// statement list (hoisting), by span.
+    hoisted_fns: std::collections::HashSet<scope::SpanKey>,
     /// Maps private field names to their indices for the current class
     private_field_indices: std::collections::HashMap<String, usize>,
     /// Maps private method names to their indices for the current class
@@ -282,6 +285,7 @@ impl Codegen {
             loop_stack: Vec::new(),
             try_stack: Vec::new(),
             pending_labels: Vec::new(),
+            hoisted_fns: std::collections::HashSet::new(),
             private_field_indices: std::collections::HashMap::new(),
             private_method_indices: std::collections::HashMap::new(),
             warnings: Vec::new(),
@@ -675,6 +679,7 @@ impl Codegen {
     fn gen_finally_body(&mut self, finalizer: &swc_ecma_ast::BlockStmt) {
         self.scope_stack.push(Vec::new());
         let env = self.enter_scope_env(finalizer.span);
+        self.hoist_functions(&finalizer.stmts);
         for s in &finalizer.stmts {
             self.gen_stmt(s);
         }
@@ -684,6 +689,39 @@ impl Codegen {
                 self.instructions.push(OpCode::Drop(name));
             }
         }
+    }
+
+    /// Define the function declarations among `stmts` up front, so they
+    /// can be called before their position in the source (hoisting). The
+    /// declaration itself then compiles to nothing.
+    fn hoist_functions<'a>(&mut self, stmts: impl IntoIterator<Item = &'a Stmt>) {
+        for stmt in stmts {
+            if let Stmt::Decl(Decl::Fn(f)) = stmt {
+                self.hoist_fn(f);
+            }
+        }
+    }
+
+    /// Start of a function body (or the program): `var` names are bound to
+    /// `undefined` (unless they are parameters), then function declarations
+    /// are defined.
+    fn hoist_body(&mut self, stmts: &[Stmt], params: &[String]) {
+        for ident in scope::var_declared(stmts) {
+            if !params.iter().any(|p| *p == *ident.sym) {
+                self.instructions.push(OpCode::Push(JsValue::Undefined));
+                self.store_var(&ident, true);
+            }
+        }
+        self.hoist_functions(stmts);
+    }
+
+    fn hoist_fn(&mut self, f: &swc_ecma_ast::FnDecl) {
+        self.hoisted_fns.insert(scope::key(f.function.span));
+        self.gen_fn_decl(Some(&f.ident), &f.function);
+    }
+
+    fn is_hoisted(&self, f: &swc_ecma_ast::FnDecl) -> bool {
+        self.hoisted_fns.contains(&scope::key(f.function.span))
     }
 
     /// `break [label]` or `continue [label]`.
@@ -927,6 +965,31 @@ impl Codegen {
 
     pub fn generate(&mut self, module: &Module) -> Vec<OpCode> {
         self.top_level_prologue();
+        let top_stmts: Vec<Stmt> = module
+            .body
+            .iter()
+            .filter_map(|item| match item {
+                ModuleItem::Stmt(s) => Some(s.clone()),
+                ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(e)) => {
+                    Some(Stmt::Decl(e.decl.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        for ident in scope::var_declared(&top_stmts) {
+            self.instructions.push(OpCode::Push(JsValue::Undefined));
+            self.store_var(&ident, true);
+        }
+        for item in &module.body {
+            match item {
+                ModuleItem::Stmt(Stmt::Decl(Decl::Fn(f))) => self.hoist_fn(f),
+                ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
+                    decl: Decl::Fn(f),
+                    ..
+                })) => self.hoist_fn(f),
+                _ => {}
+            }
+        }
         for item in &module.body {
             match item {
                 ModuleItem::Stmt(stmt) => {
@@ -1164,7 +1227,9 @@ impl Codegen {
     fn gen_decl(&mut self, decl: &Decl) {
         match decl {
             Decl::Fn(fn_decl) => {
-                self.gen_fn_decl(Some(&fn_decl.ident), &fn_decl.function);
+                if !self.is_hoisted(fn_decl) {
+                    self.gen_fn_decl(Some(&fn_decl.ident), &fn_decl.function);
+                }
             }
             Decl::Class(class_decl) => {
                 self.gen_class(&class_decl.class, Some(class_decl.ident.sym.as_str()));
@@ -1234,6 +1299,7 @@ impl Codegen {
 
     pub fn generate_script(&mut self, script: &Script) -> Vec<OpCode> {
         self.top_level_prologue();
+        self.hoist_body(&script.body, &[]);
         for stmt in &script.body {
             self.gen_stmt(stmt);
         }
@@ -1270,6 +1336,8 @@ impl Codegen {
         self.apply_param_defaults(&pats);
 
         let stmts: &[Stmt] = fn_decl.body.as_ref().map_or(&[], |b| b.stmts.as_slice());
+        let param_names: Vec<String> = pats.iter().flat_map(|p| scope::pattern_names(p)).collect();
+        self.hoist_body(stmts, &param_names);
         let mut last_instr_was_return = false;
         for s in stmts {
             let before = self.instructions.len();
@@ -1299,6 +1367,11 @@ impl Codegen {
         for decl in &var_decl.decls {
             if let Some(init) = &decl.init {
                 self.gen_expr(init);
+                self.gen_pattern_binding(&decl.name);
+            } else if var_decl.kind != VarDeclKind::Var {
+                // `let x;` is `undefined`. (A `var` is bound to `undefined`
+                // once, at the top of its function: `hoist_body`.)
+                self.instructions.push(OpCode::Push(JsValue::Undefined));
                 self.gen_pattern_binding(&decl.name);
             }
         }
@@ -1454,6 +1527,7 @@ impl Codegen {
             Stmt::Block(block) => {
                 let env = self.enter_scope_env(block.span);
                 self.scope_stack.push(Vec::new()); // Enter new scope
+                self.hoist_functions(&block.stmts);
                 for s in &block.stmts {
                     self.gen_stmt(s);
                 }
@@ -1469,7 +1543,9 @@ impl Codegen {
                 self.gen_var_decl(var_decl);
             }
             Stmt::Decl(Decl::Fn(fn_decl)) => {
-                self.gen_fn_decl(Some(&fn_decl.ident), &fn_decl.function);
+                if !self.is_hoisted(fn_decl) {
+                    self.gen_fn_decl(Some(&fn_decl.ident), &fn_decl.function);
+                }
             }
             Stmt::Decl(Decl::Class(class_decl)) => {
                 let class_name = class_decl.ident.sym.to_string();
@@ -1869,6 +1945,7 @@ impl Codegen {
                 });
                 let block_env = self.enter_scope_env(try_stmt.block.span);
                 self.scope_stack.push(Vec::new());
+                self.hoist_functions(&try_stmt.block.stmts);
                 for s in &try_stmt.block.stmts {
                     self.gen_stmt(s);
                 }
@@ -1919,6 +1996,7 @@ impl Codegen {
                             env: try_env.clone(),
                             finalizer: try_stmt.finalizer.clone(),
                         });
+                        self.hoist_functions(&handler.body.stmts);
                         for s in &handler.body.stmts {
                             self.gen_stmt(s);
                         }
@@ -2053,6 +2131,7 @@ impl Codegen {
             self.instructions
                 .push(OpCode::Store(SCOPE_LOCAL.to_string()));
         }
+        self.hoist_functions(switch.cases.iter().flat_map(|c| c.cons.iter()));
         self.loop_stack.push(LoopContext {
             kind: TargetKind::Switch,
             labels: Vec::new(),
@@ -2141,6 +2220,9 @@ impl Codegen {
                         self.instructions.push(OpCode::Return);
                     }
                     BlockStmtOrExpr::BlockStmt(block) => {
+                        let param_names: Vec<String> =
+                            pats.iter().flat_map(|p| scope::pattern_names(p)).collect();
+                        self.hoist_body(&block.stmts, &param_names);
                         let mut last_instr_was_return = false;
                         for s in &block.stmts {
                             let before = self.instructions.len();
@@ -2226,8 +2308,15 @@ impl Codegen {
             Expr::Unary(unary) => {
                 match unary.op {
                     UnaryOp::TypeOf => {
-                        self.gen_expr(&unary.arg);
-                        self.instructions.push(OpCode::TypeOf);
+                        if let Expr::Ident(id) = unary.arg.as_ref()
+                            && self.scopes.var(id.span) == VarRef::Plain
+                        {
+                            self.instructions
+                                .push(OpCode::TypeOfName(id.sym.to_string()));
+                        } else {
+                            self.gen_expr(&unary.arg);
+                            self.instructions.push(OpCode::TypeOf);
+                        }
                     }
                     UnaryOp::Delete => {
                         // delete operator - handle member expressions specially
@@ -2577,12 +2666,13 @@ impl Codegen {
                 }
             }
             Expr::New(new_expr) => {
-                // new Foo(arg1, arg2) compiles to:
-                // 1. Create new empty object that will be `this`
-                self.instructions.push(OpCode::NewObject);
-                self.instructions.push(OpCode::Dup); // Keep a copy for return value
+                // new Foo(arg1, arg2) compiles to [args..., Foo] Construct;
+                // the VM creates `this`. (This also pushed a `NewObject`
+                // and its `Dup` that nothing consumed, so two stale objects
+                // were left behind by every `new`, displacing the
+                // arguments of an enclosing call.)
 
-                // 2. Push arguments
+                // 1. Push arguments
                 let arg_count = new_expr.args.as_ref().map(|a| a.len()).unwrap_or(0);
                 if let Some(args) = &new_expr.args {
                     for arg in args {
@@ -2590,10 +2680,10 @@ impl Codegen {
                     }
                 }
 
-                // 3. Push the constructor function
+                // 2. Push the constructor function
                 self.gen_expr(&new_expr.callee);
 
-                // 4. Call with construct semantics
+                // 3. Call with construct semantics
                 self.instructions.push(OpCode::Construct(arg_count));
             }
             Expr::Paren(paren_expr) => {
@@ -2960,6 +3050,11 @@ impl Codegen {
         for param in constructor_params.iter().rev() {
             self.instructions.push(OpCode::Let(param.clone()));
         }
+        if has_super && constructor_body.is_none() {
+            // The implicit `constructor(...args) { super(...args); }`.
+            self.instructions.push(OpCode::SuperForward);
+            self.instructions.push(OpCode::Pop);
+        }
 
         // Set up private field storage for this instance
         // Create storage array for private fields (one entry per field)
@@ -2985,16 +3080,21 @@ impl Codegen {
             // Stack: [storage]
         }
 
-        // Store the private storage array in this.__private_storage__
+        // Store the private storage array in this.__private_storage__,
+        // keeping a copy for the local of the same name.
+        // Stack: [storage]
+        self.instructions.push(OpCode::Dup);
         self.instructions.push(OpCode::LoadThis);
-        // Stack: [this]
+        // Stack: [storage, storage, this]
         self.instructions.push(OpCode::Swap);
-        // Stack: [storage_array, this]
+        // Stack: [storage, this, storage]
         self.instructions
             .push(OpCode::SetProp("__private_storage__".to_string()));
-        // Stack: []
+        // Stack: [storage]
 
-        // Store the private storage array in a temp for later use
+        // Store the private storage array in a temp for later use. (This
+        // used to pop a value the constructor did not own: one of the stray
+        // objects every `new` left on the stack.)
         self.instructions
             .push(OpCode::Let("__private_storage__".to_string()));
         // Stack: []
@@ -3036,6 +3136,7 @@ impl Codegen {
         }
 
         if let Some(body) = constructor_body {
+            self.hoist_body(&body.stmts, &constructor_params);
             for stmt in &body.stmts {
                 self.gen_stmt(stmt);
             }
@@ -3257,6 +3358,7 @@ impl Codegen {
                 }
 
                 if let Some(body) = &method.function.body {
+                    self.hoist_body(&body.stmts, &params);
                     for stmt in &body.stmts {
                         self.gen_stmt(stmt);
                     }

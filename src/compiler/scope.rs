@@ -600,7 +600,7 @@ impl Visit for Resolver {
 }
 
 /// Names bound by a declaration pattern.
-fn pattern_names(pat: &Pat) -> Vec<String> {
+pub fn pattern_names(pat: &Pat) -> Vec<String> {
     pattern_idents(pat)
         .into_iter()
         .map(|i| i.sym.to_string())
@@ -608,6 +608,34 @@ fn pattern_names(pat: &Pat) -> Vec<String> {
 }
 
 /// Binding identifiers of a declaration pattern.
+/// The identifiers a `var` declares in a function body (or the program),
+/// in order and without repeats; nested functions and classes have their
+/// own.
+pub fn var_declared(stmts: &[Stmt]) -> Vec<Ident> {
+    struct Collect(Vec<Ident>);
+    impl Visit for Collect {
+        fn visit_var_decl(&mut self, v: &VarDecl) {
+            if v.kind == VarDeclKind::Var {
+                for d in &v.decls {
+                    for ident in pattern_idents(&d.name) {
+                        if !self.0.iter().any(|i| i.sym == ident.sym) {
+                            self.0.push(ident);
+                        }
+                    }
+                }
+            }
+        }
+        fn visit_function(&mut self, _: &Function) {}
+        fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+        fn visit_class(&mut self, _: &Class) {}
+    }
+    let mut c = Collect(Vec::new());
+    for s in stmts {
+        s.visit_with(&mut c);
+    }
+    c.0
+}
+
 fn pattern_idents(pat: &Pat) -> Vec<Ident> {
     let mut out = Vec::new();
     collect_idents(pat, &mut out);

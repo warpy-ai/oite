@@ -32,6 +32,7 @@ pub const RUNTIME: &[(&str, bool, &[Ty])] = {
         ("ot_array_len", true, &[Val]),
         ("ot_array_push", true, &[Val, Val]),
         ("ot_get_global", true, &[Ptr, Len]),
+        ("ot_typeof_global", true, &[Ptr, Len]),
         ("ot_set_global", false, &[Ptr, Len, Val]),
         ("ot_call", true, &[Val, Val, Ptr, Len]),
         ("ot_call_method", true, &[Val, Ptr, Len, Ptr, Len]),

@@ -468,6 +468,9 @@ pub enum IrOp {
     // === Global Variables ===
     /// Load global by name: dst = globals[name]
     LoadGlobal(ValueId, String),
+    /// `typeof name` of a global: "undefined" if it is unbound, where
+    /// `LoadGlobal` throws a `ReferenceError`.
+    TypeOfGlobal(ValueId, String),
     /// Store global by name: globals[name] = src
     StoreGlobal(String, ValueId),
 
@@ -597,6 +600,7 @@ impl IrOp {
             | IrOp::Pow(d, _, _)
             | IrOp::LoadLocal(d, _)
             | IrOp::LoadGlobal(d, _)
+            | IrOp::TypeOfGlobal(d, _)
             | IrOp::NewObject(d)
             | IrOp::GetProp(d, _, _)
             | IrOp::GetElement(d, _, _)
@@ -698,6 +702,7 @@ impl IrOp {
 
             IrOp::LoadLocal(_, _)
             | IrOp::LoadGlobal(_, _)
+            | IrOp::TypeOfGlobal(_, _)
             | IrOp::LoadThis(_)
             | IrOp::LoadEnv(_) => vec![],
             IrOp::StoreLocal(_, v) | IrOp::StoreGlobal(_, v) => vec![*v],
@@ -1207,6 +1212,7 @@ impl fmt::Display for IrOp {
             IrOp::LoadLocal(d, slot) => write!(f, "{} = load.local ${}", d, slot),
             IrOp::StoreLocal(slot, v) => write!(f, "store.local ${}, {}", slot, v),
             IrOp::LoadGlobal(d, name) => write!(f, "{} = load.global @{}", d, name),
+            IrOp::TypeOfGlobal(d, name) => write!(f, "{} = typeof.global @{}", d, name),
             IrOp::StoreGlobal(name, v) => write!(f, "store.global @{}, {}", name, v),
             IrOp::NewObject(d) => write!(f, "{} = new.object", d),
             IrOp::GetProp(d, obj, name) => write!(f, "{} = get.prop {}, .{}", d, obj, name),
