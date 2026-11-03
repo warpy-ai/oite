@@ -1,0 +1,14 @@
+// backends: vm jit aot
+let o = { a: 1, b: "two" };
+o.c = true;
+o["d"] = null;
+let k = "e";
+o[k] = [1];
+console.log(o);
+console.log(o.a, o["b"], o.missing);
+let n = { inner: { deep: { x: 1 } } };
+n.inner.deep.x = 42;
+console.log(n.inner.deep.x);
+// An assignment expression has the assigned value.
+let v = (o.a = 5);
+console.log(v, o.a);

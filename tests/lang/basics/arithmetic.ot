@@ -1,3 +1,4 @@
+// backends: vm jit aot
 console.log(1 + 2);
 console.log(10 - 4);
 console.log(6 * 7);

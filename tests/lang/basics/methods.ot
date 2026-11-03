@@ -1,0 +1,12 @@
+// backends: vm jit aot
+// Functions stored on objects are called with `this` set to the object.
+let counter = {
+  n: 0,
+  inc: function (by) { this.n = this.n + by; return this; },
+  get: function () { return this.n; },
+};
+counter.inc(2);
+counter.inc(5);
+console.log(counter.get());
+let ops = { add: (a, b) => a + b };
+console.log(ops.add(2, 3));

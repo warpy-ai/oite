@@ -40,11 +40,14 @@ must fail with an error. It must never approximate.
 - In `src/ir/lower.rs`, an opcode the native backends do not implement returns
   `LowerError::NotSupportedNatively`. Do not lower it to a no-op or to
   `undefined`.
-- The `// backends: vm aot` directive at the top of a test runs it on each
-  listed backend against the same expectation. Tests list `vm` only for now
-  because the native runtime is still stubbed
-  ([#127](https://github.com/warpy-ai/oite/issues/127)); the goal is every
-  test on `aot`. Add `aot` to a test as soon as it passes there.
+- The `// backends: vm jit aot` directive at the top of a test runs it on
+  each listed backend against the same expectation. Any test the native
+  backends can run lists `jit aot`; the goal is every test on `aot`. Add them
+  to a test as soon as it passes there. A test for a construct the native
+  backends refuse can list `jit aot` with a `.err` file to pin the refusal.
+- Language semantics for native code live in the runtime
+  (`src/runtime/stubs.rs`), which both native backends call. Put behaviour
+  there rather than in one backend's code generator.
 
 ### 3. Nothing is dropped silently
 

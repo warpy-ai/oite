@@ -1,3 +1,4 @@
+// backends: vm jit aot
 // #117: && and || must not evaluate the right operand when the left decides.
 let ran = 0;
 function boom() { ran = ran + 1; return 1; }

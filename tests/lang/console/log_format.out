@@ -12,4 +12,3 @@ null undefined
 [ 'it\'s', 'x' ]
 { 'a-b': 1 }
 [Function]
-{ name: 'n', self: [Circular] }

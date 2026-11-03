@@ -1,0 +1,3 @@
+// backends: vm jit aot
+// #128: a native hello world must link (PIE on Linux) and print the string.
+console.log("Hello, world!");

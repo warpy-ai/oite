@@ -1,0 +1,16 @@
+// backends: vm jit aot
+let a = [1, 2, 3];
+a[0] = 10;
+a.push(4);
+console.log(a, a.length, a[1], a[9]);
+let b = [];
+b[2] = "x";
+console.log(b, b.length);
+let last = a.pop();
+console.log(last, a);
+let sum = 0;
+for (let i = 0; i < a.length; i++) { sum = sum + a[i]; }
+console.log(sum);
+let grid = [[1, 2], [3, 4]];
+grid[1][0] = 30;
+console.log(grid);

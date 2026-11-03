@@ -20,9 +20,9 @@ Tracking issue for the full gap list: [#136](https://github.com/warpy-ai/oite/is
 
 | Component                                 | Status                                                                                   |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------- |
-| LLVM AOT (production target)              | Links on Linux and macOS; native runtime is stubbed, so output is wrong ([#127](https://github.com/warpy-ai/oite/issues/127), [#129](https://github.com/warpy-ai/oite/issues/129))     |
-| Cranelift JIT (development)               | Numeric code only; object property access crashes                                        |
-| SSA IR + optimizations                    | Working for numeric code                                                                  |
+| LLVM AOT (production target)              | Runs the "native" rows below; links the runtime into a standalone binary                 |
+| Cranelift JIT (development)               | Same coverage as LLVM AOT, same runtime                                                  |
+| SSA IR + optimizations                    | Working; refuses what the native backends cannot run                                     |
 | VM interpreter (debugging)                | Runs most features; ahead of the native backends for now                                 |
 | Static type checking                      | Not implemented: annotations are parsed and erased ([#124](https://github.com/warpy-ai/oite/issues/124))                                |
 | Memory reclamation                        | Not implemented: nothing is ever freed ([#123](https://github.com/warpy-ai/oite/issues/123))                                            |
@@ -40,21 +40,27 @@ yet. Closing the gap between the two right-hand columns is the main work.
 
 | Feature                                    | VM (debugging)                       | JIT / AOT (native)                |
 | ------------------------------------------ | ------------------------------------ | --------------------------------- |
-| Numbers, strings, arithmetic, comparison   | Covered                              | JIT works for numbers             |
-| Functions, closures, recursion             | Covered                              | JIT works for numeric functions   |
-| `if`, `while`, `for`, `do..while`, `?:`    | Covered                              | JIT works                         |
-| `break` / `continue` (unlabeled)           | Covered                              | JIT works                         |
-| `&&`, `\|\|`, `??` (short-circuit)         | Covered                              | JIT works                         |
-| Optional chaining `?.`                     | Covered                              | Needs objects (crashes)           |
-| Sequence expressions `a, b`                | Covered                              | -                                 |
-| Classes, constructors, methods             | Covered                              | Crashes (objects)                 |
+| Numbers, strings, arithmetic, comparison   | Covered                              | Covered                           |
+| `==` / `!=`, `===` / `!==`, `typeof`       | Covered                              | Covered                           |
+| Bitwise operators, `**`                    | Covered                              | Covered                           |
+| Functions, recursion, functions as values  | Covered                              | Covered                           |
+| Top-level variables used from functions    | Covered                              | Covered                           |
+| Closures capturing an enclosing function's locals | Covered                       | Refused                           |
+| Objects, arrays, `obj[k]`, `.length`, `push`/`pop` | Covered                      | Covered                           |
+| Methods on object literals (`this`)        | Covered                              | Covered                           |
+| `if`, `while`, `for`, `do..while`, `?:`    | Covered                              | Covered                           |
+| `break` / `continue` (unlabeled)           | Covered                              | Covered                           |
+| `&&`, `\|\|`, `??` (short-circuit)         | Covered                              | Covered                           |
+| Optional chaining `?.`                     | Covered                              | Covered                           |
+| Sequence expressions `a, b`                | Covered                              | Covered                           |
+| Classes, `new`, `instanceof`               | Covered                              | Refused                           |
 | `extends`, `super`                         | Covered                              | Refused                           |
 | `try` / `catch` / `finally`, `throw`       | Covered                              | Refused                           |
 | `async` / `await`                          | Partial: `await` polls synchronously; `.then` callbacks never run; `new Promise` aborts ([#122](https://github.com/warpy-ai/oite/issues/122)) | Refused |
 | ES modules (`import` / `export`)           | Works, not yet covered               | Refused                           |
-| Decorators, private fields, getters/setters | Implemented, not yet covered        | -                                 |
-| Template literals                          | Implemented, not yet covered         | -                                 |
-| `console.log` formatting                   | Covered                              | Stub prints numbers only          |
+| Decorators, private fields, getters/setters | Implemented, not yet covered        | Refused                           |
+| Template literals                          | Covered                              | Covered                           |
+| `console.log` formatting                   | Covered                              | Covered (same formatter)          |
 | `switch`, labeled statements               | Compile error ([#118](https://github.com/warpy-ai/oite/issues/118))                 | Compile error                     |
 | Generators, regex, tagged templates, class expressions | Compile error            | Compile error                     |
 | Runtime errors as catchable exceptions     | No: most abort the process ([#121](https://github.com/warpy-ai/oite/issues/121))    | -                                 |

@@ -12,11 +12,12 @@
 //!
 //! Directives (comment lines at the top of the `.ot` file):
 //!
-//! - `// backends: vm aot` — run the program on each listed backend and hold
-//!   every one to the same `.out`. The expectation files are the reference;
-//!   no backend is. Default: `vm` only, because the native runtime is still
-//!   stubbed (#127). The goal is every test on `aot`, Oite's production
-//!   target.
+//! - `// backends: vm jit aot` — run the program on each listed backend
+//!   (`oitec file`, `oitec jit file`, `oitec build file`) and hold every one
+//!   to the same `.out`. The expectation files are the reference;
+//!   no backend is. Default: `vm` only. Every test that the native backends
+//!   can run should list `jit aot`; the goal is every test on `aot`, Oite's
+//!   production target.
 //!
 //! Set `OITE_BLESS=1` to (re)write `.out` files from the current VM output.
 //! Only do this after checking the new output by hand: it records what the
@@ -33,6 +34,7 @@ const OITEC: &str = env!("CARGO_BIN_EXE_oitec");
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Backend {
     Vm,
+    Jit,
     Aot,
 }
 
@@ -65,6 +67,7 @@ fn backends(source: &str) -> Vec<Backend> {
                 .split_whitespace()
                 .map(|b| match b {
                     "vm" => Backend::Vm,
+                    "jit" => Backend::Jit,
                     "aot" => Backend::Aot,
                     other => panic!("unknown backend in directive: {other}"),
                 })
@@ -83,6 +86,12 @@ fn run(backend: Backend, file: &Path, scratch: &Path) -> Result<Output, String> 
             .current_dir(scratch)
             .output()
             .map_err(|e| format!("failed to spawn oitec: {e}")),
+        Backend::Jit => Command::new(OITEC)
+            .arg("jit")
+            .arg(file)
+            .current_dir(scratch)
+            .output()
+            .map_err(|e| format!("failed to spawn oitec jit: {e}")),
         Backend::Aot => {
             let exe = scratch.join(file.file_stem().unwrap());
             let build = Command::new(OITEC)
@@ -94,13 +103,10 @@ fn run(backend: Backend, file: &Path, scratch: &Path) -> Result<Output, String> 
                 .current_dir(scratch)
                 .output()
                 .map_err(|e| format!("failed to spawn oitec build: {e}"))?;
+            // A failed build stands for the program's result: `.err` tests
+            // check its message, `.out` tests report it as a failure.
             if !build.status.success() {
-                return Err(format!(
-                    "oitec build failed ({}):\n{}{}",
-                    build.status,
-                    String::from_utf8_lossy(&build.stdout),
-                    String::from_utf8_lossy(&build.stderr)
-                ));
+                return Ok(build);
             }
             Command::new(&exe)
                 .output()

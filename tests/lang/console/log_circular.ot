@@ -1,0 +1,5 @@
+// Cycles print as [Circular]. Uses a class, so VM only for now.
+class Node {
+  constructor() { this.name = "n"; this.self = this; }
+}
+console.log(new Node());
