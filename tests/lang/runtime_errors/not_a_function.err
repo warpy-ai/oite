@@ -1,0 +1,1 @@
+Uncaught TypeError: { a: 1 }.nope is not a function

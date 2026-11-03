@@ -1,0 +1,9 @@
+// backends: vm jit aot
+// `Math` and `Date.now()`, the same on every backend.
+console.log(Math.floor(3.7), Math.ceil(3.2), Math.round(2.5), Math.round(-2.5), Math.round(2.4));
+console.log(Math.abs(-4), Math.trunc(-4.7), Math.sign(-3), Math.sign(0));
+console.log(Math.max(1, 5, 3), Math.min(4, 2), Math.max(), Math.min());
+console.log(Math.pow(2, 10), Math.sqrt(16), Math.cbrt(27), Math.hypot(3, 4));
+console.log(Math.PI.toFixed(5), Math.E.toFixed(3), Math.log(Math.E), Math.log2(8), Math.log10(1000));
+let r = Math.random();
+console.log(r >= 0 && r < 1, typeof Date.now(), Date.now() > 1600000000000);

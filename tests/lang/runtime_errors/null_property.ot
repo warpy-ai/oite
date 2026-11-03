@@ -1,0 +1,6 @@
+// backends: vm jit aot
+// #121: reading a property of null is a TypeError, reported and exit 1.
+let o = null;
+console.log("before");
+console.log(o.name);
+console.log("not reached");

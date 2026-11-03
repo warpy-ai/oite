@@ -1,0 +1,5 @@
+// backends: vm jit aot
+let n = 255;
+console.log(n.toString(), n.toString(16), n.toString(2), (-7).toString(8), (0.5).toString(2));
+console.log((3.14159).toFixed(2), (2.5).toFixed(0), (1.45).toFixed(1), (0.125).toFixed(2), (0).toFixed(2));
+console.log((-1.5).toFixed(0), (1e21).toFixed(2), (12).valueOf());

@@ -1,0 +1,3 @@
+// backends: vm jit aot
+let o;
+o.x = 1;

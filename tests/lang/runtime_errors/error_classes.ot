@@ -1,0 +1,45 @@
+// The built-in error classes (std/core/error.ot): construction, toString,
+// printing, and subclassing.
+
+let e = new Error("boom");
+console.log(e.name, e.message, e.toString(), String(e), "" + e, `${e}`);
+console.log(e);
+console.log(new Error().toString(), new Error().message === "");
+
+let t = new TypeError("bad type");
+console.log(t.name, t instanceof TypeError, t instanceof Error, t instanceof RangeError);
+console.log(t);
+console.log(new ReferenceError("r").name, new RangeError("r").name, new SyntaxError("s").name);
+
+// Subclasses: an implicit constructor passes its arguments on.
+class ValidationError extends Error {}
+let v = new ValidationError("invalid input");
+console.log(v.message, v instanceof ValidationError, v instanceof Error, v.name);
+
+// An explicit constructor, a name of its own, and extra fields.
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+HttpError.prototype.name = "HttpError";
+let h = new HttpError(404, "not found");
+console.log(h.status, h.message, h.toString());
+console.log(h);
+
+// Two levels of subclassing reach the base constructor.
+class NotFound extends HttpError {
+  constructor(what) {
+    super(404, what + " not found");
+  }
+}
+let nf = new NotFound("page");
+console.log(nf.message, nf.status, nf instanceof HttpError, nf instanceof Error);
+
+// Thrown and caught.
+try {
+  throw new HttpError(500, "server");
+} catch (err) {
+  console.log("caught", err.status, err instanceof HttpError, `${err}`);
+}
