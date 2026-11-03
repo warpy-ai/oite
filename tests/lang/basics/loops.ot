@@ -1,0 +1,15 @@
+let sum = 0;
+for (let i = 0; i < 10; i++) {
+  if (i == 3) continue;
+  if (i == 8) break;
+  sum = sum + i;
+}
+console.log(sum);
+
+let j = 0;
+while (j < 5) { j = j + 1; }
+console.log(j);
+
+let k = 0;
+do { k = k + 2; } while (k < 7);
+console.log(k);

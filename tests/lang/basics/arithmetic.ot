@@ -1,0 +1,8 @@
+console.log(1 + 2);
+console.log(10 - 4);
+console.log(6 * 7);
+console.log(7 / 2);
+console.log(7 % 3);
+console.log(0.1 + 0.2);
+console.log("con" + "cat");
+console.log("n=" + 5);

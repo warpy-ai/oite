@@ -1,0 +1,14 @@
+function risky(n) {
+  if (n > 0) { throw "bad"; }
+  return 1;
+}
+function main() {
+  try { risky(5); return 99; } catch (e) { return 7; }
+}
+console.log(main());
+
+let log = "";
+try {
+  try { throw "x"; } finally { log = log + "F"; }
+} catch (e) { log = log + "C:" + e; }
+console.log(log);

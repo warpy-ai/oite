@@ -205,6 +205,38 @@ impl Lowerer {
         }
     }
 
+    /// Local slot used to carry operand-stack position `depth` across a block
+    /// boundary. The name cannot collide with a source identifier.
+    fn merge_slot(&mut self, depth: usize) -> u32 {
+        self.get_or_create_local(&format!("%stack{}", depth))
+    }
+
+    /// Store the abstract stack into merge slots before an edge leaves the
+    /// current block.
+    ///
+    /// Bytecode leaves values on the operand stack across jumps (`?:`, `&&`,
+    /// `||`, `??`, `?.`). Each predecessor of a merge block holds a different
+    /// SSA value in the same stack position, so the values cannot be reused
+    /// directly; they travel through local slots instead, the same way
+    /// variables do.
+    fn spill_stack(&mut self, values: &[ValueId]) {
+        for (depth, &value) in values.iter().enumerate() {
+            let slot = self.merge_slot(depth);
+            self.emit(IrOp::StoreLocal(slot, value));
+        }
+    }
+
+    /// Rebuild the abstract stack at a block entry from the merge slots.
+    fn reload_stack(&mut self, depth: usize) {
+        self.stack.clear();
+        for d in 0..depth {
+            let slot = self.merge_slot(d);
+            let dst = self.alloc_value(IrType::Any);
+            self.emit(IrOp::LoadLocal(dst, slot));
+            self.stack.push(dst);
+        }
+    }
+
     /// Lower all instructions.
     fn lower_instructions(&mut self, instructions: &[OpCode]) -> Result<(), LowerError> {
         // Track stack state at each block entry for proper phi generation
@@ -225,10 +257,10 @@ impl Lowerer {
                     Terminator::Unreachable
                 ) && reachable_blocks.contains(&self.current_block)
                 {
+                    let stack = self.stack.clone();
+                    self.spill_stack(&stack);
                     self.terminate(Terminator::Jump(new_block));
-                    block_stacks
-                        .entry(new_block)
-                        .or_insert_with(|| self.stack.clone());
+                    block_stacks.entry(new_block).or_insert(stack);
                 }
 
                 // Skip unreachable blocks (e.g., function bodies jumped over)
@@ -238,9 +270,11 @@ impl Lowerer {
                     continue;
                 }
 
-                // Restore stack state from saved entry (or use empty if not saved)
-                self.stack = block_stacks.get(&new_block).cloned().unwrap_or_default();
+                // Restore stack state from the merge slots written by the
+                // block's predecessors (empty if none was recorded).
+                let depth = block_stacks.get(&new_block).map_or(0, |s| s.len());
                 self.current_block = new_block;
+                self.reload_stack(depth);
             }
 
             // Skip if we're in an unreachable block
@@ -251,10 +285,10 @@ impl Lowerer {
             // Before lowering jumps, save target block stack state
             match op {
                 OpCode::Jump(target) => {
+                    let stack = self.stack.clone();
+                    self.spill_stack(&stack);
                     if let Some(&target_block) = self.instr_to_block.get(target) {
-                        block_stacks
-                            .entry(target_block)
-                            .or_insert_with(|| self.stack.clone());
+                        block_stacks.entry(target_block).or_insert(stack);
                     }
                 }
                 OpCode::JumpIfFalse(target) => {
@@ -264,6 +298,7 @@ impl Lowerer {
                     } else {
                         Vec::new()
                     };
+                    self.spill_stack(&stack_after_pop);
 
                     // Save for false branch target
                     if let Some(&target_block) = self.instr_to_block.get(target) {

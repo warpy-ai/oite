@@ -1,0 +1,13 @@
+// #119: ?. short-circuits to undefined on null/undefined.
+let o = { a: { b: 1 }, f: function () { return "called"; } };
+console.log(o?.a?.b);
+console.log(o?.x?.b);
+let n = null;
+console.log(n?.a);
+console.log(n?.a.b.c);
+console.log(o.f?.());
+console.log(o.g?.());
+let arr = [10, 20];
+console.log(arr?.[1]);
+let none = null;
+console.log(none?.[0]);

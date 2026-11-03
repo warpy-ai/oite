@@ -91,6 +91,10 @@ impl Compiler {
             }
         }
 
+        if !codegen.errors.is_empty() {
+            return Err(codegen.errors.join("\n"));
+        }
+
         Ok(codegen.instructions)
     }
 }
@@ -117,6 +121,10 @@ pub struct Codegen {
     private_method_indices: std::collections::HashMap<String, usize>,
     /// Warnings collected during compilation
     pub warnings: Vec<String>,
+    /// Hard errors collected during code generation. Compilation fails if
+    /// any are present: a construct the compiler cannot lower must never be
+    /// dropped silently.
+    pub errors: Vec<String>,
 }
 
 impl Default for Codegen {
@@ -137,6 +145,193 @@ impl Codegen {
             private_field_indices: std::collections::HashMap::new(),
             private_method_indices: std::collections::HashMap::new(),
             warnings: Vec::new(),
+            errors: Vec::new(),
+        }
+    }
+
+    /// Record that a construct cannot be compiled. Compilation will fail.
+    fn unsupported(&mut self, what: impl std::fmt::Display) {
+        self.errors.push(format!("unsupported: {}", what));
+    }
+
+    /// Emit a jump with a placeholder target; patch it with `patch_jump`.
+    fn emit_jump(&mut self) -> usize {
+        self.instructions.push(OpCode::Jump(0));
+        self.instructions.len() - 1
+    }
+
+    /// Emit a conditional jump with a placeholder target.
+    fn emit_jump_if_false(&mut self) -> usize {
+        self.instructions.push(OpCode::JumpIfFalse(0));
+        self.instructions.len() - 1
+    }
+
+    /// Point a placeholder jump at the next instruction to be emitted.
+    fn patch_jump_here(&mut self, idx: usize) {
+        let here = self.instructions.len();
+        match &mut self.instructions[idx] {
+            OpCode::Jump(addr) | OpCode::JumpIfFalse(addr) => *addr = here,
+            other => unreachable!("patch_jump_here on non-jump {:?}", other),
+        }
+    }
+
+    /// With a value on top of the stack, emit jumps taken when it is `null`
+    /// or `undefined`. The value stays on the stack on every path.
+    ///
+    /// Uses two strict comparisons rather than `== null`, so that every
+    /// backend computes the same answer.
+    fn emit_jumps_if_nullish(&mut self) -> Vec<usize> {
+        let mut jumps = Vec::with_capacity(2);
+        for nullish in [JsValue::Null, JsValue::Undefined] {
+            self.instructions.push(OpCode::Dup);
+            self.instructions.push(OpCode::Push(nullish));
+            self.instructions.push(OpCode::Eq);
+            self.instructions.push(OpCode::Not);
+            jumps.push(self.emit_jump_if_false());
+        }
+        jumps
+    }
+
+    /// `a && b`, `a || b`, `a ?? b`: evaluate `b` only when `a` does not
+    /// decide the result. The result is the deciding operand's value.
+    fn gen_logical(&mut self, bin: &BinExpr) {
+        self.gen_expr(&bin.left);
+        match bin.op {
+            BinaryOp::LogicalAnd => {
+                // [a] -> falsy: keep a; truthy: replace with b
+                self.instructions.push(OpCode::Dup);
+                let to_end = self.emit_jump_if_false();
+                self.instructions.push(OpCode::Pop);
+                self.gen_expr(&bin.right);
+                self.patch_jump_here(to_end);
+            }
+            BinaryOp::LogicalOr => {
+                // [a] -> truthy: keep a; falsy: replace with b
+                self.instructions.push(OpCode::Dup);
+                let to_rhs = self.emit_jump_if_false();
+                let to_end = self.emit_jump();
+                self.patch_jump_here(to_rhs);
+                self.instructions.push(OpCode::Pop);
+                self.gen_expr(&bin.right);
+                self.patch_jump_here(to_end);
+            }
+            BinaryOp::NullishCoalescing => {
+                // [a] -> not null/undefined: keep a; else replace with b
+                let to_rhs = self.emit_jumps_if_nullish();
+                let to_end = self.emit_jump();
+                for j in to_rhs {
+                    self.patch_jump_here(j);
+                }
+                self.instructions.push(OpCode::Pop);
+                self.gen_expr(&bin.right);
+                self.patch_jump_here(to_end);
+            }
+            _ => unreachable!("gen_logical called with {:?}", bin.op),
+        }
+    }
+
+    /// Optional chain `a?.b.c`, `a?.[k]`, `f?.()`, `o.m?.()`.
+    ///
+    /// If any `?.` link sees `null`/`undefined`, the whole chain evaluates to
+    /// `undefined` and the rest of it is not evaluated.
+    fn gen_opt_chain_expr(&mut self, chain: &OptChainExpr) {
+        let mut to_undefined = Vec::new();
+        self.gen_opt_chain(chain, &mut to_undefined);
+        if to_undefined.is_empty() {
+            return;
+        }
+        let to_end = self.emit_jump();
+        for j in to_undefined {
+            self.patch_jump_here(j);
+        }
+        // Every short-circuit jump leaves exactly the nullish value on the stack.
+        self.instructions.push(OpCode::Pop);
+        self.instructions.push(OpCode::Push(JsValue::Undefined));
+        self.patch_jump_here(to_end);
+    }
+
+    /// Evaluate the object of a chain link. A nested `OptChain` is part of
+    /// the same chain and shares its short-circuit target.
+    fn gen_opt_chain_object(&mut self, expr: &Expr, to_undefined: &mut Vec<usize>) {
+        match expr {
+            Expr::OptChain(inner) => self.gen_opt_chain(inner, to_undefined),
+            other => self.gen_expr(other),
+        }
+    }
+
+    fn gen_opt_chain(&mut self, chain: &OptChainExpr, to_undefined: &mut Vec<usize>) {
+        match chain.base.as_ref() {
+            OptChainBase::Member(member) => {
+                self.gen_opt_chain_object(&member.obj, to_undefined);
+                if chain.optional {
+                    to_undefined.extend(self.emit_jumps_if_nullish());
+                }
+                match &member.prop {
+                    MemberProp::Ident(id) => {
+                        self.instructions.push(OpCode::GetProp(id.sym.to_string()));
+                    }
+                    MemberProp::Computed(computed) => {
+                        self.gen_expr(&computed.expr);
+                        self.instructions.push(OpCode::GetPropComputed);
+                    }
+                    MemberProp::PrivateName(_) => {
+                        self.unsupported("optional chaining on a private field (`?.#x`)");
+                    }
+                }
+            }
+            OptChainBase::Call(call) => {
+                // Temporaries are named after the instruction index, which is
+                // unique, and use a character no identifier can contain.
+                let tmp = format!("%optcall{}", self.instructions.len());
+
+                // A method callee (`o.m?.()` or `o?.m()`) keeps `o` as `this`.
+                let method = match call.callee.as_ref() {
+                    Expr::Member(m) => Some((m, false)),
+                    Expr::OptChain(c) => match c.base.as_ref() {
+                        OptChainBase::Member(m) => Some((m, c.optional)),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+
+                match method {
+                    Some((member, obj_optional)) if matches!(member.prop, MemberProp::Ident(_)) => {
+                        let MemberProp::Ident(name) = &member.prop else {
+                            unreachable!()
+                        };
+                        let name = name.sym.to_string();
+                        self.gen_opt_chain_object(&member.obj, to_undefined);
+                        if obj_optional {
+                            to_undefined.extend(self.emit_jumps_if_nullish());
+                        }
+                        self.instructions.push(OpCode::Let(tmp.clone()));
+                        if chain.optional {
+                            self.instructions.push(OpCode::Load(tmp.clone()));
+                            self.instructions.push(OpCode::GetProp(name.clone()));
+                            to_undefined.extend(self.emit_jumps_if_nullish());
+                            self.instructions.push(OpCode::Pop);
+                        }
+                        for arg in &call.args {
+                            self.gen_expr(&arg.expr);
+                        }
+                        self.instructions.push(OpCode::Load(tmp));
+                        self.instructions
+                            .push(OpCode::CallMethod(name, call.args.len()));
+                    }
+                    _ => {
+                        self.gen_opt_chain_object(&call.callee, to_undefined);
+                        if chain.optional {
+                            to_undefined.extend(self.emit_jumps_if_nullish());
+                        }
+                        self.instructions.push(OpCode::Let(tmp.clone()));
+                        for arg in &call.args {
+                            self.gen_expr(&arg.expr);
+                        }
+                        self.instructions.push(OpCode::Load(tmp));
+                        self.instructions.push(OpCode::Call(call.args.len()));
+                    }
+                }
+            }
         }
     }
 
@@ -1688,6 +1883,17 @@ impl Codegen {
             Expr::Ident(id) => {
                 self.instructions.push(OpCode::Load(id.sym.to_string()));
             }
+            Expr::Bin(bin)
+                if matches!(
+                    bin.op,
+                    BinaryOp::LogicalAnd | BinaryOp::LogicalOr | BinaryOp::NullishCoalescing
+                ) =>
+            {
+                self.gen_logical(bin);
+            }
+            Expr::OptChain(chain) => {
+                self.gen_opt_chain_expr(chain);
+            }
             Expr::Bin(bin) => {
                 self.gen_expr(&bin.left);
                 self.gen_expr(&bin.right);
@@ -1705,8 +1911,6 @@ impl Codegen {
                     BinaryOp::LtEq => self.instructions.push(OpCode::LtEq),
                     BinaryOp::Gt => self.instructions.push(OpCode::Gt),
                     BinaryOp::GtEq => self.instructions.push(OpCode::GtEq),
-                    BinaryOp::LogicalAnd => self.instructions.push(OpCode::And),
-                    BinaryOp::LogicalOr => self.instructions.push(OpCode::Or),
                     BinaryOp::InstanceOf => self.instructions.push(OpCode::InstanceOf),
                     // Bitwise operators
                     BinaryOp::BitAnd => self.instructions.push(OpCode::BitAnd),
@@ -1716,7 +1920,7 @@ impl Codegen {
                     BinaryOp::RShift => self.instructions.push(OpCode::ShiftRight),
                     BinaryOp::ZeroFillRShift => self.instructions.push(OpCode::ShiftRightUnsigned),
                     BinaryOp::Exp => self.instructions.push(OpCode::Pow),
-                    _ => eprintln!("Warning: Operator {:?} not supported", bin.op),
+                    other => self.unsupported(format!("binary operator `{}`", other.as_str())),
                 }
             }
             Expr::Unary(unary) => {
