@@ -24,6 +24,7 @@ tls = []  # Optional TLS support for https_server example
 swc_common = "18.0.1"
 swc_ecma_ast = "19.0.0"
 swc_ecma_parser = "32.0.0"
+swc_ecma_visit = "19.0.0"
 
 # System calls
 libc = "0.2"

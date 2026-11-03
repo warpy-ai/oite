@@ -241,7 +241,7 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         // SSA operations
         IrOp::Phi(_, _) => CompileStrategy::NoOp, // Handled by register allocation
         IrOp::Copy(_, _) => CompileStrategy::Inline(InlineOp::Copy),
-        IrOp::LoadThis(_) => CompileStrategy::Inline(InlineOp::LoadLocal),
+        IrOp::LoadThis(_) | IrOp::LoadEnv(_) => CompileStrategy::Inline(InlineOp::LoadLocal),
 
         // Borrow operations - handled by register allocation or inline
         IrOp::Borrow(_, _) => CompileStrategy::Inline(InlineOp::Copy), // Just copy ptr

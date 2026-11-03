@@ -2,7 +2,7 @@
 //!
 //! Native calling convention (shared with the Cranelift JIT and the runtime,
 //! see `runtime::heap::NativeFn`): every compiled function is
-//! `i64 (i64 this, ptr argv, i64 argc)`. Parameters are read from `argv`, and
+//! `i64 (i64 this, ptr argv, i64 argc, i64 env)`. Parameters are read from `argv`, and
 //! one that was not passed reads as `undefined`.
 //!
 //! Number arithmetic on values the type checker proved are numbers is
@@ -46,7 +46,7 @@ pub struct LlvmCodegen {
     fn_objects: BTreeMap<usize, LLVMValueRef>,
     /// Interned string constants: contents -> global.
     strings: HashMap<String, LLVMValueRef>,
-    /// The native function type `i64 (i64, ptr, i64)`.
+    /// The native function type `i64 (i64 this, ptr argv, i64 argc, i64 env)`.
     fn_ty: LLVMTypeRef,
 }
 
@@ -72,8 +72,8 @@ impl LlvmCodegen {
 
             let i64_ty = LLVMInt64TypeInContext(context);
             let ptr_ty = LLVMPointerTypeInContext(context, 0);
-            let mut params = [i64_ty, ptr_ty, i64_ty];
-            let fn_ty = LLVMFunctionType(i64_ty, params.as_mut_ptr(), 3, 0);
+            let mut params = [i64_ty, ptr_ty, i64_ty, i64_ty];
+            let fn_ty = LLVMFunctionType(i64_ty, params.as_mut_ptr(), 4, 0);
 
             Ok(Self {
                 context,
@@ -152,8 +152,9 @@ impl LlvmCodegen {
                 LLVMConstInt(i64_ty, UNDEFINED, 0),
                 LLVMConstNull(ptr_ty),
                 LLVMConstInt(i64_ty, 0, 0),
+                LLVMConstInt(i64_ty, UNDEFINED, 0),
             ];
-            LLVMBuildCall2(b, self.fn_ty, ot_main, args.as_mut_ptr(), 3, NONAME);
+            LLVMBuildCall2(b, self.fn_ty, ot_main, args.as_mut_ptr(), 4, NONAME);
             let (exit, exit_ty) = self.runtime["ot_runtime_exit"];
             LLVMBuildCall2(b, exit_ty, exit, std::ptr::null_mut(), 0, NONAME);
             LLVMBuildRet(b, LLVMConstInt(i32_ty, 0, 0));
@@ -216,6 +217,7 @@ impl LlvmCodegen {
                 types: &func.value_types,
                 direct: HashMap::new(),
                 this: LLVMGetParam(f, 0),
+                env: LLVMGetParam(f, 3),
             };
             fx.prologue_setup(func, f)?;
 
@@ -264,9 +266,12 @@ struct Fx<'a> {
     blocks: HashMap<BlockId, LLVMBasicBlockRef>,
     locals: Vec<LLVMValueRef>,
     types: &'a HashMap<ValueId, IrType>,
-    /// Values known to be a specific compiled function (for direct calls).
-    direct: HashMap<ValueId, usize>,
+    /// Values known to be a specific compiled function (for direct calls),
+    /// with the closure environment they carry, if any.
+    direct: HashMap<ValueId, (usize, Option<ValueId>)>,
     this: LLVMValueRef,
+    /// This function's own closure environment.
+    env: LLVMValueRef,
 }
 
 impl Fx<'_> {
@@ -451,10 +456,10 @@ impl Fx<'_> {
                 for op in &block.ops {
                     match op {
                         IrOp::Const(dst, Literal::Function(addr)) => {
-                            self.direct.insert(*dst, *addr);
+                            self.direct.insert(*dst, (*addr, None));
                         }
-                        IrOp::MakeClosure(dst, addr, _) => {
-                            self.direct.insert(*dst, *addr as usize);
+                        IrOp::MakeClosure(dst, addr, env) => {
+                            self.direct.insert(*dst, (*addr as usize, Some(*env)));
                         }
                         _ => {}
                     }
@@ -689,6 +694,10 @@ impl Fx<'_> {
                     let v = self.get(*v)?;
                     self.rt("ot_set_global", &[p, n, v]);
                 }
+                IrOp::LoadEnv(d) => {
+                    let e = self.env;
+                    self.set(*d, e);
+                }
                 IrOp::LoadThis(d) => {
                     let t = self.this;
                     self.set(*d, t);
@@ -745,10 +754,13 @@ impl Fx<'_> {
                     self.rt("ot_array_push", &args);
                 }
 
-                IrOp::MakeClosure(d, addr, _env) => {
-                    // Captured variables are refused during lowering, so the
-                    // environment is never read.
-                    let v = self.literal(&Literal::Function(*addr as usize))?;
+                IrOp::MakeClosure(d, addr, env) => {
+                    let name = format!("func_{}", addr);
+                    let f = *self.cg.functions.get(&name).ok_or_else(|| {
+                        BackendError::Llvm(format!("internal error: no function {}", name))
+                    })?;
+                    let e = self.get(*env)?;
+                    let v = self.rt("ot_make_closure", &[f, e]);
                     self.set(*d, v);
                 }
                 IrOp::Call(d, callee, args) => {
@@ -758,20 +770,25 @@ impl Fx<'_> {
                         .collect::<Result<_, _>>()?;
                     let (argv, argc) = self.arg_array(&vals);
                     let undefined = self.c(UNDEFINED);
-                    let target = self
-                        .direct
-                        .get(callee)
-                        .and_then(|addr| self.cg.functions.get(&format!("func_{}", addr)))
-                        .copied();
+                    let target = self.direct.get(callee).copied().and_then(|(addr, env)| {
+                        self.cg
+                            .functions
+                            .get(&format!("func_{}", addr))
+                            .map(|f| (*f, env))
+                    });
                     let r = match target {
-                        Some(f) => {
-                            let mut a = [undefined, argv, argc];
+                        Some((f, env)) => {
+                            let env = match env {
+                                Some(e) => self.get(e)?,
+                                None => undefined,
+                            };
+                            let mut a = [undefined, argv, argc, env];
                             LLVMBuildCall2(
                                 self.builder,
                                 self.cg.fn_ty,
                                 f,
                                 a.as_mut_ptr(),
-                                3,
+                                4,
                                 NONAME,
                             )
                         }

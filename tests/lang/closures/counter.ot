@@ -1,0 +1,10 @@
+// backends: vm jit aot
+function makeCounter() {
+  let count = 0;
+  return function () { count = count + 1; return count; };
+}
+let c = makeCounter();
+let d = makeCounter();
+c();
+c();
+console.log(c(), d());

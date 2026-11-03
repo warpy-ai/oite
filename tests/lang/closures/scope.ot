@@ -1,0 +1,6 @@
+// backends: vm jit aot
+// Scope is lexical: a function cannot see its caller's locals.
+let x = "global";
+function show() { return x; }
+function caller() { let x = "caller's"; return show(); }
+console.log(caller());

@@ -1,7 +1,7 @@
 //! Cranelift JIT code generation.
 //!
 //! Mirrors the LLVM backend (`llvm/codegen.rs`): the same calling convention
-//! (`i64 (i64 this, ptr argv, i64 argc)`, see `runtime::heap::NativeFn`), the
+//! (`i64 (i64 this, ptr argv, i64 argc, i64 env)`, see `runtime::heap::NativeFn`), the
 //! same inlined number arithmetic, and the same runtime calls for everything
 //! else. The runtime is linked in-process: the JIT resolves `ot_*` symbols to
 //! the functions in `crate::runtime::stubs`.
@@ -41,6 +41,7 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_alloc_array,
         ot_alloc_string,
         ot_make_function,
+        ot_make_closure,
         ot_get_prop,
         ot_set_prop,
         ot_get_index,
@@ -139,7 +140,7 @@ impl CraneliftCodegen {
 
     fn native_sig(&self) -> Signature {
         let mut sig = self.module.make_signature();
-        for _ in 0..3 {
+        for _ in 0..4 {
             sig.params.push(AbiParam::new(types::I64));
         }
         sig.returns.push(AbiParam::new(types::I64));
@@ -189,6 +190,7 @@ impl CraneliftCodegen {
                     locals: Vec::new(),
                     types: &func.value_types,
                     direct: HashMap::new(),
+                    env: None,
                     this: None,
                 };
                 fx.function(&mut builder, func)?;
@@ -252,8 +254,12 @@ struct Fx<'a> {
     blocks: HashMap<BlockId, Block>,
     locals: Vec<StackSlot>,
     types: &'a HashMap<ValueId, IrType>,
-    direct: HashMap<ValueId, usize>,
+    /// Values known to be a specific compiled function, with the closure
+    /// environment they carry, if any.
+    direct: HashMap<ValueId, (usize, Option<ValueId>)>,
     this: Option<Value>,
+    /// This function's own closure environment.
+    env: Option<Value>,
 }
 
 /// Names passed to the runtime live for the whole process.
@@ -361,6 +367,7 @@ impl Fx<'_> {
         let params = b.block_params(prologue).to_vec();
         let (this, argv, argc) = (params[0], params[1], params[2]);
         self.this = Some(this);
+        self.env = Some(params[3]);
 
         for _ in &func.locals {
             let slot =
@@ -387,10 +394,10 @@ impl Fx<'_> {
             for op in &block.ops {
                 match op {
                     IrOp::Const(dst, Literal::Function(addr)) => {
-                        self.direct.insert(*dst, *addr);
+                        self.direct.insert(*dst, (*addr, None));
                     }
-                    IrOp::MakeClosure(dst, addr, _) => {
-                        self.direct.insert(*dst, *addr as usize);
+                    IrOp::MakeClosure(dst, addr, env) => {
+                        self.direct.insert(*dst, (*addr as usize, Some(*env)));
                     }
                     _ => {}
                 }
@@ -630,6 +637,10 @@ impl Fx<'_> {
                 let t = self.this.expect("this is set in the prologue");
                 self.values.insert(*d, t);
             }
+            IrOp::LoadEnv(d) => {
+                let e = self.env.expect("env is set in the prologue");
+                self.values.insert(*d, e);
+            }
 
             IrOp::Copy(d, s) | IrOp::Move(d, s) | IrOp::Borrow(d, s) | IrOp::BorrowMut(d, s) => {
                 let v = self.get(*s)?;
@@ -677,10 +688,15 @@ impl Fx<'_> {
                 self.rt(b, "ot_array_push", &args);
             }
 
-            IrOp::MakeClosure(d, addr, _env) => {
-                // Captured variables are refused during lowering, so the
-                // environment is never read.
-                let v = self.literal(b, &Literal::Function(*addr as usize))?;
+            IrOp::MakeClosure(d, addr, env) => {
+                let name = format!("func_{}", addr);
+                let id = *self.func_ids.get(&name).ok_or_else(|| {
+                    BackendError::Cranelift(format!("internal error: no function {}", name))
+                })?;
+                let fref = self.module.declare_func_in_func(id, b.func);
+                let code = b.ins().func_addr(types::I64, fref);
+                let e = self.get(*env)?;
+                let v = self.rt_v(b, "ot_make_closure", &[code, e]);
                 self.values.insert(*d, v);
             }
             IrOp::Call(d, callee, args) => {
@@ -690,15 +706,19 @@ impl Fx<'_> {
                     .collect::<Result<_, _>>()?;
                 let (argv, argc) = self.arg_array(b, &vals);
                 let undefined = Self::c(b, UNDEFINED);
-                let target = self
-                    .direct
-                    .get(callee)
-                    .and_then(|addr| self.func_ids.get(&format!("func_{}", addr)))
-                    .copied();
+                let target = self.direct.get(callee).copied().and_then(|(addr, env)| {
+                    self.func_ids
+                        .get(&format!("func_{}", addr))
+                        .map(|id| (*id, env))
+                });
                 let r = match target {
-                    Some(id) => {
+                    Some((id, env)) => {
+                        let env = match env {
+                            Some(e) => self.get(e)?,
+                            None => undefined,
+                        };
                         let fref = self.module.declare_func_in_func(id, b.func);
-                        let call = b.ins().call(fref, &[undefined, argv, argc]);
+                        let call = b.ins().call(fref, &[undefined, argv, argc, env]);
                         b.inst_results(call)[0]
                     }
                     None => {

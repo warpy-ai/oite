@@ -1,5 +1,5 @@
-// Closures capturing an enclosing function's locals: VM only until native
-// closure environments exist.
+// backends: vm jit aot
+// A closure captures the enclosing function's variables; each call makes new ones.
 function makeCounter() {
   let count = 0;
   return function () {

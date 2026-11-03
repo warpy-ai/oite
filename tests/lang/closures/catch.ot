@@ -1,0 +1,4 @@
+// A captured catch parameter. VM only until native exceptions (#140).
+let get;
+try { throw "boom"; } catch (e) { get = () => e; }
+console.log(get());

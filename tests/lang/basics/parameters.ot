@@ -1,0 +1,10 @@
+// backends: vm jit aot
+// Default parameter values, object-literal methods, computed calls.
+function f(a, b = 10, c = a + 1) { return [a, b, c]; }
+console.log(f(1), f(1, 2), f(1, 2, 3), f(1, undefined, 0));
+let g = (x = 5) => x * 2;
+console.log(g(), g(3));
+let obj = { m() { return 7; }, n: function () { return 8; } };
+console.log(obj.m(), obj.n());
+let fns = [() => "a", () => "b"];
+console.log(fns[0](), fns[1]());

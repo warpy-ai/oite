@@ -63,6 +63,10 @@ pub enum OpCode {
     /// combines it with the function address to create a Function value.
     /// This is the key to "lifting" captured variables from stack to heap.
     MakeClosure(usize), // address of the function body
+    /// Push the environment object of the running closure (the one
+    /// `MakeClosure` captured), or `undefined`. Compiled functions read
+    /// captured variables through it.
+    LoadClosureEnv,
     /// Construct a new object: pops constructor, args, and `this` object from stack.
     /// Binds `this` to the new object, calls the constructor, returns the object.
     Construct(usize), // arg_count

@@ -1,0 +1,18 @@
+// backends: vm jit aot
+// Closures share the variable with the function that created them.
+function make() {
+  let n = 0;
+  let inc = function () { n = n + 1; };
+  let get = function () { return n; };
+  inc();
+  inc();
+  return [n, get()];
+}
+console.log(make());
+function later() {
+  let msg = "before";
+  let show = () => msg;
+  msg = "after";
+  return show();
+}
+console.log(later());

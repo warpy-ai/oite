@@ -1,0 +1,18 @@
+// backends: vm jit aot
+// Compound assignment used to ignore its operator (`x += 2` was `x = 2`).
+let x = 1;
+x += 2;
+x *= 10;
+x -= 5;
+console.log(x);
+let o = { a: 1, k: [1, 2] };
+o.a += 4;
+o.k[1] -= 5;
+let i = 0;
+o.k[i++] += 10;
+console.log(o, i);
+let bits = 6;
+bits &= 3;
+bits |= 8;
+bits <<= 1;
+console.log(bits, 2 ** 3);

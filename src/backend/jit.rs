@@ -65,14 +65,15 @@ impl JitRuntime {
     }
 
     /// Call a compiled function. Every compiled function has the native
-    /// calling convention `fn(this, argv, argc) -> value`.
+    /// calling convention `fn(this, argv, argc, env) -> value`.
     pub fn call_func(&self, name: &str, args: &[OtValue]) -> Result<OtValue, BackendError> {
         let ptr = self
             .get_func(name)
             .ok_or_else(|| BackendError::JitError(format!("Function '{}' not found", name)))?;
         let f: crate::runtime::heap::NativeFn = unsafe { std::mem::transmute(ptr) };
         let argv: Vec<u64> = args.iter().map(|a| a.to_bits()).collect();
-        let result = f(OtValue::undefined().to_bits(), argv.as_ptr(), argv.len());
+        let undefined = OtValue::undefined().to_bits();
+        let result = f(undefined, argv.as_ptr(), argv.len(), undefined);
         Ok(OtValue::from_bits(result))
     }
 
