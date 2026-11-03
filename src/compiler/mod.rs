@@ -56,7 +56,7 @@ impl Compiler {
                 e.into_kind().msg()
             )
         };
-        let program = parser.parse_program().map_err(&format_parse_error)?;
+        let program = parser.parse_program().map_err(format_parse_error)?;
         // The parser recovers from some errors and keeps going; those must
         // still fail compilation instead of producing a partial program.
         let recovered: Vec<String> = parser
@@ -70,7 +70,7 @@ impl Compiler {
                     swc_ecma_parser::error::SyntaxError::ReturnNotAllowed
                 )
             })
-            .map(&format_parse_error)
+            .map(format_parse_error)
             .collect();
         if !recovered.is_empty() {
             return Err(recovered.join("\n"));
