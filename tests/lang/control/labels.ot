@@ -1,0 +1,114 @@
+// backends: vm jit aot
+// #118: labeled `break` and `continue`.
+
+// break out of nested loops
+let pairs = "";
+outer: for (let i = 0; i < 3; i++) {
+  for (let j = 0; j < 3; j++) {
+    if (i == 1 && j == 1) break outer;
+    pairs += i + "" + j + " ";
+  }
+}
+console.log(pairs);
+
+// continue the outer loop from an inner one
+let skipped = "";
+rows: for (let i = 0; i < 3; i++) {
+  for (let j = 0; j < 3; j++) {
+    if (j == 1) continue rows;
+    skipped += i + "" + j + " ";
+  }
+  skipped += "never ";
+}
+console.log(skipped);
+
+// while and do-while
+let n = 0;
+loop: while (true) {
+  do {
+    n++;
+    if (n == 2) continue loop;
+    if (n >= 4) break loop;
+  } while (true);
+}
+console.log(n);
+
+// for-of and for-in
+let found = "";
+search: for (const row of [[1, 2], [3, 4], [5, 6]]) {
+  for (const v of row) {
+    if (v == 4) {
+      found = "found " + v;
+      break search;
+    }
+  }
+}
+console.log(found);
+
+let keys = "";
+props: for (const k in { a: 1 }) {
+  for (const c of [1, 2, 3]) {
+    if (c == 2) continue props;
+    keys += k + c;
+  }
+}
+console.log(keys);
+
+// A labeled block: break leaves it.
+let steps = "";
+block: {
+  steps += "a";
+  if (steps.length > 0) break block;
+  steps += "b";
+}
+steps += "c";
+console.log(steps);
+
+// break a label from inside a switch inside a loop
+let picked = -1;
+scan: for (let i = 0; i < 10; i++) {
+  switch (i) {
+    case 3:
+      picked = i;
+      break scan;
+    default:
+      continue scan;
+  }
+}
+console.log(picked);
+
+// Two labels on one loop.
+let count = 0;
+a: b: for (let i = 0; i < 5; i++) {
+  for (let j = 0; j < 5; j++) {
+    if (j == 1) continue a;
+    if (i == 3) break b;
+    count++;
+  }
+}
+console.log(count);
+
+// Closures made before `continue outer` keep their own iteration's binding.
+let fns = [];
+each: for (let i = 0; i < 3; i++) {
+  for (let j = 0; j < 3; j++) {
+    fns.push(function () { return i * 10 + j; });
+    continue each;
+  }
+}
+console.log(fns[0](), fns[1](), fns[2]());
+
+// Labels inside a function.
+function firstNegative(rows) {
+  let at = "none";
+  find: for (let r = 0; r < rows.length; r++) {
+    for (let c = 0; c < rows[r].length; c++) {
+      if (rows[r][c] < 0) {
+        at = r + "," + c;
+        break find;
+      }
+    }
+  }
+  return at;
+}
+console.log(firstNegative([[1, 2], [3, -4], [-5, 6]]), firstNegative([[1]]));

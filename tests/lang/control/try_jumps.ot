@@ -1,0 +1,136 @@
+// Leaving a `try` with return, break or continue runs its `finally` and
+// removes its exception handler. (VM only: native code does not compile
+// exceptions yet, #140.)
+
+function ret() {
+  try {
+    return "value";
+  } finally {
+    console.log("finally after return");
+  }
+}
+console.log(ret());
+
+// The return value is computed before the finally runs.
+function order() {
+  let x = 1;
+  try {
+    return x;
+  } finally {
+    x = 2;
+    console.log("x set to", x);
+  }
+}
+console.log(order());
+
+// A return in finally replaces the pending one.
+function override() {
+  try {
+    return "try";
+  } finally {
+    return "finally";
+  }
+}
+console.log(override());
+
+// return from catch runs the finally too
+function fromCatch() {
+  try {
+    throw "e";
+  } catch (e) {
+    return "caught " + e;
+  } finally {
+    console.log("finally after catch");
+  }
+}
+console.log(fromCatch());
+
+// break and continue
+let trace = "";
+for (let i = 0; i < 4; i++) {
+  try {
+    if (i == 1) continue;
+    if (i == 3) break;
+    trace += "t" + i;
+  } finally {
+    trace += "f" + i;
+  }
+}
+console.log(trace);
+
+// Nested: the inner finally runs before the outer one.
+outer: for (let i = 0; i < 2; i++) {
+  try {
+    try {
+      break outer;
+    } finally {
+      console.log("inner finally");
+    }
+  } finally {
+    console.log("outer finally");
+  }
+}
+
+// A jump that stays inside the try does not run the finally.
+function inside() {
+  let out = "";
+  try {
+    for (let i = 0; i < 3; i++) {
+      if (i == 1) continue;
+      out += i;
+    }
+  } finally {
+    out += "!";
+  }
+  return out;
+}
+console.log(inside());
+
+// No handler is left behind: after `break` out of a try in f, a throw
+// from f reaches the caller's catch, not the stale one inside f.
+function stale() {
+  for (;;) {
+    try {
+      break;
+    } catch (e) {
+      console.log("wrong handler", e);
+    }
+  }
+  throw "out";
+}
+try {
+  stale();
+} catch (e) {
+  console.log("caller caught", e);
+}
+
+function staleReturn() {
+  try {
+    return 1;
+  } catch (e) {
+    console.log("wrong handler", e);
+  }
+}
+staleReturn();
+try {
+  throw "later";
+} catch (e) {
+  console.log("caught", e);
+}
+
+// A switch inside a try: break leaves the switch, not the try.
+function sw(n) {
+  let out = "";
+  try {
+    switch (n) {
+      case 1:
+        out += "one";
+        break;
+    }
+    out += " after";
+  } finally {
+    out += " finally";
+  }
+  return out;
+}
+console.log(sw(1));

@@ -1,0 +1,14 @@
+finally after return
+value
+x set to 2
+1
+finally
+finally after catch
+caught e
+t0f0f1t2f2f3
+inner finally
+outer finally
+02!
+caller caught out
+caught later
+one after finally

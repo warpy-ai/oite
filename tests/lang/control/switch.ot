@@ -1,0 +1,147 @@
+// backends: vm jit aot
+// #118: `switch` compares with ===, falls through, and `default` can sit anywhere.
+
+function name(n) {
+  switch (n) {
+    case 1:
+      return "one";
+    case 2:
+      return "two";
+    default:
+      return "many";
+  }
+}
+console.log(name(1), name(2), name(7));
+
+// Fall-through until a break.
+function fall(n) {
+  let out = "";
+  switch (n) {
+    case 0:
+      out += "a";
+    case 1:
+      out += "b";
+      break;
+    case 2:
+      out += "c";
+    default:
+      out += "d";
+  }
+  return out;
+}
+console.log(fall(0), fall(1), fall(2), fall(3));
+
+// `default` in the middle: taken only when nothing matches, then falls through.
+function middle(n) {
+  let out = "";
+  switch (n) {
+    case 1:
+      out += "1";
+    default:
+      out += "d";
+    case 2:
+      out += "2";
+  }
+  return out;
+}
+console.log(middle(1), middle(2), middle(9));
+
+// No match and no default: nothing runs.
+let ran = false;
+switch (5) {
+  case 1:
+    ran = true;
+}
+console.log(ran);
+
+// Strict equality: "1" does not match 1.
+function kind(v) {
+  switch (v) {
+    case 1:
+      return "number";
+    case "1":
+      return "string";
+    case true:
+      return "boolean";
+  }
+  return "none";
+}
+console.log(kind(1), kind("1"), kind(true), kind(null));
+
+// Case tests run in order and stop at the first match.
+let log = "";
+function t(v) {
+  log += v;
+  return v;
+}
+switch (2) {
+  case t(1):
+  case t(2):
+  case t(3):
+    log += "!";
+}
+console.log(log);
+
+// The discriminant is evaluated once.
+let calls = 0;
+function disc() {
+  calls++;
+  return "b";
+}
+switch (disc()) {
+  case "a":
+    break;
+  case "b":
+    break;
+  case "c":
+    break;
+}
+console.log(calls);
+
+// `break` leaves the switch, `continue` the loop iteration.
+let s = "";
+for (let i = 0; i < 5; i++) {
+  switch (i % 3) {
+    case 0:
+      s += "z";
+      break;
+    case 1:
+      continue;
+    default:
+      s += "o";
+  }
+  s += i;
+}
+console.log(s);
+
+// Nested switch.
+function grid(a, b) {
+  switch (a) {
+    case 0:
+      switch (b) {
+        case 0:
+          return "00";
+        default:
+          return "0x";
+      }
+    default:
+      return "x";
+  }
+}
+console.log(grid(0, 0), grid(0, 1), grid(1, 0));
+
+// Declarations in cases share the switch scope, and closures capture them.
+function scoped(n) {
+  let f;
+  switch (n) {
+    case 1:
+      let x = 10;
+      f = function () { return x; };
+      x = 11;
+      break;
+    default:
+      f = function () { return -1; };
+  }
+  return f();
+}
+console.log(scoped(1), scoped(2));

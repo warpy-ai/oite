@@ -170,14 +170,69 @@ fn blank_module_directives(source: &str) -> String {
         .collect()
 }
 
+/// What a `break` or `continue` can jump to.
+#[derive(Clone, Copy, PartialEq)]
+enum TargetKind {
+    /// A loop: the target of `continue`, and of an unlabeled `break`.
+    Loop,
+    /// A `switch`: the target of an unlabeled `break`.
+    Switch,
+    /// Any other labeled statement: only `break label` reaches it.
+    Labeled,
+}
+
+/// A statement that `break`/`continue` can leave, innermost last.
 struct LoopContext {
-    start_addr: usize,
+    kind: TargetKind,
+    labels: Vec<String>,
     break_jumps: Vec<usize>,
     continue_jumps: Vec<usize>,
-    /// Saved `%scope` to restore before `break` (the loop's enclosing
+    /// Saved `%scope` to restore before `break` (the statement's enclosing
     /// environment) and before `continue` (the current iteration's).
     break_env: Option<String>,
     continue_env: Option<String>,
+    /// How many `try` regions were open when the statement began; a jump
+    /// out of it closes the ones above.
+    try_depth: usize,
+}
+
+/// Which part of a `try` statement code is compiled in.
+#[derive(Clone, Copy, PartialEq)]
+enum TryPart {
+    Try,
+    Catch,
+    Finally,
+}
+
+/// An enclosing `try` statement. A `break`, `continue` or `return` that
+/// leaves it pops its exception handler and runs its `finally` block.
+#[derive(Clone)]
+struct TryRegion {
+    part: TryPart,
+    /// `%scope` at the `try` statement.
+    env: Option<String>,
+    finalizer: Option<swc_ecma_ast::BlockStmt>,
+}
+
+impl TryRegion {
+    /// Whether the VM has a handler installed for this region: always in
+    /// the `try` block, and in a `catch` that a `finally` follows (the VM
+    /// re-arms the finally-only handler when it enters the catch).
+    fn has_handler(&self) -> bool {
+        match self.part {
+            TryPart::Try => true,
+            TryPart::Catch => self.finalizer.is_some(),
+            TryPart::Finally => false,
+        }
+    }
+}
+
+/// Jump targets and `try` regions; a function body starts with none.
+#[derive(Default)]
+struct ControlState {
+    loops: Vec<LoopContext>,
+    tries: Vec<TryRegion>,
+    pending_labels: Vec<String>,
 }
 
 pub struct Codegen {
@@ -187,6 +242,10 @@ pub struct Codegen {
     in_async_function: bool,
     /// Stack of loop contexts for nested loops (break/continue support)
     loop_stack: Vec<LoopContext>,
+    /// Enclosing `try` statements, innermost last.
+    try_stack: Vec<TryRegion>,
+    /// Labels of the loop about to be compiled (`outer: for (...)`).
+    pending_labels: Vec<String>,
     /// Maps private field names to their indices for the current class
     private_field_indices: std::collections::HashMap<String, usize>,
     /// Maps private method names to their indices for the current class
@@ -221,6 +280,8 @@ impl Codegen {
             in_function: false,
             in_async_function: false,
             loop_stack: Vec::new(),
+            try_stack: Vec::new(),
+            pending_labels: Vec::new(),
             private_field_indices: std::collections::HashMap::new(),
             private_method_indices: std::collections::HashMap::new(),
             warnings: Vec::new(),
@@ -538,6 +599,149 @@ impl Codegen {
     fn unsupported(&mut self, what: impl std::fmt::Display) {
         self.errors
             .push((self.current_span, format!("unsupported: {}", what)));
+    }
+
+    /// Record an error in the program at the current statement.
+    fn syntax_error(&mut self, what: impl std::fmt::Display) {
+        self.errors.push((self.current_span, what.to_string()));
+    }
+
+    /// Enter a function body: loops, labels and `try` statements outside it
+    /// are not reachable from inside.
+    fn enter_function_control(&mut self) -> ControlState {
+        ControlState {
+            loops: std::mem::take(&mut self.loop_stack),
+            tries: std::mem::take(&mut self.try_stack),
+            pending_labels: std::mem::take(&mut self.pending_labels),
+        }
+    }
+
+    fn leave_function_control(&mut self, saved: ControlState) {
+        self.loop_stack = saved.loops;
+        self.try_stack = saved.tries;
+        self.pending_labels = saved.pending_labels;
+    }
+
+    /// Start a loop's jump target, taking the labels in front of it.
+    fn push_loop(&mut self, break_env: Option<String>, continue_env: Option<String>) {
+        let labels = std::mem::take(&mut self.pending_labels);
+        self.loop_stack.push(LoopContext {
+            kind: TargetKind::Loop,
+            labels,
+            break_jumps: Vec::new(),
+            continue_jumps: Vec::new(),
+            break_env,
+            continue_env,
+            try_depth: self.try_stack.len(),
+        });
+    }
+
+    /// End the innermost jump target: `break` goes to `break_addr`,
+    /// `continue` to `continue_addr`.
+    fn pop_target(&mut self, break_addr: usize, continue_addr: usize) {
+        if let Some(ctx) = self.loop_stack.pop() {
+            for idx in ctx.break_jumps {
+                if let OpCode::Jump(ref mut addr) = self.instructions[idx] {
+                    *addr = break_addr;
+                }
+            }
+            for idx in ctx.continue_jumps {
+                if let OpCode::Jump(ref mut addr) = self.instructions[idx] {
+                    *addr = continue_addr;
+                }
+            }
+        }
+    }
+
+    /// Leave the `try` regions above `depth`, innermost first: pop each
+    /// installed handler and run each pending `finally` block inline.
+    fn unwind_tries(&mut self, depth: usize) {
+        let saved = self.try_stack.clone();
+        while self.try_stack.len() > depth {
+            let region = self.try_stack.pop().unwrap();
+            if region.has_handler() {
+                self.instructions.push(OpCode::PopTry);
+            }
+            if region.part != TryPart::Finally
+                && let Some(finalizer) = &region.finalizer
+            {
+                self.restore_env(&region.env);
+                self.gen_finally_body(finalizer);
+            }
+        }
+        self.try_stack = saved;
+    }
+
+    fn gen_finally_body(&mut self, finalizer: &swc_ecma_ast::BlockStmt) {
+        self.scope_stack.push(Vec::new());
+        let env = self.enter_scope_env(finalizer.span);
+        for s in &finalizer.stmts {
+            self.gen_stmt(s);
+        }
+        self.exit_scope_env(env);
+        if let Some(locals) = self.scope_stack.pop() {
+            for name in locals.into_iter().rev() {
+                self.instructions.push(OpCode::Drop(name));
+            }
+        }
+    }
+
+    /// `break [label]` or `continue [label]`.
+    fn gen_jump_stmt(&mut self, label: Option<&Ident>, is_continue: bool) {
+        let keyword = if is_continue { "continue" } else { "break" };
+        let found = match label {
+            Some(label) => {
+                let name = label.sym.as_ref();
+                match self
+                    .loop_stack
+                    .iter()
+                    .rposition(|c| c.labels.iter().any(|l| l == name))
+                {
+                    Some(i) if is_continue && self.loop_stack[i].kind != TargetKind::Loop => {
+                        self.syntax_error(format!("`continue {name}`: `{name}` is not a loop"));
+                        return;
+                    }
+                    Some(i) => i,
+                    None => {
+                        self.syntax_error(format!(
+                            "`{keyword} {name}`: no enclosing label `{name}`"
+                        ));
+                        return;
+                    }
+                }
+            }
+            None => match self.loop_stack.iter().rposition(|c| match c.kind {
+                TargetKind::Loop => true,
+                TargetKind::Switch => !is_continue,
+                TargetKind::Labeled => false,
+            }) {
+                Some(i) => i,
+                None => {
+                    let place = if is_continue {
+                        "a loop"
+                    } else {
+                        "a loop or `switch`"
+                    };
+                    self.syntax_error(format!("`{keyword}` outside of {place}"));
+                    return;
+                }
+            },
+        };
+        let depth = self.loop_stack[found].try_depth;
+        self.unwind_tries(depth);
+        let env = if is_continue {
+            self.loop_stack[found].continue_env.clone()
+        } else {
+            self.loop_stack[found].break_env.clone()
+        };
+        self.restore_env(&env);
+        let jump_idx = self.emit_jump();
+        let ctx = &mut self.loop_stack[found];
+        if is_continue {
+            ctx.continue_jumps.push(jump_idx);
+        } else {
+            ctx.break_jumps.push(jump_idx);
+        }
     }
 
     /// Emit a jump with a placeholder target; patch it with `patch_jump`.
@@ -1058,6 +1262,7 @@ impl Codegen {
         let prev_async = self.in_async_function;
         self.in_function = true;
         self.in_async_function = is_async;
+        let prev_control = self.enter_function_control();
 
         let pats: Vec<&Pat> = fn_decl.params.iter().map(|p| &p.pat).collect();
         let params = self.bind_params(&pats);
@@ -1086,6 +1291,7 @@ impl Codegen {
         self.env_active = prev_env;
         self.in_function = prev_in_function;
         self.in_async_function = prev_async;
+        self.leave_function_control(prev_control);
         self.patch_jump_here(jump_idx);
     }
 
@@ -1235,6 +1441,9 @@ impl Codegen {
                 } else {
                     self.instructions.push(OpCode::Push(JsValue::Undefined));
                 }
+                // Leaving every `try` in this function: pop the handlers and
+                // run the `finally` blocks, with the return value on the stack.
+                self.unwind_tries(0);
                 // For async functions, wrap the return value in Promise.resolve()
                 if self.in_async_function {
                     self.emit_promise_resolve();
@@ -1336,13 +1545,7 @@ impl Codegen {
                 let loop_env = self.save_env();
                 let iter_env = loop_env.clone();
                 let loop_start = self.instructions.len();
-                self.loop_stack.push(LoopContext {
-                    start_addr: loop_start,
-                    break_jumps: Vec::new(),
-                    continue_jumps: Vec::new(),
-                    break_env: loop_env.clone(),
-                    continue_env: iter_env.clone(),
-                });
+                self.push_loop(loop_env.clone(), iter_env.clone());
                 self.gen_expr(&while_stmt.test);
                 let exit_jump_idx = self.instructions.len();
                 self.instructions.push(OpCode::JumpIfFalse(0));
@@ -1353,51 +1556,10 @@ impl Codegen {
                 if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
                     *addr = loop_end;
                 }
-                if let Some(loop_ctx) = self.loop_stack.pop() {
-                    for break_idx in loop_ctx.break_jumps {
-                        if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
-                            *addr = loop_end;
-                        }
-                    }
-                    for cont_idx in loop_ctx.continue_jumps {
-                        if let OpCode::Jump(ref mut addr) = self.instructions[cont_idx] {
-                            *addr = loop_start;
-                        }
-                    }
-                }
+                self.pop_target(loop_end, loop_start);
             }
-            Stmt::Break(brk) => {
-                if brk.label.is_some() {
-                    self.unsupported("labeled `break`");
-                } else if let Some(env) = self.loop_stack.last().map(|l| l.break_env.clone()) {
-                    self.restore_env(&env);
-                    let jump_idx = self.instructions.len();
-                    self.instructions.push(OpCode::Jump(0));
-                    self.loop_stack
-                        .last_mut()
-                        .unwrap()
-                        .break_jumps
-                        .push(jump_idx);
-                } else {
-                    self.unsupported("`break` outside of a loop");
-                }
-            }
-            Stmt::Continue(cont) => {
-                if cont.label.is_some() {
-                    self.unsupported("labeled `continue`");
-                } else if let Some(env) = self.loop_stack.last().map(|l| l.continue_env.clone()) {
-                    self.restore_env(&env);
-                    let jump_idx = self.instructions.len();
-                    self.instructions.push(OpCode::Jump(0));
-                    self.loop_stack
-                        .last_mut()
-                        .unwrap()
-                        .continue_jumps
-                        .push(jump_idx);
-                } else {
-                    self.unsupported("`continue` outside of a loop");
-                }
-            }
+            Stmt::Break(brk) => self.gen_jump_stmt(brk.label.as_ref(), false),
+            Stmt::Continue(cont) => self.gen_jump_stmt(cont.label.as_ref(), true),
             Stmt::If(if_stmt) => {
                 self.gen_expr(&if_stmt.test);
                 let else_jump_idx = self.instructions.len();
@@ -1462,13 +1624,7 @@ impl Codegen {
                     None => loop_env.clone(),
                 };
                 let loop_start = self.instructions.len();
-                self.loop_stack.push(LoopContext {
-                    start_addr: loop_start,
-                    break_jumps: Vec::new(),
-                    continue_jumps: Vec::new(),
-                    break_env: loop_env.clone(),
-                    continue_env: iter_env.clone(),
-                });
+                self.push_loop(loop_env.clone(), iter_env.clone());
                 if let Some(test) = &for_stmt.test {
                     self.gen_expr(test);
                 } else {
@@ -1494,18 +1650,7 @@ impl Codegen {
                 if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
                     *addr = loop_end;
                 }
-                if let Some(loop_ctx) = self.loop_stack.pop() {
-                    for break_idx in loop_ctx.break_jumps {
-                        if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
-                            *addr = loop_end;
-                        }
-                    }
-                    for cont_idx in loop_ctx.continue_jumps {
-                        if let OpCode::Jump(ref mut addr) = self.instructions[cont_idx] {
-                            *addr = continue_target;
-                        }
-                    }
-                }
+                self.pop_target(loop_end, continue_target);
                 if let Some(locals) = self.scope_stack.pop() {
                     for name in locals.into_iter().rev() {
                         self.instructions.push(OpCode::Drop(name));
@@ -1531,13 +1676,7 @@ impl Codegen {
                     scope.push(idx_name.clone());
                 }
                 let loop_start = self.instructions.len();
-                self.loop_stack.push(LoopContext {
-                    start_addr: loop_start,
-                    break_jumps: Vec::new(),
-                    continue_jumps: Vec::new(),
-                    break_env: loop_env.clone(),
-                    continue_env: iter_env.clone(),
-                });
+                self.push_loop(loop_env.clone(), iter_env.clone());
                 self.instructions.push(OpCode::Load(idx_name.clone()));
                 self.instructions.push(OpCode::Load(iter_name.clone()));
                 self.instructions
@@ -1592,18 +1731,7 @@ impl Codegen {
                 if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
                     *addr = loop_end;
                 }
-                if let Some(loop_ctx) = self.loop_stack.pop() {
-                    for break_idx in loop_ctx.break_jumps {
-                        if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
-                            *addr = loop_end;
-                        }
-                    }
-                    for cont_idx in loop_ctx.continue_jumps {
-                        if let OpCode::Jump(ref mut addr) = self.instructions[cont_idx] {
-                            *addr = continue_target;
-                        }
-                    }
-                }
+                self.pop_target(loop_end, continue_target);
                 if let Some(locals) = self.scope_stack.pop() {
                     for name in locals.into_iter().rev() {
                         self.instructions.push(OpCode::Drop(name));
@@ -1631,13 +1759,7 @@ impl Codegen {
                     scope.push(idx_name.clone());
                 }
                 let loop_start = self.instructions.len();
-                self.loop_stack.push(LoopContext {
-                    start_addr: loop_start,
-                    break_jumps: Vec::new(),
-                    continue_jumps: Vec::new(),
-                    break_env: loop_env.clone(),
-                    continue_env: iter_env.clone(),
-                });
+                self.push_loop(loop_env.clone(), iter_env.clone());
                 self.instructions.push(OpCode::Load(idx_name.clone()));
                 self.instructions.push(OpCode::Load(keys_name.clone()));
                 self.instructions
@@ -1691,18 +1813,7 @@ impl Codegen {
                 if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
                     *addr = loop_end;
                 }
-                if let Some(loop_ctx) = self.loop_stack.pop() {
-                    for break_idx in loop_ctx.break_jumps {
-                        if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
-                            *addr = loop_end;
-                        }
-                    }
-                    for cont_idx in loop_ctx.continue_jumps {
-                        if let OpCode::Jump(ref mut addr) = self.instructions[cont_idx] {
-                            *addr = continue_target;
-                        }
-                    }
-                }
+                self.pop_target(loop_end, continue_target);
                 if let Some(locals) = self.scope_stack.pop() {
                     for name in locals.into_iter().rev() {
                         self.instructions.push(OpCode::Drop(name));
@@ -1713,13 +1824,7 @@ impl Codegen {
                 let loop_env = self.save_env();
                 let iter_env = loop_env.clone();
                 let loop_start = self.instructions.len();
-                self.loop_stack.push(LoopContext {
-                    start_addr: loop_start,
-                    break_jumps: Vec::new(),
-                    continue_jumps: Vec::new(),
-                    break_env: loop_env.clone(),
-                    continue_env: iter_env.clone(),
-                });
+                self.push_loop(loop_env.clone(), iter_env.clone());
                 self.gen_stmt(&do_while_stmt.body);
                 let continue_target = self.instructions.len();
                 self.gen_expr(&do_while_stmt.test);
@@ -1728,18 +1833,7 @@ impl Codegen {
                 self.instructions.push(OpCode::Jump(loop_start));
                 let loop_end = self.instructions.len();
                 self.restore_env(&loop_env);
-                if let Some(loop_ctx) = self.loop_stack.pop() {
-                    for break_idx in loop_ctx.break_jumps {
-                        if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
-                            *addr = loop_end;
-                        }
-                    }
-                    for cont_idx in loop_ctx.continue_jumps {
-                        if let OpCode::Jump(ref mut addr) = self.instructions[cont_idx] {
-                            *addr = continue_target;
-                        }
-                    }
-                }
+                self.pop_target(loop_end, continue_target);
             }
             Stmt::With(_) => self.unsupported("`with` statements"),
             Stmt::Empty(_) | Stmt::Debugger(_) => {
@@ -1768,12 +1862,18 @@ impl Codegen {
                 });
 
                 // 2. Emit try block
+                self.try_stack.push(TryRegion {
+                    part: TryPart::Try,
+                    env: try_env.clone(),
+                    finalizer: try_stmt.finalizer.clone(),
+                });
                 let block_env = self.enter_scope_env(try_stmt.block.span);
                 self.scope_stack.push(Vec::new());
                 for s in &try_stmt.block.stmts {
                     self.gen_stmt(s);
                 }
                 self.exit_scope_env(block_env);
+                self.try_stack.pop();
                 // Drop try block scope variables
                 if let Some(locals) = self.scope_stack.pop() {
                     for name in locals.into_iter().rev() {
@@ -1814,9 +1914,15 @@ impl Codegen {
                         }
 
                         // Generate catch block body
+                        self.try_stack.push(TryRegion {
+                            part: TryPart::Catch,
+                            env: try_env.clone(),
+                            finalizer: try_stmt.finalizer.clone(),
+                        });
                         for s in &handler.body.stmts {
                             self.gen_stmt(s);
                         }
+                        self.try_stack.pop();
                         self.exit_scope_env(catch_env);
 
                         // Drop catch block scope variables
@@ -1842,19 +1948,14 @@ impl Codegen {
                 let finally_addr = if has_finally {
                     let addr = self.instructions.len();
                     if let Some(finalizer) = &try_stmt.finalizer {
-                        self.scope_stack.push(Vec::new());
                         self.restore_env(&try_env);
-                        let finally_env = self.enter_scope_env(finalizer.span);
-                        for s in &finalizer.stmts {
-                            self.gen_stmt(s);
-                        }
-                        self.exit_scope_env(finally_env);
-                        // Drop finally block scope variables
-                        if let Some(locals) = self.scope_stack.pop() {
-                            for name in locals.into_iter().rev() {
-                                self.instructions.push(OpCode::Drop(name));
-                            }
-                        }
+                        self.try_stack.push(TryRegion {
+                            part: TryPart::Finally,
+                            env: try_env.clone(),
+                            finalizer: None,
+                        });
+                        self.gen_finally_body(finalizer);
+                        self.try_stack.pop();
                     }
                     // Re-throw a pending exception (throw with no catch, or a
                     // throw from inside catch) once the finally has run.
@@ -1889,9 +1990,114 @@ impl Codegen {
                 self.gen_expr(&throw_stmt.arg);
                 self.instructions.push(OpCode::Throw);
             }
-            Stmt::Switch(_) => self.unsupported("`switch` statements"),
-            Stmt::Labeled(_) => self.unsupported("labeled statements"),
+            Stmt::Switch(switch) => self.gen_switch(switch),
+            Stmt::Labeled(labeled) => {
+                let name = labeled.label.sym.to_string();
+                if self.loop_stack.iter().any(|c| c.labels.contains(&name))
+                    || self.pending_labels.contains(&name)
+                {
+                    self.syntax_error(format!("label `{name}` is already declared"));
+                    return;
+                }
+                let mut body = labeled.body.as_ref();
+                while let Stmt::Labeled(inner) = body {
+                    body = inner.body.as_ref();
+                }
+                let is_loop = matches!(
+                    body,
+                    Stmt::For(_)
+                        | Stmt::ForIn(_)
+                        | Stmt::ForOf(_)
+                        | Stmt::While(_)
+                        | Stmt::DoWhile(_)
+                );
+                if is_loop {
+                    // The loop takes the label: `continue name` reaches it.
+                    self.pending_labels.push(name);
+                    self.gen_stmt(&labeled.body);
+                } else {
+                    let mut labels = std::mem::take(&mut self.pending_labels);
+                    labels.push(name);
+                    let break_env = self.save_env();
+                    self.loop_stack.push(LoopContext {
+                        kind: TargetKind::Labeled,
+                        labels,
+                        break_jumps: Vec::new(),
+                        continue_jumps: Vec::new(),
+                        break_env,
+                        continue_env: None,
+                        try_depth: self.try_stack.len(),
+                    });
+                    self.gen_stmt(&labeled.body);
+                    let end = self.instructions.len();
+                    self.pop_target(end, end);
+                }
+            }
             Stmt::Decl(Decl::Using(_)) => self.unsupported("`using` declarations"),
+        }
+    }
+
+    /// `switch`: the discriminant goes in a temporary; each `case` test is
+    /// compared with `===` in source order, and the first match (or else
+    /// `default`) jumps into the run of case bodies, which fall through.
+    fn gen_switch(&mut self, switch: &swc_ecma_ast::SwitchStmt) {
+        self.gen_expr(&switch.discriminant);
+        let disc = format!("%switch{}", self.instructions.len());
+        self.instructions.push(OpCode::Let(disc.clone()));
+        self.scope_stack.push(vec![disc.clone()]);
+
+        // The case bodies share one block scope.
+        let break_env = self.save_env();
+        if self.scopes.env_scope(switch.span).is_some() {
+            self.emit_child_env();
+            self.instructions
+                .push(OpCode::Store(SCOPE_LOCAL.to_string()));
+        }
+        self.loop_stack.push(LoopContext {
+            kind: TargetKind::Switch,
+            labels: Vec::new(),
+            break_jumps: Vec::new(),
+            continue_jumps: Vec::new(),
+            break_env: break_env.clone(),
+            continue_env: None,
+            try_depth: self.try_stack.len(),
+        });
+
+        let mut matched_jumps = Vec::new();
+        for case in &switch.cases {
+            if let Some(test) = &case.test {
+                self.instructions.push(OpCode::Load(disc.clone()));
+                self.gen_expr(test);
+                self.instructions.push(OpCode::Eq);
+                let skip = self.emit_jump_if_false();
+                matched_jumps.push(Some(self.emit_jump()));
+                self.patch_jump_here(skip);
+            } else {
+                matched_jumps.push(None);
+            }
+        }
+        let no_match = self.emit_jump();
+
+        let mut default_addr = None;
+        for (case, jump) in switch.cases.iter().zip(&matched_jumps) {
+            match jump {
+                Some(idx) => self.patch_jump_here(*idx),
+                None => default_addr = Some(self.instructions.len()),
+            }
+            for s in &case.cons {
+                self.gen_stmt(s);
+            }
+        }
+        let end = self.instructions.len();
+        if let OpCode::Jump(ref mut addr) = self.instructions[no_match] {
+            *addr = default_addr.unwrap_or(end);
+        }
+        self.restore_env(&break_env);
+        self.pop_target(end, end);
+        if let Some(locals) = self.scope_stack.pop() {
+            for name in locals.into_iter().rev() {
+                self.instructions.push(OpCode::Drop(name));
+            }
         }
     }
 
@@ -1918,6 +2124,7 @@ impl Codegen {
                 let prev_async = self.in_async_function;
                 self.in_function = true;
                 self.in_async_function = arrow.is_async;
+                let prev_control = self.enter_function_control();
 
                 let pats: Vec<&Pat> = arrow.params.iter().collect();
                 let params = self.bind_params(&pats);
@@ -1954,6 +2161,7 @@ impl Codegen {
                 self.env_active = prev_env;
                 self.in_function = prev_in_function;
                 self.in_async_function = prev_async;
+                self.leave_function_control(prev_control);
                 self.patch_jump_here(jump_idx);
             }
             Expr::Lit(Lit::Num(num)) => {
@@ -2747,6 +2955,7 @@ impl Codegen {
         // Constructor body
         let saved_in_function = self.in_function;
         self.in_function = true;
+        let saved_control = self.enter_function_control();
 
         for param in constructor_params.iter().rev() {
             self.instructions.push(OpCode::Let(param.clone()));
@@ -2835,6 +3044,7 @@ impl Codegen {
         self.instructions.push(OpCode::LoadThis);
         self.instructions.push(OpCode::Return);
         self.in_function = saved_in_function;
+        self.leave_function_control(saved_control);
 
         // Backpatch jump
         let after_constructor = self.instructions.len();
@@ -3040,6 +3250,7 @@ impl Codegen {
                 // Compile method body
                 let saved_in_function = self.in_function;
                 self.in_function = true;
+                let saved_control = self.enter_function_control();
 
                 for param in params.iter().rev() {
                     self.instructions.push(OpCode::Let(param.clone()));
@@ -3054,6 +3265,7 @@ impl Codegen {
                 self.instructions.push(OpCode::LoadThis);
                 self.instructions.push(OpCode::Return);
                 self.in_function = saved_in_function;
+                self.leave_function_control(saved_control);
 
                 // Backpatch method jump
                 let after_method = self.instructions.len();
