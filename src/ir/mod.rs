@@ -522,6 +522,8 @@ pub enum IrOp {
     Copy(ValueId, ValueId),
     /// Load 'this' context
     LoadThis(ValueId),
+    /// The running closure's environment object (`undefined` if none).
+    LoadEnv(ValueId),
 
     // === Borrow Operations ===
     /// Create immutable borrow: dst = &src
@@ -610,6 +612,7 @@ impl IrOp {
             | IrOp::Phi(d, _)
             | IrOp::Copy(d, _)
             | IrOp::LoadThis(d)
+            | IrOp::LoadEnv(d)
             // Borrow operations
             | IrOp::Borrow(d, _)
             | IrOp::BorrowMut(d, _)
@@ -693,7 +696,10 @@ impl IrOp {
             | IrOp::Move(_, a)
             | IrOp::Clone(_, a) => vec![*a],
 
-            IrOp::LoadLocal(_, _) | IrOp::LoadGlobal(_, _) | IrOp::LoadThis(_) => vec![],
+            IrOp::LoadLocal(_, _)
+            | IrOp::LoadGlobal(_, _)
+            | IrOp::LoadThis(_)
+            | IrOp::LoadEnv(_) => vec![],
             IrOp::StoreLocal(_, v) | IrOp::StoreGlobal(_, v) => vec![*v],
 
             IrOp::NewObject(_) | IrOp::NewArray(_) => vec![],
@@ -1241,6 +1247,7 @@ impl fmt::Display for IrOp {
             }
             IrOp::Copy(d, s) => write!(f, "{} = copy {}", d, s),
             IrOp::LoadThis(d) => write!(f, "{} = load.this", d),
+            IrOp::LoadEnv(d) => write!(f, "{} = load.env", d),
             // Borrow operations
             IrOp::Borrow(d, s) => write!(f, "{} = borrow {}", d, s),
             IrOp::BorrowMut(d, s) => write!(f, "{} = borrow.mut {}", d, s),

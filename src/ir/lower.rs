@@ -823,6 +823,12 @@ impl Lowerer {
                 self.push(dst);
             }
 
+            OpCode::LoadClosureEnv => {
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::LoadEnv(dst));
+                self.push(dst);
+            }
+
             OpCode::MakeClosure(addr) => {
                 // Pop environment object
                 let env = self.pop()?;

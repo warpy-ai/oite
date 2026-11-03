@@ -1,6 +1,0 @@
-// backends: jit aot
-function outer() {
-  let x = 1;
-  return function () { return x; };
-}
-console.log(outer()());

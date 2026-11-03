@@ -208,6 +208,7 @@ fn serialize_op(output: &mut String, op: &IrOp) {
         }
         IrOp::Copy(d, s) => output.push_str(&format!("{} = copy {}", d, s)),
         IrOp::LoadThis(d) => output.push_str(&format!("{} = load.this", d)),
+        IrOp::LoadEnv(d) => output.push_str(&format!("{} = load.env", d)),
         IrOp::Borrow(d, s) => output.push_str(&format!("{} = borrow {}", d, s)),
         IrOp::BorrowMut(d, s) => output.push_str(&format!("{} = borrow.mut {}", d, s)),
         IrOp::Deref(d, s) => output.push_str(&format!("{} = deref {}", d, s)),

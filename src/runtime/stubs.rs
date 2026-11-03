@@ -365,7 +365,13 @@ pub extern "C" fn ot_alloc_string(data: *const u8, len: usize) -> u64 {
 /// Wrap compiled code (with the `NativeFn` signature) as a function value.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_make_function(code: *const u8) -> u64 {
-    match heap().alloc_function(code) {
+    ot_make_closure(code, undefined())
+}
+
+/// A closure: compiled code plus the environment object it captured.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_make_closure(code: *const u8, env: u64) -> u64 {
+    match heap().alloc_function(code, env) {
         Some(ptr) => OtValue::pointer(ptr).to_bits(),
         None => undefined(),
     }
@@ -463,6 +469,13 @@ fn initial_globals() -> HashMap<String, u64> {
     set_property(c, "log", builtin(ot_builtin_console_log));
     set_property(c, "error", builtin(ot_builtin_console_error));
     g.insert("console".to_string(), console);
+    let object = ot_alloc_object();
+    set_property(
+        OtValue::from_bits(object),
+        "keys",
+        builtin(ot_builtin_object_keys),
+    );
+    g.insert("Object".to_string(), object);
     g.insert("undefined".to_string(), undefined());
     g.insert("NaN".to_string(), number(f64::NAN));
     g.insert("Infinity".to_string(), number(f64::INFINITY));
@@ -494,9 +507,9 @@ pub extern "C" fn ot_set_global(key: *const u8, key_len: usize, value: u64) {
 pub extern "C" fn ot_call(func: u64, this: u64, argv: *const u64, argc: usize) -> u64 {
     match object(OtValue::from_bits(func)) {
         Some((ptr, ObjectKind::Function)) => {
-            let code = unsafe { ptr.as_ref::<NativeFunction>().code };
-            let f: NativeFn = unsafe { std::mem::transmute(code) };
-            f(this, argv, argc)
+            let func = unsafe { ptr.as_ref::<NativeFunction>() };
+            let f: NativeFn = unsafe { std::mem::transmute(func.code) };
+            f(this, argv, argc, func.env)
         }
         _ => runtime_error(&format!(
             "TypeError: {} is not a function",
@@ -1007,7 +1020,12 @@ fn format_log_args(a: &[u64]) -> String {
 }
 
 /// `console.log(...)`
-pub extern "C" fn ot_builtin_console_log(_this: u64, argv: *const u64, argc: usize) -> u64 {
+pub extern "C" fn ot_builtin_console_log(
+    _this: u64,
+    argv: *const u64,
+    argc: usize,
+    _env: u64,
+) -> u64 {
     let line = format_log_args(unsafe { args(argv, argc) });
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{}", line);
@@ -1015,17 +1033,58 @@ pub extern "C" fn ot_builtin_console_log(_this: u64, argv: *const u64, argc: usi
 }
 
 /// `console.error(...)`
-pub extern "C" fn ot_builtin_console_error(_this: u64, argv: *const u64, argc: usize) -> u64 {
+pub extern "C" fn ot_builtin_console_error(
+    _this: u64,
+    argv: *const u64,
+    argc: usize,
+    _env: u64,
+) -> u64 {
     let line = format_log_args(unsafe { args(argv, argc) });
     let _ = std::io::stdout().flush();
     eprintln!("{}", line);
     undefined()
 }
 
+/// `Object.keys(obj)`: own property names, in insertion order. (`for...in`
+/// compiles to this.)
+pub extern "C" fn ot_builtin_object_keys(
+    _this: u64,
+    argv: *const u64,
+    argc: usize,
+    _env: u64,
+) -> u64 {
+    let a = unsafe { args(argv, argc) };
+    let out = ot_alloc_array(0);
+    let Some((out_ptr, _)) = object(OtValue::from_bits(out)) else {
+        return out;
+    };
+    let target = a.first().map(|v| OtValue::from_bits(*v));
+    match target.and_then(object) {
+        Some((ptr, ObjectKind::Object)) => {
+            let names: Vec<String> = props(ptr)
+                .iter()
+                .filter(|(k, _)| !k.starts_with("__") && !k.starts_with('%'))
+                .map(|(k, _)| k.clone())
+                .collect();
+            for k in names {
+                array_push(array(out_ptr), new_string(&k));
+            }
+        }
+        Some((ptr, ObjectKind::Array)) => {
+            let len = array(ptr).len;
+            for i in 0..len {
+                array_push(array(out_ptr), new_string(&i.to_string()));
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
 /// Print one value, as `console.log(value)` does.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_console_log(value: u64) {
-    ot_builtin_console_log(undefined(), &value, 1);
+    ot_builtin_console_log(undefined(), &value, 1, undefined());
 }
 
 // =========================================================================

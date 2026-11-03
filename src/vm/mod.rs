@@ -1248,71 +1248,39 @@ impl VM {
             }
 
             OpCode::Store(name) => {
+                // Lexical scoping: a name is a local of the running function
+                // or a global (frame 0). Captured variables never come
+                // through here: the compiler accesses them through their
+                // environment object. (This used to search every frame on
+                // the call stack, so a function could read and overwrite its
+                // caller's locals.)
                 let val = self.stack.pop().unwrap_or(JsValue::Undefined);
-                // Assign to an existing binding if found, otherwise create in current frame.
-                // A frame's locals shadow its captured environment; captured variables
-                // are written through to the heap env object so the mutation is shared.
-                enum Slot {
-                    Local(usize),
-                    Env(usize),
-                }
-                let mut slot = None;
-                for (i, frame) in self.call_stack.iter().enumerate().rev() {
-                    if frame.locals.contains_key(&name) {
-                        slot = Some(Slot::Local(i));
-                        break;
-                    }
-                    if let Some(env_ptr) = frame.env
-                        && let Some(HeapObject {
-                            data: HeapData::Object(props),
-                        }) = self.heap.get(env_ptr)
-                        && props.contains_key(&name)
-                    {
-                        slot = Some(Slot::Env(env_ptr));
-                        break;
-                    }
-                }
-                match slot {
-                    Some(Slot::Local(i)) => {
-                        self.call_stack[i].locals.insert(name, val);
-                    }
-                    Some(Slot::Env(env_ptr)) => {
-                        if let Some(HeapObject {
-                            data: HeapData::Object(props),
-                        }) = self.heap.get_mut(env_ptr)
-                        {
-                            props.insert(name, val);
-                        }
-                    }
-                    None => {
-                        self.call_stack.last_mut().unwrap().locals.insert(name, val);
-                    }
-                }
+                let current = self.call_stack.len() - 1;
+                let frame = if self.call_stack[current].locals.contains_key(&name)
+                    || !self.call_stack[0].locals.contains_key(&name)
+                {
+                    current
+                } else {
+                    0
+                };
+                self.call_stack[frame].locals.insert(name, val);
             }
 
             OpCode::Load(name) => {
-                // Search for variable from innermost to outermost frame.
-                // Locals shadow the frame's captured environment; captured
-                // variables are read from the heap env object so mutations
-                // made through the closure are visible.
-                let mut found = None;
-                for frame in self.call_stack.iter().rev() {
-                    if let Some(v) = frame.locals.get(&name) {
-                        found = Some(v.clone());
-                        break;
-                    }
-                    if let Some(env_ptr) = frame.env
-                        && let Some(HeapObject {
-                            data: HeapData::Object(props),
-                        }) = self.heap.get(env_ptr)
-                        && let Some(v) = props.get(&name)
-                    {
-                        found = Some(v.clone());
-                        break;
-                    }
-                }
-                let value = found.unwrap_or(JsValue::Undefined);
+                let value = self
+                    .call_stack
+                    .last()
+                    .and_then(|f| f.locals.get(&name))
+                    .or_else(|| self.call_stack[0].locals.get(&name))
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined);
                 self.stack.push(value);
+            }
+
+            OpCode::LoadClosureEnv => {
+                let env = self.call_stack.last().and_then(|f| f.env);
+                self.stack
+                    .push(env.map_or(JsValue::Undefined, JsValue::Object));
             }
 
             OpCode::LoadThis => {

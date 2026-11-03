@@ -1,8 +1,9 @@
 use crate::vm::opcodes::OpCode;
-use std::collections::HashSet;
 use swc_ecma_ast::*;
 pub mod borrow_ck;
+pub mod scope;
 use crate::compiler::borrow_ck::BorrowChecker;
+use crate::compiler::scope::{PARENT_PROP, SCOPE_LOCAL, ScopeInfo, VarRef};
 use crate::vm::value::JsValue;
 use swc_common::{FileName, SourceMap, Span, Spanned, sync::Lrc};
 use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
@@ -109,9 +110,11 @@ impl Compiler {
         let mut codegen = Codegen::new();
         match &program {
             Program::Module(module) => {
+                codegen.scopes = ScopeInfo::analyze_module(module);
                 codegen.generate(module);
             }
             Program::Script(script) => {
+                codegen.scopes = ScopeInfo::analyze_script(script);
                 codegen.generate_script(script);
             }
         }
@@ -171,6 +174,10 @@ struct LoopContext {
     start_addr: usize,
     break_jumps: Vec<usize>,
     continue_jumps: Vec<usize>,
+    /// Saved `%scope` to restore before `break` (the loop's enclosing
+    /// environment) and before `continue` (the current iteration's).
+    break_env: Option<String>,
+    continue_env: Option<String>,
 }
 
 pub struct Codegen {
@@ -178,9 +185,6 @@ pub struct Codegen {
     scope_stack: Vec<Vec<String>>,
     in_function: bool,
     in_async_function: bool,
-    /// Tracks which variables are available in the current scope chain.
-    /// Used to detect "upvars" (variables captured from outer scopes).
-    outer_scope_vars: HashSet<String>,
     /// Stack of loop contexts for nested loops (break/continue support)
     loop_stack: Vec<LoopContext>,
     /// Maps private field names to their indices for the current class
@@ -196,6 +200,11 @@ pub struct Codegen {
     /// Span of the innermost statement or expression being compiled, used
     /// to locate errors.
     current_span: Span,
+    /// Where every variable lives (see `scope.rs`).
+    pub scopes: ScopeInfo,
+    /// Whether the code being generated keeps its innermost environment in
+    /// `%scope` (some variable in reach is captured).
+    env_active: bool,
 }
 
 impl Default for Codegen {
@@ -211,13 +220,14 @@ impl Codegen {
             scope_stack: vec![Vec::new()],
             in_function: false,
             in_async_function: false,
-            outer_scope_vars: HashSet::new(),
             loop_stack: Vec::new(),
             private_field_indices: std::collections::HashMap::new(),
             private_method_indices: std::collections::HashMap::new(),
             warnings: Vec::new(),
             errors: Vec::new(),
             current_span: Span::default(),
+            scopes: ScopeInfo::default(),
+            env_active: false,
         }
     }
 
@@ -227,6 +237,301 @@ impl Codegen {
         self.instructions.push(OpCode::Load("Promise".to_string()));
         self.instructions
             .push(OpCode::CallMethod("resolve".to_string(), 1));
+    }
+
+    /// `x op= v`, `o.p op= v`, `o[k] op= v`: read, combine, write back,
+    /// evaluating the target's object and key once. Before this, the
+    /// operator was ignored and `x += 2` compiled as `x = 2`.
+    fn gen_compound_assign(&mut self, assign: &AssignExpr) {
+        let op = match assign.op {
+            AssignOp::AddAssign => OpCode::Add,
+            AssignOp::SubAssign => OpCode::Sub,
+            AssignOp::MulAssign => OpCode::Mul,
+            AssignOp::DivAssign => OpCode::Div,
+            AssignOp::ModAssign => OpCode::Mod,
+            AssignOp::ExpAssign => OpCode::Pow,
+            AssignOp::BitAndAssign => OpCode::BitAnd,
+            AssignOp::BitOrAssign => OpCode::BitOr,
+            AssignOp::BitXorAssign => OpCode::Xor,
+            AssignOp::LShiftAssign => OpCode::ShiftLeft,
+            AssignOp::RShiftAssign => OpCode::ShiftRight,
+            AssignOp::ZeroFillRShiftAssign => OpCode::ShiftRightUnsigned,
+            other => {
+                self.unsupported(format!("assignment operator `{}`", other.as_str()));
+                self.instructions.push(OpCode::Push(JsValue::Undefined));
+                return;
+            }
+        };
+        let AssignTarget::Simple(target) = &assign.left else {
+            self.unsupported("destructuring assignment");
+            self.instructions.push(OpCode::Push(JsValue::Undefined));
+            return;
+        };
+        match target {
+            SimpleAssignTarget::Ident(id) => {
+                self.load_var(&id.id);
+                self.gen_expr(&assign.right);
+                self.instructions.push(op);
+                self.instructions.push(OpCode::Dup);
+                self.store_var(&id.id, false);
+            }
+            SimpleAssignTarget::Member(member) => match &member.prop {
+                MemberProp::Ident(prop) => {
+                    let name = prop.sym.to_string();
+                    // [obj] -> [obj, cur] -> [obj, cur, rhs] -> [obj, v]
+                    self.gen_expr(&member.obj);
+                    self.instructions.push(OpCode::Dup);
+                    self.instructions.push(OpCode::GetProp(name.clone()));
+                    self.gen_expr(&assign.right);
+                    self.instructions.push(op);
+                    // [obj, v] -> [v, obj, v] -> SetProp -> [v]
+                    self.instructions.push(OpCode::Dup);
+                    self.instructions.push(OpCode::Swap3);
+                    self.instructions.push(OpCode::Swap);
+                    self.instructions.push(OpCode::SetProp(name));
+                }
+                MemberProp::Computed(computed) => {
+                    let obj = format!("%obj{}", self.instructions.len());
+                    let key = format!("%key{}", self.instructions.len());
+                    self.gen_expr(&member.obj);
+                    self.instructions.push(OpCode::Let(obj.clone()));
+                    self.gen_expr(&computed.expr);
+                    self.instructions.push(OpCode::Let(key.clone()));
+                    self.instructions.push(OpCode::Load(obj.clone()));
+                    self.instructions.push(OpCode::Load(key.clone()));
+                    self.instructions.push(OpCode::GetPropComputed);
+                    self.gen_expr(&assign.right);
+                    self.instructions.push(op);
+                    // [v] -> [obj, v] -> [v, obj, v] -> [v, obj, v, key]
+                    self.instructions.push(OpCode::Load(obj));
+                    self.instructions.push(OpCode::Swap);
+                    self.instructions.push(OpCode::Dup);
+                    self.instructions.push(OpCode::Swap3);
+                    self.instructions.push(OpCode::Swap);
+                    self.instructions.push(OpCode::Load(key));
+                    self.instructions.push(OpCode::SetPropComputed);
+                }
+                MemberProp::PrivateName(_) => {
+                    self.unsupported("compound assignment to a private field");
+                    self.instructions.push(OpCode::Push(JsValue::Undefined));
+                }
+            },
+            _ => {
+                self.unsupported("this assignment target");
+                self.instructions.push(OpCode::Push(JsValue::Undefined));
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Variables and environments (see `scope.rs`)
+    // ---------------------------------------------------------------------
+
+    fn top_level_prologue(&mut self) {
+        if self.scopes.top_level_uses_env() {
+            self.instructions.push(OpCode::Push(JsValue::Undefined));
+            self.instructions.push(OpCode::Let(SCOPE_LOCAL.to_string()));
+            self.env_active = true;
+        }
+    }
+
+    /// Push the environment `hops` parent links above `%scope`.
+    fn emit_env(&mut self, hops: u32) {
+        self.instructions
+            .push(OpCode::Load(SCOPE_LOCAL.to_string()));
+        for _ in 0..hops {
+            self.instructions
+                .push(OpCode::GetProp(PARENT_PROP.to_string()));
+        }
+    }
+
+    /// `[] -> [value of ident]`
+    fn load_var(&mut self, ident: &Ident) {
+        let name = ident.sym.to_string();
+        match self.scopes.var(ident.span) {
+            VarRef::Plain => self.instructions.push(OpCode::Load(name)),
+            VarRef::Env { hops } => {
+                self.emit_env(hops);
+                self.instructions.push(OpCode::GetProp(name));
+            }
+        }
+    }
+
+    /// `[value] -> []`: assign to (or, with `declare`, bind) `ident`.
+    fn store_var(&mut self, ident: &Ident, declare: bool) {
+        let name = ident.sym.to_string();
+        match self.scopes.var(ident.span) {
+            VarRef::Plain if declare => self.instructions.push(OpCode::Let(name)),
+            VarRef::Plain => self.instructions.push(OpCode::Store(name)),
+            VarRef::Env { hops } => {
+                self.emit_env(hops);
+                self.instructions.push(OpCode::Swap);
+                self.instructions.push(OpCode::SetProp(name));
+            }
+        }
+    }
+
+    /// `[] -> [new environment whose parent is %scope]`
+    fn emit_child_env(&mut self) {
+        self.instructions.push(OpCode::NewObject);
+        self.instructions.push(OpCode::Dup);
+        self.instructions
+            .push(OpCode::Load(SCOPE_LOCAL.to_string()));
+        self.instructions
+            .push(OpCode::SetProp(PARENT_PROP.to_string()));
+    }
+
+    /// Remember `%scope` in a fresh local, so it can be restored after a
+    /// block, at a loop's continue and exit points, or in a catch handler.
+    fn save_env(&mut self) -> Option<String> {
+        if !self.env_active {
+            return None;
+        }
+        let save = format!("%save{}", self.instructions.len());
+        self.instructions
+            .push(OpCode::Load(SCOPE_LOCAL.to_string()));
+        self.instructions.push(OpCode::Let(save.clone()));
+        Some(save)
+    }
+
+    fn restore_env(&mut self, save: &Option<String>) {
+        if let Some(save) = save {
+            self.instructions.push(OpCode::Load(save.clone()));
+            self.instructions
+                .push(OpCode::Store(SCOPE_LOCAL.to_string()));
+        }
+    }
+
+    /// Enter the scope opened by the node at `span`: if it has captured
+    /// bindings, a new environment becomes `%scope`. Returns what
+    /// `exit_scope_env` needs to restore the enclosing one.
+    fn enter_scope_env(&mut self, span: Span) -> Option<String> {
+        self.scopes.env_scope(span)?;
+        let save = self.save_env();
+        self.emit_child_env();
+        self.instructions
+            .push(OpCode::Store(SCOPE_LOCAL.to_string()));
+        save
+    }
+
+    fn exit_scope_env(&mut self, save: Option<String>) {
+        self.restore_env(&save);
+    }
+
+    /// Start of a function body, after the parameters are bound: set up
+    /// `%scope` (the closure's environment, then the function's own) and
+    /// move captured parameters into it. Returns the previous `env_active`.
+    fn function_prologue(&mut self, fn_span: Span, params: &[&Ident]) -> bool {
+        let prev = self.env_active;
+        self.env_active = self.scopes.uses_env(fn_span);
+        if !self.env_active {
+            return prev;
+        }
+        if self.scopes.is_closure(fn_span) {
+            self.instructions.push(OpCode::LoadClosureEnv);
+        } else {
+            self.instructions.push(OpCode::Push(JsValue::Undefined));
+        }
+        self.instructions.push(OpCode::Let(SCOPE_LOCAL.to_string()));
+        if let Some(captured) = self.scopes.env_scope(fn_span) {
+            let captured: Vec<String> = captured.to_vec();
+            self.emit_child_env();
+            self.instructions
+                .push(OpCode::Store(SCOPE_LOCAL.to_string()));
+            for p in params {
+                let name = p.sym.to_string();
+                if captured.contains(&name) {
+                    self.instructions.push(OpCode::Load(name.clone()));
+                    self.store_var(p, true);
+                }
+            }
+        }
+        prev
+    }
+
+    /// Bind the arguments on the stack to `params` (in reverse order). The
+    /// function must start with exactly these `Let`s: the VM and IR lowering
+    /// count them as its parameters. Returns the parameter identifiers.
+    fn bind_params<'p>(&mut self, params: &[&'p Pat]) -> Vec<&'p Ident> {
+        let mut idents = Vec::new();
+        for pat in params.iter().rev() {
+            let ident = match pat {
+                Pat::Ident(id) => Some(&id.id),
+                Pat::Assign(a) => match a.left.as_ref() {
+                    Pat::Ident(id) => Some(&id.id),
+                    _ => None,
+                },
+                _ => None,
+            };
+            match ident {
+                Some(id) => {
+                    self.instructions.push(OpCode::Let(id.sym.to_string()));
+                    idents.push(id);
+                }
+                None => self.unsupported("destructuring function parameters"),
+            }
+        }
+        idents
+    }
+
+    /// `function f(a = 1)`: after the prologue, replace an `undefined`
+    /// argument with its default value.
+    fn apply_param_defaults(&mut self, params: &[&Pat]) {
+        for pat in params {
+            if let Pat::Assign(a) = pat
+                && let Pat::Ident(id) = a.left.as_ref()
+            {
+                self.load_var(&id.id);
+                self.instructions.push(OpCode::Push(JsValue::Undefined));
+                self.instructions.push(OpCode::Eq);
+                let skip = self.emit_jump_if_false();
+                self.gen_expr(&a.right);
+                self.store_var(&id.id, false);
+                self.patch_jump_here(skip);
+            }
+        }
+    }
+
+    /// Push the function value for the body starting at `address`: a
+    /// closure over `%scope` when the function captures variables.
+    /// Returns the index of the instruction holding the address, for
+    /// patching.
+    fn emit_function_value(&mut self, fn_span: Span, address: usize) -> usize {
+        if self.scopes.is_closure(fn_span) {
+            self.instructions
+                .push(OpCode::Load(SCOPE_LOCAL.to_string()));
+            self.instructions.push(OpCode::MakeClosure(address));
+        } else {
+            self.instructions
+                .push(OpCode::Push(JsValue::Function { address, env: None }));
+        }
+        self.instructions.len() - 1
+    }
+
+    fn patch_function_value(&mut self, idx: usize, address: usize) {
+        match &mut self.instructions[idx] {
+            OpCode::MakeClosure(a) => *a = address,
+            OpCode::Push(JsValue::Function { address: a, .. }) => *a = address,
+            other => unreachable!("not a function value: {:?}", other),
+        }
+    }
+
+    /// `[] -> [new environment: a copy of %scope's bindings `names`]`,
+    /// then made `%scope`. Gives each loop iteration its own bindings.
+    fn emit_iteration_env(&mut self, names: &[String]) {
+        self.instructions.push(OpCode::NewObject);
+        self.instructions.push(OpCode::Dup);
+        self.emit_env(1);
+        self.instructions
+            .push(OpCode::SetProp(PARENT_PROP.to_string()));
+        for name in names {
+            self.instructions.push(OpCode::Dup);
+            self.emit_env(0);
+            self.instructions.push(OpCode::GetProp(name.clone()));
+            self.instructions.push(OpCode::SetProp(name.clone()));
+        }
+        self.instructions
+            .push(OpCode::Store(SCOPE_LOCAL.to_string()));
     }
 
     /// Record that a construct cannot be compiled. Compilation will fail.
@@ -416,127 +721,8 @@ impl Codegen {
         }
     }
 
-    /// Collects all free variables (identifiers used but not defined) in a function body.
-    /// These are candidates for "capture" from the enclosing scope.
-    fn collect_free_vars_in_body(&self, body: &BlockStmt, params: &[String]) -> HashSet<String> {
-        let mut free_vars = HashSet::new();
-        let param_set: HashSet<_> = params.iter().cloned().collect();
-
-        for stmt in &body.stmts {
-            self.collect_free_vars_in_stmt(stmt, &param_set, &mut free_vars);
-        }
-        free_vars
-    }
-
-    fn collect_free_vars_in_stmt(
-        &self,
-        stmt: &Stmt,
-        local_vars: &HashSet<String>,
-        free_vars: &mut HashSet<String>,
-    ) {
-        match stmt {
-            Stmt::Expr(expr_stmt) => {
-                self.collect_free_vars_in_expr(&expr_stmt.expr, local_vars, free_vars);
-            }
-            Stmt::Return(ret) => {
-                if let Some(arg) = &ret.arg {
-                    self.collect_free_vars_in_expr(arg, local_vars, free_vars);
-                }
-            }
-            Stmt::Block(block) => {
-                for s in &block.stmts {
-                    self.collect_free_vars_in_stmt(s, local_vars, free_vars);
-                }
-            }
-            Stmt::Decl(Decl::Var(var_decl)) => {
-                for init in var_decl.decls.iter().filter_map(|d| d.init.as_ref()) {
-                    self.collect_free_vars_in_expr(init, local_vars, free_vars);
-                }
-            }
-            Stmt::While(while_stmt) => {
-                self.collect_free_vars_in_expr(&while_stmt.test, local_vars, free_vars);
-                self.collect_free_vars_in_stmt(&while_stmt.body, local_vars, free_vars);
-            }
-            _ => {}
-        }
-    }
-
-    fn collect_free_vars_in_expr(
-        &self,
-        expr: &Expr,
-        local_vars: &HashSet<String>,
-        free_vars: &mut HashSet<String>,
-    ) {
-        match expr {
-            Expr::Ident(id) => {
-                let name = id.sym.to_string();
-                // If not a local/param AND exists in outer scope, it's a captured var
-                if !local_vars.contains(&name) && self.outer_scope_vars.contains(&name) {
-                    free_vars.insert(name);
-                }
-            }
-            Expr::Bin(bin) => {
-                self.collect_free_vars_in_expr(&bin.left, local_vars, free_vars);
-                self.collect_free_vars_in_expr(&bin.right, local_vars, free_vars);
-            }
-            Expr::Call(call) => {
-                for arg in &call.args {
-                    self.collect_free_vars_in_expr(&arg.expr, local_vars, free_vars);
-                }
-                if let Callee::Expr(callee) = &call.callee {
-                    self.collect_free_vars_in_expr(callee, local_vars, free_vars);
-                }
-            }
-            Expr::Member(member) => {
-                self.collect_free_vars_in_expr(&member.obj, local_vars, free_vars);
-                if let MemberProp::Computed(computed) = &member.prop {
-                    self.collect_free_vars_in_expr(&computed.expr, local_vars, free_vars);
-                }
-            }
-            Expr::Object(obj) => {
-                for prop in &obj.props {
-                    if let PropOrSpread::Prop(p) = prop
-                        && let Prop::KeyValue(kv) = p.as_ref()
-                    {
-                        self.collect_free_vars_in_expr(&kv.value, local_vars, free_vars);
-                    }
-                }
-            }
-            Expr::Array(arr) => {
-                for e in arr.elems.iter().flatten() {
-                    self.collect_free_vars_in_expr(&e.expr, local_vars, free_vars);
-                }
-            }
-            Expr::Assign(assign) => {
-                self.collect_free_vars_in_expr(&assign.right, local_vars, free_vars);
-            }
-            _ => {}
-        }
-    }
-
-    /// Collects free vars from an arrow function expression body
-    fn collect_free_vars_in_arrow_body(
-        &self,
-        body: &BlockStmtOrExpr,
-        params: &[String],
-    ) -> HashSet<String> {
-        let mut free_vars = HashSet::new();
-        let param_set: HashSet<_> = params.iter().cloned().collect();
-
-        match body {
-            BlockStmtOrExpr::Expr(e) => {
-                self.collect_free_vars_in_expr(e, &param_set, &mut free_vars);
-            }
-            BlockStmtOrExpr::BlockStmt(block) => {
-                for stmt in &block.stmts {
-                    self.collect_free_vars_in_stmt(stmt, &param_set, &mut free_vars);
-                }
-            }
-        }
-        free_vars
-    }
-
     pub fn generate(&mut self, module: &Module) -> Vec<OpCode> {
+        self.top_level_prologue();
         for item in &module.body {
             match item {
                 ModuleItem::Stmt(stmt) => {
@@ -564,12 +750,7 @@ impl Codegen {
                     );
                 }
                 DefaultDecl::Fn(fn_expr) => {
-                    let name = if let Some(id) = fn_expr.ident.clone() {
-                        Some(id.sym.to_string())
-                    } else {
-                        None
-                    };
-                    self.gen_fn_decl(name, &fn_expr.function);
+                    self.gen_fn_decl(fn_expr.ident.as_ref(), &fn_expr.function);
                 }
                 DefaultDecl::TsInterfaceDecl(_) => {
                     // Interfaces are compile-time only
@@ -577,12 +758,7 @@ impl Codegen {
             },
             ModuleDecl::ExportDefaultExpr(export_default) => match &*export_default.expr {
                 Expr::Fn(fn_expr) => {
-                    let name = if let Some(id) = fn_expr.ident.clone() {
-                        Some(id.sym.to_string())
-                    } else {
-                        None
-                    };
-                    self.gen_fn_decl(name, &fn_expr.function);
+                    self.gen_fn_decl(fn_expr.ident.as_ref(), &fn_expr.function);
                 }
                 Expr::Class(class_expr) => {
                     self.gen_class(
@@ -784,8 +960,7 @@ impl Codegen {
     fn gen_decl(&mut self, decl: &Decl) {
         match decl {
             Decl::Fn(fn_decl) => {
-                let name = fn_decl.ident.sym.to_string();
-                self.gen_fn_decl(Some(name), &fn_decl.function);
+                self.gen_fn_decl(Some(&fn_decl.ident), &fn_decl.function);
             }
             Decl::Class(class_decl) => {
                 self.gen_class(&class_decl.class, Some(class_decl.ident.sym.as_str()));
@@ -839,7 +1014,6 @@ impl Codegen {
 
                 // Store the enum object in a variable
                 self.instructions.push(OpCode::Store(enum_name.clone()));
-                self.outer_scope_vars.insert(enum_name);
             }
             Decl::TsModule(_) => {
                 // TypeScript modules are compile-time only, skip
@@ -855,6 +1029,7 @@ impl Codegen {
     }
 
     pub fn generate_script(&mut self, script: &Script) -> Vec<OpCode> {
+        self.top_level_prologue();
         for stmt in &script.body {
             self.gen_stmt(stmt);
         }
@@ -862,96 +1037,56 @@ impl Codegen {
         self.instructions.clone()
     }
 
-    fn gen_fn_decl(&mut self, name: Option<String>, fn_decl: &Function) {
+    /// A function declaration (`name` given) or an anonymous function value
+    /// (left on the stack).
+    fn gen_fn_decl(&mut self, name: Option<&Ident>, fn_decl: &Function) {
         let is_async = fn_decl.is_async;
         if fn_decl.is_generator {
             self.unsupported("generator functions (`function*`)");
         }
 
-        // For named function declarations, store them in the current scope
-        // Anonymous functions are not stored (they're just values)
-        let has_name = name.is_some();
-        let start_ip = if let Some(ref name) = name {
-            // 1. Push function address and store it
-            let ip = self.instructions.len() + 3; // +3 to skip Push, Let, and Jump
-            self.instructions.push(OpCode::Push(JsValue::Function {
-                address: ip,
-                env: None, // Named function declarations typically don't capture
-            }));
-            self.instructions.push(OpCode::Let(name.clone()));
+        // [function value] ; bind the name ; jump over the body.
+        let value_idx = self.emit_function_value(fn_decl.span, 0);
+        if let Some(ident) = name {
+            self.store_var(ident, true);
+        }
+        let jump_idx = self.emit_jump();
+        let body_start = self.instructions.len();
+        self.patch_function_value(value_idx, body_start);
 
-            // Track this function name in outer scope
-            self.outer_scope_vars.insert(name.clone());
-
-            // 2. Add jump to skip over function body
-            let jump_target = self.instructions.len() + 1; // Will be updated after compiling body
-            self.instructions.push(OpCode::Jump(jump_target));
-
-            ip
-        } else {
-            // For anonymous functions, just push the function value on the stack
-            // The actual function address will be set after the body
-            self.instructions.len()
-        };
-
-        // 3. Compile function body
+        let prev_in_function = self.in_function;
+        let prev_async = self.in_async_function;
         self.in_function = true;
         self.in_async_function = is_async;
 
-        // Inside the function body, we must pop arguments into locals
-        // We process them in REVERSE order because of how they sit on the stack
-        for param in fn_decl.params.iter().rev() {
-            if let Pat::Ident(id) = &param.pat {
-                let param_name = id.id.sym.to_string();
-                // The value is already on the stack from the Caller
-                // Parameters are new bindings in the function scope
-                self.instructions.push(OpCode::Let(param_name.clone()));
-                // Params are capturable by nested closures
-                self.outer_scope_vars.insert(param_name);
-            }
-        }
-        let stmts = &fn_decl.body.as_ref().unwrap().stmts;
+        let pats: Vec<&Pat> = fn_decl.params.iter().map(|p| &p.pat).collect();
+        let params = self.bind_params(&pats);
+        let prev_env = self.function_prologue(fn_decl.span, &params);
+        self.apply_param_defaults(&pats);
 
+        let stmts: &[Stmt] = fn_decl.body.as_ref().map_or(&[], |b| b.stmts.as_slice());
         let mut last_instr_was_return = false;
         for s in stmts {
             let before = self.instructions.len();
             self.gen_stmt(s);
-            // Check if the last instruction emitted was a Return
             last_instr_was_return = self.instructions.len() > before
                 && matches!(self.instructions.last(), Some(OpCode::Return));
         }
 
-        self.in_function = false;
-        self.in_async_function = false;
-
-        // If the last statement wasn't a return, we need to handle implicit return
         if !last_instr_was_return {
-            if stmts.is_empty() {
-                // Empty function body - return undefined
-                self.instructions.push(OpCode::Push(JsValue::Undefined));
-                // For async functions, wrap in Promise.resolve()
-                if is_async {
-                    self.emit_promise_resolve();
-                }
-            } else {
-                // Non-empty body but last statement wasn't a return.
-                // Expression statements pop their value, so nothing is left
-                // on the stack: an async function resolves to `undefined`.
-                if is_async {
-                    self.instructions.push(OpCode::Push(JsValue::Undefined));
-                    self.emit_promise_resolve();
-                }
+            // Expression statements pop their value, so nothing is left on
+            // the stack: the implicit result is `undefined`.
+            self.instructions.push(OpCode::Push(JsValue::Undefined));
+            if is_async {
+                self.emit_promise_resolve();
             }
             self.instructions.push(OpCode::Return);
         }
 
-        // 4. Update jump target to point after the function body (for named functions)
-        if has_name {
-            let current_len = self.instructions.len();
-            if let OpCode::Jump(ref mut target) = self.instructions[start_ip - 1] {
-                *target = current_len;
-            }
-        }
+        self.env_active = prev_env;
+        self.in_function = prev_in_function;
+        self.in_async_function = prev_async;
+        self.patch_jump_here(jump_idx);
     }
 
     fn gen_var_decl(&mut self, var_decl: &VarDecl) {
@@ -969,9 +1104,7 @@ impl Codegen {
         match pat {
             Pat::Ident(id) => {
                 // Simple variable binding
-                let name = id.id.sym.to_string();
-                self.instructions.push(OpCode::Let(name.clone()));
-                self.outer_scope_vars.insert(name);
+                self.store_var(&id.id, true);
             }
             Pat::Object(obj_pat) => {
                 // Object destructuring: let { x, y } = obj
@@ -1026,16 +1159,13 @@ impl Codegen {
                                 }
                             }
 
-                            self.instructions.push(OpCode::Let(key_name.clone()));
-                            self.outer_scope_vars.insert(key_name);
+                            self.store_var(&assign.key.id, true);
                         }
                         swc_ecma_ast::ObjectPatProp::Rest(rest) => {
                             // { ...rest } - not fully implemented yet
                             if let Pat::Ident(id) = rest.arg.as_ref() {
-                                let name = id.id.sym.to_string();
                                 // For now, just bind the remaining object
-                                self.instructions.push(OpCode::Let(name.clone()));
-                                self.outer_scope_vars.insert(name);
+                                self.store_var(&id.id, true);
                             }
                         }
                     }
@@ -1113,6 +1243,7 @@ impl Codegen {
             }
             // RECURSION: Handle the Block
             Stmt::Block(block) => {
+                let env = self.enter_scope_env(block.span);
                 self.scope_stack.push(Vec::new()); // Enter new scope
                 for s in &block.stmts {
                     self.gen_stmt(s);
@@ -1123,19 +1254,18 @@ impl Codegen {
                         self.instructions.push(OpCode::Drop(name));
                     }
                 }
+                self.exit_scope_env(env);
             }
             Stmt::Decl(Decl::Var(var_decl)) => {
                 self.gen_var_decl(var_decl);
             }
             Stmt::Decl(Decl::Fn(fn_decl)) => {
-                let name = fn_decl.ident.sym.to_string();
-                self.gen_fn_decl(Some(name), &fn_decl.function);
+                self.gen_fn_decl(Some(&fn_decl.ident), &fn_decl.function);
             }
             Stmt::Decl(Decl::Class(class_decl)) => {
                 let class_name = class_decl.ident.sym.to_string();
                 self.gen_class(&class_decl.class, Some(class_name.as_str()));
-                self.instructions.push(OpCode::Let(class_name.clone()));
-                self.outer_scope_vars.insert(class_name);
+                self.store_var(&class_decl.ident, true);
             }
             Stmt::Decl(Decl::TsEnum(enum_decl)) => {
                 // Generate enum as a runtime object at statement level
@@ -1183,7 +1313,6 @@ impl Codegen {
 
                 // Store the enum object in a variable
                 self.instructions.push(OpCode::Let(enum_name.clone()));
-                self.outer_scope_vars.insert(enum_name);
             }
             Stmt::Decl(Decl::TsModule(_)) => {
                 // TypeScript modules are compile-time only, skip at runtime
@@ -1204,11 +1333,15 @@ impl Codegen {
                 self.instructions.push(OpCode::Pop);
             }
             Stmt::While(while_stmt) => {
+                let loop_env = self.save_env();
+                let iter_env = loop_env.clone();
                 let loop_start = self.instructions.len();
                 self.loop_stack.push(LoopContext {
                     start_addr: loop_start,
                     break_jumps: Vec::new(),
                     continue_jumps: Vec::new(),
+                    break_env: loop_env.clone(),
+                    continue_env: iter_env.clone(),
                 });
                 self.gen_expr(&while_stmt.test);
                 let exit_jump_idx = self.instructions.len();
@@ -1216,6 +1349,7 @@ impl Codegen {
                 self.gen_stmt(&while_stmt.body);
                 self.instructions.push(OpCode::Jump(loop_start));
                 let loop_end = self.instructions.len();
+                self.restore_env(&loop_env);
                 if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
                     *addr = loop_end;
                 }
@@ -1235,10 +1369,15 @@ impl Codegen {
             Stmt::Break(brk) => {
                 if brk.label.is_some() {
                     self.unsupported("labeled `break`");
-                } else if let Some(loop_ctx) = self.loop_stack.last_mut() {
+                } else if let Some(env) = self.loop_stack.last().map(|l| l.break_env.clone()) {
+                    self.restore_env(&env);
                     let jump_idx = self.instructions.len();
                     self.instructions.push(OpCode::Jump(0));
-                    loop_ctx.break_jumps.push(jump_idx);
+                    self.loop_stack
+                        .last_mut()
+                        .unwrap()
+                        .break_jumps
+                        .push(jump_idx);
                 } else {
                     self.unsupported("`break` outside of a loop");
                 }
@@ -1246,10 +1385,15 @@ impl Codegen {
             Stmt::Continue(cont) => {
                 if cont.label.is_some() {
                     self.unsupported("labeled `continue`");
-                } else if let Some(loop_ctx) = self.loop_stack.last_mut() {
+                } else if let Some(env) = self.loop_stack.last().map(|l| l.continue_env.clone()) {
+                    self.restore_env(&env);
                     let jump_idx = self.instructions.len();
                     self.instructions.push(OpCode::Jump(0));
-                    loop_ctx.continue_jumps.push(jump_idx);
+                    self.loop_stack
+                        .last_mut()
+                        .unwrap()
+                        .continue_jumps
+                        .push(jump_idx);
                 } else {
                     self.unsupported("`continue` outside of a loop");
                 }
@@ -1284,6 +1428,17 @@ impl Codegen {
             }
             Stmt::For(for_stmt) => {
                 self.scope_stack.push(Vec::new());
+                // `let` bindings of the loop head that closures capture get a
+                // fresh environment per iteration, copied from the previous
+                // one, as JavaScript specifies.
+                let loop_env = self.save_env();
+                let head: Option<Vec<String>> =
+                    self.scopes.env_scope(for_stmt.span).map(|n| n.to_vec());
+                if head.is_some() {
+                    self.emit_child_env();
+                    self.instructions
+                        .push(OpCode::Store(SCOPE_LOCAL.to_string()));
+                }
                 if let Some(init) = &for_stmt.init {
                     match init {
                         swc_ecma_ast::VarDeclOrExpr::VarDecl(var_decl) => {
@@ -1295,11 +1450,24 @@ impl Codegen {
                         }
                     }
                 }
+                let iter_env = match &head {
+                    Some(names) => {
+                        self.emit_iteration_env(names);
+                        let save = format!("%iter{}", self.instructions.len());
+                        self.instructions
+                            .push(OpCode::Load(SCOPE_LOCAL.to_string()));
+                        self.instructions.push(OpCode::Let(save.clone()));
+                        Some(save)
+                    }
+                    None => loop_env.clone(),
+                };
                 let loop_start = self.instructions.len();
                 self.loop_stack.push(LoopContext {
                     start_addr: loop_start,
                     break_jumps: Vec::new(),
                     continue_jumps: Vec::new(),
+                    break_env: loop_env.clone(),
+                    continue_env: iter_env.clone(),
                 });
                 if let Some(test) = &for_stmt.test {
                     self.gen_expr(test);
@@ -1310,12 +1478,19 @@ impl Codegen {
                 self.instructions.push(OpCode::JumpIfFalse(0));
                 self.gen_stmt(&for_stmt.body);
                 let continue_target = self.instructions.len();
+                if let (Some(names), Some(save)) = (&head, &iter_env) {
+                    self.emit_iteration_env(names);
+                    self.instructions
+                        .push(OpCode::Load(SCOPE_LOCAL.to_string()));
+                    self.instructions.push(OpCode::Store(save.clone()));
+                }
                 if let Some(update) = &for_stmt.update {
                     self.gen_expr(update);
                     self.instructions.push(OpCode::Pop);
                 }
                 self.instructions.push(OpCode::Jump(loop_start));
                 let loop_end = self.instructions.len();
+                self.restore_env(&loop_env);
                 if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
                     *addr = loop_end;
                 }
@@ -1339,14 +1514,18 @@ impl Codegen {
             }
             Stmt::ForOf(for_of_stmt) => {
                 self.scope_stack.push(Vec::new());
+                let loop_env = self.save_env();
+                let iter_env = loop_env.clone();
+                let per_iteration = self.scopes.env_scope(for_of_stmt.span).is_some();
                 self.gen_expr(&for_of_stmt.right);
-                let iter_name = "__for_of_iter__".to_string();
+                // Unique names, so nested loops do not share them.
+                let iter_name = format!("%forof_iter{}", self.instructions.len());
                 self.instructions.push(OpCode::Let(iter_name.clone()));
                 if let Some(scope) = self.scope_stack.last_mut() {
                     scope.push(iter_name.clone());
                 }
                 self.instructions.push(OpCode::Push(JsValue::Number(0.0)));
-                let idx_name = "__for_of_idx__".to_string();
+                let idx_name = format!("%forof_idx{}", self.instructions.len());
                 self.instructions.push(OpCode::Let(idx_name.clone()));
                 if let Some(scope) = self.scope_stack.last_mut() {
                     scope.push(idx_name.clone());
@@ -1356,6 +1535,8 @@ impl Codegen {
                     start_addr: loop_start,
                     break_jumps: Vec::new(),
                     continue_jumps: Vec::new(),
+                    break_env: loop_env.clone(),
+                    continue_env: iter_env.clone(),
                 });
                 self.instructions.push(OpCode::Load(idx_name.clone()));
                 self.instructions.push(OpCode::Load(iter_name.clone()));
@@ -1367,15 +1548,27 @@ impl Codegen {
                 self.instructions.push(OpCode::Load(iter_name.clone()));
                 self.instructions.push(OpCode::Load(idx_name.clone()));
                 self.instructions.push(OpCode::LoadElement);
+                if per_iteration {
+                    // A fresh environment for this iteration's binding.
+                    self.restore_env(&loop_env);
+                    self.emit_child_env();
+                    self.instructions
+                        .push(OpCode::Store(SCOPE_LOCAL.to_string()));
+                }
                 if let Some(var_decl) = &for_of_stmt.left.as_var_decl()
                     && let Some(decl) = var_decl.decls.first()
                     && let Pat::Ident(id) = &decl.name
                 {
-                    let var_name = id.id.sym.to_string();
-                    self.instructions.push(OpCode::Let(var_name.clone()));
+                    self.store_var(&id.id, true);
                     if let Some(scope) = self.scope_stack.last_mut() {
-                        scope.push(var_name);
+                        scope.push(id.id.sym.to_string());
                     }
+                } else if let ForHead::Pat(pat) = &for_of_stmt.left
+                    && let Pat::Ident(id) = pat.as_ref()
+                {
+                    self.store_var(&id.id, false);
+                } else {
+                    self.unsupported("this `for...of` binding");
                 }
                 self.gen_stmt(&for_of_stmt.body);
                 let continue_target = self.instructions.len();
@@ -1395,6 +1588,7 @@ impl Codegen {
                 self.instructions.push(OpCode::Store(idx_name.clone()));
                 self.instructions.push(OpCode::Jump(loop_start));
                 let loop_end = self.instructions.len();
+                self.restore_env(&loop_env);
                 if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
                     *addr = loop_end;
                 }
@@ -1418,17 +1612,20 @@ impl Codegen {
             }
             Stmt::ForIn(for_in_stmt) => {
                 self.scope_stack.push(Vec::new());
+                let loop_env = self.save_env();
+                let iter_env = loop_env.clone();
+                let per_iteration = self.scopes.env_scope(for_in_stmt.span).is_some();
                 self.gen_expr(&for_in_stmt.right);
                 self.instructions.push(OpCode::Load("Object".to_string()));
                 self.instructions.push(OpCode::GetProp("keys".to_string()));
                 self.instructions.push(OpCode::Call(1));
-                let keys_name = "__for_in_keys__".to_string();
+                let keys_name = format!("%forin_keys{}", self.instructions.len());
                 self.instructions.push(OpCode::Let(keys_name.clone()));
                 if let Some(scope) = self.scope_stack.last_mut() {
                     scope.push(keys_name.clone());
                 }
                 self.instructions.push(OpCode::Push(JsValue::Number(0.0)));
-                let idx_name = "__for_in_idx__".to_string();
+                let idx_name = format!("%forin_idx{}", self.instructions.len());
                 self.instructions.push(OpCode::Let(idx_name.clone()));
                 if let Some(scope) = self.scope_stack.last_mut() {
                     scope.push(idx_name.clone());
@@ -1438,6 +1635,8 @@ impl Codegen {
                     start_addr: loop_start,
                     break_jumps: Vec::new(),
                     continue_jumps: Vec::new(),
+                    break_env: loop_env.clone(),
+                    continue_env: iter_env.clone(),
                 });
                 self.instructions.push(OpCode::Load(idx_name.clone()));
                 self.instructions.push(OpCode::Load(keys_name.clone()));
@@ -1449,15 +1648,26 @@ impl Codegen {
                 self.instructions.push(OpCode::Load(keys_name.clone()));
                 self.instructions.push(OpCode::Load(idx_name.clone()));
                 self.instructions.push(OpCode::LoadElement);
+                if per_iteration {
+                    self.restore_env(&loop_env);
+                    self.emit_child_env();
+                    self.instructions
+                        .push(OpCode::Store(SCOPE_LOCAL.to_string()));
+                }
                 if let Some(var_decl) = &for_in_stmt.left.as_var_decl()
                     && let Some(decl) = var_decl.decls.first()
                     && let Pat::Ident(id) = &decl.name
                 {
-                    let var_name = id.id.sym.to_string();
-                    self.instructions.push(OpCode::Let(var_name.clone()));
+                    self.store_var(&id.id, true);
                     if let Some(scope) = self.scope_stack.last_mut() {
-                        scope.push(var_name);
+                        scope.push(id.id.sym.to_string());
                     }
+                } else if let ForHead::Pat(pat) = &for_in_stmt.left
+                    && let Pat::Ident(id) = pat.as_ref()
+                {
+                    self.store_var(&id.id, false);
+                } else {
+                    self.unsupported("this `for...in` binding");
                 }
                 self.gen_stmt(&for_in_stmt.body);
                 let continue_target = self.instructions.len();
@@ -1477,6 +1687,7 @@ impl Codegen {
                 self.instructions.push(OpCode::Store(idx_name.clone()));
                 self.instructions.push(OpCode::Jump(loop_start));
                 let loop_end = self.instructions.len();
+                self.restore_env(&loop_env);
                 if let OpCode::JumpIfFalse(ref mut addr) = self.instructions[exit_jump_idx] {
                     *addr = loop_end;
                 }
@@ -1499,11 +1710,15 @@ impl Codegen {
                 }
             }
             Stmt::DoWhile(do_while_stmt) => {
+                let loop_env = self.save_env();
+                let iter_env = loop_env.clone();
                 let loop_start = self.instructions.len();
                 self.loop_stack.push(LoopContext {
                     start_addr: loop_start,
                     break_jumps: Vec::new(),
                     continue_jumps: Vec::new(),
+                    break_env: loop_env.clone(),
+                    continue_env: iter_env.clone(),
                 });
                 self.gen_stmt(&do_while_stmt.body);
                 let continue_target = self.instructions.len();
@@ -1512,6 +1727,7 @@ impl Codegen {
                     .push(OpCode::JumpIfFalse(self.instructions.len() + 2));
                 self.instructions.push(OpCode::Jump(loop_start));
                 let loop_end = self.instructions.len();
+                self.restore_env(&loop_env);
                 if let Some(loop_ctx) = self.loop_stack.pop() {
                     for break_idx in loop_ctx.break_jumps {
                         if let OpCode::Jump(ref mut addr) = self.instructions[break_idx] {
@@ -1540,6 +1756,10 @@ impl Codegen {
                 let has_catch = try_stmt.handler.is_some();
                 let has_finally = try_stmt.finalizer.is_some();
 
+                // An exception can arrive from inside a nested environment;
+                // the handlers restore `%scope` from here.
+                let try_env = self.save_env();
+
                 // 1. Emit SetupTry with placeholder addresses (will backpatch)
                 let setup_try_idx = self.instructions.len();
                 self.instructions.push(OpCode::SetupTry {
@@ -1548,10 +1768,12 @@ impl Codegen {
                 });
 
                 // 2. Emit try block
+                let block_env = self.enter_scope_env(try_stmt.block.span);
                 self.scope_stack.push(Vec::new());
                 for s in &try_stmt.block.stmts {
                     self.gen_stmt(s);
                 }
+                self.exit_scope_env(block_env);
                 // Drop try block scope variables
                 if let Some(locals) = self.scope_stack.pop() {
                     for name in locals.into_iter().rev() {
@@ -1571,16 +1793,20 @@ impl Codegen {
                     let addr = self.instructions.len();
                     if let Some(handler) = &try_stmt.handler {
                         self.scope_stack.push(Vec::new());
+                        // [exception]
+                        self.restore_env(&try_env);
+                        let catch_env = self.enter_scope_env(handler.span);
 
                         // Bind exception to catch parameter if present
                         if let Some(param) = &handler.param {
                             if let Pat::Ident(id) = param {
-                                let param_name = id.id.sym.to_string();
                                 // Exception value is on stack, bind it
-                                self.instructions.push(OpCode::Let(param_name.clone()));
+                                self.store_var(&id.id, true);
                                 if let Some(scope) = self.scope_stack.last_mut() {
-                                    scope.push(param_name);
+                                    scope.push(id.id.sym.to_string());
                                 }
+                            } else {
+                                self.unsupported("destructuring in a `catch` parameter");
                             }
                         } else {
                             // No catch parameter, pop the exception
@@ -1591,6 +1817,7 @@ impl Codegen {
                         for s in &handler.body.stmts {
                             self.gen_stmt(s);
                         }
+                        self.exit_scope_env(catch_env);
 
                         // Drop catch block scope variables
                         if let Some(locals) = self.scope_stack.pop() {
@@ -1616,9 +1843,12 @@ impl Codegen {
                     let addr = self.instructions.len();
                     if let Some(finalizer) = &try_stmt.finalizer {
                         self.scope_stack.push(Vec::new());
+                        self.restore_env(&try_env);
+                        let finally_env = self.enter_scope_env(finalizer.span);
                         for s in &finalizer.stmts {
                             self.gen_stmt(s);
                         }
+                        self.exit_scope_env(finally_env);
                         // Drop finally block scope variables
                         if let Some(locals) = self.scope_stack.pop() {
                             for name in locals.into_iter().rev() {
@@ -1674,222 +1904,57 @@ impl Codegen {
     fn gen_expr_inner(&mut self, expr: &Expr) {
         match expr {
             Expr::Fn(fn_expr) => {
-                let is_async = fn_expr.function.is_async;
-
-                // Function expression: `function(a, b) { ... }` or `async function(a, b) { ... }`
-                //
-                // CLOSURE CAPTURING: Like arrow functions, we detect and lift captured variables.
-
-                // 1. Collect parameter names
-                let params: Vec<String> = fn_expr
-                    .function
-                    .params
-                    .iter()
-                    .filter_map(|p| {
-                        if let Pat::Ident(id) = &p.pat {
-                            Some(id.id.sym.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                // 2. Detect captured variables from outer scopes
-                let captured_vars = if let Some(body) = &fn_expr.function.body {
-                    self.collect_free_vars_in_body(body, &params)
-                } else {
-                    HashSet::new()
-                };
-                let has_captures = !captured_vars.is_empty();
-
-                if has_captures {
-                    // Create Environment Object
-                    self.instructions.push(OpCode::NewObject);
-
-                    // Move captured variables into the Environment Object
-                    for var_name in &captured_vars {
-                        self.instructions.push(OpCode::Dup);
-                        self.instructions.push(OpCode::Load(var_name.clone()));
-                        self.instructions.push(OpCode::SetProp(var_name.clone()));
-                    }
-
-                    let start_ip = self.instructions.len() + 2;
-                    self.instructions.push(OpCode::MakeClosure(start_ip));
-                } else {
-                    let start_ip = self.instructions.len() + 2;
-                    self.instructions.push(OpCode::Push(JsValue::Function {
-                        address: start_ip,
-                        env: None,
-                    }));
-                }
-
-                let jump_idx = self.instructions.len();
-                self.instructions.push(OpCode::Jump(0)); // patched after body
-
-                let prev_in_function = self.in_function;
-                let prev_async = self.in_async_function;
-                self.in_function = true;
-                self.in_async_function = is_async;
-
-                // Pop args into locals (reverse order)
-                // Parameters are new bindings in the function scope
-                for param in fn_expr.function.params.iter().rev() {
-                    if let Pat::Ident(id) = &param.pat {
-                        let param_name = id.id.sym.to_string();
-                        self.instructions.push(OpCode::Let(param_name.clone()));
-                        // Params are capturable by nested closures
-                        self.outer_scope_vars.insert(param_name);
-                    }
-                }
-
-                if let Some(body) = &fn_expr.function.body {
-                    let stmts = &body.stmts;
-                    let mut last_instr_was_return = false;
-
-                    for s in stmts {
-                        let before = self.instructions.len();
-                        self.gen_stmt(s);
-                        last_instr_was_return = self.instructions.len() > before
-                            && matches!(self.instructions.last(), Some(OpCode::Return));
-                    }
-
-                    // For async functions with no return statement at the end, wrap the result
-                    if is_async && !last_instr_was_return {
-                        // Expression statements pop their value, so the
-                        // implicit result is always `undefined`.
-                        self.instructions.push(OpCode::Push(JsValue::Undefined));
-                        // Wrap in Promise.resolve() and add Return
-                        self.emit_promise_resolve();
-                        self.instructions.push(OpCode::Return);
-                    }
-                } else {
-                    self.instructions.push(OpCode::Push(JsValue::Undefined));
-                    // For async functions with no body, wrap undefined in Promise.resolve()
-                    if is_async {
-                        self.emit_promise_resolve();
-                    }
-                    self.instructions.push(OpCode::Return);
-                }
-                self.in_function = prev_in_function;
-                self.in_async_function = prev_async;
-
-                let after_body = self.instructions.len();
-                if let OpCode::Jump(ref mut target) = self.instructions[jump_idx] {
-                    *target = after_body;
-                }
+                // `function (a, b) { ... }`: an anonymous function value.
+                self.gen_fn_decl(None, &fn_expr.function);
             }
             Expr::Arrow(arrow) => {
-                // Arrow function: `(a, b) => expr` or `(a, b) => { ... }`
-                //
-                // CLOSURE CAPTURING: If this arrow references variables from an outer scope,
-                // we "lift" those variables to the heap by creating an Environment Object.
-                // This solves the Stack Frame Paradox for async callbacks like setTimeout.
-
-                // 1. Collect parameter names
-                let params: Vec<String> = arrow
-                    .params
-                    .iter()
-                    .filter_map(|p| {
-                        if let Pat::Ident(id) = p {
-                            Some(id.id.sym.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                // 2. Detect captured variables (upvars) from outer scopes
-                let captured_vars = self.collect_free_vars_in_arrow_body(&arrow.body, &params);
-                let has_captures = !captured_vars.is_empty();
-
-                if has_captures {
-                    // 3. Create Environment Object on the Heap
-                    self.instructions.push(OpCode::NewObject);
-
-                    // 4. Move captured variables into the Environment Object
-                    for var_name in &captured_vars {
-                        self.instructions.push(OpCode::Dup); // Keep env ptr
-                        self.instructions.push(OpCode::Load(var_name.clone())); // Load value
-                        self.instructions.push(OpCode::SetProp(var_name.clone())); // Store in env
-                    }
-
-                    // 5. Calculate function body start address
-                    // Layout: ... MakeClosure Jump [body...] ...
-                    let start_ip = self.instructions.len() + 2; // MakeClosure + Jump
-                    self.instructions.push(OpCode::MakeClosure(start_ip));
-                } else {
-                    // No captures: simple function (no environment needed)
-                    let start_ip = self.instructions.len() + 2; // Push + Jump
-                    self.instructions.push(OpCode::Push(JsValue::Function {
-                        address: start_ip,
-                        env: None,
-                    }));
-                }
-
-                let jump_idx = self.instructions.len();
-                self.instructions.push(OpCode::Jump(0)); // patched after body
+                // `(a, b) => expr` or `(a, b) => { ... }`
+                let value_idx = self.emit_function_value(arrow.span, 0);
+                let jump_idx = self.emit_jump();
+                let body_start = self.instructions.len();
+                self.patch_function_value(value_idx, body_start);
 
                 let prev_in_function = self.in_function;
                 let prev_async = self.in_async_function;
                 self.in_function = true;
                 self.in_async_function = arrow.is_async;
 
-                // Pop args into locals (reverse order)
-                // Parameters are new bindings in the function scope
-                for param in arrow.params.iter().rev() {
-                    if let Pat::Ident(id) = param {
-                        let param_name = id.id.sym.to_string();
-                        self.instructions.push(OpCode::Let(param_name.clone()));
-                        // Params are capturable by nested closures
-                        self.outer_scope_vars.insert(param_name);
-                    } else {
-                        self.unsupported("destructuring or default arrow-function parameters");
-                    }
-                }
+                let pats: Vec<&Pat> = arrow.params.iter().collect();
+                let params = self.bind_params(&pats);
+                let prev_env = self.function_prologue(arrow.span, &params);
+                self.apply_param_defaults(&pats);
 
                 match &*arrow.body {
                     BlockStmtOrExpr::Expr(e) => {
                         // Expression-bodied arrows implicitly return the expression.
                         self.gen_expr(e);
-                        // For async arrows, wrap the return value in Promise.resolve()
                         if arrow.is_async {
                             self.emit_promise_resolve();
                         }
                         self.instructions.push(OpCode::Return);
                     }
                     BlockStmtOrExpr::BlockStmt(block) => {
-                        let stmts = &block.stmts;
                         let mut last_instr_was_return = false;
-
-                        for s in stmts {
+                        for s in &block.stmts {
                             let before = self.instructions.len();
                             self.gen_stmt(s);
                             last_instr_was_return = self.instructions.len() > before
                                 && matches!(self.instructions.last(), Some(OpCode::Return));
                         }
-
-                        if stmts.is_empty() {
-                            self.instructions.push(OpCode::Push(JsValue::Undefined));
-                        }
-
-                        // For async arrows with no return statement at the end, wrap the result
-                        if arrow.is_async && !last_instr_was_return {
-                            self.emit_promise_resolve();
-                        }
-
                         if !last_instr_was_return {
+                            self.instructions.push(OpCode::Push(JsValue::Undefined));
+                            if arrow.is_async {
+                                self.emit_promise_resolve();
+                            }
                             self.instructions.push(OpCode::Return);
                         }
                     }
                 }
 
+                self.env_active = prev_env;
                 self.in_function = prev_in_function;
                 self.in_async_function = prev_async;
-
-                let after_body = self.instructions.len();
-                if let OpCode::Jump(ref mut target) = self.instructions[jump_idx] {
-                    *target = after_body;
-                }
+                self.patch_jump_here(jump_idx);
             }
             Expr::Lit(Lit::Num(num)) => {
                 self.instructions
@@ -1908,7 +1973,7 @@ impl Codegen {
                 self.instructions.push(OpCode::Push(JsValue::Null));
             }
             Expr::Ident(id) => {
-                self.instructions.push(OpCode::Load(id.sym.to_string()));
+                self.load_var(id);
             }
             Expr::Bin(bin)
                 if matches!(
@@ -2039,20 +2104,21 @@ impl Codegen {
                 }
             }
             Expr::Call(call_expr) => {
+                // `obj.name(args)`: a method call with `this = obj`. Only for
+                // an identifier property: for `obj[k](args)` this used to
+                // emit the arguments and object, then fall through and emit
+                // them again, leaving junk on the stack.
                 if let Callee::Expr(callee_expr) = &call_expr.callee
                     && let Expr::Member(member) = callee_expr.as_ref()
+                    && let MemberProp::Ident(id) = &member.prop
                 {
                     for arg in &call_expr.args {
                         self.gen_expr(&arg.expr);
                     }
-
                     self.gen_expr(&member.obj);
-
-                    if let MemberProp::Ident(id) = &member.prop {
-                        self.instructions
-                            .push(OpCode::CallMethod(id.sym.to_string(), call_expr.args.len()));
-                        return;
-                    }
+                    self.instructions
+                        .push(OpCode::CallMethod(id.sym.to_string(), call_expr.args.len()));
+                    return;
                 }
                 // detect if this is a 'require' call
                 if let Callee::Expr(expr) = &call_expr.callee
@@ -2091,6 +2157,9 @@ impl Codegen {
                     }
                 }
             }
+            Expr::Assign(assign_expr) if assign_expr.op != AssignOp::Assign => {
+                self.gen_compound_assign(assign_expr);
+            }
             Expr::Assign(assign_expr) => {
                 // Handle different assignment targets
                 match &assign_expr.left {
@@ -2098,12 +2167,11 @@ impl Codegen {
                         SimpleAssignTarget::Ident(binding_ident) => {
                             // Simple variable assignment: x = value
                             self.gen_expr(&assign_expr.right);
-                            let name = binding_ident.id.sym.to_string();
                             // JS assignment expressions evaluate to the assigned value.
-                            // Our `Store` opcode consumes the value, so `Dup` ensures one copy
-                            // remains on the stack for expression context (e.g. `a = 1;`).
+                            // The store consumes the value, so `Dup` keeps one copy
+                            // on the stack for expression context (e.g. `a = 1;`).
                             self.instructions.push(OpCode::Dup);
-                            self.instructions.push(OpCode::Store(name));
+                            self.store_var(&binding_ident.id, false);
                         }
                         SimpleAssignTarget::Member(member_expr) => {
                             // Member assignment: obj.prop = value or this.prop = value
@@ -2199,7 +2267,7 @@ impl Codegen {
                                     // { x } shorthand for { x: x }
                                     let key = ident.sym.to_string();
                                     self.instructions.push(OpCode::Dup);
-                                    self.instructions.push(OpCode::Load(key.clone()));
+                                    self.load_var(ident);
                                     self.instructions.push(OpCode::SetProp(key));
                                 }
                                 Prop::Method(method) => {
@@ -2406,8 +2474,7 @@ impl Codegen {
             }
             Expr::Update(update_expr) => {
                 if let Expr::Ident(id) = update_expr.arg.as_ref() {
-                    let name = id.sym.to_string();
-                    self.instructions.push(OpCode::Load(name.clone()));
+                    self.load_var(id);
                     if update_expr.prefix {
                         self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
                         if update_expr.op == UpdateOp::PlusPlus {
@@ -2416,7 +2483,7 @@ impl Codegen {
                             self.instructions.push(OpCode::Sub);
                         }
                         self.instructions.push(OpCode::Dup);
-                        self.instructions.push(OpCode::Store(name));
+                        self.store_var(id, false);
                     } else {
                         self.instructions.push(OpCode::Dup);
                         self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
@@ -2425,7 +2492,7 @@ impl Codegen {
                         } else {
                             self.instructions.push(OpCode::Sub);
                         }
-                        self.instructions.push(OpCode::Store(name));
+                        self.store_var(id, false);
                     }
                 } else if let Expr::Member(member) = update_expr.arg.as_ref()
                     && matches!(member.prop, MemberProp::PrivateName(_))

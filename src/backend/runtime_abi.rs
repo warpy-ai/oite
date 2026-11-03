@@ -23,6 +23,7 @@ pub const RUNTIME: &[(&str, bool, &[Ty])] = {
         ("ot_alloc_array", true, &[Len]),
         ("ot_alloc_string", true, &[Ptr, Len]),
         ("ot_make_function", true, &[Ptr]),
+        ("ot_make_closure", true, &[Ptr, Val]),
         ("ot_get_prop", true, &[Val, Ptr, Len]),
         ("ot_set_prop", false, &[Val, Ptr, Len, Val]),
         ("ot_get_index", true, &[Val, Val]),

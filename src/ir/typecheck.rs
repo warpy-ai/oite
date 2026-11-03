@@ -276,6 +276,11 @@ impl<'a> TypeChecker<'a> {
                 self.set_type(*dst, IrType::Object);
             }
 
+            // The closure environment is an object or undefined
+            IrOp::LoadEnv(dst) => {
+                self.set_type(*dst, IrType::Any);
+            }
+
             // Side-effecting ops with no result
             IrOp::StoreLocal(_, _)
             | IrOp::StoreGlobal(_, _)

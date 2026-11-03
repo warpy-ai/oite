@@ -191,18 +191,21 @@ pub struct NativeArray {
     pub elements: *mut u64,
 }
 
-/// A function object: native code with the Oite calling convention,
-/// `extern "C" fn(this: u64, argv: *const u64, argc: usize) -> u64`.
+/// A function object: native code with the Oite calling convention (see
+/// `NativeFn`), plus the environment object a closure captured.
 ///
 /// Compiled user functions and runtime built-ins (`console.log`) both use it.
 #[repr(C)]
 pub struct NativeFunction {
     pub header: ObjectHeader,
     pub code: *const u8,
+    /// The closure's environment (an object value), or `undefined`.
+    pub env: u64,
 }
 
-/// Signature of every function callable through a `NativeFunction`.
-pub type NativeFn = extern "C" fn(this: u64, argv: *const u64, argc: usize) -> u64;
+/// Signature of every function callable through a `NativeFunction`:
+/// `this`, the arguments, and the function's own environment.
+pub type NativeFn = extern "C" fn(this: u64, argv: *const u64, argc: usize, env: u64) -> u64;
 
 /// A native object (key-value map).
 ///
@@ -380,13 +383,15 @@ impl NativeHeap {
     }
 
     /// Allocate a function object pointing at native code.
-    pub fn alloc_function(&self, code: *const u8) -> Option<HeapPtr> {
+    pub fn alloc_function(&self, code: *const u8, env: u64) -> Option<HeapPtr> {
         let data_size = std::mem::size_of::<NativeFunction>() - ObjectHeader::SIZE;
         let ptr = self.alloc(data_size)?;
         unsafe {
             let header = ptr.as_mut::<ObjectHeader>();
             *header = ObjectHeader::new(ObjectKind::Function, data_size as u32);
-            ptr.as_mut::<NativeFunction>().code = code;
+            let f = ptr.as_mut::<NativeFunction>();
+            f.code = code;
+            f.env = env;
         }
         Some(ptr)
     }
