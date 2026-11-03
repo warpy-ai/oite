@@ -8,4 +8,8 @@ invalid input true true Error
 404 not found HttpError: not found
 HttpError: not found { status: 404 }
 page not found 404 true true
+true true false
+true false
+TypeError 1 is not a constructor
+true Maximum call stack size exceeded
 caught 500 true HttpError: server

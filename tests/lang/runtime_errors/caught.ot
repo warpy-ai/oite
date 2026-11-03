@@ -1,13 +1,14 @@
-// #121: runtime errors are ordinary exceptions: catchable, with the
-// standard classes, names and messages. (VM only: native code does not
-// compile `try` yet, #140.)
+// backends: vm jit aot
+// #121, #140: runtime errors are ordinary exceptions: catchable, with the
+// standard names and messages, on every backend. (`instanceof` and `new`
+// need classes, which native code does not compile yet: error_classes.ot.)
 
 function attempt(label, f) {
   try {
     f();
     console.log(label, "no error");
   } catch (e) {
-    console.log(label, e.name, "|", e.message, "|", e instanceof Error);
+    console.log(label, e.name, "|", e.message);
   }
 }
 
@@ -18,23 +19,14 @@ attempt("method on null", function () { let o = null; o.go(); });
 attempt("missing method", function () { let o = {}; o.go(); });
 attempt("call non-function", function () { let f = 5; f(); });
 attempt("unbound name", function () { return notDefinedAnywhere; });
-attempt("not a constructor", function () { let C = 1; new C(); });
 attempt("range", function () { "x".repeat(-1); });
-attempt("deep recursion", function () {
-  function down(n) { return down(n + 1); }
-  down(0);
-});
 
-// The class of the error.
+// Printed and converted like any error.
 try {
   null.x;
 } catch (e) {
-  console.log(e instanceof TypeError, e instanceof ReferenceError, e instanceof RangeError);
-}
-try {
-  nope;
-} catch (e) {
-  console.log(e instanceof ReferenceError, e instanceof TypeError);
+  console.log(e);
+  console.log(String(e), "" + e, `${e}`);
 }
 
 // Execution continues after a caught runtime error.

@@ -1,4 +1,5 @@
-// A captured catch parameter. VM only until native exceptions (#140).
+// backends: vm jit aot
+// A captured catch parameter.
 let get;
 try { throw "boom"; } catch (e) { get = () => e; }
 console.log(get());

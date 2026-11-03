@@ -1,0 +1,11 @@
+12
+caught -3 negative
+[ 'text', 42, null, undefined, true, [ 1, 2 ] ]
+rethrown inner
+returned
+[ 'try normal', 'finally normal', 'try throw', 'finally throw', 'outer caught x' ]
+second
+[ 1, 2, 'caught deep' ]
+406
+3 stopped at 1 with 1
+safe: outer again

@@ -1,0 +1,14 @@
+// backends: vm jit aot
+// An exception thrown deep in calls, with finally blocks on the way.
+function inner() {
+  throw "from inner";
+}
+function outer() {
+  try {
+    inner();
+  } finally {
+    console.log("cleanup");
+  }
+}
+outer();
+console.log("not reached");

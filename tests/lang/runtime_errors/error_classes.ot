@@ -1,5 +1,6 @@
 // The built-in error classes (std/core/error.ot): construction, toString,
-// printing, and subclassing.
+// printing, and subclassing. (VM only: native code does not compile
+// classes yet.)
 
 let e = new Error("boom");
 console.log(e.name, e.message, e.toString(), String(e), "" + e, `${e}`);
@@ -36,6 +37,29 @@ class NotFound extends HttpError {
 }
 let nf = new NotFound("page");
 console.log(nf.message, nf.status, nf instanceof HttpError, nf instanceof Error);
+
+// Runtime errors are instances of the classes.
+try {
+  null.x;
+} catch (err) {
+  console.log(err instanceof TypeError, err instanceof Error, err instanceof RangeError);
+}
+try {
+  nope;
+} catch (err) {
+  console.log(err instanceof ReferenceError, err instanceof TypeError);
+}
+try {
+  let C = 1;
+  new C();
+} catch (err) {
+  console.log(err.name, err.message);
+}
+try {
+  (function down(n) { return down(n + 1); })(0);
+} catch (err) {
+  console.log(err instanceof RangeError, err.message);
+}
 
 // Thrown and caught.
 try {
