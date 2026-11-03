@@ -252,9 +252,10 @@ fn setup_json(vm: &mut VM) {
 fn setup_globals(vm: &mut VM) {
     let require_idx = vm.register_native(crate::stdlib::native_require);
 
-    vm.call_stack[0]
-        .locals
-        .insert("require".into(), JsValue::NativeFunction(require_idx));
+    let globals = &mut vm.call_stack[0].locals;
+    globals.insert("require".into(), JsValue::NativeFunction(require_idx));
+    globals.insert("NaN".into(), JsValue::Number(f64::NAN));
+    globals.insert("Infinity".into(), JsValue::Number(f64::INFINITY));
 }
 
 fn setup_map_set(vm: &mut VM) {
