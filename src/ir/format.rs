@@ -142,6 +142,8 @@ fn serialize_op(output: &mut String, op: &IrOp) {
         IrOp::NegAny(d, a) => output.push_str(&format!("{} = neg.any {}", d, a)),
         IrOp::EqStrict(d, a, b) => output.push_str(&format!("{} = eq.strict {}, {}", d, a, b)),
         IrOp::NeStrict(d, a, b) => output.push_str(&format!("{} = ne.strict {}, {}", d, a, b)),
+        IrOp::EqLoose(d, a, b) => output.push_str(&format!("{} = eq.loose {}, {}", d, a, b)),
+        IrOp::NeLoose(d, a, b) => output.push_str(&format!("{} = ne.loose {}, {}", d, a, b)),
         IrOp::Lt(d, a, b) => output.push_str(&format!("{} = lt {}, {}", d, a, b)),
         IrOp::LtEq(d, a, b) => output.push_str(&format!("{} = le {}, {}", d, a, b)),
         IrOp::Gt(d, a, b) => output.push_str(&format!("{} = gt {}, {}", d, a, b)),

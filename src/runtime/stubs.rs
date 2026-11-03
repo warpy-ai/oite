@@ -1,771 +1,942 @@
 //! Runtime stubs callable from native-compiled code
 //!
-//! These extern "C" functions provide the interface between JIT/AOT compiled
-//! code and the Rust runtime. They handle:
-//! - Object allocation
-//! - Property access
-//! - Dynamic dispatch (for `any` typed operations)
-//! - String operations
+//! These `extern "C"` functions are the runtime of Oite's native backends.
+//! The Cranelift JIT calls them in-process; LLVM AOT binaries link them from
+//! the static library that `build.rs` compiles from this same file. Keeping
+//! the semantics here, instead of in each backend, is what makes the two
+//! backends agree.
 //!
 //! The calling convention is:
-//! - All values passed as u64 (NaN-boxed OtValue)
-//! - Return values are also u64
-//! - Pointers to arrays use *const u64
+//! - All values are passed and returned as `u64` (NaN-boxed `OtValue`).
+//! - Every function value, compiled or built in, has the signature
+//!   `extern "C" fn(this: u64, argv: *const u64, argc: usize) -> u64`
+//!   (see `heap::NativeFn`). Missing arguments read as `undefined`.
+//! - Names (properties, globals) are passed as a UTF-8 pointer and length.
 
 use super::abi::OtValue;
 use super::heap::{
-    NativeArray, NativeObject, NativeString, ObjectHeader, ObjectKind, PropertyMap, heap,
+    HeapPtr, NativeArray, NativeFn, NativeFunction, NativeObject, NativeString, ObjectHeader,
+    ObjectKind, PropertyMap, heap,
 };
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::io::Write;
 
 // =========================================================================
-// Allocation Stubs
+// Helpers
+// =========================================================================
+
+fn undefined() -> u64 {
+    OtValue::undefined().to_bits()
+}
+
+fn boolean(b: bool) -> u64 {
+    OtValue::boolean(b).to_bits()
+}
+
+fn number(n: f64) -> u64 {
+    OtValue::number(n).to_bits()
+}
+
+/// Report an uncaught runtime error and exit.
+///
+/// Native code has no exception support yet (#120), so this cannot be caught.
+/// Output written so far is flushed first so it is not lost.
+fn runtime_error(msg: &str) -> ! {
+    let _ = std::io::stdout().flush();
+    eprintln!("Uncaught {}", msg);
+    std::process::exit(1);
+}
+
+/// The heap object behind a value, with its kind.
+fn object(v: OtValue) -> Option<(HeapPtr, ObjectKind)> {
+    let ptr = v.as_pointer()?;
+    let kind = unsafe { ptr.as_ref::<ObjectHeader>().kind };
+    Some((ptr, kind))
+}
+
+/// The string behind a value, if it is a string.
+fn as_str(v: OtValue) -> Option<&'static str> {
+    match object(v)? {
+        (ptr, ObjectKind::String) => Some(unsafe { ptr.as_ref::<NativeString>().as_str() }),
+        _ => None,
+    }
+}
+
+fn new_string(s: &str) -> u64 {
+    match heap().alloc_string(s) {
+        Some(ptr) => OtValue::pointer(ptr).to_bits(),
+        None => undefined(),
+    }
+}
+
+/// A name passed as pointer + length.
+unsafe fn name<'a>(ptr: *const u8, len: usize) -> &'a str {
+    unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, len)) }
+}
+
+/// The arguments passed to a native function.
+unsafe fn args<'a>(argv: *const u64, argc: usize) -> &'a [u64] {
+    if argv.is_null() || argc == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(argv, argc) }
+    }
+}
+
+/// JavaScript truthiness.
+fn truthy(v: OtValue) -> bool {
+    if v.is_falsy() {
+        return false;
+    }
+    !matches!(as_str(v), Some(""))
+}
+
+/// JavaScript `ToNumber`, for primitives.
+fn to_number(v: OtValue) -> f64 {
+    if v.is_number() {
+        return v.as_number_unchecked();
+    }
+    if v.is_boolean() {
+        return if v.as_boolean_unchecked() { 1.0 } else { 0.0 };
+    }
+    if v.is_null() {
+        return 0.0;
+    }
+    if let Some(s) = as_str(v) {
+        let t = s.trim();
+        if t.is_empty() {
+            return 0.0;
+        }
+        return t.parse::<f64>().unwrap_or(f64::NAN);
+    }
+    f64::NAN
+}
+
+/// JavaScript `ToInt32`.
+fn to_int32(v: OtValue) -> i32 {
+    let n = to_number(v);
+    if !n.is_finite() {
+        return 0;
+    }
+    (n.trunc() as i64 as u64 as u32) as i32
+}
+
+/// Number to string, as the language prints numbers.
+pub fn number_to_string(n: f64) -> String {
+    if n.is_nan() {
+        "NaN".to_string()
+    } else if n.is_infinite() {
+        if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string()
+    } else {
+        n.to_string()
+    }
+}
+
+/// `String(v)`: the conversion used by `+` with a string operand.
+fn value_to_string(v: OtValue) -> String {
+    if v.is_number() {
+        return number_to_string(v.as_number_unchecked());
+    }
+    if v.is_boolean() {
+        return v.as_boolean_unchecked().to_string();
+    }
+    if v.is_null() {
+        return "null".to_string();
+    }
+    if v.is_undefined() {
+        return "undefined".to_string();
+    }
+    match object(v) {
+        Some((ptr, ObjectKind::String)) => unsafe { ptr.as_ref::<NativeString>().as_str() }.into(),
+        Some((ptr, ObjectKind::Array)) => {
+            let arr = unsafe { ptr.as_ref::<NativeArray>() };
+            (0..arr.len as usize)
+                .map(|i| {
+                    let e = OtValue::from_bits(unsafe { *arr.elements.add(i) });
+                    if e.is_null() || e.is_undefined() {
+                        String::new()
+                    } else {
+                        value_to_string(e)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+        Some((_, ObjectKind::Function)) => "function".to_string(),
+        _ => "[object Object]".to_string(),
+    }
+}
+
+fn props(ptr: HeapPtr) -> &'static mut PropertyMap {
+    let obj = unsafe { ptr.as_mut::<NativeObject>() };
+    if obj.properties.is_null() {
+        obj.properties = Box::into_raw(Box::new(PropertyMap::new()));
+    }
+    unsafe { &mut *obj.properties }
+}
+
+fn array(ptr: HeapPtr) -> &'static mut NativeArray {
+    unsafe { ptr.as_mut::<NativeArray>() }
+}
+
+/// Make room for at least `needed` elements.
+fn array_reserve(arr: &mut NativeArray, needed: usize) {
+    use std::alloc::{Layout, realloc};
+    if needed <= arr.capacity as usize {
+        return;
+    }
+    let new_cap = needed.max(arr.capacity as usize * 2).max(4);
+    let old = Layout::array::<u64>(arr.capacity as usize).unwrap();
+    let new_size = Layout::array::<u64>(new_cap).unwrap().size();
+    let p = unsafe { realloc(arr.elements as *mut u8, old, new_size) } as *mut u64;
+    if p.is_null() {
+        runtime_error("RangeError: out of memory growing an array");
+    }
+    arr.elements = p;
+    arr.capacity = new_cap as u32;
+}
+
+fn array_set(arr: &mut NativeArray, idx: usize, value: u64) {
+    array_reserve(arr, idx + 1);
+    for i in arr.len as usize..idx {
+        unsafe { *arr.elements.add(i) = undefined() };
+    }
+    unsafe { *arr.elements.add(idx) = value };
+    if idx >= arr.len as usize {
+        arr.len = (idx + 1) as u32;
+    }
+}
+
+fn array_push(arr: &mut NativeArray, value: u64) -> usize {
+    let len = arr.len as usize;
+    array_set(arr, len, value);
+    len + 1
+}
+
+/// Property lookup, following `__proto__`.
+fn get_property(v: OtValue, key: &str) -> u64 {
+    let Some((ptr, kind)) = object(v) else {
+        if v.is_null() || v.is_undefined() {
+            runtime_error(&format!(
+                "TypeError: Cannot read properties of {} (reading '{}')",
+                value_to_string(v),
+                key
+            ));
+        }
+        return undefined();
+    };
+    match kind {
+        ObjectKind::Object => {
+            let mut cur = ptr;
+            for _ in 0..1000 {
+                let map = props(cur);
+                if let Some((_, bits)) = map.iter().find(|(k, _)| k == key) {
+                    return *bits;
+                }
+                match map.iter().find(|(k, _)| k == "__proto__") {
+                    Some((_, proto)) => match OtValue::from_bits(*proto).as_pointer() {
+                        Some(p) => cur = p,
+                        None => break,
+                    },
+                    None => break,
+                }
+            }
+            undefined()
+        }
+        ObjectKind::Array => {
+            let arr = array(ptr);
+            if key == "length" {
+                return number(arr.len as f64);
+            }
+            match key.parse::<usize>() {
+                Ok(i) if i < arr.len as usize => unsafe { *arr.elements.add(i) },
+                _ => undefined(),
+            }
+        }
+        ObjectKind::String => {
+            let s = unsafe { ptr.as_ref::<NativeString>().as_str() };
+            if key == "length" {
+                // Byte length, matching the VM until the string model is
+                // decided (#133).
+                return number(s.len() as f64);
+            }
+            match key.parse::<usize>() {
+                Ok(i) if i < s.len() => new_string(&s[i..i + 1]),
+                _ => undefined(),
+            }
+        }
+        _ => undefined(),
+    }
+}
+
+fn set_property(v: OtValue, key: &str, value: u64) {
+    match object(v) {
+        Some((ptr, ObjectKind::Object)) => {
+            let map = props(ptr);
+            if let Some(entry) = map.iter_mut().find(|(k, _)| k == key) {
+                entry.1 = value;
+            } else {
+                map.push((key.to_string(), value));
+            }
+        }
+        Some((ptr, ObjectKind::Array)) => {
+            let arr = array(ptr);
+            if key == "length" {
+                let n = to_number(OtValue::from_bits(value));
+                if n >= 0.0 && n.fract() == 0.0 && n <= u32::MAX as f64 {
+                    let n = n as usize;
+                    if n < arr.len as usize {
+                        arr.len = n as u32;
+                    } else {
+                        for i in arr.len as usize..n {
+                            array_set(arr, i, undefined());
+                        }
+                    }
+                }
+            } else if let Ok(i) = key.parse::<usize>() {
+                array_set(arr, i, value);
+            }
+        }
+        Some(_) => {}
+        None => {
+            if v.is_null() || v.is_undefined() {
+                runtime_error(&format!(
+                    "TypeError: Cannot set properties of {} (setting '{}')",
+                    value_to_string(v),
+                    key
+                ));
+            }
+        }
+    }
+}
+
+/// An index or key value as a property name.
+fn key_string(key: OtValue) -> String {
+    value_to_string(key)
+}
+
+/// A number key usable as an array index.
+fn index_of(key: OtValue) -> Option<usize> {
+    let n = key.as_number()?;
+    if n >= 0.0 && n.fract() == 0.0 && n < u32::MAX as f64 {
+        Some(n as usize)
+    } else {
+        None
+    }
+}
+
+// =========================================================================
+// Allocation
 // =========================================================================
 
 /// Allocate a new empty object.
-///
-/// Returns a OtValue containing the object pointer, or undefined on failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_alloc_object() -> u64 {
     match heap().alloc_object() {
         Some(ptr) => OtValue::pointer(ptr).to_bits(),
-        None => OtValue::undefined().to_bits(),
+        None => undefined(),
     }
 }
 
-/// Allocate a new array with the given capacity.
-///
-/// Returns a OtValue containing the array pointer, or undefined on failure.
+/// Allocate a new empty array with room for `capacity` elements.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_alloc_array(capacity: usize) -> u64 {
     match heap().alloc_array(capacity) {
         Some(ptr) => OtValue::pointer(ptr).to_bits(),
-        None => OtValue::undefined().to_bits(),
+        None => undefined(),
     }
 }
 
 /// Allocate a new string from UTF-8 bytes.
-///
-/// Returns a OtValue containing the string pointer, or undefined on failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_alloc_string(data: *const u8, len: usize) -> u64 {
     if data.is_null() {
-        return OtValue::undefined().to_bits();
+        return new_string("");
     }
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    match std::str::from_utf8(bytes) {
+        Ok(s) => new_string(s),
+        Err(_) => undefined(),
+    }
+}
 
-    let s = unsafe {
-        let slice = std::slice::from_raw_parts(data, len);
-        match std::str::from_utf8(slice) {
-            Ok(s) => s,
-            Err(_) => return OtValue::undefined().to_bits(),
-        }
-    };
-
-    match heap().alloc_string(s) {
+/// Wrap compiled code (with the `NativeFn` signature) as a function value.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_make_function(code: *const u8) -> u64 {
+    match heap().alloc_function(code) {
         Some(ptr) => OtValue::pointer(ptr).to_bits(),
-        None => OtValue::undefined().to_bits(),
+        None => undefined(),
     }
 }
 
 // =========================================================================
-// Property Access Stubs
+// Properties and elements
 // =========================================================================
 
-/// Get a property from an object.
-///
-/// # Parameters
-/// - `obj`: OtValue containing an object pointer
-/// - `key`: Pointer to UTF-8 key string
-/// - `key_len`: Length of key string
-///
-/// # Returns
-/// The property value, or undefined if not found.
+/// `obj.key`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_get_prop(obj: u64, key: *const u8, key_len: usize) -> u64 {
-    let val = OtValue::from_bits(obj);
+    get_property(OtValue::from_bits(obj), unsafe { name(key, key_len) })
+}
 
-    let ptr = match val.as_pointer() {
-        Some(p) => p,
-        None => return OtValue::undefined().to_bits(),
-    };
+/// `obj.key = value`
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_set_prop(obj: u64, key: *const u8, key_len: usize, value: u64) {
+    set_property(
+        OtValue::from_bits(obj),
+        unsafe { name(key, key_len) },
+        value,
+    )
+}
 
-    let key_str = unsafe {
-        let slice = std::slice::from_raw_parts(key, key_len);
-        match std::str::from_utf8(slice) {
-            Ok(s) => s,
-            Err(_) => return OtValue::undefined().to_bits(),
-        }
-    };
+/// `obj[key]`
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_get_index(obj: u64, key: u64) -> u64 {
+    let o = OtValue::from_bits(obj);
+    let k = OtValue::from_bits(key);
+    if let (Some((ptr, ObjectKind::Array)), Some(i)) = (object(o), index_of(k)) {
+        let arr = array(ptr);
+        return if i < arr.len as usize {
+            unsafe { *arr.elements.add(i) }
+        } else {
+            undefined()
+        };
+    }
+    get_property(o, &key_string(k))
+}
 
-    unsafe {
-        let header = ptr.as_ref::<ObjectHeader>();
+/// `obj[key] = value`
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_set_index(obj: u64, key: u64, value: u64) {
+    let o = OtValue::from_bits(obj);
+    let k = OtValue::from_bits(key);
+    if let (Some((ptr, ObjectKind::Array)), Some(i)) = (object(o), index_of(k)) {
+        array_set(array(ptr), i, value);
+        return;
+    }
+    set_property(o, &key_string(k), value)
+}
 
-        match header.kind {
-            ObjectKind::Object => {
-                let obj = ptr.as_ref::<NativeObject>();
-                if obj.properties.is_null() {
-                    return OtValue::undefined().to_bits();
-                }
-                // Vec-based lookup
-                match (*obj.properties).iter().find(|(k, _)| k == key_str) {
-                    Some((_, bits)) => *bits,
-                    None => OtValue::undefined().to_bits(),
-                }
-            }
-            ObjectKind::Array => {
-                let arr = ptr.as_ref::<NativeArray>();
-                // Handle "length" property
-                if key_str == "length" {
-                    return OtValue::number(arr.len as f64).to_bits();
-                }
-                // Try to parse as index
-                if let Ok(idx) = key_str.parse::<usize>()
-                    && idx < arr.len as usize
-                {
-                    return *arr.elements.add(idx);
-                }
-                OtValue::undefined().to_bits()
-            }
-            ObjectKind::String => {
-                let s = ptr.as_ref::<NativeString>();
-                // Handle "length" property
-                if key_str == "length" {
-                    return OtValue::number(s.len as f64).to_bits();
-                }
-                // Try to parse as index (for charAt)
-                if let Ok(idx) = key_str.parse::<usize>() {
-                    let str_data = s.as_str();
-                    if let Some(ch) = str_data.chars().nth(idx) {
-                        // Allocate a single-char string
-                        let mut buf = [0u8; 4];
-                        let ch_str = ch.encode_utf8(&mut buf);
-                        match heap().alloc_string(ch_str) {
-                            Some(ptr) => return OtValue::pointer(ptr).to_bits(),
-                            None => return OtValue::undefined().to_bits(),
-                        }
-                    }
-                }
-                OtValue::undefined().to_bits()
-            }
-            _ => OtValue::undefined().to_bits(),
-        }
+/// `delete obj.key`
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_delete_prop(obj: u64, key: *const u8, key_len: usize) -> u64 {
+    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(obj)) {
+        let key = unsafe { name(key, key_len) };
+        props(ptr).retain(|(k, _)| k != key);
+    }
+    boolean(true)
+}
+
+/// `arr.length` (or `.length` of anything else).
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_array_len(arr: u64) -> u64 {
+    get_property(OtValue::from_bits(arr), "length")
+}
+
+/// `arr.push(value)`; returns the new length.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_array_push(arr: u64, value: u64) -> u64 {
+    match object(OtValue::from_bits(arr)) {
+        Some((ptr, ObjectKind::Array)) => number(array_push(array(ptr), value) as f64),
+        _ => runtime_error("TypeError: push called on a non-array"),
     }
 }
 
-/// Set a property on an object.
-///
-/// # Parameters
-/// - `obj`: OtValue containing an object pointer
-/// - `key`: Pointer to UTF-8 key string
-/// - `key_len`: Length of key string
-/// - `value`: OtValue to set
+// =========================================================================
+// Globals
+// =========================================================================
+
+thread_local! {
+    static GLOBALS: RefCell<HashMap<String, u64>> = RefCell::new(initial_globals());
+}
+
+fn builtin(code: NativeFn) -> u64 {
+    ot_make_function(code as *const u8)
+}
+
+fn initial_globals() -> HashMap<String, u64> {
+    let mut g = HashMap::new();
+    let console = ot_alloc_object();
+    let c = OtValue::from_bits(console);
+    set_property(c, "log", builtin(ot_builtin_console_log));
+    set_property(c, "error", builtin(ot_builtin_console_error));
+    g.insert("console".to_string(), console);
+    g.insert("undefined".to_string(), undefined());
+    g.insert("NaN".to_string(), number(f64::NAN));
+    g.insert("Infinity".to_string(), number(f64::INFINITY));
+    g
+}
+
+/// Read a global variable; `undefined` if it was never set.
 #[unsafe(no_mangle)]
-pub extern "C" fn ot_set_prop(obj: u64, key: *const u8, key_len: usize, value: u64) {
-    let val = OtValue::from_bits(obj);
+pub extern "C" fn ot_get_global(key: *const u8, key_len: usize) -> u64 {
+    let key = unsafe { name(key, key_len) };
+    GLOBALS.with(|g| g.borrow().get(key).copied().unwrap_or_else(undefined))
+}
 
-    let ptr = match val.as_pointer() {
-        Some(p) => p,
-        None => return,
-    };
+/// Write a global variable.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_set_global(key: *const u8, key_len: usize, value: u64) {
+    let key = unsafe { name(key, key_len) };
+    GLOBALS.with(|g| {
+        g.borrow_mut().insert(key.to_string(), value);
+    });
+}
 
-    let key_str = unsafe {
-        let slice = std::slice::from_raw_parts(key, key_len);
-        match std::str::from_utf8(slice) {
-            Ok(s) => s,
-            Err(_) => return,
+// =========================================================================
+// Calls
+// =========================================================================
+
+/// Call a function value: `f(...args)` with the given `this`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_call(func: u64, this: u64, argv: *const u64, argc: usize) -> u64 {
+    match object(OtValue::from_bits(func)) {
+        Some((ptr, ObjectKind::Function)) => {
+            let code = unsafe { ptr.as_ref::<NativeFunction>().code };
+            let f: NativeFn = unsafe { std::mem::transmute(code) };
+            f(this, argv, argc)
         }
-    };
+        _ => runtime_error(&format!(
+            "TypeError: {} is not a function",
+            inspect(OtValue::from_bits(func))
+        )),
+    }
+}
 
-    unsafe {
-        let header = ptr.as_ref::<ObjectHeader>();
+/// `recv.name(...args)`: looks up the method and calls it with `this = recv`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_call_method(
+    recv: u64,
+    key: *const u8,
+    key_len: usize,
+    argv: *const u64,
+    argc: usize,
+) -> u64 {
+    let r = OtValue::from_bits(recv);
+    let key = unsafe { name(key, key_len) };
 
-        match header.kind {
-            ObjectKind::Object => {
-                let obj = ptr.as_mut::<NativeObject>();
-                if obj.properties.is_null() {
-                    obj.properties = Box::into_raw(Box::new(PropertyMap::new()));
+    // Built-in array methods.
+    if let Some((ptr, ObjectKind::Array)) = object(r) {
+        let arr = array(ptr);
+        let a = unsafe { args(argv, argc) };
+        match key {
+            "push" => {
+                let mut len = arr.len as usize;
+                for &v in a {
+                    len = array_push(arr, v);
                 }
-                // Vec-based insert: find existing or append
-                let props = &mut *obj.properties;
-                if let Some(entry) = props.iter_mut().find(|(k, _)| k == key_str) {
-                    entry.1 = value;
-                } else {
-                    props.push((key_str.to_string(), value));
-                }
+                return number(len as f64);
             }
-            ObjectKind::Array => {
-                let arr = ptr.as_mut::<NativeArray>();
-                // Try to parse as index
-                if let Ok(idx) = key_str.parse::<usize>()
-                    && idx < arr.capacity as usize
-                {
-                    *arr.elements.add(idx) = value;
-                    if idx >= arr.len as usize {
-                        arr.len = (idx + 1) as u32;
-                    }
+            "pop" => {
+                if arr.len == 0 {
+                    return undefined();
                 }
+                arr.len -= 1;
+                return unsafe { *arr.elements.add(arr.len as usize) };
             }
             _ => {}
         }
     }
-}
 
-// =========================================================================
-// Array Access Stubs
-// =========================================================================
-
-/// Get an element from an array by index.
-#[unsafe(no_mangle)]
-pub extern "C" fn ot_get_element(arr: u64, index: usize) -> u64 {
-    let val = OtValue::from_bits(arr);
-
-    let ptr = match val.as_pointer() {
-        Some(p) => p,
-        None => return OtValue::undefined().to_bits(),
-    };
-
-    unsafe {
-        let header = ptr.as_ref::<ObjectHeader>();
-        if header.kind != ObjectKind::Array {
-            return OtValue::undefined().to_bits();
-        }
-
-        let arr = ptr.as_ref::<NativeArray>();
-        if index < arr.len as usize {
-            *arr.elements.add(index)
-        } else {
-            OtValue::undefined().to_bits()
-        }
+    let method = get_property(r, key);
+    if let Some((_, ObjectKind::Function)) = object(OtValue::from_bits(method)) {
+        return ot_call(method, recv, argv, argc);
     }
-}
-
-/// Set an element in an array by index.
-#[unsafe(no_mangle)]
-pub extern "C" fn ot_set_element(arr: u64, index: usize, value: u64) {
-    let val = OtValue::from_bits(arr);
-
-    let ptr = match val.as_pointer() {
-        Some(p) => p,
-        None => return,
-    };
-
-    unsafe {
-        let header = ptr.as_ref::<ObjectHeader>();
-        if header.kind != ObjectKind::Array {
-            return;
-        }
-
-        let arr = ptr.as_mut::<NativeArray>();
-        if index < arr.capacity as usize {
-            *arr.elements.add(index) = value;
-            if index >= arr.len as usize {
-                arr.len = (index + 1) as u32;
-            }
-        }
-    }
+    runtime_error(&format!(
+        "TypeError: {}.{} is not a function",
+        inspect(r),
+        key
+    ))
 }
 
 // =========================================================================
-// Dynamic Dispatch Stubs (for 'any' typed operations)
+// Operators
 // =========================================================================
 
-/// Dynamic addition (handles number + number, string + string, etc.)
+/// `a + b`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_add_any(a: u64, b: u64) -> u64 {
     let va = OtValue::from_bits(a);
     let vb = OtValue::from_bits(b);
-
-    // Number + Number
     if va.is_number() && vb.is_number() {
-        return OtValue::number(va.as_number_unchecked() + vb.as_number_unchecked()).to_bits();
+        return number(va.as_number_unchecked() + vb.as_number_unchecked());
     }
-
-    // String + anything (concatenation)
-    if let Some(ptr_a) = va.as_pointer() {
-        unsafe {
-            let header_a = ptr_a.as_ref::<ObjectHeader>();
-            if header_a.kind == ObjectKind::String {
-                let str_a = ptr_a.as_ref::<NativeString>().as_str();
-
-                // Convert b to string
-                let str_b = value_to_string(vb);
-
-                // Concatenate
-                let result = format!("{}{}", str_a, str_b);
-                return match heap().alloc_string(&result) {
-                    Some(ptr) => OtValue::pointer(ptr).to_bits(),
-                    None => OtValue::undefined().to_bits(),
-                };
-            }
-        }
+    let a_str =
+        as_str(va).is_some() || matches!(object(va), Some((_, k)) if k != ObjectKind::String);
+    let b_str =
+        as_str(vb).is_some() || matches!(object(vb), Some((_, k)) if k != ObjectKind::String);
+    if a_str || b_str {
+        let mut s = value_to_string(va);
+        s.push_str(&value_to_string(vb));
+        return new_string(&s);
     }
-
-    // Fallback to NaN
-    OtValue::number(f64::NAN).to_bits()
+    number(to_number(va) + to_number(vb))
 }
 
-/// Dynamic subtraction.
+fn numeric(a: u64, b: u64, f: impl Fn(f64, f64) -> f64) -> u64 {
+    number(f(
+        to_number(OtValue::from_bits(a)),
+        to_number(OtValue::from_bits(b)),
+    ))
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_sub_any(a: u64, b: u64) -> u64 {
-    let va = OtValue::from_bits(a);
-    let vb = OtValue::from_bits(b);
-
-    if va.is_number() && vb.is_number() {
-        OtValue::number(va.as_number_unchecked() - vb.as_number_unchecked()).to_bits()
-    } else {
-        OtValue::number(f64::NAN).to_bits()
-    }
+    numeric(a, b, |x, y| x - y)
 }
 
-/// Dynamic multiplication.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_mul_any(a: u64, b: u64) -> u64 {
-    let va = OtValue::from_bits(a);
-    let vb = OtValue::from_bits(b);
-
-    if va.is_number() && vb.is_number() {
-        OtValue::number(va.as_number_unchecked() * vb.as_number_unchecked()).to_bits()
-    } else {
-        OtValue::number(f64::NAN).to_bits()
-    }
+    numeric(a, b, |x, y| x * y)
 }
 
-/// Dynamic division.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_div_any(a: u64, b: u64) -> u64 {
-    let va = OtValue::from_bits(a);
-    let vb = OtValue::from_bits(b);
-
-    if va.is_number() && vb.is_number() {
-        OtValue::number(va.as_number_unchecked() / vb.as_number_unchecked()).to_bits()
-    } else {
-        OtValue::number(f64::NAN).to_bits()
-    }
+    numeric(a, b, |x, y| x / y)
 }
 
-/// Dynamic modulo.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_mod_any(a: u64, b: u64) -> u64 {
-    let va = OtValue::from_bits(a);
-    let vb = OtValue::from_bits(b);
-
-    if va.is_number() && vb.is_number() {
-        OtValue::number(va.as_number_unchecked() % vb.as_number_unchecked()).to_bits()
-    } else {
-        OtValue::number(f64::NAN).to_bits()
-    }
+    numeric(a, b, |x, y| x % y)
 }
 
-/// Exponentiation (a ** b).
+/// `a ** b`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_pow(a: u64, b: u64) -> u64 {
-    let va = OtValue::from_bits(a);
-    let vb = OtValue::from_bits(b);
-
-    if va.is_number() && vb.is_number() {
-        OtValue::number(va.as_number_unchecked().powf(vb.as_number_unchecked())).to_bits()
-    } else {
-        OtValue::number(f64::NAN).to_bits()
-    }
+    numeric(a, b, f64::powf)
 }
 
-/// Get the bytes of an f64 value.
-///
-/// Returns 8 bytes in little-endian order via output array.
-/// # Parameters
-/// - `value`: The f64 value as bits
-/// - `output`: Pointer to array of 8 bytes to write to
-#[unsafe(no_mangle)]
-pub extern "C" fn ot_f64_to_bytes(value: u64, output: *mut u8) {
-    // f64 bytes in little-endian order
-    unsafe {
-        *output = (value & 0xFF) as u8;
-        *output.add(1) = ((value >> 8) & 0xFF) as u8;
-        *output.add(2) = ((value >> 16) & 0xFF) as u8;
-        *output.add(3) = ((value >> 24) & 0xFF) as u8;
-        *output.add(4) = ((value >> 32) & 0xFF) as u8;
-        *output.add(5) = ((value >> 40) & 0xFF) as u8;
-        *output.add(6) = ((value >> 48) & 0xFF) as u8;
-        *output.add(7) = ((value >> 56) & 0xFF) as u8;
-    }
-}
-
-/// Dynamic strict equality (===).
-#[unsafe(no_mangle)]
-pub extern "C" fn ot_eq_strict(a: u64, b: u64) -> u64 {
-    OtValue::from_bits(a)
-        .strict_eq(OtValue::from_bits(b))
-        .to_bits()
-}
-
-/// Try to extract string refs from two pointer OtValues for comparison.
-/// Returns None if either value is not a string pointer.
-unsafe fn try_get_string_pair(
-    va: OtValue,
-    vb: OtValue,
-) -> Option<(*const u8, usize, *const u8, usize)> {
-    let ptr_a = va.as_pointer()?;
-    let ptr_b = vb.as_pointer()?;
-    unsafe {
-        let header_a = ptr_a.as_ref::<ObjectHeader>();
-        let header_b = ptr_b.as_ref::<ObjectHeader>();
-        if header_a.kind != ObjectKind::String || header_b.kind != ObjectKind::String {
-            return None;
-        }
-        let sa = ptr_a.as_ref::<NativeString>();
-        let sb = ptr_b.as_ref::<NativeString>();
-        let str_a = sa.as_str();
-        let str_b = sb.as_str();
-        Some((str_a.as_ptr(), str_a.len(), str_b.as_ptr(), str_b.len()))
-    }
-}
-
-/// Dynamic less-than comparison.
-#[unsafe(no_mangle)]
-pub extern "C" fn ot_lt(a: u64, b: u64) -> u64 {
-    let va = OtValue::from_bits(a);
-    let vb = OtValue::from_bits(b);
-    if va.is_number() && vb.is_number() {
-        return OtValue::boolean(va.as_number_unchecked() < vb.as_number_unchecked()).to_bits();
-    }
-    unsafe {
-        if let Some((pa, la, pb, lb)) = try_get_string_pair(va, vb) {
-            let sa = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pa, la));
-            let sb = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pb, lb));
-            return OtValue::boolean(sa < sb).to_bits();
-        }
-    }
-    OtValue::boolean(false).to_bits()
-}
-
-/// Dynamic greater-than comparison.
-#[unsafe(no_mangle)]
-pub extern "C" fn ot_gt(a: u64, b: u64) -> u64 {
-    let va = OtValue::from_bits(a);
-    let vb = OtValue::from_bits(b);
-    if va.is_number() && vb.is_number() {
-        return OtValue::boolean(va.as_number_unchecked() > vb.as_number_unchecked()).to_bits();
-    }
-    unsafe {
-        if let Some((pa, la, pb, lb)) = try_get_string_pair(va, vb) {
-            let sa = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pa, la));
-            let sb = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pb, lb));
-            return OtValue::boolean(sa > sb).to_bits();
-        }
-    }
-    OtValue::boolean(false).to_bits()
-}
-
-/// Dynamic less-than-or-equal comparison.
-#[unsafe(no_mangle)]
-pub extern "C" fn ot_lte(a: u64, b: u64) -> u64 {
-    let va = OtValue::from_bits(a);
-    let vb = OtValue::from_bits(b);
-    if va.is_number() && vb.is_number() {
-        return OtValue::boolean(va.as_number_unchecked() <= vb.as_number_unchecked()).to_bits();
-    }
-    unsafe {
-        if let Some((pa, la, pb, lb)) = try_get_string_pair(va, vb) {
-            let sa = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pa, la));
-            let sb = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pb, lb));
-            return OtValue::boolean(sa <= sb).to_bits();
-        }
-    }
-    OtValue::boolean(false).to_bits()
-}
-
-/// Dynamic greater-than-or-equal comparison.
-#[unsafe(no_mangle)]
-pub extern "C" fn ot_gte(a: u64, b: u64) -> u64 {
-    let va = OtValue::from_bits(a);
-    let vb = OtValue::from_bits(b);
-    if va.is_number() && vb.is_number() {
-        return OtValue::boolean(va.as_number_unchecked() >= vb.as_number_unchecked()).to_bits();
-    }
-    unsafe {
-        if let Some((pa, la, pb, lb)) = try_get_string_pair(va, vb) {
-            let sa = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pa, la));
-            let sb = std::str::from_utf8_unchecked(std::slice::from_raw_parts(pb, lb));
-            return OtValue::boolean(sa >= sb).to_bits();
-        }
-    }
-    OtValue::boolean(false).to_bits()
-}
-
-/// Logical NOT.
-#[unsafe(no_mangle)]
-pub extern "C" fn ot_not(a: u64) -> u64 {
-    OtValue::boolean(OtValue::from_bits(a).is_falsy()).to_bits()
-}
-
-/// new.target: returns the constructor that was called with new
-/// This is a bit tricky because we don't have access to the call frame from here
-/// For now, return undefined
-#[unsafe(no_mangle)]
-pub extern "C" fn ot_new_target() -> u64 {
-    OtValue::undefined().to_bits()
-}
-
-/// InstanceOf operator: checks if obj's prototype chain contains constructor.prototype
-#[unsafe(no_mangle)]
-pub extern "C" fn ot_instanceof(obj: u64, constructor: u64) -> u64 {
-    let obj_val = OtValue::from_bits(obj);
-    let ctor_val = OtValue::from_bits(constructor);
-
-    // Get constructor.prototype
-    let target_proto_ptr = if let Some(pointer) = ctor_val.as_pointer() {
-        unsafe {
-            let header = pointer.as_ref::<ObjectHeader>();
-            if header.kind == ObjectKind::Object {
-                let props = pointer.as_ref::<PropertyMap>();
-                // Find "prototype" in the property list
-                for (name, value) in props.iter() {
-                    if name == "prototype" {
-                        // Check if value is an object pointer
-                        let prop_val = OtValue::from_bits(*value);
-                        if let Some(ptr) = prop_val.as_pointer() {
-                            return ptr.as_usize() as u64;
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-        0
-    } else {
-        0
-    };
-
-    if target_proto_ptr == 0 {
-        return OtValue::boolean(false).to_bits();
-    }
-
-    // Walk the object's prototype chain
-    let mut current_ptr = obj_val.as_pointer();
-
-    const MAX_PROTO_DEPTH: usize = 100;
-    let mut depth = 0;
-
-    while let Some(ptr) = current_ptr {
-        if depth > MAX_PROTO_DEPTH {
-            break;
-        }
-        depth += 1;
-
-        if ptr.as_usize() as u64 == target_proto_ptr {
-            return OtValue::boolean(true).to_bits();
-        }
-
-        unsafe {
-            let header = ptr.as_ref::<ObjectHeader>();
-            if header.kind == ObjectKind::Object {
-                let props = ptr.as_ref::<PropertyMap>();
-                // Find "__proto__" in the property list
-                for (name, value) in props.iter() {
-                    if name == "__proto__" {
-                        let prop_val = OtValue::from_bits(*value);
-                        if let Some(proto_ptr) = prop_val.as_pointer() {
-                            current_ptr = Some(proto_ptr);
-                        }
-                        break;
-                    }
-                }
-            } else {
-                break;
-            }
-        }
-    }
-
-    OtValue::boolean(false).to_bits()
-}
-
-/// Unary negation.
+/// `-a`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_neg(a: u64) -> u64 {
+    number(-to_number(OtValue::from_bits(a)))
+}
+
+fn int_op(a: u64, b: u64, f: impl Fn(i32, i32) -> i32) -> u64 {
+    number(f(
+        to_int32(OtValue::from_bits(a)),
+        to_int32(OtValue::from_bits(b)),
+    ) as f64)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_bit_and(a: u64, b: u64) -> u64 {
+    int_op(a, b, |x, y| x & y)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_bit_or(a: u64, b: u64) -> u64 {
+    int_op(a, b, |x, y| x | y)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_bit_xor(a: u64, b: u64) -> u64 {
+    int_op(a, b, |x, y| x ^ y)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_shl(a: u64, b: u64) -> u64 {
+    int_op(a, b, |x, y| x.wrapping_shl((y & 31) as u32))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_shr(a: u64, b: u64) -> u64 {
+    int_op(a, b, |x, y| x.wrapping_shr((y & 31) as u32))
+}
+
+/// `a >>> b`
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_shr_u(a: u64, b: u64) -> u64 {
+    let x = to_int32(OtValue::from_bits(a)) as u32;
+    let y = (to_int32(OtValue::from_bits(b)) & 31) as u32;
+    number(x.wrapping_shr(y) as f64)
+}
+
+/// Strict equality as a raw `bool`.
+fn strict_equal(va: OtValue, vb: OtValue) -> bool {
+    if va.is_number() && vb.is_number() {
+        return va.as_number_unchecked() == vb.as_number_unchecked();
+    }
+    if let (Some(x), Some(y)) = (as_str(va), as_str(vb)) {
+        return x == y;
+    }
+    va.to_bits() == vb.to_bits()
+}
+
+/// Loose equality (`==`) as a raw `bool`.
+fn loose_equal(va: OtValue, vb: OtValue) -> bool {
+    let nullish = |v: OtValue| v.is_null() || v.is_undefined();
+    if nullish(va) || nullish(vb) {
+        return nullish(va) && nullish(vb);
+    }
+    let primitive = |v: OtValue| v.is_number() || v.is_boolean() || as_str(v).is_some();
+    if primitive(va) && primitive(vb) {
+        if let (Some(x), Some(y)) = (as_str(va), as_str(vb)) {
+            return x == y;
+        }
+        return to_number(va) == to_number(vb);
+    }
+    strict_equal(va, vb)
+}
+
+/// `a === b`
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_eq_strict(a: u64, b: u64) -> u64 {
+    boolean(strict_equal(OtValue::from_bits(a), OtValue::from_bits(b)))
+}
+
+/// `a == b`
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_eq_loose(a: u64, b: u64) -> u64 {
+    boolean(loose_equal(OtValue::from_bits(a), OtValue::from_bits(b)))
+}
+
+fn compare(a: u64, b: u64, f: impl Fn(std::cmp::Ordering) -> bool) -> u64 {
     let va = OtValue::from_bits(a);
-    if va.is_number() {
-        OtValue::number(-va.as_number_unchecked()).to_bits()
-    } else {
-        OtValue::number(f64::NAN).to_bits()
+    let vb = OtValue::from_bits(b);
+    if let (Some(x), Some(y)) = (as_str(va), as_str(vb)) {
+        return boolean(f(x.cmp(y)));
+    }
+    match to_number(va).partial_cmp(&to_number(vb)) {
+        Some(ord) => boolean(f(ord)),
+        None => boolean(false), // NaN compares false
     }
 }
 
-// =========================================================================
-// Type Conversion Stubs
-// =========================================================================
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_lt(a: u64, b: u64) -> u64 {
+    compare(a, b, |o| o.is_lt())
+}
 
-/// Convert a OtValue to a boolean.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_gt(a: u64, b: u64) -> u64 {
+    compare(a, b, |o| o.is_gt())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_lte(a: u64, b: u64) -> u64 {
+    compare(a, b, |o| o.is_le())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_gte(a: u64, b: u64) -> u64 {
+    compare(a, b, |o| o.is_ge())
+}
+
+/// `!a`
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_not(a: u64) -> u64 {
+    boolean(!truthy(OtValue::from_bits(a)))
+}
+
+/// Truthiness as a raw `0` / `1`, for branches.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_truthy(a: u64) -> u64 {
+    truthy(OtValue::from_bits(a)) as u64
+}
+
+/// `typeof a`
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_typeof(a: u64) -> u64 {
+    let v = OtValue::from_bits(a);
+    let t = if v.is_number() {
+        "number"
+    } else if v.is_boolean() {
+        "boolean"
+    } else if v.is_undefined() {
+        "undefined"
+    } else {
+        match object(v) {
+            Some((_, ObjectKind::String)) => "string",
+            Some((_, ObjectKind::Function)) => "function",
+            _ => "object",
+        }
+    };
+    new_string(t)
+}
+
+/// `Boolean(a)`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_to_boolean(a: u64) -> u64 {
-    OtValue::boolean(!OtValue::from_bits(a).is_falsy()).to_bits()
+    boolean(truthy(OtValue::from_bits(a)))
 }
 
-/// Convert a OtValue to a number.
+/// `Number(a)`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_to_number(a: u64) -> u64 {
-    let va = OtValue::from_bits(a);
+    number(to_number(OtValue::from_bits(a)))
+}
 
-    if va.is_number() {
-        return a;
-    }
+/// `new.target` (not tracked natively yet).
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_new_target() -> u64 {
+    undefined()
+}
 
-    if va.is_boolean() {
-        return OtValue::number(if va.as_boolean_unchecked() { 1.0 } else { 0.0 }).to_bits();
-    }
-
-    if va.is_null() {
-        return OtValue::number(0.0).to_bits();
-    }
-
-    if va.is_undefined() {
-        return OtValue::number(f64::NAN).to_bits();
-    }
-
-    // String to number - attempt parse
-    if let Some(ptr) = va.as_pointer() {
-        unsafe {
-            let header = ptr.as_ref::<ObjectHeader>();
-            if header.kind == ObjectKind::String {
-                let s = ptr.as_ref::<NativeString>().as_str();
-                if let Ok(n) = s.trim().parse::<f64>() {
-                    return OtValue::number(n).to_bits();
-                }
-            }
+/// `obj instanceof ctor`: is `ctor.prototype` on `obj`'s `__proto__` chain?
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_instanceof(obj: u64, ctor: u64) -> u64 {
+    let proto = get_property(OtValue::from_bits(ctor), "prototype");
+    let Some(target) = OtValue::from_bits(proto).as_pointer() else {
+        return boolean(false);
+    };
+    let mut cur = OtValue::from_bits(obj);
+    for _ in 0..1000 {
+        let Some((ptr, ObjectKind::Object)) = object(cur) else {
+            break;
+        };
+        let next = props(ptr)
+            .iter()
+            .find(|(k, _)| k == "__proto__")
+            .map(|(_, v)| OtValue::from_bits(*v));
+        match next {
+            Some(p) if p.as_pointer() == Some(target) => return boolean(true),
+            Some(p) => cur = p,
+            None => break,
         }
     }
-
-    OtValue::number(f64::NAN).to_bits()
+    boolean(false)
 }
 
-// =========================================================================
-// Function Call Stubs
-// =========================================================================
-
-/// Call a function with arguments.
-///
-/// # Parameters
-/// - `func`: OtValue containing a function pointer
-/// - `argc`: Number of arguments
-/// - `argv`: Pointer to array of OtValue arguments
-///
-/// # Returns
-/// The return value of the function, or undefined on error.
+/// Flush buffered output. Called when a native program exits.
 #[unsafe(no_mangle)]
-pub extern "C" fn ot_call(_func: u64, _argc: usize, _argv: *const u64) -> u64 {
-    // This is a placeholder - actual implementation requires:
-    // 1. Looking up the function by address
-    // 2. Setting up a new call frame
-    // 3. Executing the function code
-    //
-    // For JIT-compiled functions, this will be a direct call.
-    // For interpreted functions, this falls back to the VM.
-
-    OtValue::undefined().to_bits()
+pub extern "C" fn ot_runtime_exit() {
+    let _ = std::io::stdout().flush();
 }
 
 // =========================================================================
-// Console/IO Stubs
+// Console
 // =========================================================================
 
-/// Create a closure object that pairs a function address with an environment.
-///
-/// # Parameters
-/// - `func_addr`: The function's bytecode address (as a number)
-/// - `env`: Environment object containing captured variables
-///
-/// # Returns
-/// A closure object (pointer to heap-allocated closure data).
-#[unsafe(no_mangle)]
-pub extern "C" fn ot_make_closure(func_addr: u64, env: u64) -> u64 {
-    // For now, just return the function address as a simple closure
-    // A full implementation would:
-    // 1. Allocate a closure object on the heap
-    // 2. Store func_addr and env in the closure
-    // 3. Return a pointer to the closure
+/// Nesting depth beyond which objects print as `[Object]` / `[Array]`.
+const INSPECT_DEPTH: usize = 2;
 
-    // Simplified: pack func_addr in the low bits, treat as pointer
-    // This works because we're using NaN-boxing and func_addr fits
-    let _ = env; // Environment not used in simplified version
-    OtValue::number(func_addr as f64).to_bits()
+/// Human-readable rendering of a value, in the style of Node's
+/// `util.inspect`. Must stay identical to `stdlib::inspect` in the VM, so
+/// `console.log` prints the same on every backend: `[ 1, 2, 3 ]`,
+/// `{ x: 1, y: 's' }`, `[Circular]`. Object keys are sorted, and keys
+/// starting with `__` are internal and hidden.
+pub fn inspect(v: OtValue) -> String {
+    let mut seen = Vec::new();
+    inspect_inner(v, 0, &mut seen)
 }
 
-/// Print a value to the console.
+fn is_identifier(key: &str) -> bool {
+    let mut chars = key.chars();
+    matches!(chars.next(), Some(c) if c.is_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+}
+
+fn quote(s: &str) -> String {
+    format!(
+        "'{}'",
+        s.replace('\\', "\\\\")
+            .replace('\'', "\\'")
+            .replace('\n', "\\n")
+    )
+}
+
+fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> String {
+    let Some((ptr, kind)) = object(v) else {
+        return value_to_string(v);
+    };
+    match kind {
+        ObjectKind::String => quote(unsafe { ptr.as_ref::<NativeString>().as_str() }),
+        ObjectKind::Function => "[Function]".to_string(),
+        ObjectKind::ByteStream => "ByteStream".to_string(),
+        ObjectKind::Array | ObjectKind::Object => {
+            let addr = ptr.as_usize();
+            if seen.contains(&addr) {
+                return "[Circular]".to_string();
+            }
+            let too_deep = depth > INSPECT_DEPTH;
+            seen.push(addr);
+            let out = if kind == ObjectKind::Array {
+                let arr = array(ptr);
+                if arr.len == 0 {
+                    "[]".to_string()
+                } else if too_deep {
+                    "[Array]".to_string()
+                } else {
+                    let parts: Vec<String> = (0..arr.len as usize)
+                        .map(|i| {
+                            let e = OtValue::from_bits(unsafe { *arr.elements.add(i) });
+                            inspect_inner(e, depth + 1, seen)
+                        })
+                        .collect();
+                    format!("[ {} ]", parts.join(", "))
+                }
+            } else {
+                let map = props(ptr);
+                let mut keys: Vec<&(String, u64)> =
+                    map.iter().filter(|(k, _)| !k.starts_with("__")).collect();
+                keys.sort_by(|a, b| a.0.cmp(&b.0));
+                if keys.is_empty() {
+                    "{}".to_string()
+                } else if too_deep {
+                    "[Object]".to_string()
+                } else {
+                    let parts: Vec<String> = keys
+                        .into_iter()
+                        .map(|(k, bits)| {
+                            let key = if is_identifier(k) {
+                                k.clone()
+                            } else {
+                                quote(k)
+                            };
+                            let val = inspect_inner(OtValue::from_bits(*bits), depth + 1, seen);
+                            format!("{}: {}", key, val)
+                        })
+                        .collect();
+                    format!("{{ {} }}", parts.join(", "))
+                }
+            };
+            seen.pop();
+            out
+        }
+    }
+}
+
+/// `console.log` arguments joined by a space; top-level strings print raw.
+fn format_log_args(a: &[u64]) -> String {
+    a.iter()
+        .map(|&bits| {
+            let v = OtValue::from_bits(bits);
+            match as_str(v) {
+                Some(s) => s.to_string(),
+                None => inspect(v),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `console.log(...)`
+pub extern "C" fn ot_builtin_console_log(_this: u64, argv: *const u64, argc: usize) -> u64 {
+    let line = format_log_args(unsafe { args(argv, argc) });
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{}", line);
+    undefined()
+}
+
+/// `console.error(...)`
+pub extern "C" fn ot_builtin_console_error(_this: u64, argv: *const u64, argc: usize) -> u64 {
+    let line = format_log_args(unsafe { args(argv, argc) });
+    let _ = std::io::stdout().flush();
+    eprintln!("{}", line);
+    undefined()
+}
+
+/// Print one value, as `console.log(value)` does.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_console_log(value: u64) {
-    let va = OtValue::from_bits(value);
-    let s = value_to_string(va);
-    println!("{}", s);
+    ot_builtin_console_log(undefined(), &value, 1);
 }
 
 // =========================================================================
-// Helper Functions
+// File system (used by the self-hosted compiler)
 // =========================================================================
-
-/// Convert a OtValue to a string representation.
-fn value_to_string(val: OtValue) -> String {
-    if val.is_number() {
-        let n = val.as_number_unchecked();
-        if n.is_nan() {
-            return "NaN".to_string();
-        }
-        if n.is_infinite() {
-            return if n.is_sign_positive() {
-                "Infinity"
-            } else {
-                "-Infinity"
-            }
-            .to_string();
-        }
-        return format!("{}", n);
-    }
-
-    if val.is_boolean() {
-        return if val.as_boolean_unchecked() {
-            "true"
-        } else {
-            "false"
-        }
-        .to_string();
-    }
-
-    if val.is_null() {
-        return "null".to_string();
-    }
-
-    if val.is_undefined() {
-        return "undefined".to_string();
-    }
-
-    if let Some(ptr) = val.as_pointer() {
-        unsafe {
-            let header = ptr.as_ref::<ObjectHeader>();
-            match header.kind {
-                ObjectKind::String => {
-                    return ptr.as_ref::<NativeString>().as_str().to_string();
-                }
-                ObjectKind::Array => {
-                    let arr = ptr.as_ref::<NativeArray>();
-                    let mut parts = Vec::new();
-                    for i in 0..arr.len as usize {
-                        let elem = OtValue::from_bits(*arr.elements.add(i));
-                        parts.push(value_to_string(elem));
-                    }
-                    return format!("[{}]", parts.join(","));
-                }
-                ObjectKind::Object => {
-                    return "[object Object]".to_string();
-                }
-                ObjectKind::Function => {
-                    return "[function]".to_string();
-                }
-                ObjectKind::ByteStream => {
-                    return "[ByteStream]".to_string();
-                }
-            }
-        }
-    }
-
-    "undefined".to_string()
-}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_fs_exists(path: u64) -> u64 {

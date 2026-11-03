@@ -1,0 +1,5 @@
+// backends: vm jit aot
+let name = "world";
+let n = 3;
+console.log(`hello ${name}, ${n + 1} times`);
+console.log(`plain`);

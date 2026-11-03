@@ -1,0 +1,13 @@
+// Closures capturing an enclosing function's locals: VM only until native
+// closure environments exist.
+function makeCounter() {
+  let count = 0;
+  return function () {
+    count = count + 1;
+    return count;
+  };
+}
+let c = makeCounter();
+c();
+c();
+console.log(c());

@@ -1,1225 +1,832 @@
-//! Code generation: SSA IR → LLVM IR translation
+//! Code generation: SSA IR → LLVM IR.
 //!
-//! This module translates tscl SSA IR operations to LLVM IR instructions.
+//! Native calling convention (shared with the Cranelift JIT and the runtime,
+//! see `runtime::heap::NativeFn`): every compiled function is
+//! `i64 (i64 this, ptr argv, i64 argc)`. Parameters are read from `argv`, and
+//! one that was not passed reads as `undefined`.
+//!
+//! Number arithmetic on values the type checker proved are numbers is
+//! inlined. Everything else calls the runtime (`src/runtime/stubs.rs`), which
+//! is where the language's semantics live, so that both native backends agree.
 
-// Allow these for LLVM FFI code
 #![allow(clippy::manual_c_str_literals)]
 #![allow(clippy::missing_safety_doc)]
 
+use llvm_sys::core::*;
 use llvm_sys::prelude::*;
+use llvm_sys::{LLVMIntPredicate, LLVMLinkage, LLVMRealPredicate};
 use std::collections::{BTreeMap, HashMap};
-use std::ffi::{CString, c_char};
+use std::ffi::{CStr, CString, c_char};
 
 use crate::backend::BackendError;
-use crate::ir::{
-    BasicBlock, BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId,
-};
+use crate::ir::{BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId};
 
 use super::abi;
-use super::types;
+
+const QNAN: u64 = 0x7FFC_0000_0000_0000;
+const TAG_BOOLEAN: u64 = 0x0001_0000_0000_0000;
+const TAG_NULL: u64 = 0x0002_0000_0000_0000;
+const TAG_UNDEFINED: u64 = 0x0003_0000_0000_0000;
+const UNDEFINED: u64 = QNAN | TAG_UNDEFINED;
+const FALSE: u64 = QNAN | TAG_BOOLEAN;
+const TRUE: u64 = QNAN | TAG_BOOLEAN | 1;
+
+const NONAME: *const c_char = b"\0".as_ptr() as *const c_char;
 
 /// LLVM code generator for AOT compilation
 pub struct LlvmCodegen {
-    /// LLVM context
     pub context: LLVMContextRef,
-    /// LLVM module being built
     pub module: LLVMModuleRef,
-    /// Target triple
     pub target_triple: String,
-    /// Declared runtime stubs (name -> function value)
-    pub stubs: BTreeMap<String, LLVMValueRef>,
-    /// Compiled function values (name -> function value)
+    /// Runtime functions: name -> (function, type).
+    runtime: BTreeMap<String, (LLVMValueRef, LLVMTypeRef)>,
+    /// Compiled functions by IR name (`main`, `func_<addr>`).
     pub functions: BTreeMap<String, LLVMValueRef>,
+    /// Function bytecode address -> global holding its function object.
+    fn_objects: BTreeMap<usize, LLVMValueRef>,
+    /// Interned string constants: contents -> global.
+    strings: HashMap<String, LLVMValueRef>,
+    /// The native function type `i64 (i64, ptr, i64)`.
+    fn_ty: LLVMTypeRef,
 }
 
 impl LlvmCodegen {
-    /// Create a new LLVM code generator
     pub fn new(target_triple: String) -> Result<Self, BackendError> {
         unsafe {
-            // Initialize LLVM
             llvm_sys::target::LLVM_InitializeNativeTarget();
             llvm_sys::target::LLVM_InitializeNativeAsmPrinter();
             llvm_sys::target::LLVM_InitializeNativeAsmParser();
 
-            // Create context
-            let context = llvm_sys::core::LLVMContextCreate();
+            let context = LLVMContextCreate();
             if context.is_null() {
                 return Err(BackendError::Llvm("Failed to create LLVM context".into()));
             }
-
-            // Create module
             let module_name = CString::new("ot_module").unwrap();
-            let module =
-                llvm_sys::core::LLVMModuleCreateWithNameInContext(module_name.as_ptr(), context);
+            let module = LLVMModuleCreateWithNameInContext(module_name.as_ptr(), context);
             if module.is_null() {
-                llvm_sys::core::LLVMContextDispose(context);
+                LLVMContextDispose(context);
                 return Err(BackendError::Llvm("Failed to create LLVM module".into()));
             }
+            let triple = CString::new(target_triple.clone()).unwrap();
+            LLVMSetTarget(module, triple.as_ptr());
 
-            // Set target triple
-            let triple_cstr = CString::new(target_triple.clone()).unwrap();
-            llvm_sys::core::LLVMSetTarget(module, triple_cstr.as_ptr());
+            let i64_ty = LLVMInt64TypeInContext(context);
+            let ptr_ty = LLVMPointerTypeInContext(context, 0);
+            let mut params = [i64_ty, ptr_ty, i64_ty];
+            let fn_ty = LLVMFunctionType(i64_ty, params.as_mut_ptr(), 3, 0);
 
             Ok(Self {
                 context,
                 module,
                 target_triple,
-                stubs: BTreeMap::new(),
+                runtime: BTreeMap::new(),
                 functions: BTreeMap::new(),
+                fn_objects: BTreeMap::new(),
+                strings: HashMap::new(),
+                fn_ty,
             })
         }
     }
 
-    /// Compile an entire IR module
+    /// Compile an entire IR module, plus the C `main` entry point.
     pub fn compile_module(&mut self, ir_module: &IrModule) -> Result<(), BackendError> {
         unsafe {
-            // Declare runtime stubs first
-            abi::declare_runtime_stubs(self.module, self.context, &mut self.stubs)?;
+            self.runtime = abi::declare_runtime(self.module, self.context)?;
+            let i64_ty = LLVMInt64TypeInContext(self.context);
 
-            // Build struct types map
-            let struct_types = self.build_struct_types(ir_module)?;
-
-            // Declare all functions first (for inter-function calls)
+            // Declare every function first, so calls can refer to any of them.
             for func in &ir_module.functions {
-                let func_name = if func.name.is_empty() {
-                    "anonymous".to_string()
+                let llvm_name = if func.name == "main" {
+                    "ot_main".to_string()
                 } else {
                     func.name.clone()
                 };
-                self.declare_function(&func_name, func, &struct_types)?;
+                let cname = CString::new(llvm_name).unwrap();
+                let f = LLVMAddFunction(self.module, cname.as_ptr(), self.fn_ty);
+                LLVMSetLinkage(f, LLVMLinkage::LLVMInternalLinkage);
+                self.functions.insert(func.name.clone(), f);
+
+                if let Some(addr) = function_addr(&func.name) {
+                    let gname = CString::new(format!("ot_fnobj_{}", addr)).unwrap();
+                    let g = LLVMAddGlobal(self.module, i64_ty, gname.as_ptr());
+                    LLVMSetInitializer(g, LLVMConstInt(i64_ty, 0, 0));
+                    LLVMSetLinkage(g, LLVMLinkage::LLVMInternalLinkage);
+                    self.fn_objects.insert(addr, g);
+                }
             }
 
-            // Compile each function
             for func in &ir_module.functions {
-                self.compile_function(func, ir_module, &struct_types)?;
+                self.compile_function(func)?;
             }
 
-            // Create C-compatible main wrapper if tscl main exists
-            let ot_main_name = std::ffi::CString::new("main").unwrap();
-            let ot_main = llvm_sys::core::LLVMGetNamedFunction(self.module, ot_main_name.as_ptr());
-            if !ot_main.is_null() && llvm_sys::core::LLVMIsDeclaration(ot_main) == 0 {
-                // Rename tscl main to ot_main
-                let ot_main_new_name = std::ffi::CString::new("ot_main").unwrap();
-                llvm_sys::core::LLVMSetValueName2(
-                    ot_main,
-                    ot_main_new_name.as_ptr(),
-                    ot_main_new_name.as_bytes().len(),
-                );
+            self.build_c_main()?;
+            self.verify()
+        }
+    }
 
-                // Create C-compatible main: int main(int argc, char** argv)
-                let i32_ty = llvm_sys::core::LLVMInt32TypeInContext(self.context);
-                let i8_ty = llvm_sys::core::LLVMInt8TypeInContext(self.context);
-                let i8_ptr_ty = llvm_sys::core::LLVMPointerType(i8_ty, 0);
-                let i8_ptr_ptr_ty = llvm_sys::core::LLVMPointerType(i8_ptr_ty, 0);
-                let mut main_params = vec![i32_ty, i8_ptr_ptr_ty];
-                let main_ty = llvm_sys::core::LLVMFunctionType(
-                    i32_ty,
-                    main_params.as_mut_ptr(),
-                    main_params.len() as u32,
-                    0,
-                );
+    /// `int main(int, char**)`: create the function objects, run top-level
+    /// code, flush output.
+    unsafe fn build_c_main(&mut self) -> Result<(), BackendError> {
+        unsafe {
+            let ctx = self.context;
+            let i32_ty = LLVMInt32TypeInContext(ctx);
+            let i64_ty = LLVMInt64TypeInContext(ctx);
+            let ptr_ty = LLVMPointerTypeInContext(ctx, 0);
+            let mut params = [i32_ty, ptr_ty];
+            let main_ty = LLVMFunctionType(i32_ty, params.as_mut_ptr(), 2, 0);
+            let main = LLVMAddFunction(self.module, b"main\0".as_ptr() as _, main_ty);
+            let entry = LLVMAppendBasicBlockInContext(ctx, main, b"entry\0".as_ptr() as _);
+            let b = LLVMCreateBuilderInContext(ctx);
+            LLVMPositionBuilderAtEnd(b, entry);
 
-                let main_name = std::ffi::CString::new("main").unwrap();
-                let c_main =
-                    llvm_sys::core::LLVMAddFunction(self.module, main_name.as_ptr(), main_ty);
-
-                if !c_main.is_null() {
-                    // Set visibility and linkage to prevent LTO from eliminating it
-                    llvm_sys::core::LLVMSetVisibility(
-                        c_main,
-                        llvm_sys::LLVMVisibility::LLVMDefaultVisibility,
-                    );
-                    llvm_sys::core::LLVMSetLinkage(
-                        c_main,
-                        llvm_sys::LLVMLinkage::LLVMExternalLinkage,
-                    );
-
-                    // Mark as used to prevent LTO dead code elimination
-                    let i8_ty = llvm_sys::core::LLVMInt8TypeInContext(self.context);
-                    let i8_ptr_ty = llvm_sys::core::LLVMPointerType(i8_ty, 0);
-                    let used_array_ty = llvm_sys::core::LLVMArrayType2(i8_ptr_ty, 1);
-                    let used_name = std::ffi::CString::new("llvm.used").unwrap();
-
-                    let existing_used =
-                        llvm_sys::core::LLVMGetNamedGlobal(self.module, used_name.as_ptr());
-                    let used_global = if !existing_used.is_null() {
-                        existing_used
-                    } else {
-                        llvm_sys::core::LLVMAddGlobal(
-                            self.module,
-                            used_array_ty,
-                            used_name.as_ptr(),
-                        )
-                    };
-                    if !used_global.is_null() {
-                        let main_as_i8 = llvm_sys::core::LLVMConstBitCast(c_main, i8_ptr_ty);
-                        let mut main_ptr = main_as_i8;
-                        let used_array =
-                            llvm_sys::core::LLVMConstArray2(i8_ptr_ty, &mut main_ptr, 1);
-                        llvm_sys::core::LLVMSetInitializer(used_global, used_array);
-                        llvm_sys::core::LLVMSetLinkage(
-                            used_global,
-                            llvm_sys::LLVMLinkage::LLVMAppendingLinkage,
-                        );
-                        llvm_sys::core::LLVMSetSection(
-                            used_global,
-                            b"llvm.metadata\0".as_ptr() as *const c_char,
-                        );
-                    }
-
-                    // Create entry block and call ot_main
-                    let entry = llvm_sys::core::LLVMAppendBasicBlock(
-                        c_main,
-                        b"entry\0".as_ptr() as *const c_char,
-                    );
-                    let builder = llvm_sys::core::LLVMCreateBuilderInContext(self.context);
-                    llvm_sys::core::LLVMPositionBuilderAtEnd(builder, entry);
-
-                    let ot_main_ty = llvm_sys::core::LLVMGlobalGetValueType(ot_main);
-                    let _ot_result = llvm_sys::core::LLVMBuildCall2(
-                        builder,
-                        ot_main_ty,
-                        ot_main,
-                        std::ptr::null_mut(),
-                        0,
-                        b"call\0".as_ptr() as *const c_char,
-                    );
-
-                    // If there's a user-defined main() function, call it
-                    if let Some(user_main_addr) = ir_module.user_main_addr {
-                        let user_main_name =
-                            std::ffi::CString::new(format!("func_{}", user_main_addr)).unwrap();
-                        let user_main_func = llvm_sys::core::LLVMGetNamedFunction(
-                            self.module,
-                            user_main_name.as_ptr(),
-                        );
-                        if !user_main_func.is_null() {
-                            let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(self.context);
-                            let user_main_ty = llvm_sys::core::LLVMFunctionType(
-                                i64_ty,
-                                std::ptr::null_mut(),
-                                0,
-                                0,
-                            );
-                            let _user_result = llvm_sys::core::LLVMBuildCall2(
-                                builder,
-                                user_main_ty,
-                                user_main_func,
-                                std::ptr::null_mut(),
-                                0,
-                                b"user_main_call\0".as_ptr() as *const c_char,
-                            );
-                        }
-                    }
-
-                    // Return 0 (success)
-                    let zero = llvm_sys::core::LLVMConstInt(i32_ty, 0, 0);
-                    llvm_sys::core::LLVMBuildRet(builder, zero);
-
-                    llvm_sys::core::LLVMDisposeBuilder(builder);
-                }
+            for (addr, global) in &self.fn_objects {
+                let f = self.functions[&format!("func_{}", addr)];
+                let (mk, mk_ty) = self.runtime["ot_make_function"];
+                let mut args = [f];
+                let obj = LLVMBuildCall2(b, mk_ty, mk, args.as_mut_ptr(), 1, NONAME);
+                LLVMBuildStore(b, obj, *global);
             }
 
+            let ot_main = self.functions["main"];
+            let mut args = [
+                LLVMConstInt(i64_ty, UNDEFINED, 0),
+                LLVMConstNull(ptr_ty),
+                LLVMConstInt(i64_ty, 0, 0),
+            ];
+            LLVMBuildCall2(b, self.fn_ty, ot_main, args.as_mut_ptr(), 3, NONAME);
+            let (exit, exit_ty) = self.runtime["ot_runtime_exit"];
+            LLVMBuildCall2(b, exit_ty, exit, std::ptr::null_mut(), 0, NONAME);
+            LLVMBuildRet(b, LLVMConstInt(i32_ty, 0, 0));
+            LLVMDisposeBuilder(b);
             Ok(())
         }
     }
 
-    unsafe fn declare_function(
-        &mut self,
-        name: &str,
-        func: &IrFunction,
-        _struct_types: &BTreeMap<u32, LLVMTypeRef>,
-    ) -> Result<(), BackendError> {
+    /// Fail loudly on malformed IR instead of letting LLVM crash later.
+    unsafe fn verify(&self) -> Result<(), BackendError> {
         unsafe {
-            // All function parameters and return values are i64 (NaN-boxed)
-            let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(self.context);
-            let mut param_types = Vec::new();
-            for _ in &func.params {
-                param_types.push(i64_ty);
-            }
-
-            // Return type is always i64 (unless void)
-            let return_ty = if matches!(
-                func.return_ty,
-                crate::ir::IrType::Void | crate::ir::IrType::Never
-            ) {
-                llvm_sys::core::LLVMVoidTypeInContext(self.context)
-            } else {
-                i64_ty
-            };
-            let func_ty = llvm_sys::core::LLVMFunctionType(
-                return_ty,
-                param_types.as_mut_ptr(),
-                param_types.len() as u32,
-                0,
-            );
-
-            // Create function
-            let name_cstr = CString::new(name).unwrap();
-            let func_val =
-                llvm_sys::core::LLVMAddFunction(self.module, name_cstr.as_ptr(), func_ty);
-
-            if func_val.is_null() {
-                return Err(BackendError::Llvm(format!(
-                    "Failed to declare function: {}",
-                    name
-                )));
-            }
-
-            // Set visibility: hidden for internal functions, default for main and runtime stubs
-            // This enables LTO to eliminate unused code
-            if name == "main" {
-                // Main must be visible for linking
-                llvm_sys::core::LLVMSetVisibility(
-                    func_val,
-                    llvm_sys::LLVMVisibility::LLVMDefaultVisibility,
-                );
-            } else {
-                // All other user functions are hidden (can be eliminated by LTO if unused)
-                llvm_sys::core::LLVMSetVisibility(
-                    func_val,
-                    llvm_sys::LLVMVisibility::LLVMHiddenVisibility,
-                );
-            }
-
-            self.functions.insert(name.to_string(), func_val);
-            Ok(())
-        }
-    }
-
-    unsafe fn compile_function(
-        &mut self,
-        func: &IrFunction,
-        ir_module: &IrModule,
-        struct_types: &BTreeMap<u32, LLVMTypeRef>,
-    ) -> Result<(), BackendError> {
-        unsafe {
-            let func_name = if func.name.is_empty() {
-                "anonymous".to_string()
-            } else {
-                func.name.clone()
-            };
-
-            let func_val = *self.functions.get(&func_name).ok_or_else(|| {
-                BackendError::Llvm(format!("Function {} not declared", func_name))
-            })?;
-
-            // Create builder
-            let builder = llvm_sys::core::LLVMCreateBuilderInContext(self.context);
-            if builder.is_null() {
-                return Err(BackendError::Llvm(format!(
-                    "Failed to create builder for function {}",
-                    func_name
-                )));
-            }
-
-            // Create all blocks first
-            let mut ctx = TranslationContext {
-                values: HashMap::new(),
-                blocks: HashMap::new(),
-                locals: Vec::new(),
-                builder,
-                func_val,
-                context: self.context,
-                module: self.module,
-                struct_types: struct_types.clone(),
-                stubs: &self.stubs,
-                functions: &self.functions,
-                function_addrs: &ir_module.function_addrs,
-                return_ty: func.return_ty.clone(),
-            };
-
-            // Create blocks for all IR blocks
-            for block in &func.blocks {
-                let block_name = format!("bb{}\0", block.id.0);
-                let llvm_block = llvm_sys::core::LLVMAppendBasicBlock(
-                    func_val,
-                    block_name.as_ptr() as *const c_char,
-                );
-                if llvm_block.is_null() {
-                    llvm_sys::core::LLVMDisposeBuilder(builder);
-                    return Err(BackendError::Llvm(format!(
-                        "Failed to create block bb{}",
-                        block.id.0
-                    )));
-                }
-                ctx.blocks.insert(block.id, llvm_block);
-            }
-
-            // Allocate stack slots for locals in the entry block (first block)
-            if let Some(entry_block_id) = func.blocks.first().map(|b| b.id) {
-                llvm_sys::core::LLVMPositionBuilderAtEnd(ctx.builder, ctx.blocks[&entry_block_id]);
-
-                // All locals are stored as i64 (NaN-boxed)
-                let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(self.context);
-                for _ in &func.locals {
-                    let alloca = llvm_sys::core::LLVMBuildAlloca(
-                        ctx.builder,
-                        i64_ty,
-                        b"local\0".as_ptr() as *const c_char,
-                    );
-                    ctx.locals.push(alloca);
-                }
-
-                // Map function parameters to values in entry block
-                let param_count = func.params.len();
-                for i in 0..param_count {
-                    let param = llvm_sys::core::LLVMGetParam(func_val, i as u32);
-                    ctx.values.insert(ValueId(i as u32), param);
-                }
-            }
-
-            // Translate each block
-            for block in &func.blocks {
-                llvm_sys::core::LLVMPositionBuilderAtEnd(ctx.builder, ctx.blocks[&block.id]);
-                translate_block(&mut ctx, block, ir_module)?;
-            }
-
-            // Verify function
-            llvm_sys::analysis::LLVMVerifyFunction(
-                func_val,
+            let mut msg: *mut c_char = std::ptr::null_mut();
+            let failed = llvm_sys::analysis::LLVMVerifyModule(
+                self.module,
                 llvm_sys::analysis::LLVMVerifierFailureAction::LLVMReturnStatusAction,
+                &mut msg,
             );
-
-            llvm_sys::core::LLVMDisposeBuilder(builder);
+            let text = if msg.is_null() {
+                String::new()
+            } else {
+                let t = CStr::from_ptr(msg).to_string_lossy().into_owned();
+                LLVMDisposeMessage(msg);
+                t
+            };
+            if failed != 0 {
+                return Err(BackendError::Llvm(format!(
+                    "internal error: generated invalid LLVM IR:\n{}",
+                    text
+                )));
+            }
             Ok(())
         }
     }
 
-    unsafe fn build_struct_types(
-        &self,
-        ir_module: &IrModule,
-    ) -> Result<BTreeMap<u32, LLVMTypeRef>, BackendError> {
-        let mut struct_types = BTreeMap::new();
+    unsafe fn compile_function(&mut self, func: &IrFunction) -> Result<(), BackendError> {
+        unsafe {
+            let f = self.functions[&func.name];
+            let ctx = self.context;
+            let builder = LLVMCreateBuilderInContext(ctx);
+            let prologue_builder = LLVMCreateBuilderInContext(ctx);
+            let prologue = LLVMAppendBasicBlockInContext(ctx, f, b"prologue\0".as_ptr() as _);
+            LLVMPositionBuilderAtEnd(prologue_builder, prologue);
 
-        // Build struct types recursively
-        for (id, struct_def) in &ir_module.structs {
-            let struct_ty = types::create_struct_type(self.context, struct_def, &struct_types)?;
-            struct_types.insert(id.0, struct_ty);
+            let mut blocks = HashMap::new();
+            for block in &func.blocks {
+                let name = CString::new(format!("bb{}", block.id.0)).unwrap();
+                blocks.insert(
+                    block.id,
+                    LLVMAppendBasicBlockInContext(ctx, f, name.as_ptr()),
+                );
+            }
+
+            let mut fx = Fx {
+                cg: self,
+                builder,
+                prologue: prologue_builder,
+                values: HashMap::new(),
+                blocks,
+                locals: Vec::new(),
+                types: &func.value_types,
+                direct: HashMap::new(),
+                this: LLVMGetParam(f, 0),
+            };
+            fx.prologue_setup(func, f)?;
+
+            for block in &func.blocks {
+                LLVMPositionBuilderAtEnd(fx.builder, fx.blocks[&block.id]);
+                for op in &block.ops {
+                    fx.op(op)?;
+                }
+                fx.terminator(&block.terminator)?;
+            }
+
+            // The prologue falls through to the IR entry block.
+            if let Some(first) = func.blocks.first() {
+                LLVMBuildBr(fx.prologue, fx.blocks[&first.id]);
+            } else {
+                LLVMBuildRet(fx.prologue, fx.c(UNDEFINED));
+            }
+            LLVMDisposeBuilder(fx.prologue);
+            LLVMDisposeBuilder(fx.builder);
+            Ok(())
         }
-
-        Ok(struct_types)
     }
 }
 
 impl Drop for LlvmCodegen {
     fn drop(&mut self) {
         unsafe {
-            llvm_sys::core::LLVMDisposeModule(self.module);
-            llvm_sys::core::LLVMContextDispose(self.context);
+            LLVMDisposeModule(self.module);
+            LLVMContextDispose(self.context);
         }
     }
 }
 
-/// Translation context for compiling a function
-#[allow(dead_code)]
-struct TranslationContext<'a> {
-    /// Map from IR ValueId to LLVM Value (internal lookup, doesn't affect output order)
-    values: HashMap<ValueId, LLVMValueRef>,
-    /// Map from IR BlockId to LLVM BasicBlock (internal lookup, doesn't affect output order)
-    blocks: HashMap<BlockId, LLVMBasicBlockRef>,
-    /// Stack slots for local variables (slot index -> alloca)
-    locals: Vec<LLVMValueRef>,
-    /// LLVM builder
+/// `func_123` -> 123
+fn function_addr(name: &str) -> Option<usize> {
+    name.strip_prefix("func_")?.parse().ok()
+}
+
+/// Per-function translation state.
+struct Fx<'a> {
+    cg: &'a mut LlvmCodegen,
     builder: LLVMBuilderRef,
-    /// Current function being built
-    func_val: LLVMValueRef,
-    /// LLVM context
-    context: LLVMContextRef,
-    /// LLVM module
-    module: LLVMModuleRef,
-    /// Struct type map (deterministic ordering for struct declarations)
-    struct_types: BTreeMap<u32, LLVMTypeRef>,
-    /// Runtime stubs (deterministic ordering for stub declarations)
-    stubs: &'a BTreeMap<String, LLVMValueRef>,
-    /// Compiled functions (deterministic ordering for function declarations)
-    functions: &'a BTreeMap<String, LLVMValueRef>,
-    /// Bytecode address to function name mapping (internal lookup)
-    function_addrs: &'a HashMap<usize, usize>,
-    /// Function return type (for handling Return(None) correctly)
-    return_ty: IrType,
+    /// Appends to the prologue block (allocas, parameter loads).
+    prologue: LLVMBuilderRef,
+    values: HashMap<ValueId, LLVMValueRef>,
+    blocks: HashMap<BlockId, LLVMBasicBlockRef>,
+    locals: Vec<LLVMValueRef>,
+    types: &'a HashMap<ValueId, IrType>,
+    /// Values known to be a specific compiled function (for direct calls).
+    direct: HashMap<ValueId, usize>,
+    this: LLVMValueRef,
 }
 
-/// Translate a basic block
-unsafe fn translate_block(
-    ctx: &mut TranslationContext,
-    block: &BasicBlock,
-    _ir_module: &IrModule,
-) -> Result<(), BackendError> {
-    unsafe {
-        // Translate operations
-        for op in &block.ops {
-            translate_op(ctx, op)?;
-        }
-
-        // Translate terminator
-        translate_terminator(ctx, &block.terminator)?;
-        Ok(())
+impl Fx<'_> {
+    fn i64_ty(&self) -> LLVMTypeRef {
+        unsafe { LLVMInt64TypeInContext(self.cg.context) }
     }
-}
 
-/// Translate a single IR operation
-unsafe fn translate_op(ctx: &mut TranslationContext, op: &IrOp) -> Result<(), BackendError> {
-    unsafe {
-        match op {
-            IrOp::Const(dst, lit) => {
-                // Check if this is a function address constant
-                if let Literal::Number(n) = lit {
-                    let addr = *n as usize;
-                    // If this address maps to a known function, emit the function pointer
-                    if ctx.function_addrs.contains_key(&addr) {
-                        let func_name = format!("func_{}", addr);
-                        if let Some(&func_ptr) = ctx.functions.get(&func_name) {
-                            // Convert function pointer to i64 (for NaN-boxing compatibility)
-                            let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                            let ptr_as_int = llvm_sys::core::LLVMBuildPtrToInt(
-                                ctx.builder,
-                                func_ptr,
-                                i64_ty,
-                                b"func_addr\0".as_ptr() as *const c_char,
-                            );
-                            ctx.values.insert(*dst, ptr_as_int);
-                            return Ok(());
-                        }
-                    }
-                }
-                let val = translate_literal(ctx, lit)?;
-                ctx.values.insert(*dst, val);
-            }
-            IrOp::AddNum(dst, a, b) => {
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                // Bitcast i64 to double for operation
-                let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
-                let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                let fa = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    va,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let fb = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    vb,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let result_fp = llvm_sys::core::LLVMBuildFAdd(
-                    ctx.builder,
-                    fa,
-                    fb,
-                    b"add\0".as_ptr() as *const c_char,
-                );
-                // Bitcast back to i64 (NaN-boxed)
-                let result = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    result_fp,
-                    i64_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::SubNum(dst, a, b) => {
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
-                let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                let fa = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    va,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let fb = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    vb,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let result_fp = llvm_sys::core::LLVMBuildFSub(
-                    ctx.builder,
-                    fa,
-                    fb,
-                    b"sub\0".as_ptr() as *const c_char,
-                );
-                let result = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    result_fp,
-                    i64_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::MulNum(dst, a, b) => {
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
-                let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                let fa = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    va,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let fb = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    vb,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let result_fp = llvm_sys::core::LLVMBuildFMul(
-                    ctx.builder,
-                    fa,
-                    fb,
-                    b"mul\0".as_ptr() as *const c_char,
-                );
-                let result = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    result_fp,
-                    i64_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::DivNum(dst, a, b) => {
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
-                let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                let fa = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    va,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let fb = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    vb,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let result_fp = llvm_sys::core::LLVMBuildFDiv(
-                    ctx.builder,
-                    fa,
-                    fb,
-                    b"div\0".as_ptr() as *const c_char,
-                );
-                let result = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    result_fp,
-                    i64_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::ModNum(dst, a, b) => {
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
-                let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                let fa = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    va,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let fb = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    vb,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let result_fp = llvm_sys::core::LLVMBuildFRem(
-                    ctx.builder,
-                    fa,
-                    fb,
-                    b"mod\0".as_ptr() as *const c_char,
-                );
-                let result = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    result_fp,
-                    i64_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::NegNum(dst, a) => {
-                let va = get_value(ctx, *a)?;
-                let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
-                let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                let fa = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    va,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let zero = llvm_sys::core::LLVMConstReal(double_ty, 0.0);
-                let result_fp = llvm_sys::core::LLVMBuildFSub(
-                    ctx.builder,
-                    zero,
-                    fa,
-                    b"neg\0".as_ptr() as *const c_char,
-                );
-                let result = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    result_fp,
-                    i64_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::LoadLocal(dst, slot) => {
-                if let Some(&alloca) = ctx.locals.get(*slot as usize) {
-                    // All locals are i64 (NaN-boxed)
-                    let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                    let val = llvm_sys::core::LLVMBuildLoad2(
-                        ctx.builder,
-                        i64_ty,
-                        alloca,
-                        b"load\0".as_ptr() as *const c_char,
+    fn ptr_ty(&self) -> LLVMTypeRef {
+        unsafe { LLVMPointerTypeInContext(self.cg.context, 0) }
+    }
+
+    fn f64_ty(&self) -> LLVMTypeRef {
+        unsafe { LLVMDoubleTypeInContext(self.cg.context) }
+    }
+
+    /// A 64-bit constant.
+    fn c(&self, bits: u64) -> LLVMValueRef {
+        unsafe { LLVMConstInt(self.i64_ty(), bits, 0) }
+    }
+
+    fn get(&self, id: ValueId) -> Result<LLVMValueRef, BackendError> {
+        self.values.get(&id).copied().ok_or_else(|| {
+            BackendError::Llvm(format!(
+                "internal error: value {:?} used before definition",
+                id
+            ))
+        })
+    }
+
+    fn set(&mut self, id: ValueId, v: LLVMValueRef) {
+        self.values.insert(id, v);
+    }
+
+    fn is_num(&self, id: ValueId) -> bool {
+        matches!(self.types.get(&id), Some(IrType::Number))
+    }
+
+    fn is_bool(&self, id: ValueId) -> bool {
+        matches!(self.types.get(&id), Some(IrType::Boolean))
+    }
+
+    /// Call a runtime function.
+    unsafe fn rt(&mut self, name: &str, args: &[LLVMValueRef]) -> LLVMValueRef {
+        unsafe {
+            let (f, ty) = self.cg.runtime[name];
+            let mut args = args.to_vec();
+            LLVMBuildCall2(
+                self.builder,
+                ty,
+                f,
+                args.as_mut_ptr(),
+                args.len() as u32,
+                NONAME,
+            )
+        }
+    }
+
+    /// Pointer and length of an interned string constant.
+    unsafe fn string(&mut self, s: &str) -> (LLVMValueRef, LLVMValueRef) {
+        unsafe {
+            let global = match self.cg.strings.get(s) {
+                Some(g) => *g,
+                None => {
+                    let init = LLVMConstStringInContext(
+                        self.cg.context,
+                        s.as_ptr() as *const c_char,
+                        s.len() as u32,
+                        1, // no NUL terminator
                     );
-                    ctx.values.insert(*dst, val);
-                } else {
-                    return Err(BackendError::Llvm(format!("Invalid local slot: {}", slot)));
+                    let g = LLVMAddGlobal(self.cg.module, LLVMTypeOf(init), b"str\0".as_ptr() as _);
+                    LLVMSetInitializer(g, init);
+                    LLVMSetGlobalConstant(g, 1);
+                    LLVMSetLinkage(g, LLVMLinkage::LLVMPrivateLinkage);
+                    self.cg.strings.insert(s.to_string(), g);
+                    g
                 }
-            }
-            IrOp::StoreLocal(slot, src) => {
-                if let Some(&alloca) = ctx.locals.get(*slot as usize) {
-                    let val = get_value(ctx, *src)?;
-                    llvm_sys::core::LLVMBuildStore(ctx.builder, val, alloca);
-                } else {
-                    return Err(BackendError::Llvm(format!("Invalid local slot: {}", slot)));
-                }
-            }
-            IrOp::Lt(dst, a, b) => {
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
-                let fa = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    va,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let fb = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    vb,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let cmp = llvm_sys::core::LLVMBuildFCmp(
-                    ctx.builder,
-                    llvm_sys::LLVMRealPredicate::LLVMRealOLT,
-                    fa,
-                    fb,
-                    b"cmp\0".as_ptr() as *const c_char,
-                );
-                let result = bool_to_ot_value(ctx, cmp)?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::LtEq(dst, a, b) => {
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
-                let fa = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    va,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let fb = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    vb,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let cmp = llvm_sys::core::LLVMBuildFCmp(
-                    ctx.builder,
-                    llvm_sys::LLVMRealPredicate::LLVMRealOLE,
-                    fa,
-                    fb,
-                    b"cmp\0".as_ptr() as *const c_char,
-                );
-                let result = bool_to_ot_value(ctx, cmp)?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::Gt(dst, a, b) => {
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
-                let fa = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    va,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let fb = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    vb,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let cmp = llvm_sys::core::LLVMBuildFCmp(
-                    ctx.builder,
-                    llvm_sys::LLVMRealPredicate::LLVMRealOGT,
-                    fa,
-                    fb,
-                    b"cmp\0".as_ptr() as *const c_char,
-                );
-                let result = bool_to_ot_value(ctx, cmp)?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::GtEq(dst, a, b) => {
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
-                let fa = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    va,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let fb = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    vb,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let cmp = llvm_sys::core::LLVMBuildFCmp(
-                    ctx.builder,
-                    llvm_sys::LLVMRealPredicate::LLVMRealOGE,
-                    fa,
-                    fb,
-                    b"cmp\0".as_ptr() as *const c_char,
-                );
-                let result = bool_to_ot_value(ctx, cmp)?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::EqStrict(dst, a, b) => {
-                // For strict equality, compare the NaN-boxed i64 values directly
-                // This works because identical values have identical bit patterns
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
-                let fa = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    va,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let fb = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    vb,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let cmp = llvm_sys::core::LLVMBuildFCmp(
-                    ctx.builder,
-                    llvm_sys::LLVMRealPredicate::LLVMRealOEQ,
-                    fa,
-                    fb,
-                    b"cmp\0".as_ptr() as *const c_char,
-                );
-                let result = bool_to_ot_value(ctx, cmp)?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::NeStrict(dst, a, b) => {
-                // For strict inequality, compare the NaN-boxed i64 values directly
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
-                let fa = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    va,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let fb = llvm_sys::core::LLVMBuildBitCast(
-                    ctx.builder,
-                    vb,
-                    double_ty,
-                    b"bitcast\0".as_ptr() as *const c_char,
-                );
-                let cmp = llvm_sys::core::LLVMBuildFCmp(
-                    ctx.builder,
-                    llvm_sys::LLVMRealPredicate::LLVMRealONE,
-                    fa,
-                    fb,
-                    b"cmp\0".as_ptr() as *const c_char,
-                );
-                let result = bool_to_ot_value(ctx, cmp)?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::Not(dst, a) => {
-                // Extract the boolean value and negate it
-                let va = get_value(ctx, *a)?;
-                let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                let _i1_ty = llvm_sys::core::LLVMInt1TypeInContext(ctx.context);
-                let one = llvm_sys::core::LLVMConstInt(i64_ty, 1, 0);
-                // Extract low bit (the boolean value)
-                let masked = llvm_sys::core::LLVMBuildAnd(
-                    ctx.builder,
-                    va,
-                    one,
-                    b"mask\0".as_ptr() as *const c_char,
-                );
-                // Check if it's zero (falsy)
-                let is_falsy = llvm_sys::core::LLVMBuildICmp(
-                    ctx.builder,
-                    llvm_sys::LLVMIntPredicate::LLVMIntEQ,
-                    masked,
-                    llvm_sys::core::LLVMConstInt(i64_ty, 0, 0),
-                    b"is_falsy\0".as_ptr() as *const c_char,
-                );
-                let result = bool_to_ot_value(ctx, is_falsy)?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::Copy(dst, src)
-            | IrOp::Move(dst, src)
-            | IrOp::Borrow(dst, src)
-            | IrOp::BorrowMut(dst, src) => {
-                let val = get_value(ctx, *src)?;
-                ctx.values.insert(*dst, val);
-            }
-            IrOp::AddAny(dst, a, b) => {
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let result = call_stub(ctx, "ot_add_any", &[va, vb])?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::SubAny(dst, a, b) => {
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let result = call_stub(ctx, "ot_sub_any", &[va, vb])?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::MulAny(dst, a, b) => {
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let result = call_stub(ctx, "ot_mul_any", &[va, vb])?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::DivAny(dst, a, b) => {
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let result = call_stub(ctx, "ot_div_any", &[va, vb])?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::ModAny(dst, a, b) => {
-                let va = get_value(ctx, *a)?;
-                let vb = get_value(ctx, *b)?;
-                let result = call_stub(ctx, "ot_mod_any", &[va, vb])?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::NegAny(dst, a) => {
-                let va = get_value(ctx, *a)?;
-                let result = call_stub(ctx, "ot_neg", &[va])?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::NewObject(dst) => {
-                let result = call_stub(ctx, "ot_alloc_object", &[])?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::GetProp(dst, obj, _name) => {
-                let obj_val = get_value(ctx, *obj)?;
-                let result = call_stub(ctx, "ot_get_prop", &[obj_val])?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::SetProp(obj, _name, val) => {
-                let obj_val = get_value(ctx, *obj)?;
-                let val_val = get_value(ctx, *val)?;
-                call_stub(ctx, "ot_set_prop", &[obj_val, val_val])?;
-            }
-            IrOp::GetElement(dst, obj, idx) => {
-                let obj_val = get_value(ctx, *obj)?;
-                let idx_val = get_value(ctx, *idx)?;
-                let result = call_stub(ctx, "ot_get_element", &[obj_val, idx_val])?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::SetElement(obj, idx, val) => {
-                let obj_val = get_value(ctx, *obj)?;
-                let idx_val = get_value(ctx, *idx)?;
-                let val_val = get_value(ctx, *val)?;
-                call_stub(ctx, "ot_set_element", &[obj_val, idx_val, val_val])?;
-            }
-            IrOp::NewArray(dst) => {
-                let capacity = llvm_sys::core::LLVMConstInt(
-                    llvm_sys::core::LLVMInt64TypeInContext(ctx.context),
-                    8,
-                    0,
-                );
-                let result = call_stub(ctx, "ot_alloc_array", &[capacity])?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::Phi(dst, _entries) => {
-                if !ctx.values.contains_key(dst) {
-                    let undefined = translate_literal(ctx, &Literal::Undefined)?;
-                    ctx.values.insert(*dst, undefined);
-                }
-            }
-            IrOp::Call(dst, func_val, args) => {
-                let func_ptr = get_value(ctx, *func_val)?;
-                let arg_values: Vec<LLVMValueRef> = args
-                    .iter()
-                    .map(|id| get_value(ctx, *id))
-                    .collect::<Result<_, _>>()?;
-                let result = call_indirect(ctx, func_ptr, &arg_values)?;
-                ctx.values.insert(*dst, result);
-            }
-            IrOp::CallMethod(dst, _obj, name, args) => {
-                if name == "log" && !args.is_empty() {
-                    let arg_val = get_value(ctx, args[0])?;
-                    let result = call_stub(ctx, "ot_console_log", &[arg_val])?;
-                    ctx.values.insert(*dst, result);
-                } else {
-                    let undefined = translate_literal(ctx, &Literal::Undefined)?;
-                    ctx.values.insert(*dst, undefined);
-                }
-            }
-            IrOp::MakeClosure(dst, addr, env) => {
-                let func_addr = llvm_sys::core::LLVMConstInt(
-                    llvm_sys::core::LLVMInt64TypeInContext(ctx.context),
-                    *addr as u64,
-                    0,
-                );
-                let env_val = get_value(ctx, *env)?;
-                let result = call_stub(ctx, "ot_make_closure", &[func_addr, env_val])?;
-                ctx.values.insert(*dst, result);
-            }
-            _ => {
-                return Err(BackendError::UnsupportedOp(format!(
-                    "Operation not yet implemented: {:?}",
-                    op
-                )));
-            }
+            };
+            (global, self.c(s.len() as u64))
         }
-        Ok(())
     }
-}
 
-/// Translate a terminator
-unsafe fn translate_terminator(
-    ctx: &mut TranslationContext,
-    term: &Terminator,
-) -> Result<(), BackendError> {
-    unsafe {
-        match term {
-            Terminator::Jump(target) => {
-                let target_block = ctx.blocks[target];
-                llvm_sys::core::LLVMBuildBr(ctx.builder, target_block);
+    /// Store values into a stack array; returns (argv, argc).
+    unsafe fn arg_array(&mut self, vals: &[LLVMValueRef]) -> (LLVMValueRef, LLVMValueRef) {
+        unsafe {
+            if vals.is_empty() {
+                return (LLVMConstNull(self.ptr_ty()), self.c(0));
             }
-            Terminator::Branch(cond, true_block, false_block) => {
-                let cond_val = get_value(ctx, *cond)?;
-                // Extract boolean from NaN-boxed value (check low bit)
-                let _i1_ty = llvm_sys::core::LLVMInt1TypeInContext(ctx.context);
-                let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                let one = llvm_sys::core::LLVMConstInt(i64_ty, 1, 0);
-                let masked = llvm_sys::core::LLVMBuildAnd(
-                    ctx.builder,
-                    cond_val,
-                    one,
-                    b"mask\0".as_ptr() as *const c_char,
+            let arr_ty = LLVMArrayType2(self.i64_ty(), vals.len() as u64);
+            let slot = LLVMBuildAlloca(self.prologue, arr_ty, b"argv\0".as_ptr() as _);
+            for (i, v) in vals.iter().enumerate() {
+                let mut idx = [self.c(i as u64)];
+                let p = LLVMBuildGEP2(
+                    self.builder,
+                    self.i64_ty(),
+                    slot,
+                    idx.as_mut_ptr(),
+                    1,
+                    NONAME,
                 );
-                let bool_val = llvm_sys::core::LLVMBuildICmp(
-                    ctx.builder,
-                    llvm_sys::LLVMIntPredicate::LLVMIntNE,
-                    masked,
-                    llvm_sys::core::LLVMConstInt(i64_ty, 0, 0),
-                    b"bool\0".as_ptr() as *const c_char,
-                );
-                let true_block = ctx.blocks[true_block];
-                let false_block = ctx.blocks[false_block];
-                llvm_sys::core::LLVMBuildCondBr(ctx.builder, bool_val, true_block, false_block);
+                LLVMBuildStore(self.builder, *v, p);
             }
-            Terminator::Return(val) => {
-                if let Some(v) = val {
-                    let ret_val = get_value(ctx, *v)?;
-                    llvm_sys::core::LLVMBuildRet(ctx.builder, ret_val);
-                } else {
-                    // Check if the function is declared as returning void
-                    if matches!(ctx.return_ty, IrType::Void | IrType::Never) {
-                        llvm_sys::core::LLVMBuildRetVoid(ctx.builder);
-                    } else {
-                        // Non-void function with no return value: return undefined (NaN-boxed)
-                        let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                        let qnan = 0x7FFC_0000_0000_0000u64;
-                        let tag_undefined = 0x0003_0000_0000_0000u64;
-                        let undefined_val =
-                            llvm_sys::core::LLVMConstInt(i64_ty, qnan | tag_undefined, 0);
-                        llvm_sys::core::LLVMBuildRet(ctx.builder, undefined_val);
+            (slot, self.c(vals.len() as u64))
+        }
+    }
+
+    unsafe fn to_f64(&self, v: LLVMValueRef) -> LLVMValueRef {
+        unsafe { LLVMBuildBitCast(self.builder, v, self.f64_ty(), NONAME) }
+    }
+
+    unsafe fn from_f64(&self, v: LLVMValueRef) -> LLVMValueRef {
+        unsafe { LLVMBuildBitCast(self.builder, v, self.i64_ty(), NONAME) }
+    }
+
+    /// i1 -> boxed boolean
+    unsafe fn box_bool(&self, b: LLVMValueRef) -> LLVMValueRef {
+        unsafe {
+            let ext = LLVMBuildZExt(self.builder, b, self.i64_ty(), NONAME);
+            LLVMBuildOr(self.builder, self.c(FALSE), ext, NONAME)
+        }
+    }
+
+    /// Truthiness of a value as i1.
+    unsafe fn truthy(&mut self, id: ValueId) -> Result<LLVMValueRef, BackendError> {
+        unsafe {
+            let v = self.get(id)?;
+            if self.is_bool(id) {
+                return Ok(LLVMBuildICmp(
+                    self.builder,
+                    LLVMIntPredicate::LLVMIntEQ,
+                    v,
+                    self.c(TRUE),
+                    NONAME,
+                ));
+            }
+            let t = self.rt("ot_truthy", &[v]);
+            Ok(LLVMBuildICmp(
+                self.builder,
+                LLVMIntPredicate::LLVMIntNE,
+                t,
+                self.c(0),
+                NONAME,
+            ))
+        }
+    }
+
+    /// Parameters, `this`, local slots.
+    unsafe fn prologue_setup(
+        &mut self,
+        func: &IrFunction,
+        f: LLVMValueRef,
+    ) -> Result<(), BackendError> {
+        unsafe {
+            let b = self.prologue;
+            let i64_ty = self.i64_ty();
+            for _ in &func.locals {
+                let slot = LLVMBuildAlloca(b, i64_ty, b"local\0".as_ptr() as _);
+                LLVMBuildStore(b, self.c(UNDEFINED), slot);
+                self.locals.push(slot);
+            }
+            let argv = LLVMGetParam(f, 1);
+            let argc = LLVMGetParam(f, 2);
+            let undef_slot = LLVMBuildAlloca(b, i64_ty, b"undef\0".as_ptr() as _);
+            LLVMBuildStore(b, self.c(UNDEFINED), undef_slot);
+            for i in 0..func.params.len() {
+                // argv[i] if i < argc, else undefined (branch-free).
+                let present = LLVMBuildICmp(
+                    b,
+                    LLVMIntPredicate::LLVMIntULT,
+                    self.c(i as u64),
+                    argc,
+                    NONAME,
+                );
+                let mut idx = [self.c(i as u64)];
+                let p = LLVMBuildGEP2(b, i64_ty, argv, idx.as_mut_ptr(), 1, NONAME);
+                let src = LLVMBuildSelect(b, present, p, undef_slot, NONAME);
+                let v = LLVMBuildLoad2(b, i64_ty, src, NONAME);
+                self.set(ValueId(i as u32), v);
+            }
+
+            // Values that are a known compiled function, for direct calls.
+            for block in &func.blocks {
+                for op in &block.ops {
+                    match op {
+                        IrOp::Const(dst, Literal::Function(addr)) => {
+                            self.direct.insert(*dst, *addr);
+                        }
+                        IrOp::MakeClosure(dst, addr, _) => {
+                            self.direct.insert(*dst, *addr as usize);
+                        }
+                        _ => {}
                     }
                 }
             }
-            Terminator::Unreachable => {
-                llvm_sys::core::LLVMBuildUnreachable(ctx.builder);
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Translate a literal to an LLVM constant
-unsafe fn translate_literal(
-    ctx: &TranslationContext,
-    lit: &Literal,
-) -> Result<LLVMValueRef, BackendError> {
-    unsafe {
-        match lit {
-            Literal::Number(n) => {
-                // NaN-box the number: bitcast double to i64
-                let double_ty = llvm_sys::core::LLVMDoubleTypeInContext(ctx.context);
-                let double_const = llvm_sys::core::LLVMConstReal(double_ty, *n);
-                let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                // Use bitcast to convert double to i64 (NaN-boxing)
-                Ok(llvm_sys::core::LLVMConstBitCast(double_const, i64_ty))
-            }
-            Literal::Boolean(b) => {
-                // NaN-box the boolean
-                let qnan = 0x7FFC_0000_0000_0000u64;
-                let tag_boolean = 0x0001_0000_0000_0000u64;
-                let ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                Ok(llvm_sys::core::LLVMConstInt(
-                    ty,
-                    qnan | tag_boolean | (*b as u64),
-                    0,
-                ))
-            }
-            Literal::Null | Literal::Undefined => {
-                let ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                let qnan = 0x7FFC_0000_0000_0000u64;
-                let tag = if matches!(lit, Literal::Null) {
-                    0x0002_0000_0000_0000
-                } else {
-                    0x0003_0000_0000_0000
-                };
-                Ok(llvm_sys::core::LLVMConstInt(ty, qnan | tag, 0))
-            }
-            Literal::String(_s) => {
-                let ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
-                Ok(llvm_sys::core::LLVMConstInt(ty, 0, 0))
-            }
+            Ok(())
         }
     }
-}
 
-/// Get an LLVM value for an IR value ID
-unsafe fn get_value(ctx: &TranslationContext, id: ValueId) -> Result<LLVMValueRef, BackendError> {
-    ctx.values
-        .get(&id)
-        .copied()
-        .ok_or_else(|| BackendError::Llvm(format!("Undefined value: {:?}", id)))
-}
-
-/// Convert an i1 boolean to NaN-boxed boolean value
-unsafe fn bool_to_ot_value(
-    ctx: &TranslationContext,
-    b: LLVMValueRef,
-) -> Result<LLVMValueRef, BackendError> {
-    unsafe {
-        let qnan = 0x7FFC_0000_0000_0000u64;
-        let tag_boolean = 0x0001_0000_0000_0000u64;
-        let base = llvm_sys::core::LLVMConstInt(
-            llvm_sys::core::LLVMInt64TypeInContext(ctx.context),
-            qnan | tag_boolean,
-            0,
-        );
-
-        let b_i64 = llvm_sys::core::LLVMBuildZExt(
-            ctx.builder,
-            b,
-            llvm_sys::core::LLVMInt64TypeInContext(ctx.context),
-            b"zext\0".as_ptr() as *const c_char,
-        );
-        let result = llvm_sys::core::LLVMBuildOr(
-            ctx.builder,
-            base,
-            b_i64,
-            b"bool\0".as_ptr() as *const c_char,
-        );
-        Ok(result)
+    unsafe fn literal(&mut self, lit: &Literal) -> Result<LLVMValueRef, BackendError> {
+        unsafe {
+            Ok(match lit {
+                Literal::Number(n) => self.c(n.to_bits()),
+                Literal::Boolean(b) => self.c(if *b { TRUE } else { FALSE }),
+                Literal::Null => self.c(QNAN | TAG_NULL),
+                Literal::Undefined => self.c(UNDEFINED),
+                Literal::String(s) => {
+                    let (p, n) = self.string(s);
+                    self.rt("ot_alloc_string", &[p, n])
+                }
+                Literal::Function(addr) => {
+                    let g = *self.cg.fn_objects.get(addr).ok_or_else(|| {
+                        BackendError::Llvm(format!("internal error: no function at {}", addr))
+                    })?;
+                    LLVMBuildLoad2(self.builder, self.i64_ty(), g, NONAME)
+                }
+            })
+        }
     }
-}
 
-/// Call a runtime stub function
-unsafe fn call_stub(
-    ctx: &TranslationContext,
-    name: &str,
-    args: &[LLVMValueRef],
-) -> Result<LLVMValueRef, BackendError> {
-    unsafe {
-        let stub = ctx
-            .stubs
-            .get(name)
-            .copied()
-            .ok_or_else(|| BackendError::Llvm(format!("Runtime stub not found: {}", name)))?;
-
-        let name_cstr = CString::new(name).unwrap();
-        let mut args_mut = args.to_vec();
-        let call = llvm_sys::core::LLVMBuildCall2(
-            ctx.builder,
-            llvm_sys::core::LLVMGlobalGetValueType(stub),
-            stub,
-            args_mut.as_mut_ptr(),
-            args_mut.len() as u32,
-            name_cstr.as_ptr(),
-        );
-
-        Ok(call)
+    unsafe fn num_binop(
+        &mut self,
+        dst: ValueId,
+        a: ValueId,
+        b: ValueId,
+        build: unsafe extern "C" fn(
+            LLVMBuilderRef,
+            LLVMValueRef,
+            LLVMValueRef,
+            *const c_char,
+        ) -> LLVMValueRef,
+    ) -> Result<(), BackendError> {
+        unsafe {
+            let x = self.to_f64(self.get(a)?);
+            let y = self.to_f64(self.get(b)?);
+            let r = build(self.builder, x, y, NONAME);
+            let r = self.from_f64(r);
+            self.set(dst, r);
+            Ok(())
+        }
     }
-}
 
-/// Call a function indirectly (or directly if it's a known function)
-///
-/// This generates a direct LLVM call by:
-/// 1. Building the function type based on number of arguments
-/// 2. Casting the function pointer (i64) to the correct function pointer type
-/// 3. Calling the function directly with the provided arguments
-unsafe fn call_indirect(
-    ctx: &TranslationContext,
-    func_ptr: LLVMValueRef,
-    args: &[LLVMValueRef],
-) -> Result<LLVMValueRef, BackendError> {
-    unsafe {
-        let i64_ty = llvm_sys::core::LLVMInt64TypeInContext(ctx.context);
+    unsafe fn rt_binop(
+        &mut self,
+        dst: ValueId,
+        name: &str,
+        a: ValueId,
+        b: ValueId,
+    ) -> Result<(), BackendError> {
+        unsafe {
+            let args = [self.get(a)?, self.get(b)?];
+            let r = self.rt(name, &args);
+            self.set(dst, r);
+            Ok(())
+        }
+    }
 
-        // Build function type: all args are i64 (NaN-boxed), returns i64
-        let mut param_types: Vec<LLVMTypeRef> = vec![i64_ty; args.len()];
-        let func_ty = llvm_sys::core::LLVMFunctionType(
-            i64_ty,
-            if param_types.is_empty() {
-                std::ptr::null_mut()
+    /// A comparison: inline when both operands are numbers, else the runtime.
+    unsafe fn compare(
+        &mut self,
+        dst: ValueId,
+        a: ValueId,
+        b: ValueId,
+        pred: LLVMRealPredicate,
+        stub: &str,
+    ) -> Result<(), BackendError> {
+        unsafe {
+            if self.is_num(a) && self.is_num(b) {
+                let x = self.to_f64(self.get(a)?);
+                let y = self.to_f64(self.get(b)?);
+                let cmp = LLVMBuildFCmp(self.builder, pred, x, y, NONAME);
+                let r = self.box_bool(cmp);
+                self.set(dst, r);
+                Ok(())
             } else {
-                param_types.as_mut_ptr()
-            },
-            args.len() as u32,
-            0,
-        );
-        let func_ptr_ty = llvm_sys::core::LLVMPointerType(func_ty, 0);
+                self.rt_binop(dst, stub, a, b)
+            }
+        }
+    }
 
-        // Cast i64 function address to function pointer
-        let callee = llvm_sys::core::LLVMBuildIntToPtr(
-            ctx.builder,
-            func_ptr,
-            func_ptr_ty,
-            b"callee\0".as_ptr() as *const c_char,
-        );
+    /// Flip a boxed boolean.
+    unsafe fn negate(&mut self, v: LLVMValueRef) -> LLVMValueRef {
+        unsafe { LLVMBuildXor(self.builder, v, self.c(1), NONAME) }
+    }
 
-        // Build the call with actual arguments
-        let mut args_mut: Vec<LLVMValueRef> = args.to_vec();
-        let name_cstr = CString::new("call_result").unwrap();
-        let call = llvm_sys::core::LLVMBuildCall2(
-            ctx.builder,
-            func_ty,
-            callee,
-            if args_mut.is_empty() {
-                std::ptr::null_mut()
-            } else {
-                args_mut.as_mut_ptr()
-            },
-            args_mut.len() as u32,
-            name_cstr.as_ptr(),
-        );
+    unsafe fn op(&mut self, op: &IrOp) -> Result<(), BackendError> {
+        unsafe {
+            match op {
+                IrOp::Const(dst, lit) => {
+                    let v = self.literal(lit)?;
+                    self.set(*dst, v);
+                }
 
-        Ok(call)
+                // Numbers the type checker proved: inline floating point.
+                IrOp::AddNum(d, a, b) => self.num_binop(*d, *a, *b, LLVMBuildFAdd)?,
+                IrOp::SubNum(d, a, b) => self.num_binop(*d, *a, *b, LLVMBuildFSub)?,
+                IrOp::MulNum(d, a, b) => self.num_binop(*d, *a, *b, LLVMBuildFMul)?,
+                IrOp::DivNum(d, a, b) => self.num_binop(*d, *a, *b, LLVMBuildFDiv)?,
+                IrOp::ModNum(d, a, b) => self.num_binop(*d, *a, *b, LLVMBuildFRem)?,
+                IrOp::NegNum(d, a) => {
+                    let x = self.to_f64(self.get(*a)?);
+                    let r = LLVMBuildFNeg(self.builder, x, NONAME);
+                    let r = self.from_f64(r);
+                    self.set(*d, r);
+                }
+
+                // Everything else: the runtime.
+                IrOp::AddAny(d, a, b) => self.rt_binop(*d, "ot_add_any", *a, *b)?,
+                IrOp::SubAny(d, a, b) => self.rt_binop(*d, "ot_sub_any", *a, *b)?,
+                IrOp::MulAny(d, a, b) => self.rt_binop(*d, "ot_mul_any", *a, *b)?,
+                IrOp::DivAny(d, a, b) => self.rt_binop(*d, "ot_div_any", *a, *b)?,
+                IrOp::ModAny(d, a, b) => self.rt_binop(*d, "ot_mod_any", *a, *b)?,
+                IrOp::Pow(d, a, b) => self.rt_binop(*d, "ot_pow", *a, *b)?,
+                IrOp::BitAnd(d, a, b) => self.rt_binop(*d, "ot_bit_and", *a, *b)?,
+                IrOp::BitOr(d, a, b) => self.rt_binop(*d, "ot_bit_or", *a, *b)?,
+                IrOp::Xor(d, a, b) => self.rt_binop(*d, "ot_bit_xor", *a, *b)?,
+                IrOp::Shl(d, a, b) => self.rt_binop(*d, "ot_shl", *a, *b)?,
+                IrOp::Shr(d, a, b) => self.rt_binop(*d, "ot_shr", *a, *b)?,
+                IrOp::ShrU(d, a, b) => self.rt_binop(*d, "ot_shr_u", *a, *b)?,
+                IrOp::NegAny(d, a) => {
+                    let r = self.rt("ot_neg", &[self.get(*a)?]);
+                    self.set(*d, r);
+                }
+
+                IrOp::EqStrict(d, a, b) | IrOp::NeStrict(d, a, b) => {
+                    let r = if self.is_num(*a) && self.is_num(*b) {
+                        let x = self.to_f64(self.get(*a)?);
+                        let y = self.to_f64(self.get(*b)?);
+                        let cmp = LLVMBuildFCmp(
+                            self.builder,
+                            LLVMRealPredicate::LLVMRealOEQ,
+                            x,
+                            y,
+                            NONAME,
+                        );
+                        self.box_bool(cmp)
+                    } else {
+                        self.rt("ot_eq_strict", &[self.get(*a)?, self.get(*b)?])
+                    };
+                    let r = if matches!(op, IrOp::NeStrict(..)) {
+                        self.negate(r)
+                    } else {
+                        r
+                    };
+                    self.set(*d, r);
+                }
+                IrOp::EqLoose(d, a, b) | IrOp::NeLoose(d, a, b) => {
+                    let r = self.rt("ot_eq_loose", &[self.get(*a)?, self.get(*b)?]);
+                    let r = if matches!(op, IrOp::NeLoose(..)) {
+                        self.negate(r)
+                    } else {
+                        r
+                    };
+                    self.set(*d, r);
+                }
+                IrOp::Lt(d, a, b) => {
+                    self.compare(*d, *a, *b, LLVMRealPredicate::LLVMRealOLT, "ot_lt")?
+                }
+                IrOp::LtEq(d, a, b) => {
+                    self.compare(*d, *a, *b, LLVMRealPredicate::LLVMRealOLE, "ot_lte")?
+                }
+                IrOp::Gt(d, a, b) => {
+                    self.compare(*d, *a, *b, LLVMRealPredicate::LLVMRealOGT, "ot_gt")?
+                }
+                IrOp::GtEq(d, a, b) => {
+                    self.compare(*d, *a, *b, LLVMRealPredicate::LLVMRealOGE, "ot_gte")?
+                }
+
+                IrOp::Not(d, a) => {
+                    let r = if self.is_bool(*a) {
+                        let v = self.get(*a)?;
+                        self.negate(v)
+                    } else {
+                        self.rt("ot_not", &[self.get(*a)?])
+                    };
+                    self.set(*d, r);
+                }
+                IrOp::And(d, a, b) | IrOp::Or(d, a, b) => {
+                    // a && b: a if falsy, else b.  a || b: a if truthy, else b.
+                    let t = self.truthy(*a)?;
+                    let (x, y) = (self.get(*a)?, self.get(*b)?);
+                    let r = if matches!(op, IrOp::And(..)) {
+                        LLVMBuildSelect(self.builder, t, y, x, NONAME)
+                    } else {
+                        LLVMBuildSelect(self.builder, t, x, y, NONAME)
+                    };
+                    self.set(*d, r);
+                }
+                IrOp::ToBool(d, a) => {
+                    let r = self.rt("ot_to_boolean", &[self.get(*a)?]);
+                    self.set(*d, r);
+                }
+                IrOp::ToNum(d, a) => {
+                    let r = self.rt("ot_to_number", &[self.get(*a)?]);
+                    self.set(*d, r);
+                }
+                IrOp::TypeOf(d, a) => {
+                    let r = self.rt("ot_typeof", &[self.get(*a)?]);
+                    self.set(*d, r);
+                }
+
+                IrOp::LoadLocal(d, slot) => {
+                    let p = *self.locals.get(*slot as usize).ok_or_else(|| {
+                        BackendError::Llvm(format!("internal error: bad local slot {}", slot))
+                    })?;
+                    let v = LLVMBuildLoad2(self.builder, self.i64_ty(), p, NONAME);
+                    self.set(*d, v);
+                }
+                IrOp::StoreLocal(slot, v) => {
+                    let p = *self.locals.get(*slot as usize).ok_or_else(|| {
+                        BackendError::Llvm(format!("internal error: bad local slot {}", slot))
+                    })?;
+                    LLVMBuildStore(self.builder, self.get(*v)?, p);
+                }
+                IrOp::LoadGlobal(d, name) => {
+                    let (p, n) = self.string(name);
+                    let r = self.rt("ot_get_global", &[p, n]);
+                    self.set(*d, r);
+                }
+                IrOp::StoreGlobal(name, v) => {
+                    let (p, n) = self.string(name);
+                    let v = self.get(*v)?;
+                    self.rt("ot_set_global", &[p, n, v]);
+                }
+                IrOp::LoadThis(d) => {
+                    let t = self.this;
+                    self.set(*d, t);
+                }
+
+                IrOp::Copy(d, s)
+                | IrOp::Move(d, s)
+                | IrOp::Borrow(d, s)
+                | IrOp::BorrowMut(d, s) => {
+                    let v = self.get(*s)?;
+                    self.set(*d, v);
+                    if let Some(addr) = self.direct.get(s).copied() {
+                        self.direct.insert(*d, addr);
+                    }
+                }
+
+                IrOp::NewObject(d) => {
+                    let r = self.rt("ot_alloc_object", &[]);
+                    self.set(*d, r);
+                }
+                IrOp::NewArray(d) => {
+                    let r = self.rt("ot_alloc_array", &[self.c(4)]);
+                    self.set(*d, r);
+                }
+                IrOp::GetProp(d, obj, name) => {
+                    let o = self.get(*obj)?;
+                    let (p, n) = self.string(name);
+                    let r = self.rt("ot_get_prop", &[o, p, n]);
+                    self.set(*d, r);
+                }
+                IrOp::SetProp(obj, name, v) => {
+                    let o = self.get(*obj)?;
+                    let v = self.get(*v)?;
+                    let (p, n) = self.string(name);
+                    self.rt("ot_set_prop", &[o, p, n, v]);
+                }
+                IrOp::DeleteProp(d, obj, name) => {
+                    let o = self.get(*obj)?;
+                    let (p, n) = self.string(name);
+                    let r = self.rt("ot_delete_prop", &[o, p, n]);
+                    self.set(*d, r);
+                }
+                IrOp::GetElement(d, obj, key) => self.rt_binop(*d, "ot_get_index", *obj, *key)?,
+                IrOp::SetElement(obj, key, v) => {
+                    let args = [self.get(*obj)?, self.get(*key)?, self.get(*v)?];
+                    self.rt("ot_set_index", &args);
+                }
+                IrOp::ArrayLen(d, a) => {
+                    let r = self.rt("ot_array_len", &[self.get(*a)?]);
+                    self.set(*d, r);
+                }
+                IrOp::ArrayPush(a, v) => {
+                    let args = [self.get(*a)?, self.get(*v)?];
+                    self.rt("ot_array_push", &args);
+                }
+
+                IrOp::MakeClosure(d, addr, _env) => {
+                    // Captured variables are refused during lowering, so the
+                    // environment is never read.
+                    let v = self.literal(&Literal::Function(*addr as usize))?;
+                    self.set(*d, v);
+                }
+                IrOp::Call(d, callee, args) => {
+                    let vals: Vec<LLVMValueRef> = args
+                        .iter()
+                        .map(|a| self.get(*a))
+                        .collect::<Result<_, _>>()?;
+                    let (argv, argc) = self.arg_array(&vals);
+                    let undefined = self.c(UNDEFINED);
+                    let target = self
+                        .direct
+                        .get(callee)
+                        .and_then(|addr| self.cg.functions.get(&format!("func_{}", addr)))
+                        .copied();
+                    let r = match target {
+                        Some(f) => {
+                            let mut a = [undefined, argv, argc];
+                            LLVMBuildCall2(
+                                self.builder,
+                                self.cg.fn_ty,
+                                f,
+                                a.as_mut_ptr(),
+                                3,
+                                NONAME,
+                            )
+                        }
+                        None => {
+                            let f = self.get(*callee)?;
+                            self.rt("ot_call", &[f, undefined, argv, argc])
+                        }
+                    };
+                    self.set(*d, r);
+                }
+                IrOp::CallMethod(d, recv, name, args) => {
+                    let r = self.get(*recv)?;
+                    let vals: Vec<LLVMValueRef> = args
+                        .iter()
+                        .map(|a| self.get(*a))
+                        .collect::<Result<_, _>>()?;
+                    let (argv, argc) = self.arg_array(&vals);
+                    let (p, n) = self.string(name);
+                    let v = self.rt("ot_call_method", &[r, p, n, argv, argc]);
+                    self.set(*d, v);
+                }
+
+                other => {
+                    return Err(BackendError::UnsupportedOp(format!(
+                        "the LLVM backend does not support `{}` yet",
+                        other
+                    )));
+                }
+            }
+            Ok(())
+        }
+    }
+
+    unsafe fn terminator(&mut self, term: &Terminator) -> Result<(), BackendError> {
+        unsafe {
+            match term {
+                Terminator::Jump(t) => {
+                    LLVMBuildBr(self.builder, self.blocks[t]);
+                }
+                Terminator::Branch(cond, t, f) => {
+                    let c = self.truthy(*cond)?;
+                    LLVMBuildCondBr(self.builder, c, self.blocks[t], self.blocks[f]);
+                }
+                Terminator::Return(v) => {
+                    let r = match v {
+                        Some(v) => self.get(*v)?,
+                        None => self.c(UNDEFINED),
+                    };
+                    LLVMBuildRet(self.builder, r);
+                }
+                Terminator::Unreachable => {
+                    LLVMBuildUnreachable(self.builder);
+                }
+            }
+            Ok(())
+        }
     }
 }

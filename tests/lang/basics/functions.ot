@@ -1,20 +1,19 @@
+// backends: vm jit aot
 function fib(n) {
   if (n < 2) return n;
   return fib(n - 1) + fib(n - 2);
 }
 console.log(fib(20));
 
-function makeCounter() {
-  let count = 0;
-  return function () {
-    count = count + 1;
-    return count;
-  };
-}
-let c = makeCounter();
-c();
-c();
-console.log(c());
-
 let add = (a, b) => a + b;
 console.log(add(2, 3));
+
+// Missing arguments are undefined; extra ones are ignored.
+function two(a, b) { return [a, b]; }
+console.log(two(1));
+console.log(two(1, 2, 3));
+
+// Functions are values.
+function twice(f, x) { return f(f(x)); }
+console.log(twice(function (n) { return n * 3; }, 2));
+console.log(typeof fib);

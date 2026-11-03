@@ -2111,6 +2111,16 @@ impl Codegen {
                             self.gen_expr(&member_expr.obj); // Push the object
                             self.gen_expr(&assign_expr.right); // Push the value
 
+                            // The store ops consume the object and value and
+                            // push nothing, but an assignment expression
+                            // evaluates to the value (the statement's `Pop`
+                            // removes it). Keep a copy underneath:
+                            // [obj, v] -> Dup -> [obj, v, v] -> Swap3 ->
+                            // [v, v, obj] -> Swap -> [v, obj, v].
+                            self.instructions.push(OpCode::Dup);
+                            self.instructions.push(OpCode::Swap3);
+                            self.instructions.push(OpCode::Swap);
+
                             match &member_expr.prop {
                                 MemberProp::Ident(id) => {
                                     // obj.prop = value

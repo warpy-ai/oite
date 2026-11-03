@@ -818,6 +818,32 @@ impl VM {
         panic!("Uncaught exception: {:?}", exception);
     }
 
+    /// Number of parameters of the bytecode function at `address`: the
+    /// `Let`s that open its body bind them, one per parameter.
+    fn param_count(&self, address: usize) -> usize {
+        self.program[address..]
+            .iter()
+            .take_while(|op| matches!(op, OpCode::Let(_)))
+            .count()
+    }
+
+    /// Push call arguments for the function at `address`, matched to its
+    /// parameter count: missing arguments are `undefined`, extra ones are
+    /// dropped. Parameters are bound by popping the stack, so pushing the
+    /// arguments as given shifted every parameter whenever the counts
+    /// differed (`f(1)` against `function f(a, b)` bound `b = 1`).
+    fn push_call_args(&mut self, args: &[JsValue], address: usize) {
+        let n = if address == 0 {
+            args.len()
+        } else {
+            self.param_count(address)
+        };
+        for i in 0..n {
+            self.stack
+                .push(args.get(i).cloned().unwrap_or(JsValue::Undefined));
+        }
+    }
+
     fn exec_one(&mut self) -> ExecResult {
         if self.ip >= self.program.len() {
             return ExecResult::Stop;
@@ -896,6 +922,25 @@ impl VM {
                 let key_val = self.stack.pop().unwrap();
                 let value = self.stack.pop().unwrap();
                 let target = self.stack.pop().unwrap();
+
+                // arr[i] = v on an array: set the element, growing the array.
+                // (Previously only plain objects were handled, so this
+                // assignment was silently ignored.)
+                if let (JsValue::Object(ptr), JsValue::Number(n)) = (&target, &key_val)
+                    && *n >= 0.0
+                    && n.fract() == 0.0
+                    && let Some(HeapObject {
+                        data: HeapData::Array(arr),
+                    }) = self.heap.get_mut(*ptr)
+                {
+                    let i = *n as usize;
+                    if i >= arr.len() {
+                        arr.resize(i + 1, JsValue::Undefined);
+                    }
+                    arr[i] = value;
+                    self.ip += 1;
+                    return ExecResult::Continue;
+                }
 
                 if let JsValue::Object(ptr) = target {
                     // Convert key to string
@@ -1259,9 +1304,7 @@ impl VM {
                         // Record function call for tiered compilation
                         self.record_function_call(address);
 
-                        for arg in &args {
-                            self.stack.push(arg.clone());
-                        }
+                        self.push_call_args(&args, address);
 
                         // CLOSURE CONTEXT SWITCH: The frame keeps a pointer to the
                         // environment heap object. Load/Store resolve captured
@@ -1304,9 +1347,7 @@ impl VM {
                             {
                                 let address = *address;
                                 let env = *env;
-                                for arg in &args {
-                                    self.stack.push(arg.clone());
-                                }
+                                self.push_call_args(&args, address);
                                 let frame = Frame {
                                     return_address: self.ip + 1,
                                     locals: HashMap::new(),
@@ -1534,7 +1575,7 @@ impl VM {
                     (self.stack.pop(), self.stack.pop())
                 {
                     self.stack
-                        .push(JsValue::Number((a as i64 & b as i64) as f64));
+                        .push(JsValue::Number((to_int32(a) & to_int32(b)) as f64));
                 } else {
                     self.stack.push(JsValue::Undefined);
                 }
@@ -1545,7 +1586,7 @@ impl VM {
                     (self.stack.pop(), self.stack.pop())
                 {
                     self.stack
-                        .push(JsValue::Number((a as i64 | b as i64) as f64));
+                        .push(JsValue::Number((to_int32(a) | to_int32(b)) as f64));
                 } else {
                     self.stack.push(JsValue::Undefined);
                 }
@@ -1556,7 +1597,7 @@ impl VM {
                     (self.stack.pop(), self.stack.pop())
                 {
                     self.stack
-                        .push(JsValue::Number((a as i64 ^ b as i64) as f64));
+                        .push(JsValue::Number((to_int32(a) ^ to_int32(b)) as f64));
                 } else {
                     self.stack.push(JsValue::Undefined);
                 }
@@ -1566,8 +1607,9 @@ impl VM {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
                     (self.stack.pop(), self.stack.pop())
                 {
-                    self.stack
-                        .push(JsValue::Number(((a as i64) << (b as i64)) as f64));
+                    self.stack.push(JsValue::Number(
+                        to_int32(a).wrapping_shl(to_int32(b) as u32 & 31) as f64,
+                    ));
                 } else {
                     self.stack.push(JsValue::Undefined);
                 }
@@ -1577,8 +1619,9 @@ impl VM {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
                     (self.stack.pop(), self.stack.pop())
                 {
-                    self.stack
-                        .push(JsValue::Number(((a as i64) >> (b as i64)) as f64));
+                    self.stack.push(JsValue::Number(
+                        to_int32(a).wrapping_shr(to_int32(b) as u32 & 31) as f64,
+                    ));
                 } else {
                     self.stack.push(JsValue::Undefined);
                 }
@@ -1588,8 +1631,9 @@ impl VM {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
                     (self.stack.pop(), self.stack.pop())
                 {
-                    self.stack
-                        .push(JsValue::Number(((a as u64) >> (b as u64)) as f64));
+                    self.stack.push(JsValue::Number(
+                        (to_int32(a) as u32).wrapping_shr(to_int32(b) as u32 & 31) as f64,
+                    ));
                 } else {
                     self.stack.push(JsValue::Undefined);
                 }
@@ -1686,10 +1730,16 @@ impl VM {
                     let result = match (&a, &b) {
                         // Number and String: convert string to number
                         (JsValue::Number(n), JsValue::String(s))
-                        | (JsValue::String(s), JsValue::Number(n)) => s
-                            .parse::<f64>()
-                            .map(|parsed| (*n - parsed).abs() < f64::EPSILON)
-                            .unwrap_or(false),
+                        | (JsValue::String(s), JsValue::Number(n)) => {
+                            // JavaScript ToNumber: trimmed, "" is 0, exact.
+                            let t = s.trim();
+                            let parsed = if t.is_empty() {
+                                0.0
+                            } else {
+                                t.parse::<f64>().unwrap_or(f64::NAN)
+                            };
+                            *n == parsed
+                        }
                         // Boolean and Number coercion
                         (JsValue::Boolean(true), JsValue::Number(n))
                         | (JsValue::Number(n), JsValue::Boolean(true)) => {
@@ -2076,9 +2126,7 @@ impl VM {
                 }
 
                 // Push args back for function prologue
-                for arg in &args {
-                    self.stack.push(arg.clone());
-                }
+                self.push_call_args(&args, address);
 
                 // Create frame with `this` bound to the new object
                 let frame = Frame {
@@ -3370,9 +3418,7 @@ impl VM {
                             args.reverse();
 
                             // Push arguments in call order
-                            for arg in &args {
-                                self.stack.push(arg.clone());
-                            }
+                            self.push_call_args(&args, address);
 
                             // Create new frame with `this` bound to the receiver object
                             let frame = Frame {
@@ -3572,9 +3618,7 @@ impl VM {
                     let this_context = self.call_stack.last().unwrap().this_context.clone();
 
                     args.reverse();
-                    for arg in &args {
-                        self.stack.push(arg.clone());
-                    }
+                    self.push_call_args(&args, address);
 
                     let frame = Frame {
                         return_address: self.ip + 1,
@@ -4135,6 +4179,14 @@ impl VM {
             JsValue::Undefined
         }
     }
+}
+
+/// JavaScript `ToInt32`: the integer the bitwise operators work on.
+fn to_int32(n: f64) -> i32 {
+    if !n.is_finite() {
+        return 0;
+    }
+    n.trunc() as i64 as u64 as u32 as i32
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

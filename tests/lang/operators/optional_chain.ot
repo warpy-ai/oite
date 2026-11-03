@@ -1,3 +1,4 @@
+// backends: vm jit aot
 // #119: ?. short-circuits to undefined on null/undefined.
 let o = { a: { b: 1 }, f: function () { return "called"; } };
 console.log(o?.a?.b);

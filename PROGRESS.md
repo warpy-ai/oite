@@ -17,8 +17,8 @@ where they say ✅ without a golden test behind them, trust the status page.
 | Component                                 | Status                                              |
 | ----------------------------------------- | --------------------------------------------------- |
 | Runtime kernel (NaN-boxing, allocator)    | 🟡 Works; no memory is ever freed ([#123](https://github.com/warpy-ai/oite/issues/123))            |
-| SSA IR + optimizations                    | 🟡 Works for numeric code                           |
-| Native backends (Cranelift JIT, LLVM AOT) | 🟡 Numeric code; native runtime stubbed ([#127](https://github.com/warpy-ai/oite/issues/127))      |
+| SSA IR + optimizations                    | 🟡 Works; refuses classes, closures, exceptions, async |
+| Native backends (Cranelift JIT, LLVM AOT) | 🟡 Functions, objects, arrays, strings, globals; see the status page |
 | Language features                         | 🟡 Most run in the VM only so far; see the status page |
 | Static type checking                      | ❌ Annotations parsed, not checked ([#124](https://github.com/warpy-ai/oite/issues/124))           |
 | Self-hosting compiler                     | 🟡 Cannot compile its own source yet ([#131](https://github.com/warpy-ai/oite/issues/131))         |

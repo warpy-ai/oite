@@ -36,9 +36,11 @@ console.log(fib(35)); // Compiled to native code!
 ### Key Features
 
 > **Status:** pre-alpha. The list below is the design. Native code is the
-> target, but the JIT and AOT backends handle numeric code only so far; most
-> features currently run only in the VM (the debugging interpreter). Type
-> annotations are not checked yet, and memory is never freed. See
+> target: the JIT and AOT backends run functions, objects, arrays, strings and
+> globals, and refuse what they cannot run yet (closures that capture locals,
+> classes, exceptions, async, modules), which for now runs only in the VM (the
+> debugging interpreter). Type annotations are not checked yet, and memory is
+> never freed. See
 > [Development Status](docs/docs/development-status.md) for what runs on which
 > backend, and [#136](https://github.com/warpy-ai/oite/issues/136) for the roadmap.
 

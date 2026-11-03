@@ -71,6 +71,51 @@ pub struct Lowerer {
     local_values: HashMap<u32, ValueId>,
     /// Block entry states for phi node generation.
     block_entry_stacks: HashMap<BlockId, Vec<ValueId>>,
+    /// How bytecode variable names map to locals, globals and functions.
+    names: NameResolver,
+}
+
+/// Where a bytecode variable name lives in native code.
+#[derive(Debug, Clone, Default)]
+pub struct NameResolver {
+    /// Whether whole-program scope information is available. Without it
+    /// (`lower_function`, lowering one function on its own) every name is a
+    /// local, as before.
+    program: bool,
+    /// Names local to the function being lowered (parameters and `let`s in
+    /// its own body). Top-level code has none: its variables are globals,
+    /// shared with every function.
+    locals: HashSet<String>,
+    /// Locals of enclosing functions. Native code has no closure
+    /// environments yet, so a reference to one is refused.
+    enclosing: HashSet<String>,
+    /// Names assigned exactly once in the whole program, by a function
+    /// declaration. They resolve to that function directly.
+    constant_functions: HashMap<String, usize>,
+}
+
+enum NameRef {
+    Local,
+    Function(usize),
+    Global,
+}
+
+impl NameResolver {
+    fn resolve(&self, name: &str) -> Result<NameRef, LowerError> {
+        // Compiler-generated temporaries (`%optcall12`) are always local.
+        if !self.program || name.starts_with('%') || self.locals.contains(name) {
+            return Ok(NameRef::Local);
+        }
+        if let Some(&addr) = self.constant_functions.get(name) {
+            return Ok(NameRef::Function(addr));
+        }
+        if self.enclosing.contains(name) {
+            return Err(native_unsupported(
+                "closures that capture a variable of an enclosing function",
+            ));
+        }
+        Ok(NameRef::Global)
+    }
 }
 
 impl Lowerer {
@@ -88,7 +133,14 @@ impl Lowerer {
             var_to_slot: HashMap::new(),
             local_values: HashMap::new(),
             block_entry_stacks: HashMap::new(),
+            names: NameResolver::default(),
         }
+    }
+
+    /// Use this resolver for variable names.
+    pub fn with_names(mut self, names: NameResolver) -> Self {
+        self.names = names;
+        self
     }
 
     /// Create a new lowerer for an extracted function with parameters.
@@ -430,23 +482,8 @@ impl Lowerer {
                 self.push(a);
             }
 
-            OpCode::GetPrivateProp(_) => {
-                // For AOT compilation, private props aren't supported yet
-                // Just push undefined
-                let dst = self.alloc_value(IrType::Any);
-                self.emit(IrOp::Const(dst, Literal::Undefined));
-                self.push(dst);
-            }
-
-            OpCode::SetPrivateProp(_) => {
-                // For AOT compilation, private props aren't supported yet
-                // Pop value and this
-                let _ = self.pop()?;
-                let _ = self.pop()?;
-                // Push undefined as the result
-                let dst = self.alloc_value(IrType::Any);
-                self.emit(IrOp::Const(dst, Literal::Undefined));
-                self.push(dst);
+            OpCode::GetPrivateProp(_) | OpCode::SetPrivateProp(_) => {
+                return Err(native_unsupported("private class fields (`#x`)"));
             }
 
             // Arithmetic operations (binary)
@@ -512,19 +549,18 @@ impl Lowerer {
             }
 
             // Comparison operations
-            OpCode::Eq | OpCode::EqEq => {
+            OpCode::Eq | OpCode::EqEq | OpCode::Ne | OpCode::NeEq => {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 let dst = self.alloc_value(IrType::Boolean);
-                self.emit(IrOp::EqStrict(dst, a, b));
-                self.push(dst);
-            }
-
-            OpCode::Ne | OpCode::NeEq => {
-                let b = self.pop()?;
-                let a = self.pop()?;
-                let dst = self.alloc_value(IrType::Boolean);
-                self.emit(IrOp::NeStrict(dst, a, b));
+                self.emit(match op {
+                    OpCode::Eq => IrOp::EqStrict(dst, a, b),
+                    OpCode::Ne => IrOp::NeStrict(dst, a, b),
+                    // `==` / `!=` are loose; lowering them as strict made
+                    // `null == undefined` false in native code.
+                    OpCode::EqEq => IrOp::EqLoose(dst, a, b),
+                    _ => IrOp::NeLoose(dst, a, b),
+                });
                 self.push(dst);
             }
 
@@ -560,40 +596,14 @@ impl Lowerer {
                 self.push(dst);
             }
 
-            // InstanceOf operator
             OpCode::InstanceOf => {
-                // For AOT compilation, use a stub call
-                // Pop constructor and object
-                let ctor = self.pop()?;
-                let obj = self.pop()?;
-                // Call runtime stub
-                let stub = self.alloc_value(IrType::Any);
-                self.emit(IrOp::LoadGlobal(stub, "ot_instanceof".to_string()));
-                let result = self.alloc_value(IrType::Boolean);
-                self.emit(IrOp::Call(result, stub, vec![obj, ctor]));
-                self.push(result);
+                return Err(native_unsupported("`instanceof`"));
             }
-
-            // NewTarget - for AOT, use a stub
             OpCode::NewTarget => {
-                // Call runtime stub
-                let stub = self.alloc_value(IrType::Any);
-                self.emit(IrOp::LoadGlobal(stub, "ot_new_target".to_string()));
-                let result = self.alloc_value(IrType::Any);
-                self.emit(IrOp::Call(result, stub, vec![]));
-                self.push(result);
+                return Err(native_unsupported("`new.target`"));
             }
-
-            // ApplyDecorator - for now, just call a runtime stub
             OpCode::ApplyDecorator => {
-                let target = self.pop()?;
-                let decorator = self.pop()?;
-                // Call runtime stub for decorator application
-                let stub = self.alloc_value(IrType::Any);
-                self.emit(IrOp::LoadGlobal(stub, "ot_apply_decorator".to_string()));
-                let result = self.alloc_value(IrType::Any);
-                self.emit(IrOp::Call(result, stub, vec![target, decorator]));
-                self.push(result);
+                return Err(native_unsupported("decorators"));
             }
 
             // Logical operations
@@ -623,16 +633,38 @@ impl Lowerer {
             // Variable operations (name-based)
             OpCode::Let(name) | OpCode::Store(name) => {
                 let val = self.pop()?;
-                let slot = self.get_or_create_local(name);
-                self.emit(IrOp::StoreLocal(slot, val));
-                self.local_values.insert(slot, val);
+                match self.names.resolve(name)? {
+                    NameRef::Local => {
+                        let slot = self.get_or_create_local(name);
+                        self.emit(IrOp::StoreLocal(slot, val));
+                        self.local_values.insert(slot, val);
+                    }
+                    NameRef::Function(_) | NameRef::Global => {
+                        self.emit(IrOp::StoreGlobal(name.clone(), val));
+                    }
+                }
             }
 
             OpCode::Load(name) => {
-                let slot = self.get_or_create_local(name);
-                let dst = self.alloc_value(IrType::Any);
-                self.emit(IrOp::LoadLocal(dst, slot));
-                self.local_values.insert(slot, dst);
+                let dst = match self.names.resolve(name)? {
+                    NameRef::Local => {
+                        let slot = self.get_or_create_local(name);
+                        let dst = self.alloc_value(IrType::Any);
+                        self.emit(IrOp::LoadLocal(dst, slot));
+                        self.local_values.insert(slot, dst);
+                        dst
+                    }
+                    NameRef::Function(addr) => {
+                        let dst = self.alloc_value(IrType::Function);
+                        self.emit(IrOp::Const(dst, Literal::Function(addr)));
+                        dst
+                    }
+                    NameRef::Global => {
+                        let dst = self.alloc_value(IrType::Any);
+                        self.emit(IrOp::LoadGlobal(dst, name.clone()));
+                        dst
+                    }
+                };
                 self.push(dst);
             }
 
@@ -662,11 +694,7 @@ impl Lowerer {
             }
 
             OpCode::NewObjectWithProto => {
-                // For AOT compilation, NewObjectWithProto is not fully supported
-                // Just create a regular object
-                let dst = self.alloc_value(IrType::Object);
-                self.emit(IrOp::NewObject(dst));
-                self.push(dst);
+                return Err(native_unsupported("classes"));
             }
 
             OpCode::GetProp(name) => {
@@ -676,50 +704,44 @@ impl Lowerer {
                 self.push(dst);
             }
 
+            // Stack effects below match the VM's exactly; an extra or missing
+            // value desynchronises everything after it.
             OpCode::SetProp(name) => {
+                // [obj, value] -> []
                 let val = self.pop()?;
                 let obj = self.pop()?;
                 self.emit(IrOp::SetProp(obj, name.clone(), val));
-                // Push obj back for chaining
-                self.push(obj);
             }
 
-            OpCode::SetPropComputed => {
-                // For now, just pop the values - the VM handles this
-                let _key = self.pop()?;
-                let _val = self.pop()?;
+            OpCode::SetPropComputed | OpCode::StoreElement => {
+                // [obj, value, key] -> []
+                let key = self.pop()?;
+                let val = self.pop()?;
                 let obj = self.pop()?;
-                self.push(obj);
+                self.emit(IrOp::SetElement(obj, key, val));
             }
 
-            OpCode::GetPropComputed => {
-                // For now, just pop the values and push undefined
-                let _key = self.pop()?;
-                let _obj = self.pop()?;
+            OpCode::GetPropComputed | OpCode::LoadElement => {
+                // [obj, key] -> [obj[key]]
+                let key = self.pop()?;
+                let obj = self.pop()?;
                 let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::GetElement(dst, obj, key));
                 self.push(dst);
             }
 
             // Array operations
-            OpCode::NewArray(_size) => {
+            OpCode::NewArray(size) => {
+                // The VM creates `size` undefined elements, which the
+                // following stores then fill.
                 let dst = self.alloc_value(IrType::Array);
                 self.emit(IrOp::NewArray(dst));
+                if *size > 0 {
+                    let len = self.alloc_value(IrType::Number);
+                    self.emit(IrOp::Const(len, Literal::Number(*size as f64)));
+                    self.emit(IrOp::SetProp(dst, "length".to_string(), len));
+                }
                 self.push(dst);
-            }
-
-            OpCode::LoadElement => {
-                let idx = self.pop()?;
-                let arr = self.pop()?;
-                let dst = self.alloc_value(IrType::Any);
-                self.emit(IrOp::GetElement(dst, arr, idx));
-                self.push(dst);
-            }
-
-            OpCode::StoreElement => {
-                let val = self.pop()?;
-                let idx = self.pop()?;
-                let arr = self.pop()?;
-                self.emit(IrOp::SetElement(arr, idx, val));
             }
 
             // Control flow
@@ -809,32 +831,12 @@ impl Lowerer {
                 self.push(dst);
             }
 
-            OpCode::Construct(argc) => {
-                // Pop arguments
-                let mut args = Vec::with_capacity(*argc);
-                for _ in 0..*argc {
-                    args.push(self.pop()?);
-                }
-                args.reverse();
-
-                // Pop constructor
-                let ctor = self.pop()?;
-
-                // For now, treat construct as a call
-                let dst = self.alloc_value(IrType::Object);
-                self.emit(IrOp::Call(dst, ctor, args));
-                self.push(dst);
+            OpCode::Construct(_) => {
+                return Err(native_unsupported("`new`"));
             }
 
             OpCode::Require => {
-                // Module require: pop path, push module
-                let path = self.pop()?;
-                let dst = self.alloc_value(IrType::Any);
-                // Treat as a global function call for now
-                self.emit(IrOp::LoadGlobal(dst, "require".to_string()));
-                let result = self.alloc_value(IrType::Any);
-                self.emit(IrOp::Call(result, dst, vec![path]));
-                self.push(result);
+                return Err(native_unsupported("`require`"));
             }
 
             OpCode::Print => {
@@ -953,9 +955,7 @@ impl Lowerer {
             JsValue::Null => (Literal::Null, IrType::Any),
             JsValue::Undefined => (Literal::Undefined, IrType::Any),
             JsValue::Object(_) => (Literal::Null, IrType::Object),
-            JsValue::Function { address, .. } => {
-                (Literal::Number(*address as f64), IrType::Function)
-            }
+            JsValue::Function { address, .. } => (Literal::Function(*address), IrType::Function),
             JsValue::NativeFunction(_) => (Literal::Null, IrType::Function),
             JsValue::Accessor(_, _) => (Literal::Null, IrType::Any),
             JsValue::Promise(_) => (Literal::Null, IrType::Any),
@@ -983,29 +983,50 @@ pub struct ExtractedFunction {
 }
 
 /// Lower an entire bytecode module to SSA IR.
+/// Constructs the native backends refuse, whichever function they are in.
+fn native_refusal(op: &OpCode) -> Option<&'static str> {
+    Some(match op {
+        OpCode::Throw | OpCode::SetupTry { .. } | OpCode::PopTry | OpCode::EnterFinally(_) => {
+            "exceptions (`throw`, `try`/`catch`/`finally`)"
+        }
+        OpCode::NewObjectWithProto
+        | OpCode::SetProto
+        | OpCode::LoadSuper
+        | OpCode::CallSuper(_)
+        | OpCode::GetSuperProp(_)
+        | OpCode::GetPrivateProp(_)
+        | OpCode::SetPrivateProp(_) => "classes",
+        OpCode::Construct(_) => "`new`",
+        OpCode::InstanceOf => "`instanceof`",
+        OpCode::NewTarget => "`new.target`",
+        OpCode::ApplyDecorator => "decorators",
+        OpCode::ImportAsync(_)
+        | OpCode::GetExport { .. }
+        | OpCode::ModuleResolutionError { .. } => "modules (`import`)",
+        OpCode::Require => "`require`",
+        OpCode::Await => "`await`",
+        _ => return None,
+    })
+}
+
 pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
     let mut module = IrModule::new();
 
+    // Refuse unsupported constructs up front, so the message names the
+    // construct rather than whatever lowering error it would cause first.
+    if let Some(what) = instructions.iter().find_map(native_refusal) {
+        return Err(native_unsupported(what));
+    }
+
     // Step 1: Extract all function definitions from bytecode
     let extracted_funcs = extract_functions(instructions);
-
-    // Step 1.5: Build a map of variable name -> function address
-    // This is used to pre-initialize function references in extracted functions
-    let mut func_var_addrs: HashMap<String, usize> = HashMap::new();
-    for i in 0..instructions.len().saturating_sub(1) {
-        if let OpCode::Push(JsValue::Function { address, .. }) = &instructions[i]
-            && let OpCode::Let(name) | OpCode::Store(name) = &instructions[i + 1]
-        {
-            func_var_addrs.insert(name.clone(), *address);
-        }
-    }
+    let scopes = Scopes::analyze(instructions, &extracted_funcs);
 
     // Step 2: Lower each extracted function
     for func_info in &extracted_funcs {
         let func_bytecode = &instructions[func_info.address..=func_info.end_address];
         let func_name = format!("func_{}", func_info.address);
 
-        // Lower with parameter info and base address for rebasing jump targets
         // A function that cannot be lowered fails the whole module. Skipping
         // it would also shift the indices recorded in `function_addrs` below,
         // so calls would resolve to the wrong function.
@@ -1014,8 +1035,7 @@ pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
             func_bytecode,
             &func_info.param_names,
             func_info.address,
-            func_info.self_reference_var.as_ref(),
-            &func_var_addrs,
+            scopes.resolver_for(Some(func_info.address)),
         )
         .map_err(|e| {
             let name = func_info
@@ -1028,7 +1048,7 @@ pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
     }
 
     // Step 3: Lower the main code (treating skipped function bodies as jumps)
-    let lowerer = Lowerer::new("main".to_string());
+    let lowerer = Lowerer::new("main".to_string()).with_names(scopes.resolver_for(None));
     let main_func = lowerer.lower(instructions)?;
     module.add_function(main_func);
 
@@ -1037,19 +1057,94 @@ pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
         module.function_addrs.insert(func_info.address, i);
     }
 
-    // Step 4: Detect user-defined main() function
-    // Look for pattern: Push(Function { address: X, ... }) followed by Let("main")
-    for i in 0..instructions.len().saturating_sub(1) {
-        if let OpCode::Push(JsValue::Function { address, .. }) = &instructions[i]
-            && let OpCode::Let(name) = &instructions[i + 1]
-            && name == "main"
-        {
-            module.user_main_addr = Some(*address);
-            break;
+    Ok(module)
+}
+
+/// Which names are local to which function, for `NameResolver`.
+struct Scopes {
+    /// Function start address -> (end address, locals).
+    functions: Vec<(usize, usize, HashSet<String>)>,
+    constant_functions: HashMap<String, usize>,
+}
+
+impl Scopes {
+    fn analyze(instructions: &[OpCode], funcs: &[ExtractedFunction]) -> Self {
+        let ranges: Vec<(usize, usize)> =
+            funcs.iter().map(|f| (f.address, f.end_address)).collect();
+
+        // The innermost function containing instruction `i`, if any.
+        let owner = |i: usize| {
+            ranges
+                .iter()
+                .filter(|(start, end)| *start <= i && i <= *end)
+                .min_by_key(|(start, end)| end - start)
+                .map(|(start, _)| *start)
+        };
+
+        let mut functions = Vec::new();
+        for f in funcs {
+            let mut locals: HashSet<String> = f.param_names.iter().cloned().collect();
+            for i in f.address..=f.end_address.min(instructions.len().saturating_sub(1)) {
+                if let OpCode::Let(name) = &instructions[i]
+                    && owner(i) == Some(f.address)
+                {
+                    locals.insert(name.clone());
+                }
+            }
+            functions.push((f.address, f.end_address, locals));
+        }
+
+        // A name assigned exactly once in the program, by
+        // `Push(Function) ; Let(name)`, always holds that function.
+        let mut assignments: HashMap<&str, usize> = HashMap::new();
+        for op in instructions {
+            if let OpCode::Let(name) | OpCode::Store(name) = op {
+                *assignments.entry(name.as_str()).or_default() += 1;
+            }
+        }
+        let mut constant_functions = HashMap::new();
+        for w in instructions.windows(2) {
+            if let [
+                OpCode::Push(JsValue::Function { address, .. }),
+                OpCode::Let(name),
+            ] = w
+                && assignments.get(name.as_str()) == Some(&1)
+            {
+                constant_functions.insert(name.clone(), *address);
+            }
+        }
+
+        Self {
+            functions,
+            constant_functions,
         }
     }
 
-    Ok(module)
+    /// The resolver for the function starting at `addr`, or for top-level
+    /// code when `addr` is `None`.
+    fn resolver_for(&self, addr: Option<usize>) -> NameResolver {
+        let mut names = NameResolver {
+            program: true,
+            constant_functions: self.constant_functions.clone(),
+            ..Default::default()
+        };
+        let Some(addr) = addr else {
+            return names;
+        };
+        let Some((_, end, locals)) = self.functions.iter().find(|(a, _, _)| *a == addr) else {
+            return names;
+        };
+        names.locals = locals.clone();
+        for (start, other_end, other_locals) in &self.functions {
+            let encloses = *start < addr && end <= other_end;
+            if encloses {
+                names
+                    .enclosing
+                    .extend(other_locals.difference(locals).cloned());
+            }
+        }
+        names
+    }
 }
 
 /// Lower an extracted function with known parameters.
@@ -1058,53 +1153,14 @@ fn lower_extracted_function(
     instructions: &[OpCode],
     param_names: &[String],
     base_addr: usize,
-    self_ref_var: Option<&String>,
-    func_var_addrs: &HashMap<String, usize>,
+    names: NameResolver,
 ) -> Result<IrFunction, LowerError> {
     // Rebase jump targets to be relative to the function start
     let rebased = rebase_jump_targets(instructions, base_addr);
-    let mut lowerer = Lowerer::new_with_params(name.to_string(), param_names);
+    let mut lowerer = Lowerer::new_with_params(name.to_string(), param_names).with_names(names);
 
     for param_name in param_names {
         lowerer.get_or_create_local(param_name);
-    }
-
-    if let Some(var_name) = self_ref_var {
-        let slot = lowerer.get_or_create_local(var_name);
-        let funct_addr_val = lowerer.alloc_value(IrType::Any);
-        let addr_num = base_addr as f64;
-
-        lowerer.emit(IrOp::Const(funct_addr_val, Literal::Number(addr_num)));
-        lowerer.emit(IrOp::StoreLocal(slot, funct_addr_val));
-        lowerer.local_values.insert(slot, funct_addr_val);
-    }
-
-    // Pre-initialize any referenced function variables from outer scope
-    // Scan the bytecode for Load instructions that reference known functions
-    let mut initialized_vars: HashSet<String> = HashSet::new();
-    if let Some(var_name) = self_ref_var {
-        initialized_vars.insert(var_name.clone());
-    }
-    for param_name in param_names {
-        initialized_vars.insert(param_name.clone());
-    }
-
-    for op in &rebased {
-        if let OpCode::Load(var_name) = op
-            && !initialized_vars.contains(var_name)
-            && let Some(&func_addr) = func_var_addrs.get(var_name)
-        {
-            // This variable references an outer function - pre-initialize it
-            let slot = lowerer.get_or_create_local(var_name);
-            let func_addr_val = lowerer.alloc_value(IrType::Function);
-            lowerer.emit(IrOp::Const(
-                func_addr_val,
-                Literal::Number(func_addr as f64),
-            ));
-            lowerer.emit(IrOp::StoreLocal(slot, func_addr_val));
-            lowerer.local_values.insert(slot, func_addr_val);
-            initialized_vars.insert(var_name.clone());
-        }
     }
 
     lowerer.lower(&rebased)
@@ -1146,9 +1202,21 @@ fn extract_functions(instructions: &[OpCode]) -> Vec<ExtractedFunction> {
     let mut functions = Vec::new();
 
     for (i, op) in instructions.iter().enumerate() {
-        if let OpCode::Push(JsValue::Function { address, env }) = op {
-            // Find the end of this function (the Return before the next main code)
-            if let Some(end_addr) = find_function_end(*address, instructions) {
+        let found = match op {
+            OpCode::Push(JsValue::Function { address, env }) => Some((*address, env.is_some())),
+            OpCode::MakeClosure(address) => Some((*address, true)),
+            _ => None,
+        };
+        if let Some((address, has_env)) = found {
+            let address = &address;
+            // The compiler emits `Jump(end)` immediately before every function
+            // body, so the body is exactly `address..end`. Fall back to the
+            // heuristic only if that pattern is missing.
+            let end = match address.checked_sub(1).map(|i| &instructions[i]) {
+                Some(OpCode::Jump(end)) if *end > *address => Some(end - 1),
+                _ => find_function_end(*address, instructions),
+            };
+            if let Some(end_addr) = end {
                 // Detect parameters: consecutive Let instructions at function start
                 let (param_count, param_names) = detect_function_params(*address, instructions);
 
@@ -1170,7 +1238,7 @@ fn extract_functions(instructions: &[OpCode]) -> Vec<ExtractedFunction> {
                 functions.push(ExtractedFunction {
                     address: *address,
                     end_address: end_addr,
-                    has_env: env.is_some(),
+                    has_env,
                     param_count,
                     param_names,
                     self_reference_var: func_var_name,

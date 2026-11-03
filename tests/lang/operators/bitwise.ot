@@ -1,0 +1,5 @@
+// backends: vm jit aot
+console.log(5 & 3, 5 | 3, 5 ^ 3);
+console.log(1 << 4, -16 >> 2, -16 >>> 28);
+console.log(2 ** 10, 7 % 3);
+console.log(typeof 1, typeof "s", typeof true, typeof undefined, typeof null, typeof {});

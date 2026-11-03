@@ -1,0 +1,6 @@
+// backends: vm jit aot
+// #129: `oitec build` segfaulted on an object-allocating loop, and the native
+// heap stopped allocating after 1 MB. Each iteration allocates an object.
+let n = 0;
+for (let i = 0; i < 300000; i++) { let o = { a: i, b: i }; n = n + o.a; }
+console.log(n);

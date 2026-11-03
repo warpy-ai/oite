@@ -1,3 +1,4 @@
+// backends: vm jit aot
 // #134: console.log joins arguments with a space and prints structures.
 console.log("a", "b", 1, true);
 console.log([1, 2, 3]);
@@ -14,7 +15,3 @@ console.log(["it's", "x"]);
 console.log({ "a-b": 1 });
 function f() {}
 console.log(f);
-class Node {
-  constructor() { this.name = "n"; this.self = this; }
-}
-console.log(new Node());

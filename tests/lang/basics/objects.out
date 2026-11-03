@@ -1,0 +1,4 @@
+{ a: 1, b: 'two', c: true, d: null, e: [ 1 ] }
+1 two undefined
+42
+5 5

@@ -1,0 +1,6 @@
+// backends: jit aot
+// Constructs the native backends cannot run yet are refused, never
+// approximated.
+class A {}
+let a = new A();
+console.log("unreachable");

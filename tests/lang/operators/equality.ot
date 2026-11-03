@@ -1,0 +1,15 @@
+// backends: vm jit aot
+// Loose equality. Native code used to compile `==` as `===`.
+console.log(null == undefined, null === undefined);
+console.log(1 == "1", 1 === "1");
+console.log(0 == false, "" == 0);
+console.log(null == 0, undefined == 0);
+console.log(1 != "1", 1 !== "1");
+// Strict equality compares string contents, not identity.
+let a = "ab";
+let b = "a" + "b";
+console.log(a === b, a == b);
+console.log(NaN === NaN, NaN == NaN);
+let o = {};
+let p = {};
+console.log(o === p, o == o);

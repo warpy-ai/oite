@@ -1,0 +1,11 @@
+// backends: vm jit aot
+// Top-level variables are shared with functions.
+let total = 0;
+let label = "count";
+function bump(n) { total = total + n; return total; }
+bump(2);
+bump(3);
+console.log(label, total);
+function readLater() { return late; }
+let late = "set after the function was declared";
+console.log(readLater());

@@ -535,9 +535,9 @@ fn run_jit(filename: &str) {
         }
     };
 
-    println!("=== Bytecode ({} instructions) ===", bytecode.len());
+    eprintln!("=== Bytecode ({} instructions) ===", bytecode.len());
     for (i, op) in bytecode.iter().enumerate() {
-        println!("[{:3}] {:?}", i, op);
+        eprintln!("[{:3}] {:?}", i, op);
     }
 
     // Lower to SSA IR (using lower_module to extract all functions)
@@ -545,10 +545,10 @@ fn run_jit(filename: &str) {
         Ok(mut module) => {
             // Show extracted functions
             if module.functions.len() > 1 {
-                println!("\n=== Extracted Functions ===");
+                eprintln!("\n=== Extracted Functions ===");
                 for (i, func) in module.functions.iter().enumerate() {
                     if func.name != "main" {
-                        println!("  [{}] {} ({} blocks)", i, func.name, func.blocks.len());
+                        eprintln!("  [{}] {} ({} blocks)", i, func.name, func.blocks.len());
                     }
                 }
             }
@@ -559,11 +559,11 @@ fn run_jit(filename: &str) {
             // Run optimizations
             ir::opt::optimize_module(&mut module);
 
-            println!("\n=== SSA IR (optimized) ===");
-            println!("{}", module);
+            eprintln!("\n=== SSA IR (optimized) ===");
+            eprintln!("{}", module);
 
             // JIT compile
-            println!("\n=== JIT Compilation ===");
+            eprintln!("\n=== JIT Compilation ===");
             let config = BackendConfig::default();
             let mut runtime = match JitRuntime::new(&config) {
                 Ok(rt) => rt,
@@ -575,23 +575,24 @@ fn run_jit(filename: &str) {
 
             match runtime.compile(&module) {
                 Ok(()) => {
-                    println!("JIT compilation successful!");
+                    eprintln!("JIT compilation successful!");
 
                     // Show compiled functions
                     let funcs = runtime.get_all_funcs();
-                    println!("Compiled {} functions:", funcs.len());
+                    eprintln!("Compiled {} functions:", funcs.len());
                     for name in funcs.keys() {
-                        println!("  - {}", name);
+                        eprintln!("  - {}", name);
                     }
 
                     // Try to call main
-                    println!("\n=== Execution ===");
+                    eprintln!("\n=== Execution ===");
                     match runtime.call_main() {
                         Ok(result) => {
-                            println!("Result: {:?}", result);
+                            eprintln!("Result: {:?}", result);
                         }
                         Err(e) => {
                             eprintln!("Execution failed: {}", e);
+                            std::process::exit(1);
                         }
                     }
                 }

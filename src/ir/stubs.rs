@@ -189,6 +189,9 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         IrOp::GtEq(_, _, _) => CompileStrategy::Inline(InlineOp::FCmpGe),
         IrOp::EqStrict(_, _, _) => CompileStrategy::StubCall(stubs::EQ_STRICT),
         IrOp::NeStrict(_, _, _) => CompileStrategy::StubCall(stubs::EQ_STRICT), // Negate result
+        IrOp::EqLoose(_, _, _) | IrOp::NeLoose(_, _, _) => {
+            CompileStrategy::StubCall(stubs::EQ_STRICT)
+        }
 
         // Logical operations
         IrOp::Not(_, _) => CompileStrategy::Inline(InlineOp::BoolNot),
