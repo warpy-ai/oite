@@ -8,15 +8,20 @@ High-performance systems language with **TypeScript syntax** compiling to **nati
 
 ## Quick Status
 
-**Core language complete.** Library functionality (HTTP, TLS, fs, etc.) will be developed in the **Rolls** ecosystem (separate repository).
+**The VM runs the core language; the native backends and several advertised
+features are incomplete.** The per-feature matrix is in
+[docs/docs/development-status.md](docs/docs/development-status.md), and the
+gap analysis is tracked in [#136](https://github.com/warpy-ai/oite/issues/136). Sections below describe design and intent;
+where they say ✅ without a golden test behind them, trust the status page.
 
-| Component                                 | Status      |
-| ----------------------------------------- | ----------- |
-| Runtime kernel (NaN-boxing, allocator)    | ✅ Complete |
-| SSA IR + optimizations                    | ✅ Complete |
-| Native backends (Cranelift JIT, LLVM AOT) | ✅ Complete |
-| Language features                         | ✅ Complete |
-| Self-hosting compiler                     | ✅ Complete |
+| Component                                 | Status                                              |
+| ----------------------------------------- | --------------------------------------------------- |
+| Runtime kernel (NaN-boxing, allocator)    | 🟡 Works; no memory is ever freed ([#123](https://github.com/warpy-ai/oite/issues/123))            |
+| SSA IR + optimizations                    | 🟡 Works for numeric code                           |
+| Native backends (Cranelift JIT, LLVM AOT) | 🟡 Numeric code; native runtime stubbed ([#127](https://github.com/warpy-ai/oite/issues/127))      |
+| Language features                         | 🟡 VM: most of ES; see the status page              |
+| Static type checking                      | ❌ Annotations parsed, not checked ([#124](https://github.com/warpy-ai/oite/issues/124))           |
+| Self-hosting compiler                     | 🟡 Cannot compile its own source yet ([#131](https://github.com/warpy-ai/oite/issues/131))         |
 
 ---
 

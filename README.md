@@ -7,8 +7,8 @@
   <br/>
 
   <img src="https://img.shields.io/badge/rust-1.70+-orange.svg" alt="Rust 1.70+"/>
-  <img src="https://img.shields.io/badge/tests-113%20passing-brightgreen.svg" alt="Tests"/>
-  <img src="https://img.shields.io/badge/self--hosting-complete-success.svg" alt="Self-Hosting"/>
+  <img src="https://img.shields.io/badge/status-pre--alpha-orange.svg" alt="Status: pre-alpha"/>
+  <img src="https://img.shields.io/badge/self--hosting-partial-yellow.svg" alt="Self-Hosting: partial"/>
   <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"/>
 </div>
 
@@ -34,6 +34,12 @@ console.log(fib(35)); // Compiled to native code!
 ```
 
 ### Key Features
+
+> **Status:** pre-alpha. The list below is the design. Today the VM runs most of
+> it; the JIT and AOT backends handle numeric code only, type annotations are
+> not checked yet, and memory is never freed. See
+> [Development Status](docs/docs/development-status.md) for what runs on which
+> backend, and [#136](https://github.com/warpy-ai/oite/issues/136) for the roadmap.
 
 - **Native Execution** — SSA-based IR compiled to native code via Cranelift/LLVM
 - **Link-Time Optimization** — ThinLTO and Full LTO for maximum performance

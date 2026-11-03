@@ -31,14 +31,18 @@ See the [Getting Started](/getting-started) guide for build instructions.
 Run the test suite:
 
 ```bash
-# Run all tests
+# Run all tests (unit tests + golden language tests)
 cargo test --release
 
-# Run specific IR tests
-cargo test --release ir::
+# Golden language tests only (tests/lang/**/*.ot with .out/.err expectations)
+cargo test --release --test golden
 
-# Output: 94 tests passed
+# Specific IR tests
+cargo test --release ir::
 ```
+
+Read the [contribution rules](https://github.com/warpy-ai/oite/blob/master/CONTRIBUTING.md)
+before changing the compiler, the IR or a backend.
 
 ## Code Style
 
