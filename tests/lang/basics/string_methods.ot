@@ -1,0 +1,16 @@
+// backends: vm jit aot
+// String methods (one implementation shared by every backend).
+let s = "  Hello, World  ";
+let t = s.trim();
+console.log(t, t.length);
+console.log(s.trimStart() + "|", "|" + s.trimEnd());
+console.log(t.toUpperCase(), t.toLowerCase());
+console.log(t.charAt(0), t.charAt(99) === "", t.charCodeAt(1), t.at(-1));
+console.log(t.slice(7), t.slice(-5, -1), t.slice(3, 1) === "");
+console.log(t.substring(5, 0), t.substring(7));
+console.log(t.indexOf("o"), t.indexOf("o", 5), t.indexOf("z"), t.lastIndexOf("o"));
+console.log(t.includes("World"), t.startsWith("Hell"), t.endsWith("ld"), t.startsWith("World", 7));
+console.log("a,b,,c".split(","), "abc".split(""), "a-b-c".split("-", 2), "abc".split());
+console.log("aXbXc".replace("X", "_"), "aXbXc".replaceAll("X", "_"));
+console.log("ab".repeat(3), "x".concat("y", 1, true));
+console.log("5".padStart(3, "0"), "5".padEnd(3, "*"), "abc".padStart(2));

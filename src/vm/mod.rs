@@ -818,6 +818,47 @@ impl VM {
         panic!("Uncaught exception: {:?}", exception);
     }
 
+    /// Pop `n` call arguments, in call order.
+    fn pop_args(&mut self, n: usize) -> Vec<JsValue> {
+        let mut args: Vec<JsValue> = (0..n)
+            .map(|_| self.stack.pop().unwrap_or(JsValue::Undefined))
+            .collect();
+        args.reverse();
+        args
+    }
+
+    /// Push a shared built-in method's result, or throw its error. `None`
+    /// means there is no such method.
+    fn finish_builtin(
+        &mut self,
+        result: Option<Result<crate::runtime::builtins::Outcome<JsValue>, String>>,
+        receiver: JsValue,
+        name: &str,
+    ) -> ExecResult {
+        use crate::runtime::builtins::Outcome;
+        match result {
+            Some(Ok(Outcome::Value(v))) => self.stack.push(v),
+            Some(Ok(Outcome::This)) => self.stack.push(receiver),
+            Some(Ok(Outcome::NewArray(elems))) => {
+                let ptr = self.heap.len();
+                self.heap.push(HeapObject {
+                    data: HeapData::Array(elems),
+                });
+                self.stack.push(JsValue::Object(ptr));
+            }
+            Some(Err(msg)) => return self.throw_exception(JsValue::String(msg)),
+            None => {
+                let shown = crate::stdlib::inspect(self, &receiver);
+                return self.throw_exception(JsValue::String(format!(
+                    "TypeError: {}.{} is not a function",
+                    shown, name
+                )));
+            }
+        }
+        self.ip += 1;
+        ExecResult::Continue
+    }
+
     /// Number of parameters of the bytecode function at `address`: the
     /// `Let`s that open its body bind them, one per parameter.
     fn param_count(&self, address: usize) -> usize {
@@ -2315,840 +2356,61 @@ impl VM {
                 match reciever {
                     // -- String methods --
                     // Core string methods needed for bootstrap compiler
+                    // String methods are shared with native code
+                    // (`runtime::builtins`).
                     JsValue::String(s) => {
-                        match name.as_str() {
-                            "length" => {
-                                // Pop any args (shouldn't be any for length property)
-                                for _ in 0..arg_count {
-                                    self.stack.pop();
-                                }
-                                // O(1) for ASCII strings
-                                self.stack.push(JsValue::Number(s.len() as f64));
-                            }
-                            "charCodeAt" => {
-                                // Get char code at index
-                                let index = if arg_count > 0 {
-                                    match self.stack.pop() {
-                                        Some(JsValue::Number(n)) => n as usize,
-                                        _ => 0,
-                                    }
-                                } else {
-                                    0
-                                };
-                                // Pop remaining args if any
-                                for _ in 1..arg_count {
-                                    self.stack.pop();
-                                }
-                                // O(1) for ASCII strings (common case)
-                                let bytes = s.as_bytes();
-                                let result = if index < bytes.len() {
-                                    let b = bytes[index];
-                                    if b < 128 {
-                                        // ASCII: O(1) fast path
-                                        JsValue::Number(b as f64)
-                                    } else {
-                                        // Non-ASCII: fallback to chars().nth()
-                                        s.chars()
-                                            .nth(index)
-                                            .map(|c| JsValue::Number(c as u32 as f64))
-                                            .unwrap_or(JsValue::Number(f64::NAN))
-                                    }
-                                } else {
-                                    JsValue::Number(f64::NAN)
-                                };
-                                self.stack.push(result);
-                            }
-                            "slice" => {
-                                // Get start and end indices
-                                let mut args = Vec::with_capacity(arg_count);
-                                for _ in 0..arg_count {
-                                    args.push(self.stack.pop().expect("Missing argument"));
-                                }
-                                args.reverse();
-
-                                // O(1) length for ASCII strings
-                                let len = s.len() as i64;
-                                let start = args
-                                    .first()
-                                    .and_then(|v| match v {
-                                        JsValue::Number(n) => {
-                                            let n = *n as i64;
-                                            if n < 0 {
-                                                Some((len + n).max(0) as usize)
-                                            } else {
-                                                Some(n as usize)
-                                            }
-                                        }
-                                        _ => None,
-                                    })
-                                    .unwrap_or(0);
-                                let end = args
-                                    .get(1)
-                                    .and_then(|v| match v {
-                                        JsValue::Number(n) => {
-                                            let n = *n as i64;
-                                            if n < 0 {
-                                                Some((len + n).max(0) as usize)
-                                            } else {
-                                                Some(n as usize)
-                                            }
-                                        }
-                                        _ => None,
-                                    })
-                                    .unwrap_or(len as usize);
-
-                                // For ASCII strings, use byte slicing (O(1) + copy)
-                                let bytes = s.as_bytes();
-                                let is_ascii = bytes.iter().all(|&b| b < 128);
-                                let result = if is_ascii && end <= bytes.len() {
-                                    let start = start.min(bytes.len());
-                                    let end = end.min(bytes.len());
-                                    // Safe: we verified all bytes are ASCII
-                                    unsafe {
-                                        std::str::from_utf8_unchecked(&bytes[start..end.max(start)])
-                                            .to_string()
-                                    }
-                                } else {
-                                    // Non-ASCII fallback
-                                    s.chars()
-                                        .skip(start)
-                                        .take(end.saturating_sub(start))
-                                        .collect()
-                                };
-                                self.stack.push(JsValue::String(result));
-                            }
-                            "indexOf" => {
-                                // Pop args in reverse order (last arg on top of stack)
-                                let start_index = if arg_count > 1 {
-                                    match self.stack.pop() {
-                                        Some(JsValue::Number(n)) if n >= 0.0 => n as usize,
-                                        _ => 0,
-                                    }
-                                } else {
-                                    0
-                                };
-                                let search = if arg_count > 0 {
-                                    match self.stack.pop() {
-                                        Some(JsValue::String(ss)) => ss,
-                                        Some(JsValue::Number(n)) => n.to_string(),
-                                        _ => String::new(),
-                                    }
-                                } else {
-                                    String::new()
-                                };
-                                for _ in 2..arg_count {
-                                    self.stack.pop();
-                                }
-                                let result = s
-                                    .get(start_index..)
-                                    .and_then(|sub| sub.find(&search))
-                                    .map(|i| (i + start_index) as f64)
-                                    .unwrap_or(-1.0);
-                                self.stack.push(JsValue::Number(result));
-                            }
-                            "split" => {
-                                // Split string by separator
-                                let separator = if arg_count > 0 {
-                                    match self.stack.pop() {
-                                        Some(JsValue::String(sep)) => sep,
-                                        Some(JsValue::Number(n)) => n.to_string(),
-                                        _ => String::new(),
-                                    }
-                                } else {
-                                    String::new()
-                                };
-                                // Pop remaining args
-                                for _ in 1..arg_count {
-                                    self.stack.pop();
-                                }
-                                let parts: Vec<JsValue> = if separator.is_empty() {
-                                    // Empty separator: split into characters
-                                    s.chars().map(|c| JsValue::String(c.to_string())).collect()
-                                } else {
-                                    s.split(&separator)
-                                        .map(|part| JsValue::String(part.to_string()))
-                                        .collect()
-                                };
-                                let arr_ptr = self.heap.len();
-                                self.heap.push(HeapObject {
-                                    data: HeapData::Array(parts),
-                                });
-                                self.stack.push(JsValue::Object(arr_ptr));
-                            }
-                            "charAt" => {
-                                // Get character at index
-                                let index = if arg_count > 0 {
-                                    match self.stack.pop() {
-                                        Some(JsValue::Number(n)) => n as usize,
-                                        _ => 0,
-                                    }
-                                } else {
-                                    0
-                                };
-                                // Pop remaining args
-                                for _ in 1..arg_count {
-                                    self.stack.pop();
-                                }
-                                let result = s
-                                    .chars()
-                                    .nth(index)
-                                    .map(|c| JsValue::String(c.to_string()))
-                                    .unwrap_or(JsValue::String(String::new()));
-                                self.stack.push(result);
-                            }
-                            "substring" => {
-                                // Get substring from start to end
-                                let mut args = Vec::with_capacity(arg_count);
-                                for _ in 0..arg_count {
-                                    args.push(self.stack.pop().expect("Missing argument"));
-                                }
-                                args.reverse();
-
-                                let len = s.chars().count();
-                                let start = args
-                                    .first()
-                                    .and_then(|v| match v {
-                                        JsValue::Number(n) => Some((*n as usize).min(len)),
-                                        _ => None,
-                                    })
-                                    .unwrap_or(0);
-                                let end = args
-                                    .get(1)
-                                    .and_then(|v| match v {
-                                        JsValue::Number(n) => Some((*n as usize).min(len)),
-                                        _ => None,
-                                    })
-                                    .unwrap_or(len);
-
-                                // substring swaps start/end if start > end
-                                let (actual_start, actual_end) = if start > end {
-                                    (end, start)
-                                } else {
-                                    (start, end)
-                                };
-
-                                let result: String = s
-                                    .chars()
-                                    .skip(actual_start)
-                                    .take(actual_end - actual_start)
-                                    .collect();
-                                self.stack.push(JsValue::String(result));
-                            }
-                            "trim" => {
-                                for _ in 0..arg_count {
-                                    self.stack.pop();
-                                }
-                                self.stack.push(JsValue::String(s.trim().to_string()));
-                            }
-                            "trimStart" | "trimLeft" => {
-                                for _ in 0..arg_count {
-                                    self.stack.pop();
-                                }
-                                self.stack.push(JsValue::String(s.trim_start().to_string()));
-                            }
-                            "trimEnd" | "trimRight" => {
-                                for _ in 0..arg_count {
-                                    self.stack.pop();
-                                }
-                                self.stack.push(JsValue::String(s.trim_end().to_string()));
-                            }
-                            "toLowerCase" => {
-                                for _ in 0..arg_count {
-                                    self.stack.pop();
-                                }
-                                self.stack.push(JsValue::String(s.to_lowercase()));
-                            }
-                            "toUpperCase" => {
-                                for _ in 0..arg_count {
-                                    self.stack.pop();
-                                }
-                                self.stack.push(JsValue::String(s.to_uppercase()));
-                            }
-                            "startsWith" => {
-                                let prefix = if arg_count > 0 {
-                                    match self.stack.pop() {
-                                        Some(JsValue::String(ss)) => ss,
-                                        _ => String::new(),
-                                    }
-                                } else {
-                                    String::new()
-                                };
-                                for _ in 1..arg_count {
-                                    self.stack.pop();
-                                }
-                                self.stack.push(JsValue::Boolean(s.starts_with(&prefix)));
-                            }
-                            "endsWith" => {
-                                let suffix = if arg_count > 0 {
-                                    match self.stack.pop() {
-                                        Some(JsValue::String(ss)) => ss,
-                                        _ => String::new(),
-                                    }
-                                } else {
-                                    String::new()
-                                };
-                                for _ in 1..arg_count {
-                                    self.stack.pop();
-                                }
-                                self.stack.push(JsValue::Boolean(s.ends_with(&suffix)));
-                            }
-                            "includes" => {
-                                let search = if arg_count > 0 {
-                                    match self.stack.pop() {
-                                        Some(JsValue::String(ss)) => ss,
-                                        _ => String::new(),
-                                    }
-                                } else {
-                                    String::new()
-                                };
-                                for _ in 1..arg_count {
-                                    self.stack.pop();
-                                }
-                                self.stack.push(JsValue::Boolean(s.contains(&search)));
-                            }
-                            "replace" => {
-                                let mut args = Vec::with_capacity(arg_count);
-                                for _ in 0..arg_count {
-                                    args.push(self.stack.pop().expect("Missing argument"));
-                                }
-                                args.reverse();
-
-                                let search = args
-                                    .first()
-                                    .and_then(|v| match v {
-                                        JsValue::String(ss) => Some(ss.clone()),
-                                        _ => None,
-                                    })
-                                    .unwrap_or_default();
-                                let replacement = args
-                                    .get(1)
-                                    .and_then(|v| match v {
-                                        JsValue::String(ss) => Some(ss.clone()),
-                                        _ => None,
-                                    })
-                                    .unwrap_or_default();
-
-                                // Only replace first occurrence (JS behavior)
-                                let result = s.replacen(&search, &replacement, 1);
-                                self.stack.push(JsValue::String(result));
-                            }
-                            "repeat" => {
-                                let count = if arg_count > 0 {
-                                    match self.stack.pop() {
-                                        Some(JsValue::Number(n)) => n as usize,
-                                        _ => 0,
-                                    }
-                                } else {
-                                    0
-                                };
-                                for _ in 1..arg_count {
-                                    self.stack.pop();
-                                }
-                                self.stack.push(JsValue::String(s.repeat(count)));
-                            }
-                            "concat" => {
-                                let mut result = s.clone();
-                                for _ in 0..arg_count {
-                                    if let Some(JsValue::String(part)) = self.stack.pop() {
-                                        result.push_str(&part);
-                                    }
-                                }
-                                self.stack.push(JsValue::String(result));
-                            }
-                            "lastIndexOf" => {
-                                // Pop args in reverse order (last arg on top of stack)
-                                let end_index = if arg_count > 1 {
-                                    match self.stack.pop() {
-                                        Some(JsValue::Number(n)) if n >= 0.0 => Some(n as usize),
-                                        _ => None,
-                                    }
-                                } else {
-                                    None
-                                };
-                                let search = if arg_count > 0 {
-                                    match self.stack.pop() {
-                                        Some(JsValue::String(ss)) => ss,
-                                        Some(JsValue::Number(n)) => n.to_string(),
-                                        _ => String::new(),
-                                    }
-                                } else {
-                                    String::new()
-                                };
-                                for _ in 2..arg_count {
-                                    self.stack.pop();
-                                }
-                                let result = match end_index {
-                                    Some(end) => {
-                                        let end = (end + search.len()).min(s.len());
-                                        s.get(..end)
-                                            .and_then(|sub| sub.rfind(&search))
-                                            .map(|i| i as f64)
-                                            .unwrap_or(-1.0)
-                                    }
-                                    None => s.rfind(&search).map(|i| i as f64).unwrap_or(-1.0),
-                                };
-                                self.stack.push(JsValue::Number(result));
-                            }
-                            "padStart" => {
-                                let mut args = Vec::with_capacity(arg_count);
-                                for _ in 0..arg_count {
-                                    args.push(self.stack.pop().expect("Missing argument"));
-                                }
-                                args.reverse();
-
-                                let target_len = args
-                                    .first()
-                                    .and_then(|v| match v {
-                                        JsValue::Number(n) => Some(*n as usize),
-                                        _ => None,
-                                    })
-                                    .unwrap_or(0);
-                                let pad_str = args
-                                    .get(1)
-                                    .and_then(|v| match v {
-                                        JsValue::String(ss) => Some(ss.clone()),
-                                        _ => None,
-                                    })
-                                    .unwrap_or_else(|| " ".to_string());
-
-                                let current_len = s.chars().count();
-                                if current_len >= target_len || pad_str.is_empty() {
-                                    self.stack.push(JsValue::String(s.clone()));
-                                } else {
-                                    let pad_len = target_len - current_len;
-                                    let mut padding = String::new();
-                                    while padding.chars().count() < pad_len {
-                                        padding.push_str(&pad_str);
-                                    }
-                                    let padding: String = padding.chars().take(pad_len).collect();
-                                    self.stack.push(JsValue::String(padding + s.as_str()));
-                                }
-                            }
-                            "padEnd" => {
-                                let mut args = Vec::with_capacity(arg_count);
-                                for _ in 0..arg_count {
-                                    args.push(self.stack.pop().expect("Missing argument"));
-                                }
-                                args.reverse();
-
-                                let target_len = args
-                                    .first()
-                                    .and_then(|v| match v {
-                                        JsValue::Number(n) => Some(*n as usize),
-                                        _ => None,
-                                    })
-                                    .unwrap_or(0);
-                                let pad_str = args
-                                    .get(1)
-                                    .and_then(|v| match v {
-                                        JsValue::String(ss) => Some(ss.clone()),
-                                        _ => None,
-                                    })
-                                    .unwrap_or_else(|| " ".to_string());
-
-                                let current_len = s.chars().count();
-                                if current_len >= target_len || pad_str.is_empty() {
-                                    self.stack.push(JsValue::String(s.clone()));
-                                } else {
-                                    let pad_len = target_len - current_len;
-                                    let mut padding = String::new();
-                                    while padding.chars().count() < pad_len {
-                                        padding.push_str(&pad_str);
-                                    }
-                                    let padding: String = padding.chars().take(pad_len).collect();
-                                    self.stack
-                                        .push(JsValue::String(s.clone() + padding.as_str()));
-                                }
-                            }
-                            _ => {
-                                // Unsupported string method - pop args and return undefined
-                                for _ in 0..arg_count {
-                                    self.stack.pop();
-                                }
-                                self.stack.push(JsValue::Undefined);
-                            }
-                        }
-                        self.ip += 1;
-                        return ExecResult::Continue;
+                        let args = self.pop_args(arg_count);
+                        let result = crate::runtime::builtins::string_method(
+                            &VmHost(&self.heap),
+                            &s,
+                            &name,
+                            &args,
+                        );
+                        let receiver = JsValue::String(s.clone());
+                        return self.finish_builtin(result, receiver, &name);
                     }
                     JsValue::Object(ptr) => {
-                        // Check if this is an array and handle array methods
+                        // Array methods are shared with native code
+                        // (`runtime::builtins`). `push` and `pop` stay in
+                        // place; the rest work on a copy that is written back.
                         if let Some(HeapObject {
-                            data: HeapData::Array(arr),
-                        }) = self.heap.get_mut(ptr)
+                            data: HeapData::Array(_),
+                        }) = self.heap.get(ptr)
                         {
-                            // Handle splice inline since it needs heap access
-                            if name == "splice" {
-                                let mut args = Vec::with_capacity(arg_count);
-                                for _ in 0..arg_count {
-                                    args.push(self.stack.pop().expect("Missing argument"));
-                                }
-                                args.reverse();
-
-                                let start = args
-                                    .first()
-                                    .and_then(|v| match v {
-                                        JsValue::Number(n) => Some(*n as usize),
-                                        _ => None,
-                                    })
-                                    .unwrap_or(0);
-                                let delete_count = args
-                                    .get(1)
-                                    .and_then(|v| match v {
-                                        JsValue::Number(n) => Some(*n as usize),
-                                        _ => None,
-                                    })
-                                    .unwrap_or(0);
-                                let items_to_insert: Vec<JsValue> =
-                                    args.into_iter().skip(2).collect();
-
-                                let deleted: Vec<JsValue> = if start < arr.len() {
-                                    let end = (start + delete_count).min(arr.len());
-                                    arr.drain(start..end).collect()
-                                } else {
-                                    Vec::new()
-                                };
-
-                                for (i, item) in items_to_insert.into_iter().enumerate() {
-                                    arr.insert(start + i, item);
-                                }
-
-                                let deleted_ptr = self.heap.len();
-                                self.heap.push(HeapObject {
-                                    data: HeapData::Array(deleted),
-                                });
-                                self.stack.push(JsValue::Object(deleted_ptr));
-                                self.ip += 1;
-                                return ExecResult::Continue;
-                            }
-
-                            // For other array methods, provide basic support
-                            // Note: Full array method support moved to @rolls/array
+                            let args = self.pop_args(arg_count);
+                            let Some(HeapObject {
+                                data: HeapData::Array(arr),
+                            }) = self.heap.get_mut(ptr)
+                            else {
+                                unreachable!()
+                            };
                             match name.as_str() {
-                                "length" => {
-                                    for _ in 0..arg_count {
-                                        self.stack.pop();
-                                    }
-                                    self.stack.push(JsValue::Number(arr.len() as f64));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
                                 "push" => {
-                                    let mut args = Vec::with_capacity(arg_count);
-                                    for _ in 0..arg_count {
-                                        args.push(self.stack.pop().expect("Missing argument"));
-                                    }
-                                    args.reverse();
-                                    for arg in args {
-                                        arr.push(arg);
-                                    }
-                                    self.stack.push(JsValue::Number(arr.len() as f64));
+                                    arr.extend(args);
+                                    let n = arr.len();
+                                    self.stack.push(JsValue::Number(n as f64));
                                     self.ip += 1;
                                     return ExecResult::Continue;
                                 }
                                 "pop" => {
-                                    for _ in 0..arg_count {
-                                        self.stack.pop();
-                                    }
-                                    let result = arr.pop().unwrap_or(JsValue::Undefined);
-                                    self.stack.push(result);
+                                    let v = arr.pop().unwrap_or(JsValue::Undefined);
+                                    self.stack.push(v);
                                     self.ip += 1;
                                     return ExecResult::Continue;
                                 }
-                                "shift" => {
-                                    for _ in 0..arg_count {
-                                        self.stack.pop();
-                                    }
-                                    let result = if !arr.is_empty() {
-                                        arr.remove(0)
-                                    } else {
-                                        JsValue::Undefined
-                                    };
-                                    self.stack.push(result);
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "unshift" => {
-                                    let mut args = Vec::with_capacity(arg_count);
-                                    for _ in 0..arg_count {
-                                        args.push(self.stack.pop().expect("Missing argument"));
-                                    }
-                                    args.reverse();
-                                    for (i, arg) in args.into_iter().enumerate() {
-                                        arr.insert(i, arg);
-                                    }
-                                    self.stack.push(JsValue::Number(arr.len() as f64));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "join" => {
-                                    // Get separator (default to ",")
-                                    let separator = if arg_count > 0 {
-                                        match self.stack.pop() {
-                                            Some(JsValue::String(s)) => s,
-                                            Some(JsValue::Number(n)) => n.to_string(),
-                                            _ => ",".to_string(),
-                                        }
-                                    } else {
-                                        ",".to_string()
-                                    };
-                                    // Pop any remaining args
-                                    for _ in 1..arg_count {
-                                        self.stack.pop();
-                                    }
-                                    // Join array elements into string
-                                    let parts: Vec<String> = arr
-                                        .iter()
-                                        .map(|v| match v {
-                                            JsValue::String(s) => s.clone(),
-                                            JsValue::Number(n) => {
-                                                crate::stdlib::number_to_string(n)
-                                            }
-                                            JsValue::Boolean(b) => b.to_string(),
-                                            JsValue::Null => "null".to_string(),
-                                            JsValue::Undefined => "undefined".to_string(),
-                                            _ => "".to_string(),
-                                        })
-                                        .collect();
-                                    self.stack.push(JsValue::String(parts.join(&separator)));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "indexOf" => {
-                                    // Pop args in reverse order (last arg on top of stack)
-                                    let start_index = if arg_count > 1 {
-                                        match self.stack.pop() {
-                                            Some(JsValue::Number(n)) if n >= 0.0 => n as usize,
-                                            _ => 0,
-                                        }
-                                    } else {
-                                        0
-                                    };
-                                    let search = if arg_count > 0 {
-                                        self.stack.pop().unwrap_or(JsValue::Undefined)
-                                    } else {
-                                        JsValue::Undefined
-                                    };
-                                    for _ in 2..arg_count {
-                                        self.stack.pop();
-                                    }
-                                    let search_slice = if start_index < arr.len() {
-                                        &arr[start_index..]
-                                    } else {
-                                        &[] as &[JsValue]
-                                    };
-                                    let result =
-                                        search_slice.iter().position(|v| match (v, &search) {
-                                            (JsValue::Number(a), JsValue::Number(b)) => a == b,
-                                            (JsValue::String(a), JsValue::String(b)) => a == b,
-                                            (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
-                                            (JsValue::Null, JsValue::Null) => true,
-                                            (JsValue::Undefined, JsValue::Undefined) => true,
-                                            (JsValue::Object(a), JsValue::Object(b)) => a == b,
-                                            _ => false,
-                                        });
-                                    self.stack.push(JsValue::Number(
-                                        result.map(|i| (i + start_index) as f64).unwrap_or(-1.0),
-                                    ));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "lastIndexOf" => {
-                                    // Pop args in reverse order (last arg on top of stack)
-                                    let from_index = if arg_count > 1 {
-                                        match self.stack.pop() {
-                                            Some(JsValue::Number(n)) if n >= 0.0 => {
-                                                Some(n as usize)
-                                            }
-                                            _ => None,
-                                        }
-                                    } else {
-                                        None
-                                    };
-                                    let search = if arg_count > 0 {
-                                        self.stack.pop().unwrap_or(JsValue::Undefined)
-                                    } else {
-                                        JsValue::Undefined
-                                    };
-                                    for _ in 2..arg_count {
-                                        self.stack.pop();
-                                    }
-                                    let end = match from_index {
-                                        Some(fi) => (fi + 1).min(arr.len()),
-                                        None => arr.len(),
-                                    };
-                                    let result =
-                                        arr[..end].iter().rposition(|v| match (v, &search) {
-                                            (JsValue::Number(a), JsValue::Number(b)) => a == b,
-                                            (JsValue::String(a), JsValue::String(b)) => a == b,
-                                            (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
-                                            (JsValue::Null, JsValue::Null) => true,
-                                            (JsValue::Undefined, JsValue::Undefined) => true,
-                                            (JsValue::Object(a), JsValue::Object(b)) => a == b,
-                                            _ => false,
-                                        });
-                                    self.stack.push(JsValue::Number(
-                                        result.map(|i| i as f64).unwrap_or(-1.0),
-                                    ));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "includes" => {
-                                    let search = if arg_count > 0 {
-                                        self.stack.pop().unwrap_or(JsValue::Undefined)
-                                    } else {
-                                        JsValue::Undefined
-                                    };
-                                    for _ in 1..arg_count {
-                                        self.stack.pop();
-                                    }
-                                    let found = arr.iter().any(|v| match (v, &search) {
-                                        (JsValue::Number(a), JsValue::Number(b)) => a == b,
-                                        (JsValue::String(a), JsValue::String(b)) => a == b,
-                                        (JsValue::Boolean(a), JsValue::Boolean(b)) => a == b,
-                                        (JsValue::Null, JsValue::Null) => true,
-                                        (JsValue::Undefined, JsValue::Undefined) => true,
-                                        (JsValue::Object(a), JsValue::Object(b)) => a == b,
-                                        _ => false,
-                                    });
-                                    self.stack.push(JsValue::Boolean(found));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "slice" => {
-                                    let mut args = Vec::with_capacity(arg_count);
-                                    for _ in 0..arg_count {
-                                        args.push(self.stack.pop().expect("Missing argument"));
-                                    }
-                                    args.reverse();
-
-                                    let len = arr.len() as i64;
-                                    let start = args
-                                        .first()
-                                        .and_then(|v| match v {
-                                            JsValue::Number(n) => {
-                                                let n = *n as i64;
-                                                if n < 0 {
-                                                    Some((len + n).max(0) as usize)
-                                                } else {
-                                                    Some((n as usize).min(len as usize))
-                                                }
-                                            }
-                                            _ => None,
-                                        })
-                                        .unwrap_or(0);
-                                    let end = args
-                                        .get(1)
-                                        .and_then(|v| match v {
-                                            JsValue::Number(n) => {
-                                                let n = *n as i64;
-                                                if n < 0 {
-                                                    Some((len + n).max(0) as usize)
-                                                } else {
-                                                    Some((n as usize).min(len as usize))
-                                                }
-                                            }
-                                            _ => None,
-                                        })
-                                        .unwrap_or(len as usize);
-
-                                    let sliced: Vec<JsValue> = if start < end && start < arr.len() {
-                                        arr[start..end.min(arr.len())].to_vec()
-                                    } else {
-                                        Vec::new()
-                                    };
-                                    let arr_ptr = self.heap.len();
-                                    self.heap.push(HeapObject {
-                                        data: HeapData::Array(sliced),
-                                    });
-                                    self.stack.push(JsValue::Object(arr_ptr));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "concat" => {
-                                    let mut result = arr.clone();
-                                    for _ in 0..arg_count {
-                                        let arg = self.stack.pop().unwrap_or(JsValue::Undefined);
-                                        if let JsValue::Object(other_ptr) = arg {
-                                            if let Some(HeapObject {
-                                                data: HeapData::Array(other_arr),
-                                            }) = self.heap.get(other_ptr)
-                                            {
-                                                result.extend(other_arr.clone());
-                                            } else {
-                                                result.push(arg);
-                                            }
-                                        } else {
-                                            result.push(arg);
-                                        }
-                                    }
-                                    let arr_ptr = self.heap.len();
-                                    self.heap.push(HeapObject {
-                                        data: HeapData::Array(result),
-                                    });
-                                    self.stack.push(JsValue::Object(arr_ptr));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "reverse" => {
-                                    for _ in 0..arg_count {
-                                        self.stack.pop();
-                                    }
-                                    arr.reverse();
-                                    self.stack.push(JsValue::Object(ptr));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "fill" => {
-                                    let value = if arg_count > 0 {
-                                        self.stack.pop().unwrap_or(JsValue::Undefined)
-                                    } else {
-                                        JsValue::Undefined
-                                    };
-                                    for _ in 1..arg_count {
-                                        self.stack.pop();
-                                    }
-                                    for elem in arr.iter_mut() {
-                                        *elem = value.clone();
-                                    }
-                                    self.stack.push(JsValue::Object(ptr));
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                "at" => {
-                                    let index = if arg_count > 0 {
-                                        match self.stack.pop() {
-                                            Some(JsValue::Number(n)) => n as i64,
-                                            _ => 0,
-                                        }
-                                    } else {
-                                        0
-                                    };
-                                    for _ in 1..arg_count {
-                                        self.stack.pop();
-                                    }
-                                    let len = arr.len() as i64;
-                                    let actual_idx = if index < 0 {
-                                        (len + index) as usize
-                                    } else {
-                                        index as usize
-                                    };
-                                    let result =
-                                        arr.get(actual_idx).cloned().unwrap_or(JsValue::Undefined);
-                                    self.stack.push(result);
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
-                                _ => {
-                                    // Unsupported array method - pop args and return undefined
-                                    for _ in 0..arg_count {
-                                        self.stack.pop();
-                                    }
-                                    self.stack.push(JsValue::Undefined);
-                                    self.ip += 1;
-                                    return ExecResult::Continue;
-                                }
+                                _ => {}
                             }
+                            let mut elems = arr.clone();
+                            let result = crate::runtime::builtins::array_method(
+                                &VmHost(&self.heap),
+                                &mut elems,
+                                &name,
+                                &args,
+                            );
+                            if result.is_some() {
+                                self.heap[ptr].data = HeapData::Array(elems);
+                            }
+                            return self.finish_builtin(result, JsValue::Object(ptr), &name);
                         }
 
                         // Check if this is a Map and handle Map methods
@@ -4178,6 +3440,88 @@ impl VM {
         } else {
             JsValue::Undefined
         }
+    }
+}
+
+/// The VM's value representation, for the shared built-in methods.
+struct VmHost<'a>(&'a Vec<HeapObject>);
+
+impl crate::runtime::builtins::Host for VmHost<'_> {
+    type Value = JsValue;
+
+    fn number(&self, v: &JsValue) -> Option<f64> {
+        match v {
+            JsValue::Number(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    fn string<'a>(&'a self, v: &'a JsValue) -> Option<&'a str> {
+        match v {
+            JsValue::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    fn to_string(&self, v: &JsValue) -> String {
+        match v {
+            JsValue::String(s) => s.clone(),
+            JsValue::Number(n) => crate::stdlib::number_to_string(n),
+            JsValue::Boolean(b) => b.to_string(),
+            JsValue::Null => "null".to_string(),
+            JsValue::Undefined => "undefined".to_string(),
+            JsValue::Object(ptr) => match self.0.get(*ptr) {
+                Some(HeapObject {
+                    data: HeapData::Array(items),
+                }) => items
+                    .iter()
+                    .map(|e| match e {
+                        JsValue::Null | JsValue::Undefined => String::new(),
+                        other => self.to_string(other),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(","),
+                _ => "[object Object]".to_string(),
+            },
+            JsValue::Function { .. } | JsValue::NativeFunction(_) => "function".to_string(),
+            JsValue::Promise(_) => "[object Promise]".to_string(),
+            JsValue::Accessor(_, _) => String::new(),
+        }
+    }
+
+    fn strict_equal(&self, a: &JsValue, b: &JsValue) -> bool {
+        match (a, b) {
+            (JsValue::Function { address: x, .. }, JsValue::Function { address: y, .. }) => x == y,
+            _ => a == b,
+        }
+    }
+
+    fn array_elements(&self, v: &JsValue) -> Option<Vec<JsValue>> {
+        match v {
+            JsValue::Object(ptr) => match self.0.get(*ptr) {
+                Some(HeapObject {
+                    data: HeapData::Array(items),
+                }) => Some(items.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn make_number(&self, n: f64) -> JsValue {
+        JsValue::Number(n)
+    }
+
+    fn make_string(&self, s: String) -> JsValue {
+        JsValue::String(s)
+    }
+
+    fn make_bool(&self, b: bool) -> JsValue {
+        JsValue::Boolean(b)
+    }
+
+    fn undefined(&self) -> JsValue {
+        JsValue::Undefined
     }
 }
 

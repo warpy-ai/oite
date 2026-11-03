@@ -48,6 +48,9 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Closures capturing an enclosing function's locals | Covered                       | Refused                           |
 | Objects, arrays, `obj[k]`, `.length`, `push`/`pop` | Covered                      | Covered                           |
 | Methods on object literals (`this`)        | Covered                              | Covered                           |
+| String methods (`slice`, `split`, `trim`, `indexOf`, `padStart`, ...) | Covered   | Covered (shared implementation)   |
+| Array methods (`splice`, `join`, `indexOf`, `concat`, `shift`, ...)   | Covered   | Covered (shared implementation)   |
+| Callback methods (`map`, `filter`, `forEach`, `reduce`) | Not implemented     | Not implemented                   |
 | `if`, `while`, `for`, `do..while`, `?:`    | Covered                              | Covered                           |
 | `break` / `continue` (unlabeled)           | Covered                              | Covered                           |
 | `&&`, `\|\|`, `??` (short-circuit)         | Covered                              | Covered                           |

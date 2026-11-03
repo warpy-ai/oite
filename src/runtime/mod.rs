@@ -13,6 +13,7 @@ pub mod abi;
 pub mod abi_tests;
 pub mod abi_version;
 pub mod r#async;
+pub mod builtins;
 pub mod heap;
 pub mod stubs;
 

@@ -1,7 +1,7 @@
 //! Build script: compiles the native runtime library.
 //!
 //! `oitec build` links every native executable against the Oite runtime
-//! (`src/runtime/{abi,heap,stubs}.rs`). Those files are compiled here, as a
+//! (`src/runtime/{abi,builtins,heap,stubs}.rs`). Those files are compiled here, as a
 //! standalone static library rooted at `src/runtime/native_rt.rs`, and the
 //! archive is embedded into `oitec` (see `backend::llvm::runtime_lib`). Native
 //! binaries therefore need no Rust toolchain or source tree at build time.
@@ -21,7 +21,13 @@ fn main() {
     let target = env::var("TARGET").unwrap();
 
     let root = manifest.join("src/runtime/native_rt.rs");
-    for file in ["native_rt.rs", "abi.rs", "heap.rs", "stubs.rs"] {
+    for file in [
+        "native_rt.rs",
+        "abi.rs",
+        "builtins.rs",
+        "heap.rs",
+        "stubs.rs",
+    ] {
         println!(
             "cargo:rerun-if-changed={}",
             manifest.join("src/runtime").join(file).display()
