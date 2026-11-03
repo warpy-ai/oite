@@ -491,8 +491,8 @@ let IR = {
     addLocalWithLifetime: addLocalWithLifetime,
     getLocalLifetime: getLocalLifetime,
     createRegisterAllocator: createRegisterAllocator,
-    allocRegister: allocRegister,
-    formatInstruction: formatInstruction
+    allocRegister: allocateRegister,
+    formatInstruction: serializeIrInstruction
 };
 
 console.error("IR module loaded");
