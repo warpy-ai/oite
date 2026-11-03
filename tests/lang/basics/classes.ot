@@ -1,0 +1,12 @@
+class Animal {
+  constructor(name) { this.name = name; }
+  speak() { return this.name + " makes a sound"; }
+}
+class Dog extends Animal {
+  constructor(name) { super(name); }
+  speak() { return this.name + " barks"; }
+}
+let a = new Animal("cat");
+let d = new Dog("rex");
+console.log(a.speak());
+console.log(d.speak());

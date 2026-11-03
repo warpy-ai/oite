@@ -4,7 +4,7 @@ use swc_ecma_ast::*;
 pub mod borrow_ck;
 use crate::compiler::borrow_ck::BorrowChecker;
 use crate::vm::value::JsValue;
-use swc_common::{FileName, SourceMap, sync::Lrc};
+use swc_common::{FileName, SourceMap, Span, Spanned, sync::Lrc};
 use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 
 pub struct Compiler {
@@ -36,7 +36,7 @@ impl Compiler {
         let cm: Lrc<SourceMap> = Default::default();
         let fm = cm.new_source_file(
             FileName::Custom("main.ot".into()).into(),
-            source.to_string(),
+            blank_module_directives(source),
         );
 
         // Determine syntax based on file extension or override
@@ -47,9 +47,34 @@ impl Compiler {
 
         let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
         let mut parser = Parser::new_from(lexer);
-        let program = parser
-            .parse_program()
-            .map_err(|e| format!("Parsing error: {:?}", e))?;
+        let format_parse_error = |e: swc_ecma_parser::error::Error| {
+            let loc = cm.lookup_char_pos(e.span().lo);
+            format!(
+                "{}:{}: syntax error: {}",
+                loc.line,
+                loc.col_display + 1,
+                e.into_kind().msg()
+            )
+        };
+        let program = parser.parse_program().map_err(format_parse_error)?;
+        // The parser recovers from some errors and keeps going; those must
+        // still fail compilation instead of producing a partial program.
+        let recovered: Vec<String> = parser
+            .take_errors()
+            .into_iter()
+            // Oite allows a top-level `return`: it sets the program's result
+            // (see `oitec jit`).
+            .filter(|e| {
+                !matches!(
+                    e.kind(),
+                    swc_ecma_parser::error::SyntaxError::ReturnNotAllowed
+                )
+            })
+            .map(format_parse_error)
+            .collect();
+        if !recovered.is_empty() {
+            return Err(recovered.join("\n"));
+        }
 
         self.borrow_checker.enter_scope(); // Script vars at depth 1, globals at 0
 
@@ -91,8 +116,55 @@ impl Compiler {
             }
         }
 
+        if !codegen.errors.is_empty() {
+            let messages: Vec<String> = codegen
+                .errors
+                .iter()
+                .map(|(span, msg)| {
+                    if span.is_dummy() {
+                        msg.clone()
+                    } else {
+                        let loc = cm.lookup_char_pos(span.lo);
+                        format!("{}:{}: {}", loc.line, loc.col_display + 1, msg)
+                    }
+                })
+                .collect();
+            return Err(messages.join("\n"));
+        }
+
         Ok(codegen.instructions)
     }
+}
+
+/// Blank out `require ./path;` lines (the `;` is optional), keeping byte
+/// offsets intact.
+///
+/// This is the self-hosted compiler's module directive (`compiler/*.ot`,
+/// `bootstrap/*.ot`), parsed there as a `RequireStatement`. It is not valid
+/// JavaScript, and the Rust toolchain loads those modules from a fixed list in
+/// `main.rs`, so for this compiler the line has no meaning.
+fn blank_module_directives(source: &str) -> String {
+    source
+        .split_inclusive('\n')
+        .map(|line| {
+            let body = line.trim_end_matches(['\n', '\r']);
+            let t = body.trim();
+            let is_directive = t.strip_prefix("require ./").is_some_and(|rest| {
+                let path = rest.strip_suffix(';').unwrap_or(rest);
+                !path.is_empty()
+                    && path
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '/')
+            });
+            if is_directive {
+                let mut blank = " ".repeat(body.len());
+                blank.push_str(&line[body.len()..]);
+                blank
+            } else {
+                line.to_string()
+            }
+        })
+        .collect()
 }
 
 struct LoopContext {
@@ -117,6 +189,13 @@ pub struct Codegen {
     private_method_indices: std::collections::HashMap<String, usize>,
     /// Warnings collected during compilation
     pub warnings: Vec<String>,
+    /// Hard errors collected during code generation. Compilation fails if
+    /// any are present: a construct the compiler cannot lower must never be
+    /// dropped silently.
+    pub errors: Vec<(Span, String)>,
+    /// Span of the innermost statement or expression being compiled, used
+    /// to locate errors.
+    current_span: Span,
 }
 
 impl Default for Codegen {
@@ -137,6 +216,203 @@ impl Codegen {
             private_field_indices: std::collections::HashMap::new(),
             private_method_indices: std::collections::HashMap::new(),
             warnings: Vec::new(),
+            errors: Vec::new(),
+            current_span: Span::default(),
+        }
+    }
+
+    /// `[value] -> [Promise.resolve(value)]`, used to wrap the result of an
+    /// async function. Method calls take `[args..., receiver]`.
+    fn emit_promise_resolve(&mut self) {
+        self.instructions.push(OpCode::Load("Promise".to_string()));
+        self.instructions
+            .push(OpCode::CallMethod("resolve".to_string(), 1));
+    }
+
+    /// Record that a construct cannot be compiled. Compilation will fail.
+    fn unsupported(&mut self, what: impl std::fmt::Display) {
+        self.errors
+            .push((self.current_span, format!("unsupported: {}", what)));
+    }
+
+    /// Emit a jump with a placeholder target; patch it with `patch_jump`.
+    fn emit_jump(&mut self) -> usize {
+        self.instructions.push(OpCode::Jump(0));
+        self.instructions.len() - 1
+    }
+
+    /// Emit a conditional jump with a placeholder target.
+    fn emit_jump_if_false(&mut self) -> usize {
+        self.instructions.push(OpCode::JumpIfFalse(0));
+        self.instructions.len() - 1
+    }
+
+    /// Point a placeholder jump at the next instruction to be emitted.
+    fn patch_jump_here(&mut self, idx: usize) {
+        let here = self.instructions.len();
+        match &mut self.instructions[idx] {
+            OpCode::Jump(addr) | OpCode::JumpIfFalse(addr) => *addr = here,
+            other => unreachable!("patch_jump_here on non-jump {:?}", other),
+        }
+    }
+
+    /// With a value on top of the stack, emit jumps taken when it is `null`
+    /// or `undefined`. The value stays on the stack on every path.
+    ///
+    /// Uses two strict comparisons rather than `== null`, so that every
+    /// backend computes the same answer.
+    fn emit_jumps_if_nullish(&mut self) -> Vec<usize> {
+        let mut jumps = Vec::with_capacity(2);
+        for nullish in [JsValue::Null, JsValue::Undefined] {
+            self.instructions.push(OpCode::Dup);
+            self.instructions.push(OpCode::Push(nullish));
+            self.instructions.push(OpCode::Eq);
+            self.instructions.push(OpCode::Not);
+            jumps.push(self.emit_jump_if_false());
+        }
+        jumps
+    }
+
+    /// `a && b`, `a || b`, `a ?? b`: evaluate `b` only when `a` does not
+    /// decide the result. The result is the deciding operand's value.
+    fn gen_logical(&mut self, bin: &BinExpr) {
+        self.gen_expr(&bin.left);
+        match bin.op {
+            BinaryOp::LogicalAnd => {
+                // [a] -> falsy: keep a; truthy: replace with b
+                self.instructions.push(OpCode::Dup);
+                let to_end = self.emit_jump_if_false();
+                self.instructions.push(OpCode::Pop);
+                self.gen_expr(&bin.right);
+                self.patch_jump_here(to_end);
+            }
+            BinaryOp::LogicalOr => {
+                // [a] -> truthy: keep a; falsy: replace with b
+                self.instructions.push(OpCode::Dup);
+                let to_rhs = self.emit_jump_if_false();
+                let to_end = self.emit_jump();
+                self.patch_jump_here(to_rhs);
+                self.instructions.push(OpCode::Pop);
+                self.gen_expr(&bin.right);
+                self.patch_jump_here(to_end);
+            }
+            BinaryOp::NullishCoalescing => {
+                // [a] -> not null/undefined: keep a; else replace with b
+                let to_rhs = self.emit_jumps_if_nullish();
+                let to_end = self.emit_jump();
+                for j in to_rhs {
+                    self.patch_jump_here(j);
+                }
+                self.instructions.push(OpCode::Pop);
+                self.gen_expr(&bin.right);
+                self.patch_jump_here(to_end);
+            }
+            _ => unreachable!("gen_logical called with {:?}", bin.op),
+        }
+    }
+
+    /// Optional chain `a?.b.c`, `a?.[k]`, `f?.()`, `o.m?.()`.
+    ///
+    /// If any `?.` link sees `null`/`undefined`, the whole chain evaluates to
+    /// `undefined` and the rest of it is not evaluated.
+    fn gen_opt_chain_expr(&mut self, chain: &OptChainExpr) {
+        let mut to_undefined = Vec::new();
+        self.gen_opt_chain(chain, &mut to_undefined);
+        if to_undefined.is_empty() {
+            return;
+        }
+        let to_end = self.emit_jump();
+        for j in to_undefined {
+            self.patch_jump_here(j);
+        }
+        // Every short-circuit jump leaves exactly the nullish value on the stack.
+        self.instructions.push(OpCode::Pop);
+        self.instructions.push(OpCode::Push(JsValue::Undefined));
+        self.patch_jump_here(to_end);
+    }
+
+    /// Evaluate the object of a chain link. A nested `OptChain` is part of
+    /// the same chain and shares its short-circuit target.
+    fn gen_opt_chain_object(&mut self, expr: &Expr, to_undefined: &mut Vec<usize>) {
+        match expr {
+            Expr::OptChain(inner) => self.gen_opt_chain(inner, to_undefined),
+            other => self.gen_expr(other),
+        }
+    }
+
+    fn gen_opt_chain(&mut self, chain: &OptChainExpr, to_undefined: &mut Vec<usize>) {
+        match chain.base.as_ref() {
+            OptChainBase::Member(member) => {
+                self.gen_opt_chain_object(&member.obj, to_undefined);
+                if chain.optional {
+                    to_undefined.extend(self.emit_jumps_if_nullish());
+                }
+                match &member.prop {
+                    MemberProp::Ident(id) => {
+                        self.instructions.push(OpCode::GetProp(id.sym.to_string()));
+                    }
+                    MemberProp::Computed(computed) => {
+                        self.gen_expr(&computed.expr);
+                        self.instructions.push(OpCode::GetPropComputed);
+                    }
+                    MemberProp::PrivateName(_) => {
+                        self.unsupported("optional chaining on a private field (`?.#x`)");
+                    }
+                }
+            }
+            OptChainBase::Call(call) => {
+                // Temporaries are named after the instruction index, which is
+                // unique, and use a character no identifier can contain.
+                let tmp = format!("%optcall{}", self.instructions.len());
+
+                // A method callee (`o.m?.()` or `o?.m()`) keeps `o` as `this`.
+                let method = match call.callee.as_ref() {
+                    Expr::Member(m) => Some((m, false)),
+                    Expr::OptChain(c) => match c.base.as_ref() {
+                        OptChainBase::Member(m) => Some((m, c.optional)),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+
+                match method {
+                    Some((member, obj_optional)) if matches!(member.prop, MemberProp::Ident(_)) => {
+                        let MemberProp::Ident(name) = &member.prop else {
+                            unreachable!()
+                        };
+                        let name = name.sym.to_string();
+                        self.gen_opt_chain_object(&member.obj, to_undefined);
+                        if obj_optional {
+                            to_undefined.extend(self.emit_jumps_if_nullish());
+                        }
+                        self.instructions.push(OpCode::Let(tmp.clone()));
+                        if chain.optional {
+                            self.instructions.push(OpCode::Load(tmp.clone()));
+                            self.instructions.push(OpCode::GetProp(name.clone()));
+                            to_undefined.extend(self.emit_jumps_if_nullish());
+                            self.instructions.push(OpCode::Pop);
+                        }
+                        for arg in &call.args {
+                            self.gen_expr(&arg.expr);
+                        }
+                        self.instructions.push(OpCode::Load(tmp));
+                        self.instructions
+                            .push(OpCode::CallMethod(name, call.args.len()));
+                    }
+                    _ => {
+                        self.gen_opt_chain_object(&call.callee, to_undefined);
+                        if chain.optional {
+                            to_undefined.extend(self.emit_jumps_if_nullish());
+                        }
+                        self.instructions.push(OpCode::Let(tmp.clone()));
+                        for arg in &call.args {
+                            self.gen_expr(&arg.expr);
+                        }
+                        self.instructions.push(OpCode::Load(tmp));
+                        self.instructions.push(OpCode::Call(call.args.len()));
+                    }
+                }
+            }
         }
     }
 
@@ -295,7 +571,9 @@ impl Codegen {
                     };
                     self.gen_fn_decl(name, &fn_expr.function);
                 }
-                _ => {}
+                DefaultDecl::TsInterfaceDecl(_) => {
+                    // Interfaces are compile-time only
+                }
             },
             ModuleDecl::ExportDefaultExpr(export_default) => match &*export_default.expr {
                 Expr::Fn(fn_expr) => {
@@ -312,7 +590,9 @@ impl Codegen {
                         class_expr.ident.as_ref().map(|id| id.sym.as_str()),
                     );
                 }
-                _ => {}
+                _ => self.unsupported(
+                    "`export default` of an expression other than a function or class",
+                ),
             },
             ModuleDecl::Import(import) => {
                 let src = import.src.value.to_string_lossy().into_owned();
@@ -570,7 +850,7 @@ impl Codegen {
             Decl::TsTypeAlias(_) => {
                 // Type aliases are compile-time only, skip
             }
-            _ => {}
+            Decl::Using(_) => self.unsupported("`using` declarations"),
         }
     }
 
@@ -584,6 +864,9 @@ impl Codegen {
 
     fn gen_fn_decl(&mut self, name: Option<String>, fn_decl: &Function) {
         let is_async = fn_decl.is_async;
+        if fn_decl.is_generator {
+            self.unsupported("generator functions (`function*`)");
+        }
 
         // For named function declarations, store them in the current scope
         // Anonymous functions are not stored (they're just values)
@@ -648,42 +931,15 @@ impl Codegen {
                 self.instructions.push(OpCode::Push(JsValue::Undefined));
                 // For async functions, wrap in Promise.resolve()
                 if is_async {
-                    self.instructions
-                        .push(OpCode::Push(JsValue::String("Promise".to_string())));
-                    self.instructions.push(OpCode::Load("Promise".to_string()));
-                    self.instructions
-                        .push(OpCode::Push(JsValue::String("resolve".to_string())));
-                    self.instructions
-                        .push(OpCode::GetProp("resolve".to_string()));
-                    // Stack: [undefined, Promise, PromiseObj, resolveFn]
-                    // Pop PromiseObj and Promise, keeping resolveFn and undefined
-                    self.instructions.push(OpCode::Pop);
-                    self.instructions.push(OpCode::Pop);
-                    // Stack: [undefined, resolveFn]
-                    // Swap to get [resolveFn, undefined]
-                    self.instructions.push(OpCode::Swap);
-                    self.instructions.push(OpCode::Call(1));
+                    self.emit_promise_resolve();
                 }
             } else {
-                // Non-empty body but last statement wasn't a return
-                // The last expression's result is on the stack, need to return it
-                // For async functions, wrap in Promise.resolve()
+                // Non-empty body but last statement wasn't a return.
+                // Expression statements pop their value, so nothing is left
+                // on the stack: an async function resolves to `undefined`.
                 if is_async {
-                    self.instructions
-                        .push(OpCode::Push(JsValue::String("Promise".to_string())));
-                    self.instructions.push(OpCode::Load("Promise".to_string()));
-                    self.instructions
-                        .push(OpCode::Push(JsValue::String("resolve".to_string())));
-                    self.instructions
-                        .push(OpCode::GetProp("resolve".to_string()));
-                    // Stack: [returnValue, Promise, PromiseObj, resolveFn]
-                    // Pop PromiseObj and Promise, keeping resolveFn
-                    self.instructions.push(OpCode::Pop);
-                    self.instructions.push(OpCode::Pop);
-                    // Stack: [returnValue, resolveFn]
-                    // Swap to get [resolveFn, returnValue]
-                    self.instructions.push(OpCode::Swap);
-                    self.instructions.push(OpCode::Call(1));
+                    self.instructions.push(OpCode::Push(JsValue::Undefined));
+                    self.emit_promise_resolve();
                 }
             }
             self.instructions.push(OpCode::Return);
@@ -733,7 +989,10 @@ impl Codegen {
                                 swc_ecma_ast::PropName::Str(s) => {
                                     s.value.to_string_lossy().into_owned()
                                 }
-                                _ => continue,
+                                _ => {
+                                    self.unsupported("computed keys in destructuring patterns");
+                                    continue;
+                                }
                             };
                             self.instructions.push(OpCode::GetProp(key_name));
                             // Recursively bind the value pattern
@@ -821,14 +1080,24 @@ impl Codegen {
                 }
                 self.gen_pattern_binding(&assign.left);
             }
-            _ => {
-                // Unsupported pattern - just pop the value
+            Pat::Expr(_) => {
+                self.unsupported("expression as a binding pattern");
+                self.instructions.push(OpCode::Pop);
+            }
+            Pat::Invalid(_) => {
+                self.unsupported("invalid binding pattern");
                 self.instructions.push(OpCode::Pop);
             }
         }
     }
 
     fn gen_stmt(&mut self, stmt: &Stmt) {
+        let saved = std::mem::replace(&mut self.current_span, stmt.span());
+        self.gen_stmt_inner(stmt);
+        self.current_span = saved;
+    }
+
+    fn gen_stmt_inner(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Return(ret_stmt) => {
                 if let Some(arg) = &ret_stmt.arg {
@@ -838,15 +1107,7 @@ impl Codegen {
                 }
                 // For async functions, wrap the return value in Promise.resolve()
                 if self.in_async_function {
-                    self.instructions
-                        .push(OpCode::Push(JsValue::String("Promise".to_string())));
-                    self.instructions.push(OpCode::Load("Promise".to_string()));
-                    self.instructions
-                        .push(OpCode::Push(JsValue::String("resolve".to_string())));
-                    self.instructions
-                        .push(OpCode::GetProp("resolve".to_string()));
-                    self.instructions.push(OpCode::Swap);
-                    self.instructions.push(OpCode::Call(1));
+                    self.emit_promise_resolve();
                 }
                 self.instructions.push(OpCode::Return);
             }
@@ -971,18 +1232,26 @@ impl Codegen {
                     }
                 }
             }
-            Stmt::Break(_) => {
-                if let Some(loop_ctx) = self.loop_stack.last_mut() {
+            Stmt::Break(brk) => {
+                if brk.label.is_some() {
+                    self.unsupported("labeled `break`");
+                } else if let Some(loop_ctx) = self.loop_stack.last_mut() {
                     let jump_idx = self.instructions.len();
                     self.instructions.push(OpCode::Jump(0));
                     loop_ctx.break_jumps.push(jump_idx);
+                } else {
+                    self.unsupported("`break` outside of a loop");
                 }
             }
-            Stmt::Continue(_) => {
-                if let Some(loop_ctx) = self.loop_stack.last_mut() {
+            Stmt::Continue(cont) => {
+                if cont.label.is_some() {
+                    self.unsupported("labeled `continue`");
+                } else if let Some(loop_ctx) = self.loop_stack.last_mut() {
                     let jump_idx = self.instructions.len();
                     self.instructions.push(OpCode::Jump(0));
                     loop_ctx.continue_jumps.push(jump_idx);
+                } else {
+                    self.unsupported("`continue` outside of a loop");
                 }
             }
             Stmt::If(if_stmt) => {
@@ -1256,7 +1525,8 @@ impl Codegen {
                     }
                 }
             }
-            Stmt::Empty(_) | Stmt::Debugger(_) | Stmt::With(_) => {
+            Stmt::With(_) => self.unsupported("`with` statements"),
+            Stmt::Empty(_) | Stmt::Debugger(_) => {
                 // Empty/debugger/with statements - do nothing
             }
             Stmt::Try(try_stmt) => {
@@ -1389,11 +1659,19 @@ impl Codegen {
                 self.gen_expr(&throw_stmt.arg);
                 self.instructions.push(OpCode::Throw);
             }
-            _ => {}
+            Stmt::Switch(_) => self.unsupported("`switch` statements"),
+            Stmt::Labeled(_) => self.unsupported("labeled statements"),
+            Stmt::Decl(Decl::Using(_)) => self.unsupported("`using` declarations"),
         }
     }
 
     fn gen_expr(&mut self, expr: &Expr) {
+        let saved = std::mem::replace(&mut self.current_span, expr.span());
+        self.gen_expr_inner(expr);
+        self.current_span = saved;
+    }
+
+    fn gen_expr_inner(&mut self, expr: &Expr) {
         match expr {
             Expr::Fn(fn_expr) => {
                 let is_async = fn_expr.function.is_async;
@@ -1477,46 +1755,18 @@ impl Codegen {
 
                     // For async functions with no return statement at the end, wrap the result
                     if is_async && !last_instr_was_return {
-                        if stmts.is_empty() {
-                            self.instructions.push(OpCode::Push(JsValue::Undefined));
-                        }
+                        // Expression statements pop their value, so the
+                        // implicit result is always `undefined`.
+                        self.instructions.push(OpCode::Push(JsValue::Undefined));
                         // Wrap in Promise.resolve() and add Return
-                        self.instructions
-                            .push(OpCode::Push(JsValue::String("Promise".to_string())));
-                        self.instructions.push(OpCode::Load("Promise".to_string()));
-                        self.instructions
-                            .push(OpCode::Push(JsValue::String("resolve".to_string())));
-                        self.instructions
-                            .push(OpCode::GetProp("resolve".to_string()));
-                        // Stack: [returnValue, Promise, PromiseObj, resolveFn]
-                        // Pop PromiseObj and Promise, keeping resolveFn
-                        self.instructions.push(OpCode::Pop);
-                        self.instructions.push(OpCode::Pop);
-                        // Stack: [returnValue, resolveFn]
-                        // Swap to get [resolveFn, returnValue]
-                        self.instructions.push(OpCode::Swap);
-                        self.instructions.push(OpCode::Call(1));
+                        self.emit_promise_resolve();
                         self.instructions.push(OpCode::Return);
                     }
                 } else {
                     self.instructions.push(OpCode::Push(JsValue::Undefined));
                     // For async functions with no body, wrap undefined in Promise.resolve()
                     if is_async {
-                        self.instructions
-                            .push(OpCode::Push(JsValue::String("Promise".to_string())));
-                        self.instructions.push(OpCode::Load("Promise".to_string()));
-                        self.instructions
-                            .push(OpCode::Push(JsValue::String("resolve".to_string())));
-                        self.instructions
-                            .push(OpCode::GetProp("resolve".to_string()));
-                        // Stack: [undefined, Promise, PromiseObj, resolveFn]
-                        // Pop PromiseObj and Promise, keeping resolveFn
-                        self.instructions.push(OpCode::Pop);
-                        self.instructions.push(OpCode::Pop);
-                        // Stack: [undefined, resolveFn]
-                        // Swap to get [resolveFn, undefined]
-                        self.instructions.push(OpCode::Swap);
-                        self.instructions.push(OpCode::Call(1));
+                        self.emit_promise_resolve();
                     }
                     self.instructions.push(OpCode::Return);
                 }
@@ -1593,7 +1843,7 @@ impl Codegen {
                         // Params are capturable by nested closures
                         self.outer_scope_vars.insert(param_name);
                     } else {
-                        eprintln!("Warning: Non-identifier arrow params not supported yet.");
+                        self.unsupported("destructuring or default arrow-function parameters");
                     }
                 }
 
@@ -1603,21 +1853,7 @@ impl Codegen {
                         self.gen_expr(e);
                         // For async arrows, wrap the return value in Promise.resolve()
                         if arrow.is_async {
-                            self.instructions
-                                .push(OpCode::Push(JsValue::String("Promise".to_string())));
-                            self.instructions.push(OpCode::Load("Promise".to_string()));
-                            self.instructions
-                                .push(OpCode::Push(JsValue::String("resolve".to_string())));
-                            self.instructions
-                                .push(OpCode::GetProp("resolve".to_string()));
-                            // Stack: [returnValue, Promise, PromiseObj, resolveFn]
-                            // Pop PromiseObj and Promise, keeping resolveFn
-                            self.instructions.push(OpCode::Pop);
-                            self.instructions.push(OpCode::Pop);
-                            // Stack: [returnValue, resolveFn]
-                            // Swap to get [resolveFn, returnValue]
-                            self.instructions.push(OpCode::Swap);
-                            self.instructions.push(OpCode::Call(1));
+                            self.emit_promise_resolve();
                         }
                         self.instructions.push(OpCode::Return);
                     }
@@ -1638,21 +1874,7 @@ impl Codegen {
 
                         // For async arrows with no return statement at the end, wrap the result
                         if arrow.is_async && !last_instr_was_return {
-                            self.instructions
-                                .push(OpCode::Push(JsValue::String("Promise".to_string())));
-                            self.instructions.push(OpCode::Load("Promise".to_string()));
-                            self.instructions
-                                .push(OpCode::Push(JsValue::String("resolve".to_string())));
-                            self.instructions
-                                .push(OpCode::GetProp("resolve".to_string()));
-                            // Stack: [returnValue, Promise, PromiseObj, resolveFn]
-                            // Pop PromiseObj and Promise, keeping resolveFn
-                            self.instructions.push(OpCode::Pop);
-                            self.instructions.push(OpCode::Pop);
-                            // Stack: [returnValue, resolveFn]
-                            // Swap to get [resolveFn, returnValue]
-                            self.instructions.push(OpCode::Swap);
-                            self.instructions.push(OpCode::Call(1));
+                            self.emit_promise_resolve();
                         }
 
                         if !last_instr_was_return {
@@ -1688,6 +1910,17 @@ impl Codegen {
             Expr::Ident(id) => {
                 self.instructions.push(OpCode::Load(id.sym.to_string()));
             }
+            Expr::Bin(bin)
+                if matches!(
+                    bin.op,
+                    BinaryOp::LogicalAnd | BinaryOp::LogicalOr | BinaryOp::NullishCoalescing
+                ) =>
+            {
+                self.gen_logical(bin);
+            }
+            Expr::OptChain(chain) => {
+                self.gen_opt_chain_expr(chain);
+            }
             Expr::Bin(bin) => {
                 self.gen_expr(&bin.left);
                 self.gen_expr(&bin.right);
@@ -1705,8 +1938,6 @@ impl Codegen {
                     BinaryOp::LtEq => self.instructions.push(OpCode::LtEq),
                     BinaryOp::Gt => self.instructions.push(OpCode::Gt),
                     BinaryOp::GtEq => self.instructions.push(OpCode::GtEq),
-                    BinaryOp::LogicalAnd => self.instructions.push(OpCode::And),
-                    BinaryOp::LogicalOr => self.instructions.push(OpCode::Or),
                     BinaryOp::InstanceOf => self.instructions.push(OpCode::InstanceOf),
                     // Bitwise operators
                     BinaryOp::BitAnd => self.instructions.push(OpCode::BitAnd),
@@ -1716,7 +1947,7 @@ impl Codegen {
                     BinaryOp::RShift => self.instructions.push(OpCode::ShiftRight),
                     BinaryOp::ZeroFillRShift => self.instructions.push(OpCode::ShiftRightUnsigned),
                     BinaryOp::Exp => self.instructions.push(OpCode::Pow),
-                    _ => eprintln!("Warning: Operator {:?} not supported", bin.op),
+                    other => self.unsupported(format!("binary operator `{}`", other.as_str())),
                 }
             }
             Expr::Unary(unary) => {
@@ -1760,7 +1991,9 @@ impl Codegen {
                                 self.instructions.push(OpCode::Pop);
                                 self.instructions.push(OpCode::Push(JsValue::Undefined));
                             }
-                            _ => eprintln!("Warning: Unary operator {:?} not supported", unary.op),
+                            other => {
+                                self.unsupported(format!("unary operator `{}`", other.as_str()))
+                            }
                         }
                     }
                 }
@@ -1845,7 +2078,7 @@ impl Codegen {
                         // 2. The CallSuper opcode will use it
                         self.instructions.push(OpCode::LoadSuper);
                     }
-                    Callee::Import(_) => {} // Handle import calls if needed
+                    Callee::Import(_) => self.unsupported("dynamic `import()`"),
                 }
                 // Call it
                 match &call_expr.callee {
@@ -1916,9 +2149,9 @@ impl Codegen {
                                 }
                             }
                         }
-                        _ => eprintln!("Warning: Complex assignment target not supported."),
+                        _ => self.unsupported("this assignment target"),
                     },
-                    _ => eprintln!("Warning: Complex assignment targets not supported yet."),
+                    _ => self.unsupported("destructuring assignment"),
                 }
             }
             Expr::Object(obj_lit) => {
@@ -1941,7 +2174,11 @@ impl Codegen {
                                             .as_str()
                                             .expect("Invalid string key")
                                             .to_string(),
-                                        _ => continue,
+                                        PropName::Num(n) => n.value.to_string(),
+                                        _ => {
+                                            self.unsupported("computed object literal keys");
+                                            continue;
+                                        }
                                     };
 
                                     self.instructions.push(OpCode::Dup); // Duplicate Ptr
@@ -1959,13 +2196,23 @@ impl Codegen {
                                     // { fn() {} } - inline method
                                     let key = match &method.key {
                                         PropName::Ident(id) => id.sym.to_string(),
-                                        _ => continue,
+                                        _ => {
+                                            self.unsupported(
+                                                "computed object literal method names",
+                                            );
+                                            continue;
+                                        }
                                     };
                                     self.instructions.push(OpCode::Dup);
                                     self.gen_fn_decl(None, &method.function);
                                     self.instructions.push(OpCode::SetProp(key));
                                 }
-                                _ => {}
+                                Prop::Getter(_) | Prop::Setter(_) => {
+                                    self.unsupported("getters and setters in object literals")
+                                }
+                                Prop::Assign(_) => {
+                                    self.unsupported("`key = value` in an object literal")
+                                }
                             }
                         }
                     }
@@ -2170,6 +2417,11 @@ impl Codegen {
                         }
                         self.instructions.push(OpCode::Store(name));
                     }
+                } else if let Expr::Member(member) = update_expr.arg.as_ref()
+                    && matches!(member.prop, MemberProp::PrivateName(_))
+                {
+                    self.unsupported("`++`/`--` on a private field");
+                    self.instructions.push(OpCode::Push(JsValue::Undefined));
                 } else if let Expr::Member(member) = update_expr.arg.as_ref() {
                     // Member expression: obj.prop++ / ++obj.prop / obj[key]++ / ++obj[key]
                     let op = update_expr.op;
@@ -2187,7 +2439,7 @@ impl Codegen {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::GetPropComputed);
                             }
-                            _ => {}
+                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                         self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
                         if op == UpdateOp::PlusPlus {
@@ -2204,7 +2456,7 @@ impl Codegen {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::SetPropComputed);
                             }
-                            _ => {}
+                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                         // Reload the new value
                         self.gen_expr(&member.obj);
@@ -2216,7 +2468,7 @@ impl Codegen {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::GetPropComputed);
                             }
-                            _ => {}
+                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                     } else {
                         // obj.prop++: get old value, save it, compute new, store back
@@ -2233,7 +2485,7 @@ impl Codegen {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::GetPropComputed);
                             }
-                            _ => {}
+                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                         // Stack: [obj, old_val] -> Swap -> [old_val, obj]
                         self.instructions.push(OpCode::Swap);
@@ -2246,7 +2498,7 @@ impl Codegen {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::GetPropComputed);
                             }
-                            _ => {}
+                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                         self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
                         if op == UpdateOp::PlusPlus {
@@ -2263,7 +2515,7 @@ impl Codegen {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::SetPropComputed);
                             }
-                            _ => {}
+                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                     }
                 }
@@ -2280,7 +2532,32 @@ impl Codegen {
                 // TypeScript non-null assertion `expr!` - evaluate inner expression
                 self.gen_expr(&ts_non_null.expr);
             }
-            _ => {}
+            // More type-only wrappers with no runtime effect.
+            Expr::TsConstAssertion(e) => self.gen_expr(&e.expr),
+            Expr::TsSatisfies(e) => self.gen_expr(&e.expr),
+            Expr::TsInstantiation(e) => self.gen_expr(&e.expr),
+            Expr::Seq(seq) => {
+                // `a, b, c`: evaluate all, keep the last value.
+                for (i, e) in seq.exprs.iter().enumerate() {
+                    self.gen_expr(e);
+                    if i + 1 < seq.exprs.len() {
+                        self.instructions.push(OpCode::Pop);
+                    }
+                }
+            }
+            Expr::Lit(Lit::Regex(_)) => self.unsupported("regular expression literals"),
+            Expr::Lit(Lit::BigInt(_)) => self.unsupported("BigInt literals"),
+            Expr::Lit(_) => self.unsupported("this literal"),
+            Expr::TaggedTpl(_) => self.unsupported("tagged template literals"),
+            Expr::Yield(_) => self.unsupported("`yield`"),
+            Expr::Class(_) => self.unsupported("class expressions"),
+            Expr::PrivateName(_) => self.unsupported("bare private name"),
+            Expr::JSXMember(_)
+            | Expr::JSXNamespacedName(_)
+            | Expr::JSXEmpty(_)
+            | Expr::JSXElement(_)
+            | Expr::JSXFragment(_) => self.unsupported("JSX"),
+            Expr::Invalid(_) => self.unsupported("invalid expression"),
         }
     }
 
@@ -2312,6 +2589,20 @@ impl Codegen {
 
         // Collect class property declarations
         let mut class_prop_decls: Vec<(String, &Expr)> = Vec::new();
+
+        for member in &class.body {
+            match member {
+                ClassMember::PrivateMethod(_) => self.unsupported("private methods (`#m() {}`)"),
+                ClassMember::StaticBlock(_) => self.unsupported("static initialization blocks"),
+                ClassMember::AutoAccessor(_) => self.unsupported("`accessor` class fields"),
+                ClassMember::Constructor(_)
+                | ClassMember::Method(_)
+                | ClassMember::ClassProp(_)
+                | ClassMember::PrivateProp(_)
+                | ClassMember::TsIndexSignature(_)
+                | ClassMember::Empty(_) => {}
+            }
+        }
 
         for member in &class.body {
             if let ClassMember::Constructor(ctor) = member {
@@ -2351,7 +2642,10 @@ impl Codegen {
                     PropName::Ident(id) => id.sym.to_string(),
                     PropName::Str(s) => s.value.to_string_lossy().into_owned(),
                     PropName::Num(num) => num.value.to_string(),
-                    _ => continue,
+                    _ => {
+                        self.unsupported("computed class property names");
+                        continue;
+                    }
                 };
                 if let Some(value) = &prop.value {
                     class_prop_decls.push((prop_name, value.as_ref()));
@@ -2615,7 +2909,10 @@ impl Codegen {
                             MethodKind::Method => (name, false, false),
                         }
                     }
-                    _ => continue, // Skip computed names for now
+                    _ => {
+                        self.unsupported("computed class method names");
+                        continue;
+                    }
                 };
 
                 let unique_name = format!("__method_{}", prop_name.replace(":", "_"));

@@ -1,0 +1,30 @@
+// #117: && and || must not evaluate the right operand when the left decides.
+let ran = 0;
+function boom() { ran = ran + 1; return 1; }
+
+let r1 = false && boom();
+console.log(r1);
+let r2 = true || boom();
+console.log(r2);
+console.log(ran);
+
+let r3 = true && boom();
+console.log(r3);
+let r4 = false || boom();
+console.log(r4);
+console.log(ran);
+
+// Values, not booleans, come out.
+console.log(0 || "fallback");
+console.log("left" && "right");
+console.log(null && boom());
+console.log(ran);
+
+// The guard idiom must not touch the property of null.
+let o = null;
+if (o && o.missing) { console.log("unreachable"); } else { console.log("guarded"); }
+
+// Nested and inside conditions.
+let a = 1, b = 0, c = 3;
+console.log((a && b) || c);
+console.log(a && (b || c));

@@ -77,49 +77,41 @@ fn has_side_effects(op: &IrOp) -> bool {
 
 /// Fold constant expressions at compile time.
 pub fn constant_folding(func: &mut IrFunction) {
-    // Track known constant values
+    // Known constant SSA values. SSA values are defined once, so this map is
+    // valid across blocks.
     let mut constants: HashMap<ValueId, Literal> = HashMap::new();
-    // Track constants stored in local slots
-    let mut local_constants: HashMap<u32, Literal> = HashMap::new();
-
-    // First pass: collect constants and track local stores
     for block in &func.blocks {
         for op in &block.ops {
-            match op {
-                IrOp::Const(dst, lit) => {
-                    constants.insert(*dst, lit.clone());
-                }
-                IrOp::StoreLocal(slot, src) => {
-                    // If source is a constant, track it in the local slot
-                    if let Some(lit) = constants.get(src) {
-                        local_constants.insert(*slot, lit.clone());
-                    } else {
-                        // If we store a non-constant, remove the slot from local_constants
-                        local_constants.remove(slot);
-                    }
-                }
-                // Bitwise operations
-                IrOp::BitAnd(_, _, _)
-                | IrOp::BitOr(_, _, _)
-                | IrOp::Xor(_, _, _)
-                | IrOp::Shl(_, _, _)
-                | IrOp::Shr(_, _, _)
-                | IrOp::ShrU(_, _, _)
-                | IrOp::Pow(_, _, _) => {}
-
-                // Other operations - no constants to track
-                _ => {}
+            if let IrOp::Const(dst, lit) = op {
+                constants.insert(*dst, lit.clone());
             }
         }
     }
 
-    // Second pass: fold operations and propagate local constants
+    // Constants held in local slots. Unlike SSA values, a slot can be stored
+    // on several paths, so forwarding a store to a load is only sound inside
+    // one block: the map is reset at every block entry. (Doing this
+    // function-wide forwarded whichever store came last in block order, which
+    // miscompiled `if (c) x = 10; else x = 20; return x;` to `return 20`.)
     for block in &mut func.blocks {
+        let mut local_constants: HashMap<u32, Literal> = HashMap::new();
         let ops = std::mem::take(&mut block.ops);
-        block.ops = ops
-            .into_iter()
-            .map(|op| fold_op(op, &mut constants, &local_constants))
-            .collect();
+        let mut new_ops = Vec::with_capacity(ops.len());
+        for op in ops {
+            let op = fold_op(op, &mut constants, &local_constants);
+            if let IrOp::StoreLocal(slot, src) = &op {
+                match constants.get(src) {
+                    Some(lit) => {
+                        local_constants.insert(*slot, lit.clone());
+                    }
+                    None => {
+                        local_constants.remove(slot);
+                    }
+                }
+            }
+            new_ops.push(op);
+        }
+        block.ops = new_ops;
     }
 }
 
@@ -286,13 +278,6 @@ fn fold_op(
                 return IrOp::Const(dst, lit);
             }
             IrOp::LoadLocal(dst, slot)
-        }
-
-        // StoreLocal: update local_constants tracking
-        IrOp::StoreLocal(slot, src) => {
-            // Note: We can't modify local_constants here since it's immutable,
-            // but the first pass already handles this. This is just for consistency.
-            IrOp::StoreLocal(slot, src)
         }
 
         // All other operations pass through

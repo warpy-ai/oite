@@ -1,0 +1,4 @@
+// #118/#126: switch is not implemented yet; it must fail to compile, not vanish.
+let y = 0;
+switch (2) { case 2: y = 5; break; }
+console.log(y);

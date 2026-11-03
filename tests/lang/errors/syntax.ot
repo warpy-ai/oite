@@ -1,0 +1,2 @@
+// Recovered syntax errors fail compilation.
+let x = ;

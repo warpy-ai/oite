@@ -1,0 +1,15 @@
+a b 1 true
+[ 1, 2, 3 ]
+{ x: 1, y: 's' }
+[]
+{}
+0.30000000000000004
+Infinity -Infinity NaN
+n=Infinity
+[ 1, [ 2, [ 3, [Array] ] ] ]
+{ a: { b: { c: [Object] } } }
+null undefined
+[ 'it\'s', 'x' ]
+{ 'a-b': 1 }
+[Function]
+{ name: 'n', self: [Circular] }

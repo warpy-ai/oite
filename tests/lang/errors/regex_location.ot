@@ -1,0 +1,3 @@
+// #126: errors carry a line and column.
+let ok = 1;
+let r = /ab+c/;

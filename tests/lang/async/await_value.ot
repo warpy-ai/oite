@@ -1,0 +1,11 @@
+// #122: await on a plain value yields the value.
+async function g() {
+  let v = await 5;
+  let w = await Promise.resolve(6);
+  return v + w;
+}
+async function main() {
+  let r = await g();
+  console.log(r);
+}
+main();

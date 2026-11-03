@@ -14,7 +14,18 @@ fn compile(src: &str) -> Result<(), String> {
 fn issue_39_process_path_is_not_moved() {
     let mut compiler = Compiler::new();
     let result = compiler.compile(APHORIO_INDEX);
-    assert!(result.is_ok(), "expected clean compile, got: {:?}", result);
+    // The fixture uses regex literals, which Oite does not compile yet; that
+    // is now a reported error instead of silently dropped code. This test is
+    // about the borrow checker, so the only errors allowed are those.
+    if let Err(e) = &result {
+        assert!(!e.contains("BORROW ERROR"), "borrow checker regressed: {e}");
+        for line in e.lines() {
+            assert!(
+                line.ends_with("unsupported: regular expression literals"),
+                "unexpected compile error: {line}"
+            );
+        }
+    }
 }
 
 /// Passing a variable to a function borrows it only for that statement, so a

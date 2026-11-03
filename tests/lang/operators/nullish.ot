@@ -1,0 +1,14 @@
+// #119: ?? yields the right side only for null/undefined.
+let ran = 0;
+function boom() { ran = ran + 1; return "rhs"; }
+
+let n = null;
+let u;
+console.log(n ?? "default");
+console.log(u ?? "default");
+console.log(0 ?? boom());
+console.log("" ?? boom());
+console.log(false ?? boom());
+console.log(ran);
+console.log(n ?? boom());
+console.log(ran);

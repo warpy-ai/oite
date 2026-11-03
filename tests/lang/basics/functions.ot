@@ -1,0 +1,20 @@
+function fib(n) {
+  if (n < 2) return n;
+  return fib(n - 1) + fib(n - 2);
+}
+console.log(fib(20));
+
+function makeCounter() {
+  let count = 0;
+  return function () {
+    count = count + 1;
+    return count;
+  };
+}
+let c = makeCounter();
+c();
+c();
+console.log(c());
+
+let add = (a, b) => a + b;
+console.log(add(2, 3));

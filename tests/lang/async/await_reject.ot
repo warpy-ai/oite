@@ -1,0 +1,7 @@
+// #122: await on a rejected promise throws; the stack stays intact.
+async function f() { throw "boom"; }
+async function main() {
+  try { await f(); console.log("NO THROW"); } catch (e) { console.log("caught", e); }
+  console.log("after");
+}
+main();

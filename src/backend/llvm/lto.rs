@@ -64,6 +64,9 @@ pub fn run_thinlto(
         // Try llvm-lto approach
         let mut cmd = Command::new(&llvm_lto);
         cmd.arg("-o").arg(output_obj);
+        // Position-independent code: Linux toolchains link PIE executables
+        // by default (#128). Matches the in-process target machine.
+        cmd.arg("-relocation-model=pic");
 
         // Export main symbol to prevent elimination
         cmd.arg("--exported-symbol=main");
@@ -384,6 +387,7 @@ pub fn generate_object_file(
     let mut cmd = Command::new(&llc);
     cmd.arg("-filetype=obj")
         .arg("--function-sections") // Preserve function sections
+        .arg("-relocation-model=pic") // PIE-compatible objects (#128)
         .arg("-o")
         .arg(output_file);
 

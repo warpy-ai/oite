@@ -277,7 +277,9 @@ fn main() {
     }
 
     // 2. Check if this is a bootstrap file that needs the compiler modules
-    let is_bootstrap = filename.contains("bootstrap/") || filename.contains("tests/");
+    // Golden language tests (tests/lang/) run as plain user programs.
+    let is_bootstrap = (filename.contains("bootstrap/") || filename.contains("tests/"))
+        && !filename.contains("tests/lang/");
     let is_modular_compiler = filename.contains("compiler/") && !filename.contains("bootstrap/");
 
     if is_bootstrap {
