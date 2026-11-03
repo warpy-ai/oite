@@ -45,7 +45,10 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Bitwise operators, `**`                    | Covered                              | Covered                           |
 | Functions, recursion, functions as values  | Covered                              | Covered                           |
 | Top-level variables used from functions    | Covered                              | Covered                           |
-| Closures capturing an enclosing function's locals | Covered                       | Refused                           |
+| Closures (shared captured variables, per-iteration loop bindings) | Covered      | Covered                           |
+| Lexical scope (functions cannot see a caller's locals) | Covered                 | Covered                           |
+| Default parameter values                   | Covered                              | Covered                           |
+| Compound assignment (`+=`, `*=`, `<<=`, ...) | Covered                            | Covered                           |
 | Objects, arrays, `obj[k]`, `.length`, `push`/`pop` | Covered                      | Covered                           |
 | Methods on object literals (`this`)        | Covered                              | Covered                           |
 | String methods (`slice`, `split`, `trim`, `indexOf`, `padStart`, ...) | Covered   | Covered (shared implementation)   |

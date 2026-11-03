@@ -1,0 +1,8 @@
+// backends: vm jit aot
+// Each loop iteration gets its own `let` binding.
+let fns = [];
+for (let i = 0; i < 3; i++) {
+  let sq = i * i;
+  fns.push(function () { return [i, sq]; });
+}
+console.log(fns[0](), fns[1](), fns[2]());

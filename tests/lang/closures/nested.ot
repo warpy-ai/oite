@@ -1,0 +1,12 @@
+// backends: vm jit aot
+// Captures through more than one level, after the outer calls returned.
+function outer(a) {
+  let b = 10;
+  return function middle(c) {
+    return function inner(d) { return a + b + c + d; };
+  };
+}
+console.log(outer(1)(100)(1000));
+function adder(x) { return (y) => x + y; }
+let add5 = adder(5);
+console.log(add5(1), add5(2), adder(10)(1));

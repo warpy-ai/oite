@@ -1,0 +1,7 @@
+// backends: vm jit aot
+// Top-level variables are shared with every function and closure.
+let total = 0;
+let add = (n) => { total = total + n; };
+add(2);
+add(3);
+console.log(total);

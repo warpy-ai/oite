@@ -1,0 +1,22 @@
+// backends: vm jit aot
+// break / continue / return from inside scopes with captured variables.
+let fns = [];
+for (let i = 0; i < 10; i++) {
+  if (i == 1) continue;
+  if (i == 4) break;
+  let label = "item" + i;
+  fns.push(() => label + ":" + i);
+}
+console.log(fns.length, fns[0](), fns[1](), fns[2]());
+function find(xs, want) {
+  for (let x of xs) {
+    let hit = () => x == want;
+    if (hit()) return () => x;
+  }
+  return () => "none";
+}
+console.log(find([1, 2, 3], 2)(), find([1], 5)());
+// (One key: the VM's property order is not insertion order yet.)
+let keys = [];
+for (let k in { only: 1 }) { keys.push(() => k); }
+console.log(keys.length, keys[0]());
