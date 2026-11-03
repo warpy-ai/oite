@@ -23,6 +23,10 @@ pub enum LowerError {
     UnsupportedOpcode(String),
     /// Internal error
     Internal(String),
+    /// A language feature the native backends do not implement yet
+    NotSupportedNatively(String),
+    /// An error inside a named function
+    InFunction(String, Box<LowerError>),
 }
 
 impl std::fmt::Display for LowerError {
@@ -32,11 +36,22 @@ impl std::fmt::Display for LowerError {
             LowerError::InvalidJumpTarget(addr) => write!(f, "Invalid jump target: {}", addr),
             LowerError::UnsupportedOpcode(op) => write!(f, "Unsupported opcode: {}", op),
             LowerError::Internal(msg) => write!(f, "Internal error: {}", msg),
+            LowerError::NotSupportedNatively(what) => write!(
+                f,
+                "{} not supported by the JIT/AOT backends yet; run the program with the VM (`oitec <file>`)",
+                what
+            ),
+            LowerError::InFunction(name, inner) => write!(f, "in function `{}`: {}", name, inner),
         }
     }
 }
 
 impl std::error::Error for LowerError {}
+
+/// Error for a construct the native backends cannot compile yet.
+fn native_unsupported(what: &str) -> LowerError {
+    LowerError::NotSupportedNatively(what.to_string())
+}
 
 /// Bytecode to SSA lowering context.
 pub struct Lowerer {
@@ -836,100 +851,29 @@ impl Lowerer {
                 ));
             }
 
-            // Exception handling - for now, we just skip these in IR lowering
-            // Full exception handling in IR/LLVM would require landing pads
-            OpCode::Throw => {
-                // Pop the exception value and emit unreachable
-                let _exc = self.pop()?;
-                // In a full implementation, this would invoke unwinding
-                // For now, we just mark it as unreachable since thrown exceptions
-                // won't be compiled to native code yet
+            // Not yet supported by the native backends. These used to lower
+            // to no-ops or `undefined`, which made the JIT and AOT backends
+            // compute different answers from the VM (e.g. a caught `throw`
+            // fell through to the code after it). Refusing is the only
+            // behaviour that cannot produce a wrong result.
+            OpCode::Throw | OpCode::SetupTry { .. } | OpCode::PopTry | OpCode::EnterFinally(_) => {
+                return Err(native_unsupported(
+                    "exceptions (`throw`, `try`/`catch`/`finally`)",
+                ));
             }
-
-            OpCode::SetupTry { .. } => {
-                // Try block setup - skip in IR for now
-                // Full implementation would need invoke instructions and landing pads
+            OpCode::SetProto
+            | OpCode::LoadSuper
+            | OpCode::CallSuper(_)
+            | OpCode::GetSuperProp(_) => {
+                return Err(native_unsupported("class inheritance (`extends`, `super`)"));
             }
-
-            OpCode::PopTry => {
-                // Pop try handler - skip in IR
+            OpCode::ImportAsync(_)
+            | OpCode::GetExport { .. }
+            | OpCode::ModuleResolutionError { .. } => {
+                return Err(native_unsupported("modules (`import`)"));
             }
-
-            OpCode::EnterFinally(_) => {
-                // Enter finally - skip in IR
-            }
-
-            // === Class inheritance opcodes - skip in IR for now ===
-            OpCode::SetProto => {
-                // Prototype chain setup - skip in IR
-                // Would need runtime support for prototype lookup
-                let _proto = self.pop()?;
-                let obj = self.pop()?;
-                self.push(obj);
-            }
-
-            OpCode::LoadSuper => {
-                // Load super constructor - emit undefined for now
-                let val = self.alloc_value(IrType::Any);
-                self.emit(IrOp::Const(val, Literal::Undefined));
-                self.push(val);
-            }
-
-            OpCode::CallSuper(arg_count) => {
-                // Super constructor call - skip for now
-                let _super_ctor = self.pop()?;
-                for _ in 0..*arg_count {
-                    let _ = self.pop()?;
-                }
-                let val = self.alloc_value(IrType::Any);
-                self.emit(IrOp::Const(val, Literal::Undefined));
-                self.push(val);
-            }
-
-            OpCode::GetSuperProp(_name) => {
-                // Get property from super - emit undefined for now
-                let _super_obj = self.pop()?;
-                let val = self.alloc_value(IrType::Any);
-                self.emit(IrOp::Const(val, Literal::Undefined));
-                self.push(val);
-            }
-
-            // === ES Modules ===
-            // ES modules require async loading which isn't supported in AOT yet
-            // These opcodes will work in JIT mode but emit stubs for AOT
-            OpCode::ImportAsync(_specifier) => {
-                // Pop the module specifier URL
-                let _url = self.pop()?;
-                // Emit undefined as a placeholder for the promise
-                let dst = self.alloc_value(IrType::Any);
-                self.emit(IrOp::Const(dst, Literal::Undefined));
-                self.push(dst);
-            }
-
             OpCode::Await => {
-                // Await requires async runtime support - emit undefined for now
-                let _promise = self.pop()?;
-                let dst = self.alloc_value(IrType::Any);
-                self.emit(IrOp::Const(dst, Literal::Undefined));
-                self.push(dst);
-            }
-
-            OpCode::GetExport {
-                name: _,
-                is_default: _,
-            } => {
-                // Get export from module namespace - emit undefined for now
-                let _namespace = self.pop()?;
-                let dst = self.alloc_value(IrType::Any);
-                self.emit(IrOp::Const(dst, Literal::Undefined));
-                self.push(dst);
-            }
-
-            OpCode::ModuleResolutionError { .. } => {
-                // Module resolution error - pop and ignore for AOT
-                let _specifier = self.pop()?;
-                let _importer = self.pop()?;
-                let _chain = self.pop()?;
+                return Err(native_unsupported("`await`"));
             }
 
             // Bitwise operators - emit as number operations
@@ -1062,22 +1006,25 @@ pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
         let func_name = format!("func_{}", func_info.address);
 
         // Lower with parameter info and base address for rebasing jump targets
-        match lower_extracted_function(
+        // A function that cannot be lowered fails the whole module. Skipping
+        // it would also shift the indices recorded in `function_addrs` below,
+        // so calls would resolve to the wrong function.
+        let ir_func = lower_extracted_function(
             &func_name,
             func_bytecode,
             &func_info.param_names,
             func_info.address,
             func_info.self_reference_var.as_ref(),
             &func_var_addrs,
-        ) {
-            Ok(ir_func) => {
-                module.add_function(ir_func);
-            }
-            Err(e) => {
-                // Log but continue - some functions may have issues
-                eprintln!("Warning: Failed to lower func_{}: {}", func_info.address, e);
-            }
-        }
+        )
+        .map_err(|e| {
+            let name = func_info
+                .self_reference_var
+                .as_deref()
+                .unwrap_or(&func_name);
+            LowerError::InFunction(name.to_string(), Box::new(e))
+        })?;
+        module.add_function(ir_func);
     }
 
     // Step 3: Lower the main code (treating skipped function bodies as jumps)

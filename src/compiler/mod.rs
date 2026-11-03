@@ -4,7 +4,7 @@ use swc_ecma_ast::*;
 pub mod borrow_ck;
 use crate::compiler::borrow_ck::BorrowChecker;
 use crate::vm::value::JsValue;
-use swc_common::{FileName, SourceMap, sync::Lrc};
+use swc_common::{FileName, SourceMap, Span, Spanned, sync::Lrc};
 use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 
 pub struct Compiler {
@@ -36,7 +36,7 @@ impl Compiler {
         let cm: Lrc<SourceMap> = Default::default();
         let fm = cm.new_source_file(
             FileName::Custom("main.ot".into()).into(),
-            source.to_string(),
+            blank_module_directives(source),
         );
 
         // Determine syntax based on file extension or override
@@ -47,9 +47,34 @@ impl Compiler {
 
         let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
         let mut parser = Parser::new_from(lexer);
-        let program = parser
-            .parse_program()
-            .map_err(|e| format!("Parsing error: {:?}", e))?;
+        let format_parse_error = |e: swc_ecma_parser::error::Error| {
+            let loc = cm.lookup_char_pos(e.span().lo);
+            format!(
+                "{}:{}: syntax error: {}",
+                loc.line,
+                loc.col_display + 1,
+                e.into_kind().msg()
+            )
+        };
+        let program = parser.parse_program().map_err(&format_parse_error)?;
+        // The parser recovers from some errors and keeps going; those must
+        // still fail compilation instead of producing a partial program.
+        let recovered: Vec<String> = parser
+            .take_errors()
+            .into_iter()
+            // Oite allows a top-level `return`: it sets the program's result
+            // (see `oitec jit`).
+            .filter(|e| {
+                !matches!(
+                    e.kind(),
+                    swc_ecma_parser::error::SyntaxError::ReturnNotAllowed
+                )
+            })
+            .map(&format_parse_error)
+            .collect();
+        if !recovered.is_empty() {
+            return Err(recovered.join("\n"));
+        }
 
         self.borrow_checker.enter_scope(); // Script vars at depth 1, globals at 0
 
@@ -92,11 +117,54 @@ impl Compiler {
         }
 
         if !codegen.errors.is_empty() {
-            return Err(codegen.errors.join("\n"));
+            let messages: Vec<String> = codegen
+                .errors
+                .iter()
+                .map(|(span, msg)| {
+                    if span.is_dummy() {
+                        msg.clone()
+                    } else {
+                        let loc = cm.lookup_char_pos(span.lo);
+                        format!("{}:{}: {}", loc.line, loc.col_display + 1, msg)
+                    }
+                })
+                .collect();
+            return Err(messages.join("\n"));
         }
 
         Ok(codegen.instructions)
     }
+}
+
+/// Blank out `require ./path;` lines (the `;` is optional), keeping byte
+/// offsets intact.
+///
+/// This is the self-hosted compiler's module directive (`compiler/*.ot`,
+/// `bootstrap/*.ot`), parsed there as a `RequireStatement`. It is not valid
+/// JavaScript, and the Rust toolchain loads those modules from a fixed list in
+/// `main.rs`, so for this compiler the line has no meaning.
+fn blank_module_directives(source: &str) -> String {
+    source
+        .split_inclusive('\n')
+        .map(|line| {
+            let body = line.trim_end_matches(['\n', '\r']);
+            let t = body.trim();
+            let is_directive = t.strip_prefix("require ./").is_some_and(|rest| {
+                let path = rest.strip_suffix(';').unwrap_or(rest);
+                !path.is_empty()
+                    && path
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '/')
+            });
+            if is_directive {
+                let mut blank = " ".repeat(body.len());
+                blank.push_str(&line[body.len()..]);
+                blank
+            } else {
+                line.to_string()
+            }
+        })
+        .collect()
 }
 
 struct LoopContext {
@@ -124,7 +192,10 @@ pub struct Codegen {
     /// Hard errors collected during code generation. Compilation fails if
     /// any are present: a construct the compiler cannot lower must never be
     /// dropped silently.
-    pub errors: Vec<String>,
+    pub errors: Vec<(Span, String)>,
+    /// Span of the innermost statement or expression being compiled, used
+    /// to locate errors.
+    current_span: Span,
 }
 
 impl Default for Codegen {
@@ -146,12 +217,14 @@ impl Codegen {
             private_method_indices: std::collections::HashMap::new(),
             warnings: Vec::new(),
             errors: Vec::new(),
+            current_span: Span::default(),
         }
     }
 
     /// Record that a construct cannot be compiled. Compilation will fail.
     fn unsupported(&mut self, what: impl std::fmt::Display) {
-        self.errors.push(format!("unsupported: {}", what));
+        self.errors
+            .push((self.current_span, format!("unsupported: {}", what)));
     }
 
     /// Emit a jump with a placeholder target; patch it with `patch_jump`.
@@ -490,7 +563,9 @@ impl Codegen {
                     };
                     self.gen_fn_decl(name, &fn_expr.function);
                 }
-                _ => {}
+                DefaultDecl::TsInterfaceDecl(_) => {
+                    // Interfaces are compile-time only
+                }
             },
             ModuleDecl::ExportDefaultExpr(export_default) => match &*export_default.expr {
                 Expr::Fn(fn_expr) => {
@@ -507,7 +582,9 @@ impl Codegen {
                         class_expr.ident.as_ref().map(|id| id.sym.as_str()),
                     );
                 }
-                _ => {}
+                _ => self.unsupported(
+                    "`export default` of an expression other than a function or class",
+                ),
             },
             ModuleDecl::Import(import) => {
                 let src = import.src.value.to_string_lossy().into_owned();
@@ -765,7 +842,7 @@ impl Codegen {
             Decl::TsTypeAlias(_) => {
                 // Type aliases are compile-time only, skip
             }
-            _ => {}
+            Decl::Using(_) => self.unsupported("`using` declarations"),
         }
     }
 
@@ -779,6 +856,9 @@ impl Codegen {
 
     fn gen_fn_decl(&mut self, name: Option<String>, fn_decl: &Function) {
         let is_async = fn_decl.is_async;
+        if fn_decl.is_generator {
+            self.unsupported("generator functions (`function*`)");
+        }
 
         // For named function declarations, store them in the current scope
         // Anonymous functions are not stored (they're just values)
@@ -928,7 +1008,10 @@ impl Codegen {
                                 swc_ecma_ast::PropName::Str(s) => {
                                     s.value.to_string_lossy().into_owned()
                                 }
-                                _ => continue,
+                                _ => {
+                                    self.unsupported("computed keys in destructuring patterns");
+                                    continue;
+                                }
                             };
                             self.instructions.push(OpCode::GetProp(key_name));
                             // Recursively bind the value pattern
@@ -1016,14 +1099,24 @@ impl Codegen {
                 }
                 self.gen_pattern_binding(&assign.left);
             }
-            _ => {
-                // Unsupported pattern - just pop the value
+            Pat::Expr(_) => {
+                self.unsupported("expression as a binding pattern");
+                self.instructions.push(OpCode::Pop);
+            }
+            Pat::Invalid(_) => {
+                self.unsupported("invalid binding pattern");
                 self.instructions.push(OpCode::Pop);
             }
         }
     }
 
     fn gen_stmt(&mut self, stmt: &Stmt) {
+        let saved = std::mem::replace(&mut self.current_span, stmt.span());
+        self.gen_stmt_inner(stmt);
+        self.current_span = saved;
+    }
+
+    fn gen_stmt_inner(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Return(ret_stmt) => {
                 if let Some(arg) = &ret_stmt.arg {
@@ -1166,18 +1259,26 @@ impl Codegen {
                     }
                 }
             }
-            Stmt::Break(_) => {
-                if let Some(loop_ctx) = self.loop_stack.last_mut() {
+            Stmt::Break(brk) => {
+                if brk.label.is_some() {
+                    self.unsupported("labeled `break`");
+                } else if let Some(loop_ctx) = self.loop_stack.last_mut() {
                     let jump_idx = self.instructions.len();
                     self.instructions.push(OpCode::Jump(0));
                     loop_ctx.break_jumps.push(jump_idx);
+                } else {
+                    self.unsupported("`break` outside of a loop");
                 }
             }
-            Stmt::Continue(_) => {
-                if let Some(loop_ctx) = self.loop_stack.last_mut() {
+            Stmt::Continue(cont) => {
+                if cont.label.is_some() {
+                    self.unsupported("labeled `continue`");
+                } else if let Some(loop_ctx) = self.loop_stack.last_mut() {
                     let jump_idx = self.instructions.len();
                     self.instructions.push(OpCode::Jump(0));
                     loop_ctx.continue_jumps.push(jump_idx);
+                } else {
+                    self.unsupported("`continue` outside of a loop");
                 }
             }
             Stmt::If(if_stmt) => {
@@ -1451,7 +1552,8 @@ impl Codegen {
                     }
                 }
             }
-            Stmt::Empty(_) | Stmt::Debugger(_) | Stmt::With(_) => {
+            Stmt::With(_) => self.unsupported("`with` statements"),
+            Stmt::Empty(_) | Stmt::Debugger(_) => {
                 // Empty/debugger/with statements - do nothing
             }
             Stmt::Try(try_stmt) => {
@@ -1584,11 +1686,19 @@ impl Codegen {
                 self.gen_expr(&throw_stmt.arg);
                 self.instructions.push(OpCode::Throw);
             }
-            _ => {}
+            Stmt::Switch(_) => self.unsupported("`switch` statements"),
+            Stmt::Labeled(_) => self.unsupported("labeled statements"),
+            Stmt::Decl(Decl::Using(_)) => self.unsupported("`using` declarations"),
         }
     }
 
     fn gen_expr(&mut self, expr: &Expr) {
+        let saved = std::mem::replace(&mut self.current_span, expr.span());
+        self.gen_expr_inner(expr);
+        self.current_span = saved;
+    }
+
+    fn gen_expr_inner(&mut self, expr: &Expr) {
         match expr {
             Expr::Fn(fn_expr) => {
                 let is_async = fn_expr.function.is_async;
@@ -1788,7 +1898,7 @@ impl Codegen {
                         // Params are capturable by nested closures
                         self.outer_scope_vars.insert(param_name);
                     } else {
-                        eprintln!("Warning: Non-identifier arrow params not supported yet.");
+                        self.unsupported("destructuring or default arrow-function parameters");
                     }
                 }
 
@@ -1964,7 +2074,9 @@ impl Codegen {
                                 self.instructions.push(OpCode::Pop);
                                 self.instructions.push(OpCode::Push(JsValue::Undefined));
                             }
-                            _ => eprintln!("Warning: Unary operator {:?} not supported", unary.op),
+                            other => {
+                                self.unsupported(format!("unary operator `{}`", other.as_str()))
+                            }
                         }
                     }
                 }
@@ -2049,7 +2161,7 @@ impl Codegen {
                         // 2. The CallSuper opcode will use it
                         self.instructions.push(OpCode::LoadSuper);
                     }
-                    Callee::Import(_) => {} // Handle import calls if needed
+                    Callee::Import(_) => self.unsupported("dynamic `import()`"),
                 }
                 // Call it
                 match &call_expr.callee {
@@ -2120,9 +2232,9 @@ impl Codegen {
                                 }
                             }
                         }
-                        _ => eprintln!("Warning: Complex assignment target not supported."),
+                        _ => self.unsupported("this assignment target"),
                     },
-                    _ => eprintln!("Warning: Complex assignment targets not supported yet."),
+                    _ => self.unsupported("destructuring assignment"),
                 }
             }
             Expr::Object(obj_lit) => {
@@ -2145,7 +2257,11 @@ impl Codegen {
                                             .as_str()
                                             .expect("Invalid string key")
                                             .to_string(),
-                                        _ => continue,
+                                        PropName::Num(n) => n.value.to_string(),
+                                        _ => {
+                                            self.unsupported("computed object literal keys");
+                                            continue;
+                                        }
                                     };
 
                                     self.instructions.push(OpCode::Dup); // Duplicate Ptr
@@ -2163,13 +2279,23 @@ impl Codegen {
                                     // { fn() {} } - inline method
                                     let key = match &method.key {
                                         PropName::Ident(id) => id.sym.to_string(),
-                                        _ => continue,
+                                        _ => {
+                                            self.unsupported(
+                                                "computed object literal method names",
+                                            );
+                                            continue;
+                                        }
                                     };
                                     self.instructions.push(OpCode::Dup);
                                     self.gen_fn_decl(None, &method.function);
                                     self.instructions.push(OpCode::SetProp(key));
                                 }
-                                _ => {}
+                                Prop::Getter(_) | Prop::Setter(_) => {
+                                    self.unsupported("getters and setters in object literals")
+                                }
+                                Prop::Assign(_) => {
+                                    self.unsupported("`key = value` in an object literal")
+                                }
                             }
                         }
                     }
@@ -2374,6 +2500,11 @@ impl Codegen {
                         }
                         self.instructions.push(OpCode::Store(name));
                     }
+                } else if let Expr::Member(member) = update_expr.arg.as_ref()
+                    && matches!(member.prop, MemberProp::PrivateName(_))
+                {
+                    self.unsupported("`++`/`--` on a private field");
+                    self.instructions.push(OpCode::Push(JsValue::Undefined));
                 } else if let Expr::Member(member) = update_expr.arg.as_ref() {
                     // Member expression: obj.prop++ / ++obj.prop / obj[key]++ / ++obj[key]
                     let op = update_expr.op;
@@ -2391,7 +2522,7 @@ impl Codegen {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::GetPropComputed);
                             }
-                            _ => {}
+                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                         self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
                         if op == UpdateOp::PlusPlus {
@@ -2408,7 +2539,7 @@ impl Codegen {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::SetPropComputed);
                             }
-                            _ => {}
+                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                         // Reload the new value
                         self.gen_expr(&member.obj);
@@ -2420,7 +2551,7 @@ impl Codegen {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::GetPropComputed);
                             }
-                            _ => {}
+                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                     } else {
                         // obj.prop++: get old value, save it, compute new, store back
@@ -2437,7 +2568,7 @@ impl Codegen {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::GetPropComputed);
                             }
-                            _ => {}
+                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                         // Stack: [obj, old_val] -> Swap -> [old_val, obj]
                         self.instructions.push(OpCode::Swap);
@@ -2450,7 +2581,7 @@ impl Codegen {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::GetPropComputed);
                             }
-                            _ => {}
+                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                         self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
                         if op == UpdateOp::PlusPlus {
@@ -2467,7 +2598,7 @@ impl Codegen {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::SetPropComputed);
                             }
-                            _ => {}
+                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                     }
                 }
@@ -2484,7 +2615,32 @@ impl Codegen {
                 // TypeScript non-null assertion `expr!` - evaluate inner expression
                 self.gen_expr(&ts_non_null.expr);
             }
-            _ => {}
+            // More type-only wrappers with no runtime effect.
+            Expr::TsConstAssertion(e) => self.gen_expr(&e.expr),
+            Expr::TsSatisfies(e) => self.gen_expr(&e.expr),
+            Expr::TsInstantiation(e) => self.gen_expr(&e.expr),
+            Expr::Seq(seq) => {
+                // `a, b, c`: evaluate all, keep the last value.
+                for (i, e) in seq.exprs.iter().enumerate() {
+                    self.gen_expr(e);
+                    if i + 1 < seq.exprs.len() {
+                        self.instructions.push(OpCode::Pop);
+                    }
+                }
+            }
+            Expr::Lit(Lit::Regex(_)) => self.unsupported("regular expression literals"),
+            Expr::Lit(Lit::BigInt(_)) => self.unsupported("BigInt literals"),
+            Expr::Lit(_) => self.unsupported("this literal"),
+            Expr::TaggedTpl(_) => self.unsupported("tagged template literals"),
+            Expr::Yield(_) => self.unsupported("`yield`"),
+            Expr::Class(_) => self.unsupported("class expressions"),
+            Expr::PrivateName(_) => self.unsupported("bare private name"),
+            Expr::JSXMember(_)
+            | Expr::JSXNamespacedName(_)
+            | Expr::JSXEmpty(_)
+            | Expr::JSXElement(_)
+            | Expr::JSXFragment(_) => self.unsupported("JSX"),
+            Expr::Invalid(_) => self.unsupported("invalid expression"),
         }
     }
 
@@ -2516,6 +2672,20 @@ impl Codegen {
 
         // Collect class property declarations
         let mut class_prop_decls: Vec<(String, &Expr)> = Vec::new();
+
+        for member in &class.body {
+            match member {
+                ClassMember::PrivateMethod(_) => self.unsupported("private methods (`#m() {}`)"),
+                ClassMember::StaticBlock(_) => self.unsupported("static initialization blocks"),
+                ClassMember::AutoAccessor(_) => self.unsupported("`accessor` class fields"),
+                ClassMember::Constructor(_)
+                | ClassMember::Method(_)
+                | ClassMember::ClassProp(_)
+                | ClassMember::PrivateProp(_)
+                | ClassMember::TsIndexSignature(_)
+                | ClassMember::Empty(_) => {}
+            }
+        }
 
         for member in &class.body {
             if let ClassMember::Constructor(ctor) = member {
@@ -2555,7 +2725,10 @@ impl Codegen {
                     PropName::Ident(id) => id.sym.to_string(),
                     PropName::Str(s) => s.value.to_string_lossy().into_owned(),
                     PropName::Num(num) => num.value.to_string(),
-                    _ => continue,
+                    _ => {
+                        self.unsupported("computed class property names");
+                        continue;
+                    }
                 };
                 if let Some(value) = &prop.value {
                     class_prop_decls.push((prop_name, value.as_ref()));
@@ -2819,7 +2992,10 @@ impl Codegen {
                             MethodKind::Method => (name, false, false),
                         }
                     }
-                    _ => continue, // Skip computed names for now
+                    _ => {
+                        self.unsupported("computed class method names");
+                        continue;
+                    }
                 };
 
                 let unique_name = format!("__method_{}", prop_name.replace(":", "_"));
