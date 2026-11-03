@@ -7,8 +7,11 @@ keywords: [development status, roadmap, features, progress, releases, changelog]
 
 # Development Status
 
-Oite runs real programs on the VM. Its native backends and several advertised
-features are not finished yet. This page records what runs today. "Covered"
+Oite is a compiled language: programs are meant to run as native code, built
+with LLVM AOT, with the Cranelift JIT for development. The native backends are
+not finished yet. Today most features run only in the VM, which is the
+debugging interpreter, so the VM column below is often ahead. This page records
+what runs on each backend today. "Covered"
 means a golden test in `tests/lang/` checks it; see the
 [contributing rules](https://github.com/warpy-ai/oite/blob/master/CONTRIBUTING.md).
 Tracking issue for the full gap list: [#136](https://github.com/warpy-ai/oite/issues/136).
@@ -17,10 +20,10 @@ Tracking issue for the full gap list: [#136](https://github.com/warpy-ai/oite/is
 
 | Component                                 | Status                                                                                   |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------- |
-| VM interpreter                            | Working; reference implementation                                                        |
+| LLVM AOT (production target)              | Links on Linux and macOS; native runtime is stubbed, so output is wrong ([#127](https://github.com/warpy-ai/oite/issues/127), [#129](https://github.com/warpy-ai/oite/issues/129))     |
+| Cranelift JIT (development)               | Numeric code only; object property access crashes                                        |
 | SSA IR + optimizations                    | Working for numeric code                                                                  |
-| Cranelift JIT                             | Numeric code only; object property access crashes                                        |
-| LLVM AOT                                  | Links on Linux and macOS; native runtime is stubbed, so output is wrong ([#127](https://github.com/warpy-ai/oite/issues/127), [#129](https://github.com/warpy-ai/oite/issues/129))     |
+| VM interpreter (debugging)                | Runs most features; ahead of the native backends for now                                 |
 | Static type checking                      | Not implemented: annotations are parsed and erased ([#124](https://github.com/warpy-ai/oite/issues/124))                                |
 | Memory reclamation                        | Not implemented: nothing is ever freed ([#123](https://github.com/warpy-ai/oite/issues/123))                                            |
 | Self-hosting compiler                     | Partial: cannot compile its own source yet ([#131](https://github.com/warpy-ai/oite/issues/131))                                        |
@@ -32,10 +35,10 @@ Tracking issue for the full gap list: [#136](https://github.com/warpy-ai/oite/is
 ## Language Features
 
 "Refused" means the backend reports an error and does not run the program.
-That is the intended state for anything a backend cannot yet do exactly as
-the VM does.
+That is the intended state for anything a native backend cannot run correctly
+yet. Closing the gap between the two right-hand columns is the main work.
 
-| Feature                                    | VM                                   | JIT / AOT                         |
+| Feature                                    | VM (debugging)                       | JIT / AOT (native)                |
 | ------------------------------------------ | ------------------------------------ | --------------------------------- |
 | Numbers, strings, arithmetic, comparison   | Covered                              | JIT works for numbers             |
 | Functions, closures, recursion             | Covered                              | JIT works for numeric functions   |
@@ -64,7 +67,7 @@ the VM does.
 | Component                         | Status                                         |
 | --------------------------------- | ---------------------------------------------- |
 | Rust compiler (`src/compiler/`)   | Production compiler for all three backends     |
-| Bootstrap compiler (`bootstrap/`) | Runs on the VM; reference for self-hosting     |
+| Bootstrap compiler (`bootstrap/`) | Runs on the VM; seed for self-hosting          |
 | Modular compiler (`compiler/`)    | Runs on the VM; cannot yet compile itself ([#131](https://github.com/warpy-ai/oite/issues/131)) |
 
 `scripts/bootstrap_verify.sh` checks determinism of one module

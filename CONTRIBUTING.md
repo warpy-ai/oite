@@ -21,24 +21,30 @@ A change to the language is not done until a golden test shows it.
 - Run them with `cargo test --release --test golden`. Narrow with
   `OITE_GOLDEN_FILTER=operators`.
 - Write the expected output **by hand** from what the program should do. Do not
-  copy whatever the VM prints today. `OITE_BLESS=1` rewrites `.out` files from
+  copy whatever a backend prints today. `OITE_BLESS=1` rewrites `.out` files from
   current output; use it only after checking the diff line by line.
 - Every bug fix starts as a golden test that fails, using the reproduction from
   the issue.
 
-### 2. The VM is the reference; backends must agree with it or refuse
+### 2. Native code is the target; a backend matches the expectation or refuses
 
-Oite has three ways to run a program: the VM (`oitec file.ot`), the Cranelift
-JIT (`oitec jit`) and LLVM AOT (`oitec build`). A backend that cannot run a
-construct exactly as the VM does must fail with an error. It must never
-approximate.
+Oite compiles to native code: LLVM AOT (`oitec build`) for production and the
+Cranelift JIT (`oitec jit`) for development. The VM (`oitec file.ot`) is the
+debugging interpreter. A feature is done when it runs natively; working only
+in the VM is a step on the way, not the goal.
+
+The `.out` / `.err` files define correct behaviour. No backend is the
+reference, including the VM. A backend that cannot run a construct correctly
+must fail with an error. It must never approximate.
 
 - In `src/ir/lower.rs`, an opcode the native backends do not implement returns
   `LowerError::NotSupportedNatively`. Do not lower it to a no-op or to
   `undefined`.
-- A test that should also run natively gets a `// backends: vm aot` directive
-  at the top. The harness then builds it with `oitec build` and requires the
-  same output.
+- The `// backends: vm aot` directive at the top of a test runs it on each
+  listed backend against the same expectation. Tests list `vm` only for now
+  because the native runtime is still stubbed
+  ([#127](https://github.com/warpy-ai/oite/issues/127)); the goal is every
+  test on `aot`. Add `aot` to a test as soon as it passes there.
 
 ### 3. Nothing is dropped silently
 
@@ -51,9 +57,8 @@ approximate.
 
 ### 4. Every IR op is handled everywhere, or rejected everywhere
 
-Adding an `IrOp` (`src/ir/mod.rs`) means handling it in the VM path, in
-Cranelift (`src/backend/cranelift.rs`) and in LLVM (`src/backend/llvm/codegen.rs`),
-or rejecting it in lowering until all three can. Lowering must also not
+Adding an `IrOp` (`src/ir/mod.rs`) means handling it in Cranelift (`src/backend/cranelift.rs`) and in LLVM (`src/backend/llvm/codegen.rs`),
+or rejecting it in lowering until both can. Lowering must also not
 assume a value on the operand stack survives a jump: `spill_stack` and
 `reload_stack` carry stack values across block edges.
 

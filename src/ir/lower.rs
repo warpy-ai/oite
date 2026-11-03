@@ -38,7 +38,7 @@ impl std::fmt::Display for LowerError {
             LowerError::Internal(msg) => write!(f, "Internal error: {}", msg),
             LowerError::NotSupportedNatively(what) => write!(
                 f,
-                "{} not supported by the JIT/AOT backends yet; run the program with the VM (`oitec <file>`)",
+                "{} not supported by the JIT/AOT backends yet (the VM interpreter, `oitec <file>`, can run it for debugging)",
                 what
             ),
             LowerError::InFunction(name, inner) => write!(f, "in function `{}`: {}", name, inner),
@@ -852,9 +852,9 @@ impl Lowerer {
             }
 
             // Not yet supported by the native backends. These used to lower
-            // to no-ops or `undefined`, which made the JIT and AOT backends
-            // compute different answers from the VM (e.g. a caught `throw`
-            // fell through to the code after it). Refusing is the only
+            // to no-ops or `undefined`, so native code silently computed
+            // wrong answers (e.g. a caught `throw` fell through to the code
+            // after it). Refusing is the only
             // behaviour that cannot produce a wrong result.
             OpCode::Throw | OpCode::SetupTry { .. } | OpCode::PopTry | OpCode::EnterFinally(_) => {
                 return Err(native_unsupported(

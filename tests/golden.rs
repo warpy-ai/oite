@@ -12,13 +12,15 @@
 //!
 //! Directives (comment lines at the top of the `.ot` file):
 //!
-//! - `// backends: vm aot` — also build the program with `oitec build` and
-//!   require the native binary to print the same `.out`. Default: `vm` only.
-//!   This is how the backends are held to the VM as the reference
-//!   implementation.
+//! - `// backends: vm aot` — run the program on each listed backend and hold
+//!   every one to the same `.out`. The expectation files are the reference;
+//!   no backend is. Default: `vm` only, because the native runtime is still
+//!   stubbed (#127). The goal is every test on `aot`, Oite's production
+//!   target.
 //!
 //! Set `OITE_BLESS=1` to (re)write `.out` files from the current VM output.
-//! Only do this after checking the new output by hand.
+//! Only do this after checking the new output by hand: it records what the
+//! VM does, not what is correct.
 //!
 //! Set `OITE_GOLDEN_FILTER=substr` to run only matching files.
 
