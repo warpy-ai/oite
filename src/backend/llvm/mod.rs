@@ -17,6 +17,7 @@ pub mod linker;
 pub mod lto;
 pub mod object;
 pub mod optimizer;
+pub mod runtime_lib;
 pub mod types;
 
 pub use codegen::LlvmCodegen;

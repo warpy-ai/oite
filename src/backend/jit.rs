@@ -57,52 +57,22 @@ impl JitRuntime {
         self.compiled_funcs.clone()
     }
 
-    /// Call the main function with no arguments
+    /// Run top-level code (`main`) and flush output.
     pub fn call_main(&self) -> Result<OtValue, BackendError> {
-        let ptr = self
-            .get_func("main")
-            .ok_or_else(|| BackendError::JitError("No 'main' function found".into()))?;
-
-        // Cast to function pointer and call
-        // Safety: We trust the compiled code is valid
-        let main_fn: extern "C" fn() -> u64 = unsafe { std::mem::transmute(ptr) };
-        let result = main_fn();
-
-        Ok(OtValue::from_bits(result))
+        let result = self.call_func("main", &[])?;
+        crate::runtime::stubs::ot_runtime_exit();
+        Ok(result)
     }
 
-    /// Call a named function with arguments
+    /// Call a compiled function. Every compiled function has the native
+    /// calling convention `fn(this, argv, argc) -> value`.
     pub fn call_func(&self, name: &str, args: &[OtValue]) -> Result<OtValue, BackendError> {
         let ptr = self
             .get_func(name)
             .ok_or_else(|| BackendError::JitError(format!("Function '{}' not found", name)))?;
-
-        // For now, only support 0-3 arguments
-        // A proper implementation would use libffi or similar
-        let result = match args.len() {
-            0 => {
-                let f: extern "C" fn() -> u64 = unsafe { std::mem::transmute(ptr) };
-                f()
-            }
-            1 => {
-                let f: extern "C" fn(u64) -> u64 = unsafe { std::mem::transmute(ptr) };
-                f(args[0].to_bits())
-            }
-            2 => {
-                let f: extern "C" fn(u64, u64) -> u64 = unsafe { std::mem::transmute(ptr) };
-                f(args[0].to_bits(), args[1].to_bits())
-            }
-            3 => {
-                let f: extern "C" fn(u64, u64, u64) -> u64 = unsafe { std::mem::transmute(ptr) };
-                f(args[0].to_bits(), args[1].to_bits(), args[2].to_bits())
-            }
-            _ => {
-                return Err(BackendError::JitError(
-                    "Too many arguments (max 3 supported)".into(),
-                ));
-            }
-        };
-
+        let f: crate::runtime::heap::NativeFn = unsafe { std::mem::transmute(ptr) };
+        let argv: Vec<u64> = args.iter().map(|a| a.to_bits()).collect();
+        let result = f(OtValue::undefined().to_bits(), argv.as_ptr(), argv.len());
         Ok(OtValue::from_bits(result))
     }
 
@@ -117,50 +87,6 @@ impl JitRuntime {
         result
             .as_number()
             .ok_or_else(|| BackendError::JitError("Expected numeric result".into()))
-    }
-}
-
-/// Compiled function handle for type-safe calls
-pub struct CompiledFunction {
-    ptr: *const u8,
-    arg_count: usize,
-}
-
-impl CompiledFunction {
-    /// Create a new compiled function handle
-    pub fn new(ptr: *const u8, arg_count: usize) -> Self {
-        Self { ptr, arg_count }
-    }
-
-    /// Get the raw function pointer
-    pub fn ptr(&self) -> *const u8 {
-        self.ptr
-    }
-
-    /// Get the argument count
-    pub fn arg_count(&self) -> usize {
-        self.arg_count
-    }
-
-    /// Call with no arguments
-    pub fn call0(&self) -> OtValue {
-        assert_eq!(self.arg_count, 0);
-        let f: extern "C" fn() -> u64 = unsafe { std::mem::transmute(self.ptr) };
-        OtValue::from_bits(f())
-    }
-
-    /// Call with one argument
-    pub fn call1(&self, a: OtValue) -> OtValue {
-        assert_eq!(self.arg_count, 1);
-        let f: extern "C" fn(u64) -> u64 = unsafe { std::mem::transmute(self.ptr) };
-        OtValue::from_bits(f(a.to_bits()))
-    }
-
-    /// Call with two arguments
-    pub fn call2(&self, a: OtValue, b: OtValue) -> OtValue {
-        assert_eq!(self.arg_count, 2);
-        let f: extern "C" fn(u64, u64) -> u64 = unsafe { std::mem::transmute(self.ptr) };
-        OtValue::from_bits(f(a.to_bits(), b.to_bits()))
     }
 }
 

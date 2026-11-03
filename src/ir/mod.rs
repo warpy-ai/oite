@@ -333,6 +333,10 @@ pub enum Literal {
     Boolean(bool),
     Null,
     Undefined,
+    /// A reference to the compiled function whose bytecode starts at this
+    /// address. Kept apart from `Number` so a numeric literal is never
+    /// mistaken for a function.
+    Function(usize),
 }
 
 impl Literal {
@@ -342,6 +346,7 @@ impl Literal {
             Literal::String(_) => IrType::String,
             Literal::Boolean(_) => IrType::Boolean,
             Literal::Null | Literal::Undefined => IrType::Any,
+            Literal::Function(_) => IrType::Function,
         }
     }
 }
@@ -354,6 +359,7 @@ impl fmt::Display for Literal {
             Literal::Boolean(b) => write!(f, "{}", b),
             Literal::Null => write!(f, "null"),
             Literal::Undefined => write!(f, "undefined"),
+            Literal::Function(addr) => write!(f, "func_{}", addr),
         }
     }
 }
@@ -432,6 +438,10 @@ pub enum IrOp {
     EqStrict(ValueId, ValueId, ValueId),
     /// Strict inequality: dst = a !== b
     NeStrict(ValueId, ValueId, ValueId),
+    /// Loose equality: dst = a == b
+    EqLoose(ValueId, ValueId, ValueId),
+    /// Loose inequality: dst = a != b
+    NeLoose(ValueId, ValueId, ValueId),
     /// Less than: dst = a < b
     Lt(ValueId, ValueId, ValueId),
     /// Less than or equal: dst = a <= b
@@ -567,6 +577,8 @@ impl IrOp {
             | IrOp::NegAny(d, _)
             | IrOp::EqStrict(d, _, _)
             | IrOp::NeStrict(d, _, _)
+            | IrOp::EqLoose(d, _, _)
+            | IrOp::NeLoose(d, _, _)
             | IrOp::Lt(d, _, _)
             | IrOp::LtEq(d, _, _)
             | IrOp::Gt(d, _, _)
@@ -645,6 +657,8 @@ impl IrOp {
             | IrOp::ModAny(_, a, b)
             | IrOp::EqStrict(_, a, b)
             | IrOp::NeStrict(_, a, b)
+            | IrOp::EqLoose(_, a, b)
+            | IrOp::NeLoose(_, a, b)
             | IrOp::Lt(_, a, b)
             | IrOp::LtEq(_, a, b)
             | IrOp::Gt(_, a, b)
@@ -1168,6 +1182,8 @@ impl fmt::Display for IrOp {
             IrOp::NegAny(d, a) => write!(f, "{} = neg.any {}", d, a),
             IrOp::EqStrict(d, a, b) => write!(f, "{} = eq.strict {}, {}", d, a, b),
             IrOp::NeStrict(d, a, b) => write!(f, "{} = ne.strict {}, {}", d, a, b),
+            IrOp::EqLoose(d, a, b) => write!(f, "{} = eq.loose {}, {}", d, a, b),
+            IrOp::NeLoose(d, a, b) => write!(f, "{} = ne.loose {}, {}", d, a, b),
             IrOp::Lt(d, a, b) => write!(f, "{} = lt {}, {}", d, a, b),
             IrOp::LtEq(d, a, b) => write!(f, "{} = le {}, {}", d, a, b),
             IrOp::Gt(d, a, b) => write!(f, "{} = gt {}, {}", d, a, b),

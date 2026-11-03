@@ -346,22 +346,17 @@ fn optimize_whole_program(
     let opt = get_llvm_tool(tools_dir, "opt");
 
     let mut cmd = Command::new(&opt);
-    cmd.arg("-lto").arg("-o").arg(output_file);
-
-    // Add optimization level
-    match opt_level {
-        OptLevel::None => {
-            cmd.arg("-O0");
-        }
-        OptLevel::Speed => {
-            cmd.arg("-O2");
-        }
-        OptLevel::SpeedAndSize => {
-            cmd.arg("-O3");
-        }
-    }
-
-    cmd.arg(input_file);
+    // `-lto` was a legacy pass-manager flag and no longer exists (LLVM 18
+    // rejects it); the new pass manager spells the LTO pipeline `lto<On>`.
+    let passes = match opt_level {
+        OptLevel::None => "default<O0>",
+        OptLevel::Speed => "lto<O2>",
+        OptLevel::SpeedAndSize => "lto<O3>",
+    };
+    cmd.arg(format!("-passes={}", passes))
+        .arg("-o")
+        .arg(output_file)
+        .arg(input_file);
 
     let output = cmd
         .output()

@@ -15,6 +15,7 @@ pub mod cranelift;
 pub mod jit;
 pub mod layout;
 pub mod llvm;
+pub mod runtime_abi;
 pub mod tier;
 
 use crate::ir::IrModule;

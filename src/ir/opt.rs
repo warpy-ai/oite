@@ -357,6 +357,8 @@ fn extract_expr_key(op: &IrOp) -> Option<(ExprKey, ValueId)> {
         IrOp::GtEq(d, a, b) => Some((ExprKey::Binary("ge", *a, *b), *d)),
         IrOp::EqStrict(d, a, b) => Some((ExprKey::Binary("eq", *a, *b), *d)),
         IrOp::NeStrict(d, a, b) => Some((ExprKey::Binary("ne", *a, *b), *d)),
+        IrOp::EqLoose(d, a, b) => Some((ExprKey::Binary("eq.loose", *a, *b), *d)),
+        IrOp::NeLoose(d, a, b) => Some((ExprKey::Binary("ne.loose", *a, *b), *d)),
         IrOp::Not(d, a) => Some((ExprKey::Unary("not", *a), *d)),
         IrOp::LoadLocal(d, slot) => Some((ExprKey::LoadLocal(*slot), *d)),
         IrOp::LoadGlobal(d, name) => Some((ExprKey::LoadGlobal(name.clone()), *d)),
@@ -432,6 +434,8 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
         | IrOp::ModAny(_, a, b)
         | IrOp::EqStrict(_, a, b)
         | IrOp::NeStrict(_, a, b)
+        | IrOp::EqLoose(_, a, b)
+        | IrOp::NeLoose(_, a, b)
         | IrOp::Lt(_, a, b)
         | IrOp::LtEq(_, a, b)
         | IrOp::Gt(_, a, b)

@@ -103,27 +103,17 @@ pub fn link_object_files_with_lto(
         cmd.arg(obj);
     }
 
-    // Add runtime library if provided
-    // Use -all_load on macOS to ensure ALL symbols from ALL archives are included
-    if let Some(lib) = runtime_lib
-        && lib.exists()
-    {
+    // The runtime library, plus the system libraries it needs. Unused
+    // runtime code is dropped by the linker.
+    if let Some(lib) = runtime_lib {
+        cmd.arg(lib);
+        for arg in super::runtime_lib::native_libs() {
+            cmd.arg(arg);
+        }
         #[cfg(target_os = "macos")]
-        {
-            if linker.contains("clang") {
-                // -all_load forces loading all symbols from all archives
-                cmd.arg("-Wl,-all_load").arg(lib);
-            } else {
-                cmd.arg(lib);
-            }
-        }
+        cmd.arg("-Wl,-dead_strip");
         #[cfg(not(target_os = "macos"))]
-        {
-            cmd.arg(lib);
-        }
-
-        // Runtime uses Vec/String from std, which should be statically linked in libruntime.a
-        // No additional libraries needed since we removed HashMap dependency
+        cmd.arg("-Wl,--gc-sections");
     }
 
     // Set output format

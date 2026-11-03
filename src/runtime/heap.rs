@@ -191,6 +191,19 @@ pub struct NativeArray {
     pub elements: *mut u64,
 }
 
+/// A function object: native code with the Oite calling convention,
+/// `extern "C" fn(this: u64, argv: *const u64, argc: usize) -> u64`.
+///
+/// Compiled user functions and runtime built-ins (`console.log`) both use it.
+#[repr(C)]
+pub struct NativeFunction {
+    pub header: ObjectHeader,
+    pub code: *const u8,
+}
+
+/// Signature of every function callable through a `NativeFunction`.
+pub type NativeFn = extern "C" fn(this: u64, argv: *const u64, argc: usize) -> u64;
+
 /// A native object (key-value map).
 ///
 /// For simplicity, we use a Rust HashMap internally.
@@ -231,12 +244,14 @@ impl Default for HeapConfig {
 /// Long-lived objects will eventually be promoted to an old generation
 /// with mark-sweep collection.
 pub struct NativeHeap {
-    /// Start of the young generation.
-    young_start: *mut u8,
-    /// Current allocation pointer (bump pointer).
+    /// Start of the current chunk.
+    young_start: std::cell::Cell<*mut u8>,
+    /// Current allocation pointer (bump pointer) in the current chunk.
     young_ptr: AtomicUsize,
-    /// End of the young generation.
-    young_end: *mut u8,
+    /// End of the current chunk.
+    young_end: std::cell::Cell<*mut u8>,
+    /// Every chunk allocated so far, with its size, for `Drop`.
+    chunks: std::cell::RefCell<Vec<(*mut u8, usize)>>,
     /// Total bytes allocated (for stats).
     total_allocated: AtomicUsize,
     /// Configuration.
@@ -257,53 +272,52 @@ impl NativeHeap {
 
     /// Create a new native heap with custom configuration.
     pub fn with_config(config: HeapConfig) -> Self {
-        let layout = Layout::from_size_align(config.young_size, 8).unwrap();
-        let young_start = unsafe { alloc::alloc(layout) };
-        if young_start.is_null() {
-            panic!("Failed to allocate native heap");
-        }
+        let young_start = Self::alloc_chunk(config.young_size);
         let young_end = unsafe { young_start.add(config.young_size) };
 
         Self {
-            young_start,
+            young_start: std::cell::Cell::new(young_start),
             young_ptr: AtomicUsize::new(young_start as usize),
-            young_end,
+            young_end: std::cell::Cell::new(young_end),
+            chunks: std::cell::RefCell::new(vec![(young_start, config.young_size)]),
             total_allocated: AtomicUsize::new(0),
             config,
         }
     }
 
+    fn alloc_chunk(size: usize) -> *mut u8 {
+        let layout = Layout::from_size_align(size, 8).unwrap();
+        let chunk = unsafe { alloc::alloc(layout) };
+        if chunk.is_null() {
+            alloc::handle_alloc_error(layout);
+        }
+        chunk
+    }
+
     /// Allocate memory for an object of the given size.
     ///
-    /// Returns None if allocation fails (heap full, need GC).
+    /// When the current chunk is full, a new chunk is added. Nothing is
+    /// reclaimed yet (#123), so memory grows with every allocation, but an
+    /// allocation never fails short of the system running out of memory.
     pub fn alloc(&self, size: usize) -> Option<HeapPtr> {
         let total_size = ObjectHeader::SIZE + size;
         let aligned_size = (total_size + 7) & !7; // 8-byte alignment
 
-        loop {
-            let current = self.young_ptr.load(Ordering::Relaxed);
-            let new_ptr = current + aligned_size;
-
-            if new_ptr > self.young_end as usize {
-                // Out of space - need GC
-                return None;
-            }
-
-            // Try to bump the pointer atomically
-            match self.young_ptr.compare_exchange_weak(
-                current,
-                new_ptr,
-                Ordering::SeqCst,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    self.total_allocated
-                        .fetch_add(aligned_size, Ordering::Relaxed);
-                    return Some(HeapPtr::from_usize(current));
-                }
-                Err(_) => continue, // Retry
-            }
+        let current = self.young_ptr.load(Ordering::Relaxed);
+        let mut start = current;
+        if current + aligned_size > self.young_end.get() as usize {
+            let chunk_size = self.config.young_size.max(aligned_size);
+            let chunk = Self::alloc_chunk(chunk_size);
+            self.chunks.borrow_mut().push((chunk, chunk_size));
+            self.young_start.set(chunk);
+            self.young_end.set(unsafe { chunk.add(chunk_size) });
+            start = chunk as usize;
         }
+        self.young_ptr
+            .store(start + aligned_size, Ordering::Relaxed);
+        self.total_allocated
+            .fetch_add(aligned_size, Ordering::Relaxed);
+        Some(HeapPtr::from_usize(start))
     }
 
     /// Allocate and initialize a string.
@@ -347,6 +361,8 @@ impl NativeHeap {
     pub fn alloc_array(&self, capacity: usize) -> Option<HeapPtr> {
         let data_size = std::mem::size_of::<NativeArray>() - ObjectHeader::SIZE;
         let ptr = self.alloc(data_size)?;
+        // Element storage is always allocated, so it can be grown with realloc.
+        let capacity = capacity.max(4);
 
         unsafe {
             let header = ptr.as_mut::<ObjectHeader>();
@@ -363,15 +379,27 @@ impl NativeHeap {
         Some(ptr)
     }
 
+    /// Allocate a function object pointing at native code.
+    pub fn alloc_function(&self, code: *const u8) -> Option<HeapPtr> {
+        let data_size = std::mem::size_of::<NativeFunction>() - ObjectHeader::SIZE;
+        let ptr = self.alloc(data_size)?;
+        unsafe {
+            let header = ptr.as_mut::<ObjectHeader>();
+            *header = ObjectHeader::new(ObjectKind::Function, data_size as u32);
+            ptr.as_mut::<NativeFunction>().code = code;
+        }
+        Some(ptr)
+    }
+
     /// Get the total bytes allocated.
     pub fn total_allocated(&self) -> usize {
         self.total_allocated.load(Ordering::Relaxed)
     }
 
-    /// Get the bytes remaining in the young generation.
+    /// Get the bytes remaining in the current chunk.
     pub fn bytes_remaining(&self) -> usize {
         let current = self.young_ptr.load(Ordering::Relaxed);
-        self.young_end as usize - current
+        self.young_end.get() as usize - current
     }
 
     /// Check if GC should be triggered.
@@ -379,19 +407,23 @@ impl NativeHeap {
         self.bytes_remaining() < (self.config.young_size - self.config.gc_threshold)
     }
 
-    /// Reset the heap (for testing).
+    /// Reset the heap (for testing): back to the start of the first chunk.
     pub fn reset(&self) {
-        self.young_ptr
-            .store(self.young_start as usize, Ordering::SeqCst);
+        let (first, size) = self.chunks.borrow()[0];
+        self.young_start.set(first);
+        self.young_end.set(unsafe { first.add(size) });
+        self.young_ptr.store(first as usize, Ordering::SeqCst);
         self.total_allocated.store(0, Ordering::SeqCst);
     }
 }
 
 impl Drop for NativeHeap {
     fn drop(&mut self) {
-        let layout = Layout::from_size_align(self.config.young_size, 8).unwrap();
-        unsafe {
-            alloc::dealloc(self.young_start, layout);
+        for &(chunk, size) in self.chunks.borrow().iter() {
+            let layout = Layout::from_size_align(size, 8).unwrap();
+            unsafe {
+                alloc::dealloc(chunk, layout);
+            }
         }
     }
 }

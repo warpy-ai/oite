@@ -166,6 +166,8 @@ impl<'a> TypeChecker<'a> {
             // Comparison operations always produce boolean
             IrOp::EqStrict(dst, _, _)
             | IrOp::NeStrict(dst, _, _)
+            | IrOp::EqLoose(dst, _, _)
+            | IrOp::NeLoose(dst, _, _)
             | IrOp::Lt(dst, _, _)
             | IrOp::LtEq(dst, _, _)
             | IrOp::Gt(dst, _, _)
