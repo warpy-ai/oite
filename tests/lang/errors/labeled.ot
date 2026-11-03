@@ -1,2 +1,0 @@
-// #118/#126: labeled loops must not vanish.
-lbl: for (let i = 0; i < 2; i++) { console.log(i); }

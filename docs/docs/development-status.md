@@ -55,7 +55,9 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Array methods (`splice`, `join`, `indexOf`, `concat`, `shift`, ...)   | Covered   | Covered (shared implementation)   |
 | Callback methods (`map`, `filter`, `forEach`, `reduce`) | Not implemented     | Not implemented                   |
 | `if`, `while`, `for`, `do..while`, `?:`    | Covered                              | Covered                           |
-| `break` / `continue` (unlabeled)           | Covered                              | Covered                           |
+| `break` / `continue`, with or without labels | Covered                            | Covered                           |
+| `switch`, labeled blocks                   | Covered                              | Covered                           |
+| `return` / `break` / `continue` out of `try` (runs `finally`) | Covered       | Refused                           |
 | `&&`, `\|\|`, `??` (short-circuit)         | Covered                              | Covered                           |
 | Optional chaining `?.`                     | Covered                              | Covered                           |
 | Sequence expressions `a, b`                | Covered                              | Covered                           |
@@ -67,7 +69,6 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Decorators, private fields, getters/setters | Implemented, not yet covered        | Refused                           |
 | Template literals                          | Covered                              | Covered                           |
 | `console.log` formatting                   | Covered                              | Covered (same formatter)          |
-| `switch`, labeled statements               | Compile error ([#118](https://github.com/warpy-ai/oite/issues/118))                 | Compile error                     |
 | Generators, regex, tagged templates, class expressions | Compile error            | Compile error                     |
 | Runtime errors as catchable exceptions     | No: most abort the process ([#121](https://github.com/warpy-ai/oite/issues/121))    | -                                 |
 | String `length` / indexing                 | Counts UTF-8 bytes ([#133](https://github.com/warpy-ai/oite/issues/133))            | -                                 |
@@ -131,8 +132,8 @@ Oite Core is like "C without libc" — minimal and self-contained. These feature
 
 Correctness comes before new surface area (see [#136](https://github.com/warpy-ai/oite/issues/136)):
 
-1. **Language correctness**: `switch` and labels ([#118](https://github.com/warpy-ai/oite/issues/118)), runtime errors as exceptions ([#121](https://github.com/warpy-ai/oite/issues/121)), async ([#122](https://github.com/warpy-ai/oite/issues/122)), the string model ([#133](https://github.com/warpy-ai/oite/issues/133))
-2. **Native backends**: a real native runtime and the missing IR ops ([#127](https://github.com/warpy-ai/oite/issues/127), [#129](https://github.com/warpy-ai/oite/issues/129)), then exceptions ([#120](https://github.com/warpy-ai/oite/issues/120))
+1. **Language correctness**: runtime errors as exceptions ([#121](https://github.com/warpy-ai/oite/issues/121)), async ([#139](https://github.com/warpy-ai/oite/issues/139)), the string model ([#133](https://github.com/warpy-ai/oite/issues/133)), callback methods (`map`, `filter`, ...)
+2. **Native backends**: exceptions ([#140](https://github.com/warpy-ai/oite/issues/140)), then classes, async and modules
 3. **Compiler infrastructure**: source positions everywhere ([#125](https://github.com/warpy-ai/oite/issues/125)), type checking ([#124](https://github.com/warpy-ai/oite/issues/124))
 4. **Foundations**: language specification ([#135](https://github.com/warpy-ai/oite/issues/135)), memory reclamation ([#123](https://github.com/warpy-ai/oite/issues/123)), FFI ([#132](https://github.com/warpy-ai/oite/issues/132))
 5. **Rolls, Unroll, tooling**: after the above

@@ -503,6 +503,23 @@ impl Visit for Resolver {
         self.pop_scope(saved);
     }
 
+    fn visit_switch_stmt(&mut self, sw: &SwitchStmt) {
+        sw.discriminant.visit_with(self);
+        // The case clauses share one block scope.
+        let saved = self.current;
+        self.push_scope(Kind::Block, sw.span);
+        for case in &sw.cases {
+            self.hoist_stmts(&case.cons);
+        }
+        for case in &sw.cases {
+            case.test.visit_with(self);
+            for s in &case.cons {
+                s.visit_with(self);
+            }
+        }
+        self.pop_scope(saved);
+    }
+
     fn visit_catch_clause(&mut self, c: &CatchClause) {
         let saved = self.current;
         self.push_scope(Kind::Block, c.span);

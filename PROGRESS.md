@@ -151,8 +151,9 @@ Full TypeScript-style language with ownership semantics.
 #### Control Flow
 
 - `if`/`else`, `while`, `for`, `do..while`
-- `break`/`continue` with labels
-- `try`/`catch`/`finally`, `throw`
+- `switch` (strict `===` matching, fall-through, `default` anywhere)
+- `break`/`continue` with labels; labeled blocks
+- `try`/`catch`/`finally`, `throw`; `return`/`break`/`continue` out of a `try` run its `finally`
 
 #### Classes & OOP
 

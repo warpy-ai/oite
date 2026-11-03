@@ -1,0 +1,4 @@
+// A label is not visible inside a nested function.
+outer: for (let i = 0; i < 2; i++) {
+  (function () { break outer; })();
+}
