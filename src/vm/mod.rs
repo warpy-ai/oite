@@ -494,18 +494,15 @@ impl VM {
             match promise.get_state() {
                 PromiseState::Fulfilled => {
                     let value = promise.get_value().unwrap_or(JsValue::Undefined);
-                    eprintln!("DEBUG poll_promise: fulfilled, value = {:?}", value);
                     return value;
                 }
                 PromiseState::Rejected => {
                     let value = promise.get_value().unwrap_or(JsValue::Undefined);
-                    eprintln!("DEBUG poll_promise: rejected, value = {:?}", value);
                     return value;
                 }
                 PromiseState::Pending => {
                     let elapsed = start.elapsed().as_millis();
                     if elapsed > timeout_ms as u128 {
-                        eprintln!("DEBUG poll_promise: timeout after {}ms", elapsed);
                         return JsValue::Undefined;
                     }
                     // Brief sleep to avoid busy-waiting
@@ -904,7 +901,7 @@ impl VM {
                     // Convert key to string
                     let key_name = match &key_val {
                         JsValue::String(s) => s.clone(),
-                        JsValue::Number(n) => n.to_string(),
+                        JsValue::Number(n) => crate::stdlib::number_to_string(n),
                         JsValue::Object(_) => {
                             // For objects, use default string representation
                             "[object Object]".to_string()
@@ -946,7 +943,7 @@ impl VM {
                         // Convert key to string
                         let key_name = match &key_val {
                             JsValue::String(s) => s.clone(),
-                            JsValue::Number(n) => n.to_string(),
+                            JsValue::Number(n) => crate::stdlib::number_to_string(n),
                             JsValue::Object(_) => "[object Object]".to_string(),
                             _ => format!("{:?}", key_val),
                         };
@@ -1382,7 +1379,7 @@ impl VM {
                     }
                     (JsValue::String(a_str), b) => {
                         let b_str = match b {
-                            JsValue::Number(n) => n.to_string(),
+                            JsValue::Number(n) => crate::stdlib::number_to_string(n),
                             JsValue::Boolean(b) => b.to_string(),
                             JsValue::Null => "null".to_string(),
                             JsValue::Undefined => "undefined".to_string(),
@@ -1400,7 +1397,7 @@ impl VM {
                     }
                     (a, JsValue::String(b_str)) => {
                         let a_str = match a {
-                            JsValue::Number(n) => n.to_string(),
+                            JsValue::Number(n) => crate::stdlib::number_to_string(n),
                             JsValue::Boolean(b) => b.to_string(),
                             JsValue::Null => "null".to_string(),
                             JsValue::Undefined => "undefined".to_string(),
@@ -2139,15 +2136,12 @@ impl VM {
                     } else if constructor_type == "Promise" {
                         // Handle Promise construction specially
                         // new Promise((resolve, reject) => { ... })
-                        eprintln!("DEBUG: Construct - Promise detected");
 
                         // The executor should be the first argument
                         let executor = args.first().cloned().unwrap_or(JsValue::Undefined);
-                        eprintln!("DEBUG: Construct - executor = {:?}", executor);
 
                         // Create a new pending promise
                         let promise = Promise::new();
-                        eprintln!("DEBUG: Construct - created promise");
 
                         // If we have an executor function, call it synchronously
                         if let JsValue::Function {
@@ -2155,15 +2149,12 @@ impl VM {
                             env,
                         } = executor
                         {
-                            eprintln!("DEBUG: Construct - calling executor at {}", exec_addr);
-
                             // Set the current promise so resolve/reject can access it
                             self.current_promise = Some(promise.clone());
 
                             // Create resolve function
                             let resolve_idx = self.register_native(|vm, args| {
                                 let value = args.first().cloned().unwrap_or(JsValue::Undefined);
-                                eprintln!("DEBUG: Construct resolve called with {:?}", value);
                                 if let Some(p) = vm.current_promise.take() {
                                     p.set_value(value, true);
                                 }
@@ -2173,7 +2164,6 @@ impl VM {
                             // Create reject function
                             let reject_idx = self.register_native(|vm, args| {
                                 let reason = args.first().cloned().unwrap_or(JsValue::Undefined);
-                                eprintln!("DEBUG: Construct reject called with {:?}", reason);
                                 if let Some(p) = vm.current_promise.take() {
                                     p.set_value(reason, false);
                                 }
@@ -2863,7 +2853,9 @@ impl VM {
                                         .iter()
                                         .map(|v| match v {
                                             JsValue::String(s) => s.clone(),
-                                            JsValue::Number(n) => n.to_string(),
+                                            JsValue::Number(n) => {
+                                                crate::stdlib::number_to_string(n)
+                                            }
                                             JsValue::Boolean(b) => b.to_string(),
                                             JsValue::Null => "null".to_string(),
                                             JsValue::Undefined => "undefined".to_string(),
@@ -4043,42 +4035,32 @@ impl VM {
 
             OpCode::Await => {
                 // Stack: [promise] -> [result]
-                let promise = match self.stack.pop() {
-                    Some(JsValue::Promise(p)) => p,
-                    Some(other) => {
-                        // Non-promise values are passed through (thenable check simplified)
-                        self.stack.push(other);
-                        self.stack.push(JsValue::Undefined);
-                        return ExecResult::Continue;
-                    }
-                    None => {
-                        self.stack.push(JsValue::Undefined);
-                        return ExecResult::Continue;
-                    }
-                };
-
-                // Poll the promise synchronously (simplified implementation)
-                let state = promise.get_state();
-                eprintln!("DEBUG Await: promise state = {:?}", state);
-
-                match state {
-                    PromiseState::Fulfilled => {
-                        let value = promise.get_value().unwrap_or(JsValue::Undefined);
-                        eprintln!("DEBUG Await: fulfilled with value = {:?}", value);
-                        self.stack.push(value);
-                    }
-                    PromiseState::Rejected => {
-                        let value = promise.get_value().unwrap_or(JsValue::Undefined);
-                        eprintln!("DEBUG Await: rejected with value = {:?}", value);
-                        self.stack.push(value);
-                    }
-                    PromiseState::Pending => {
-                        eprintln!("DEBUG Await: still pending, polling...");
-                        // Poll until resolved (with timeout)
-                        let result = self.poll_promise(&promise, 1000);
-                        eprintln!("DEBUG Await: poll result = {:?}", result);
-                        self.stack.push(result);
-                    }
+                //
+                // Still a synchronous poll, not a suspension point (#122).
+                // Every non-throwing path must fall through to the ip
+                // increment at the end of `exec_one`; an early
+                // `return ExecResult::Continue` re-executes this instruction
+                // forever.
+                match self.stack.pop() {
+                    Some(JsValue::Promise(promise)) => match promise.get_state() {
+                        PromiseState::Fulfilled => {
+                            let value = promise.get_value().unwrap_or(JsValue::Undefined);
+                            self.stack.push(value);
+                        }
+                        PromiseState::Rejected => {
+                            // `await` on a rejected promise throws the reason.
+                            let reason = promise.get_value().unwrap_or(JsValue::Undefined);
+                            return self.throw_exception(reason);
+                        }
+                        PromiseState::Pending => {
+                            // Poll until resolved (with timeout)
+                            let result = self.poll_promise(&promise, 1000);
+                            self.stack.push(result);
+                        }
+                    },
+                    // `await v` on a non-promise yields `v` itself.
+                    Some(other) => self.stack.push(other),
+                    None => self.stack.push(JsValue::Undefined),
                 }
             }
 

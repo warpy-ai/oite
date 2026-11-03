@@ -14,42 +14,162 @@ use crate::vm::value::{HeapData, HeapObject, JsValue};
 // Console Functions
 // ============================================================================
 
-pub fn native_log(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    for arg in args {
-        match arg {
-            JsValue::String(s) => print!("{}", s),
-            JsValue::Number(n) => print!("{}", n),
-            JsValue::Boolean(b) => print!("{}", b),
-            JsValue::Null => print!("null"),
-            JsValue::Undefined => print!("undefined"),
-            JsValue::Object(ptr) => print!("Object({})", ptr),
-            JsValue::Function { address, env: _ } => print!("Function({})", address),
-            JsValue::NativeFunction(idx) => print!("NativeFunction({})", idx),
-            JsValue::Promise(_) => print!("Promise"),
-            JsValue::Accessor(_, _) => print!("Accessor"),
-        }
-    }
-    println!();
+pub fn native_log(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    println!("{}", format_log_args(vm, &args));
     JsValue::Undefined
 }
 
-pub fn native_error(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    for arg in args {
-        match arg {
-            JsValue::String(s) => eprint!("{}", s),
-            JsValue::Number(n) => eprint!("{}", n),
-            JsValue::Boolean(b) => eprint!("{}", b),
-            JsValue::Null => eprint!("null"),
-            JsValue::Undefined => eprint!("undefined"),
-            JsValue::Object(ptr) => eprint!("Object({})", ptr),
-            JsValue::Function { address, env: _ } => eprint!("Function({})", address),
-            JsValue::NativeFunction(idx) => eprint!("NativeFunction({})", idx),
-            JsValue::Promise(_) => eprint!("Promise"),
-            JsValue::Accessor(_, _) => eprint!("Accessor"),
+pub fn native_error(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+    eprintln!("{}", format_log_args(vm, &args));
+    JsValue::Undefined
+}
+
+/// Join `console.log` arguments with a space. Top-level strings print raw;
+/// everything else goes through `inspect`.
+fn format_log_args(vm: &VM, args: &[JsValue]) -> String {
+    args.iter()
+        .map(|arg| match arg {
+            JsValue::String(s) => s.clone(),
+            other => inspect(vm, other),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Convert a number to its string form: `NaN`, `Infinity`, `-Infinity`,
+/// otherwise the shortest round-tripping decimal (`3`, `3.5`,
+/// `0.30000000000000004`).
+pub fn number_to_string(n: impl std::borrow::Borrow<f64>) -> String {
+    let n = *n.borrow();
+    if n.is_nan() {
+        "NaN".to_string()
+    } else if n.is_infinite() {
+        if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string()
+    } else {
+        n.to_string()
+    }
+}
+
+/// Nesting depth beyond which objects print as `[Object]` / `[Array]`.
+const INSPECT_DEPTH: usize = 2;
+
+/// Human-readable rendering of a value, in the style of Node's
+/// `util.inspect`: `[ 1, 2, 3 ]`, `{ x: 1, y: 's' }`, `[Circular]`.
+///
+/// Object keys are printed in sorted order: objects are stored in a hash
+/// map, so insertion order is not available, and sorting keeps output
+/// deterministic. Keys starting with `__` are internal (`__proto__`,
+/// `__type__`) and are not shown.
+pub fn inspect(vm: &VM, value: &JsValue) -> String {
+    let mut seen = Vec::new();
+    inspect_inner(vm, value, 0, &mut seen)
+}
+
+fn is_identifier(key: &str) -> bool {
+    let mut chars = key.chars();
+    matches!(chars.next(), Some(c) if c.is_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+}
+
+fn quote(s: &str) -> String {
+    format!(
+        "'{}'",
+        s.replace('\\', "\\\\")
+            .replace('\'', "\\'")
+            .replace('\n', "\\n")
+    )
+}
+
+fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) -> String {
+    match value {
+        JsValue::String(s) => quote(s),
+        JsValue::Number(n) => number_to_string(n),
+        JsValue::Boolean(b) => b.to_string(),
+        JsValue::Null => "null".to_string(),
+        JsValue::Undefined => "undefined".to_string(),
+        JsValue::Function { .. } | JsValue::NativeFunction(_) => "[Function]".to_string(),
+        JsValue::Promise(_) => "Promise".to_string(),
+        JsValue::Accessor(_, _) => "[Getter/Setter]".to_string(),
+        JsValue::Object(ptr) => {
+            let Some(HeapObject { data }) = vm.heap.get(*ptr) else {
+                return "[Object]".to_string();
+            };
+            if seen.contains(ptr) {
+                return "[Circular]".to_string();
+            }
+            let too_deep = depth > INSPECT_DEPTH;
+            seen.push(*ptr);
+            let out = match data {
+                HeapData::Array(items) if items.is_empty() => "[]".to_string(),
+                HeapData::Array(_) if too_deep => "[Array]".to_string(),
+                HeapData::Array(items) => {
+                    let parts: Vec<String> = items
+                        .iter()
+                        .map(|v| inspect_inner(vm, v, depth + 1, seen))
+                        .collect();
+                    format!("[ {} ]", parts.join(", "))
+                }
+                HeapData::Object(props) => {
+                    let mut keys: Vec<&String> =
+                        props.keys().filter(|k| !k.starts_with("__")).collect();
+                    keys.sort();
+                    if keys.is_empty() {
+                        "{}".to_string()
+                    } else if too_deep {
+                        "[Object]".to_string()
+                    } else {
+                        let parts: Vec<String> = keys
+                            .into_iter()
+                            .map(|k| {
+                                let key = if is_identifier(k) {
+                                    k.clone()
+                                } else {
+                                    quote(k)
+                                };
+                                format!(
+                                    "{}: {}",
+                                    key,
+                                    inspect_inner(vm, &props[k], depth + 1, seen)
+                                )
+                            })
+                            .collect();
+                        format!("{{ {} }}", parts.join(", "))
+                    }
+                }
+                HeapData::Map(entries) => {
+                    let parts: Vec<String> = entries
+                        .iter()
+                        .map(|(k, v)| {
+                            format!(
+                                "{} => {}",
+                                inspect_inner(vm, k, depth + 1, seen),
+                                inspect_inner(vm, v, depth + 1, seen)
+                            )
+                        })
+                        .collect();
+                    if parts.is_empty() {
+                        "Map(0) {}".to_string()
+                    } else {
+                        format!("Map({}) {{ {} }}", entries.len(), parts.join(", "))
+                    }
+                }
+                HeapData::Set(items) => {
+                    let parts: Vec<String> = items
+                        .iter()
+                        .map(|v| inspect_inner(vm, v, depth + 1, seen))
+                        .collect();
+                    if parts.is_empty() {
+                        "Set(0) {}".to_string()
+                    } else {
+                        format!("Set({}) {{ {} }}", items.len(), parts.join(", "))
+                    }
+                }
+                HeapData::ByteStream(bytes) => format!("ByteStream({})", bytes.len()),
+            };
+            seen.pop();
+            out
         }
     }
-    eprintln!();
-    JsValue::Undefined
 }
 
 // ============================================================================

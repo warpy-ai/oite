@@ -221,6 +221,14 @@ impl Codegen {
         }
     }
 
+    /// `[value] -> [Promise.resolve(value)]`, used to wrap the result of an
+    /// async function. Method calls take `[args..., receiver]`.
+    fn emit_promise_resolve(&mut self) {
+        self.instructions.push(OpCode::Load("Promise".to_string()));
+        self.instructions
+            .push(OpCode::CallMethod("resolve".to_string(), 1));
+    }
+
     /// Record that a construct cannot be compiled. Compilation will fail.
     fn unsupported(&mut self, what: impl std::fmt::Display) {
         self.errors
@@ -923,42 +931,15 @@ impl Codegen {
                 self.instructions.push(OpCode::Push(JsValue::Undefined));
                 // For async functions, wrap in Promise.resolve()
                 if is_async {
-                    self.instructions
-                        .push(OpCode::Push(JsValue::String("Promise".to_string())));
-                    self.instructions.push(OpCode::Load("Promise".to_string()));
-                    self.instructions
-                        .push(OpCode::Push(JsValue::String("resolve".to_string())));
-                    self.instructions
-                        .push(OpCode::GetProp("resolve".to_string()));
-                    // Stack: [undefined, Promise, PromiseObj, resolveFn]
-                    // Pop PromiseObj and Promise, keeping resolveFn and undefined
-                    self.instructions.push(OpCode::Pop);
-                    self.instructions.push(OpCode::Pop);
-                    // Stack: [undefined, resolveFn]
-                    // Swap to get [resolveFn, undefined]
-                    self.instructions.push(OpCode::Swap);
-                    self.instructions.push(OpCode::Call(1));
+                    self.emit_promise_resolve();
                 }
             } else {
-                // Non-empty body but last statement wasn't a return
-                // The last expression's result is on the stack, need to return it
-                // For async functions, wrap in Promise.resolve()
+                // Non-empty body but last statement wasn't a return.
+                // Expression statements pop their value, so nothing is left
+                // on the stack: an async function resolves to `undefined`.
                 if is_async {
-                    self.instructions
-                        .push(OpCode::Push(JsValue::String("Promise".to_string())));
-                    self.instructions.push(OpCode::Load("Promise".to_string()));
-                    self.instructions
-                        .push(OpCode::Push(JsValue::String("resolve".to_string())));
-                    self.instructions
-                        .push(OpCode::GetProp("resolve".to_string()));
-                    // Stack: [returnValue, Promise, PromiseObj, resolveFn]
-                    // Pop PromiseObj and Promise, keeping resolveFn
-                    self.instructions.push(OpCode::Pop);
-                    self.instructions.push(OpCode::Pop);
-                    // Stack: [returnValue, resolveFn]
-                    // Swap to get [resolveFn, returnValue]
-                    self.instructions.push(OpCode::Swap);
-                    self.instructions.push(OpCode::Call(1));
+                    self.instructions.push(OpCode::Push(JsValue::Undefined));
+                    self.emit_promise_resolve();
                 }
             }
             self.instructions.push(OpCode::Return);
@@ -1126,15 +1107,7 @@ impl Codegen {
                 }
                 // For async functions, wrap the return value in Promise.resolve()
                 if self.in_async_function {
-                    self.instructions
-                        .push(OpCode::Push(JsValue::String("Promise".to_string())));
-                    self.instructions.push(OpCode::Load("Promise".to_string()));
-                    self.instructions
-                        .push(OpCode::Push(JsValue::String("resolve".to_string())));
-                    self.instructions
-                        .push(OpCode::GetProp("resolve".to_string()));
-                    self.instructions.push(OpCode::Swap);
-                    self.instructions.push(OpCode::Call(1));
+                    self.emit_promise_resolve();
                 }
                 self.instructions.push(OpCode::Return);
             }
@@ -1782,46 +1755,18 @@ impl Codegen {
 
                     // For async functions with no return statement at the end, wrap the result
                     if is_async && !last_instr_was_return {
-                        if stmts.is_empty() {
-                            self.instructions.push(OpCode::Push(JsValue::Undefined));
-                        }
+                        // Expression statements pop their value, so the
+                        // implicit result is always `undefined`.
+                        self.instructions.push(OpCode::Push(JsValue::Undefined));
                         // Wrap in Promise.resolve() and add Return
-                        self.instructions
-                            .push(OpCode::Push(JsValue::String("Promise".to_string())));
-                        self.instructions.push(OpCode::Load("Promise".to_string()));
-                        self.instructions
-                            .push(OpCode::Push(JsValue::String("resolve".to_string())));
-                        self.instructions
-                            .push(OpCode::GetProp("resolve".to_string()));
-                        // Stack: [returnValue, Promise, PromiseObj, resolveFn]
-                        // Pop PromiseObj and Promise, keeping resolveFn
-                        self.instructions.push(OpCode::Pop);
-                        self.instructions.push(OpCode::Pop);
-                        // Stack: [returnValue, resolveFn]
-                        // Swap to get [resolveFn, returnValue]
-                        self.instructions.push(OpCode::Swap);
-                        self.instructions.push(OpCode::Call(1));
+                        self.emit_promise_resolve();
                         self.instructions.push(OpCode::Return);
                     }
                 } else {
                     self.instructions.push(OpCode::Push(JsValue::Undefined));
                     // For async functions with no body, wrap undefined in Promise.resolve()
                     if is_async {
-                        self.instructions
-                            .push(OpCode::Push(JsValue::String("Promise".to_string())));
-                        self.instructions.push(OpCode::Load("Promise".to_string()));
-                        self.instructions
-                            .push(OpCode::Push(JsValue::String("resolve".to_string())));
-                        self.instructions
-                            .push(OpCode::GetProp("resolve".to_string()));
-                        // Stack: [undefined, Promise, PromiseObj, resolveFn]
-                        // Pop PromiseObj and Promise, keeping resolveFn
-                        self.instructions.push(OpCode::Pop);
-                        self.instructions.push(OpCode::Pop);
-                        // Stack: [undefined, resolveFn]
-                        // Swap to get [resolveFn, undefined]
-                        self.instructions.push(OpCode::Swap);
-                        self.instructions.push(OpCode::Call(1));
+                        self.emit_promise_resolve();
                     }
                     self.instructions.push(OpCode::Return);
                 }
@@ -1908,21 +1853,7 @@ impl Codegen {
                         self.gen_expr(e);
                         // For async arrows, wrap the return value in Promise.resolve()
                         if arrow.is_async {
-                            self.instructions
-                                .push(OpCode::Push(JsValue::String("Promise".to_string())));
-                            self.instructions.push(OpCode::Load("Promise".to_string()));
-                            self.instructions
-                                .push(OpCode::Push(JsValue::String("resolve".to_string())));
-                            self.instructions
-                                .push(OpCode::GetProp("resolve".to_string()));
-                            // Stack: [returnValue, Promise, PromiseObj, resolveFn]
-                            // Pop PromiseObj and Promise, keeping resolveFn
-                            self.instructions.push(OpCode::Pop);
-                            self.instructions.push(OpCode::Pop);
-                            // Stack: [returnValue, resolveFn]
-                            // Swap to get [resolveFn, returnValue]
-                            self.instructions.push(OpCode::Swap);
-                            self.instructions.push(OpCode::Call(1));
+                            self.emit_promise_resolve();
                         }
                         self.instructions.push(OpCode::Return);
                     }
@@ -1943,21 +1874,7 @@ impl Codegen {
 
                         // For async arrows with no return statement at the end, wrap the result
                         if arrow.is_async && !last_instr_was_return {
-                            self.instructions
-                                .push(OpCode::Push(JsValue::String("Promise".to_string())));
-                            self.instructions.push(OpCode::Load("Promise".to_string()));
-                            self.instructions
-                                .push(OpCode::Push(JsValue::String("resolve".to_string())));
-                            self.instructions
-                                .push(OpCode::GetProp("resolve".to_string()));
-                            // Stack: [returnValue, Promise, PromiseObj, resolveFn]
-                            // Pop PromiseObj and Promise, keeping resolveFn
-                            self.instructions.push(OpCode::Pop);
-                            self.instructions.push(OpCode::Pop);
-                            // Stack: [returnValue, resolveFn]
-                            // Swap to get [resolveFn, returnValue]
-                            self.instructions.push(OpCode::Swap);
-                            self.instructions.push(OpCode::Call(1));
+                            self.emit_promise_resolve();
                         }
 
                         if !last_instr_was_return {

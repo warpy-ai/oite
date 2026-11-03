@@ -21,6 +21,46 @@ pub fn setup_stdlib(vm: &mut VM) {
     setup_process(vm);
     setup_fetch(vm);
     setup_object(vm);
+    setup_promise(vm);
+}
+
+/// `Promise` global: `Promise.resolve(v)`, `Promise.reject(r)`, and
+/// `new Promise(executor)` (dispatched on `__type__` in `Construct`).
+///
+/// Async functions wrap their result with `Promise.resolve`, so without this
+/// global every async function resolved to `undefined`.
+fn setup_promise(vm: &mut VM) {
+    use crate::vm::value::Promise;
+
+    fn native_promise_resolve(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+        match args.into_iter().next() {
+            // Resolving with a promise adopts it.
+            Some(JsValue::Promise(p)) => JsValue::Promise(p),
+            Some(v) => JsValue::Promise(Promise::with_value(v)),
+            None => JsValue::Promise(Promise::with_value(JsValue::Undefined)),
+        }
+    }
+
+    fn native_promise_reject(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+        let reason = args.into_iter().next().unwrap_or(JsValue::Undefined);
+        let p = Promise::new();
+        p.set_value(reason, false);
+        JsValue::Promise(p)
+    }
+
+    let resolve_idx = vm.register_native(native_promise_resolve);
+    let reject_idx = vm.register_native(native_promise_reject);
+    let mut props = std::collections::HashMap::new();
+    props.insert("__type__".to_string(), JsValue::String("Promise".into()));
+    props.insert("resolve".to_string(), JsValue::NativeFunction(resolve_idx));
+    props.insert("reject".to_string(), JsValue::NativeFunction(reject_idx));
+    let ptr = vm.heap.len();
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(props),
+    });
+    vm.call_stack[0]
+        .locals
+        .insert("Promise".into(), JsValue::Object(ptr));
 }
 
 fn setup_console(vm: &mut VM) {
