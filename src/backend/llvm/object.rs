@@ -80,7 +80,12 @@ pub unsafe fn create_target_machine(
             cpu_cstr.as_ptr(),
             features_cstr.as_ptr(),
             level,
-            LLVMRelocMode::LLVMRelocDefault,
+            // Position-independent code: modern Linux toolchains link PIE
+            // executables by default, and a non-PIC object fails with
+            // "relocation R_X86_64_32 ... can not be used when making a PIE
+            // object" as soon as the program contains a string constant.
+            // PIC is also what macOS requires.
+            LLVMRelocMode::LLVMRelocPIC,
             LLVMCodeModel::LLVMCodeModelDefault,
         );
 
