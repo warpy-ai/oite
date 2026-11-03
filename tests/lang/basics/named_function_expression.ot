@@ -1,0 +1,7 @@
+// backends: vm jit aot
+let fact = function f(n) { return n <= 1 ? 1 : n * f(n - 1); };
+console.log(fact(5));
+let g = function named() { return typeof named; };
+console.log(g(), typeof named);
+let h = function unusedName(x) { return x + 1; };
+console.log(h(1));
