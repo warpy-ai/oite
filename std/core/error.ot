@@ -1,0 +1,35 @@
+// The built-in error classes.
+//
+// Compiled into oitec and run before every program on the VM. The VM
+// throws instances of these for runtime errors (see src/vm/errors.rs):
+// a `TypeError` for reading a property of `null`, a `ReferenceError` for
+// an unbound name, and so on.
+
+class Error {
+  constructor(message) {
+    if (message !== undefined) {
+      this.message = "" + message;
+    }
+  }
+
+  toString() {
+    if (this.message === "") {
+      return this.name;
+    }
+    return this.name + ": " + this.message;
+  }
+}
+Error.prototype.name = "Error";
+Error.prototype.message = "";
+
+class TypeError extends Error {}
+TypeError.prototype.name = "TypeError";
+
+class ReferenceError extends Error {}
+ReferenceError.prototype.name = "ReferenceError";
+
+class RangeError extends Error {}
+RangeError.prototype.name = "RangeError";
+
+class SyntaxError extends Error {}
+SyntaxError.prototype.name = "SyntaxError";

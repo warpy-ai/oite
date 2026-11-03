@@ -1,0 +1,14 @@
+null read TypeError | Cannot read properties of null (reading 'x') | true
+undefined write TypeError | Cannot set properties of undefined (setting 'x') | true
+computed read TypeError | Cannot read properties of null (reading 'k') | true
+method on null TypeError | Cannot read properties of null (reading 'go') | true
+missing method TypeError | {}.go is not a function | true
+call non-function TypeError | 5 is not a function | true
+unbound name ReferenceError | notDefinedAnywhere is not defined | true
+not a constructor TypeError | 1 is not a constructor | true
+range RangeError | Invalid count value: -1 | true
+deep recursion RangeError | Maximum call stack size exceeded | true
+true false false
+true false
+12
+outer caught Cannot read properties of undefined (reading 'y')

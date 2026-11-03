@@ -37,8 +37,26 @@ pub enum Outcome<V> {
     This,
 }
 
-/// A built-in method's error, as a message (`TypeError: ...`).
-pub type Error = String;
+/// A built-in method's error: the error class to throw and its message.
+pub struct Error {
+    pub kind: &'static str,
+    pub message: String,
+}
+
+impl Error {
+    pub fn range(message: impl Into<String>) -> Self {
+        Error {
+            kind: "RangeError",
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.kind, self.message)
+    }
+}
 
 /// `Some(result)` if `name` is a string method, `None` otherwise.
 pub fn string_method<H: Host>(
@@ -175,7 +193,7 @@ pub fn string_method<H: Host>(
         "repeat" => {
             let n = arg_num(0).unwrap_or(0.0);
             if n < 0.0 || n.is_infinite() {
-                return Some(Err(format!("RangeError: Invalid count value: {}", n)));
+                return Some(Err(Error::range(format!("Invalid count value: {}", n))));
             }
             string(s.repeat(n as usize))
         }
@@ -390,4 +408,243 @@ fn rfind(hay: &[char], needle: &[char], from: usize) -> Option<usize> {
     (0..=last)
         .rev()
         .find(|&i| hay[i..i + needle.len()] == *needle)
+}
+
+/// The function members of `Math`. Native code identifies one by its index.
+pub const MATH_FUNCTIONS: &[&str] = &[
+    "abs", "ceil", "floor", "round", "trunc", "sign", "sqrt", "cbrt", "pow", "exp", "log", "log2",
+    "log10", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "hypot", "min", "max", "random",
+];
+
+/// The constant members of `Math`.
+pub const MATH_CONSTANTS: &[(&str, f64)] = &[
+    ("PI", std::f64::consts::PI),
+    ("E", std::f64::consts::E),
+    ("LN2", std::f64::consts::LN_2),
+    ("LN10", std::f64::consts::LN_10),
+    ("LOG2E", std::f64::consts::LOG2_E),
+    ("LOG10E", std::f64::consts::LOG10_E),
+    ("SQRT2", std::f64::consts::SQRT_2),
+    ("SQRT1_2", std::f64::consts::FRAC_1_SQRT_2),
+];
+
+/// `Math.<name>(...args)`, with the arguments already converted to numbers.
+pub fn math_call(name: &str, args: &[f64]) -> f64 {
+    let a = args.first().copied().unwrap_or(f64::NAN);
+    let b = args.get(1).copied().unwrap_or(f64::NAN);
+    match name {
+        "abs" => a.abs(),
+        "ceil" => a.ceil(),
+        "floor" => a.floor(),
+        // Halves round up, towards +Infinity (`Math.round(-2.5)` is -2).
+        "round" => {
+            let f = a.floor();
+            if a - f >= 0.5 { f + 1.0 } else { f }
+        }
+        "trunc" => a.trunc(),
+        "sign" => {
+            if a.is_nan() || a == 0.0 {
+                a
+            } else {
+                a.signum()
+            }
+        }
+        "sqrt" => a.sqrt(),
+        "cbrt" => a.cbrt(),
+        "pow" => a.powf(b),
+        "exp" => a.exp(),
+        "log" => a.ln(),
+        "log2" => a.log2(),
+        "log10" => a.log10(),
+        "sin" => a.sin(),
+        "cos" => a.cos(),
+        "tan" => a.tan(),
+        "asin" => a.asin(),
+        "acos" => a.acos(),
+        "atan" => a.atan(),
+        "atan2" => a.atan2(b),
+        "hypot" => args.iter().map(|x| x * x).sum::<f64>().sqrt(),
+        "min" => args.iter().fold(f64::INFINITY, |m, &x| {
+            if m.is_nan() || x.is_nan() {
+                f64::NAN
+            } else {
+                m.min(x)
+            }
+        }),
+        "max" => args.iter().fold(f64::NEG_INFINITY, |m, &x| {
+            if m.is_nan() || x.is_nan() {
+                f64::NAN
+            } else {
+                m.max(x)
+            }
+        }),
+        "random" => random(),
+        _ => f64::NAN,
+    }
+}
+
+/// A number in [0, 1), from a xorshift generator seeded by the clock.
+fn random() -> f64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static STATE: AtomicU64 = AtomicU64::new(0);
+    let mut x = STATE.load(Ordering::Relaxed);
+    if x == 0 {
+        x = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0x9E37_79B9_7F4A_7C15, |d| d.as_nanos() as u64)
+            | 1;
+    }
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    STATE.store(x, Ordering::Relaxed);
+    (x >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// `Date.now()`: milliseconds since the Unix epoch.
+pub fn date_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_millis() as f64)
+}
+
+/// `Some(result)` if `name` is a number method, `None` otherwise.
+pub fn number_method<H: Host>(
+    h: &H,
+    n: f64,
+    name: &str,
+    args: &[H::Value],
+) -> Option<Result<Outcome<H::Value>, Error>> {
+    let arg_num = |i: usize| args.get(i).and_then(|v| h.number(v));
+    Some(Ok(Outcome::Value(match name {
+        "toString" => {
+            let radix = match args.first() {
+                None => 10.0,
+                Some(v) => integer(h.number(v).unwrap_or(f64::NAN)),
+            };
+            if !(2.0..=36.0).contains(&radix) {
+                return Some(Err(Error::range(
+                    "toString() radix must be between 2 and 36",
+                )));
+            }
+            if radix == 10.0 || !n.is_finite() {
+                h.make_string(h.to_string(&h.make_number(n)))
+            } else {
+                h.make_string(to_radix(n, radix as u32))
+            }
+        }
+        "toFixed" => {
+            let digits = integer(arg_num(0).unwrap_or(0.0));
+            if !(0.0..=100.0).contains(&digits) {
+                return Some(Err(Error::range(
+                    "toFixed() digits argument must be between 0 and 100",
+                )));
+            }
+            if !n.is_finite() || n.abs() >= 1e21 {
+                h.make_string(h.to_string(&h.make_number(n)))
+            } else {
+                h.make_string(to_fixed(n, digits as usize))
+            }
+        }
+        "valueOf" => h.make_number(n),
+        _ => return None,
+    })))
+}
+
+/// `n.toFixed(digits)`: exact ties round away from zero, as JavaScript
+/// picks the larger candidate (Rust's formatting rounds them to even).
+fn to_fixed(n: f64, digits: usize) -> String {
+    // Rust prints the correctly rounded exact value; only an exact tie (the
+    // digits after the cut are 5 then zeros) needs rounding up instead.
+    let exact = format!("{:.*}", digits + 1100, n.abs());
+    let point = exact.find('.').unwrap_or(exact.len());
+    let rest = &exact[(point + 1 + digits).min(exact.len())..];
+    let tie = rest.starts_with('5') && rest[1..].bytes().all(|b| b == b'0');
+    let s = if tie {
+        format!("{:.*}", digits, n.abs() + 0.5 / 10f64.powi(digits as i32))
+    } else {
+        format!("{:.*}", digits, n.abs())
+    };
+    if n < 0.0 && s.chars().any(|c| c.is_ascii_digit() && c != '0') {
+        format!("-{s}")
+    } else {
+        s
+    }
+}
+
+/// `n.toString(radix)` for a radix other than 10.
+fn to_radix(n: f64, radix: u32) -> String {
+    let digit = |d: u32| std::char::from_digit(d, radix).unwrap_or('0');
+    let neg = n < 0.0;
+    let n = n.abs();
+    let mut int = n.trunc();
+    let mut frac = n - int;
+    let mut int_digits = Vec::new();
+    if int == 0.0 {
+        int_digits.push('0');
+    }
+    while int >= 1.0 {
+        int_digits.push(digit((int % radix as f64) as u32));
+        int = (int / radix as f64).trunc();
+    }
+    int_digits.reverse();
+    let mut out: String = int_digits.into_iter().collect();
+    if frac > 0.0 {
+        out.push('.');
+        // Enough digits to identify a double.
+        for _ in 0..52 {
+            if frac == 0.0 {
+                break;
+            }
+            frac *= radix as f64;
+            let d = frac.trunc();
+            out.push(digit(d as u32));
+            frac -= d;
+        }
+    }
+    if neg {
+        out.insert(0, '-');
+    }
+    out
+}
+
+/// JavaScript `Number.prototype.toString()`: the shortest digits that
+/// round-trip, in exponent form from 1e21 up and below 1e-6.
+pub fn number_to_string(n: f64) -> String {
+    if n.is_nan() {
+        return "NaN".to_string();
+    }
+    if n.is_infinite() {
+        return if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
+    }
+    if n == 0.0 {
+        return "0".to_string();
+    }
+    // `{:e}` gives the shortest round-trip digits: "1.2345e-7".
+    let sci = format!("{:e}", n.abs());
+    let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let k = digits.len() as i32;
+    // The value is 0.<digits> * 10^point.
+    let point = exp.parse::<i32>().unwrap_or(0) + 1;
+    let body = if k <= point && point <= 21 {
+        format!("{digits}{}", "0".repeat((point - k) as usize))
+    } else if 0 < point && point <= 21 {
+        format!(
+            "{}.{}",
+            &digits[..point as usize],
+            &digits[point as usize..]
+        )
+    } else if -6 < point && point <= 0 {
+        format!("0.{}{digits}", "0".repeat((-point) as usize))
+    } else {
+        let e = point - 1;
+        let sign = if e < 0 { '-' } else { '+' };
+        if k == 1 {
+            format!("{digits}e{sign}{}", e.abs())
+        } else {
+            format!("{}.{}e{sign}{}", &digits[..1], &digits[1..], e.abs())
+        }
+    };
+    if n < 0.0 { format!("-{body}") } else { body }
 }

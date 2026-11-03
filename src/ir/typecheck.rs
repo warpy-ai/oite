@@ -197,6 +197,9 @@ impl<'a> TypeChecker<'a> {
             IrOp::LoadGlobal(dst, _) => {
                 self.set_type(*dst, IrType::Any);
             }
+            IrOp::TypeOfGlobal(dst, _) => {
+                self.set_type(*dst, IrType::String);
+            }
 
             // Object creation
             IrOp::NewObject(dst) => {

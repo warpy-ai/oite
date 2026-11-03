@@ -212,7 +212,9 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         IrOp::StoreLocal(_, _) => CompileStrategy::Inline(InlineOp::StoreLocal),
 
         // Global variable access - call stubs
-        IrOp::LoadGlobal(_, _) => CompileStrategy::StubCall(stubs::GET_PROP),
+        IrOp::LoadGlobal(_, _) | IrOp::TypeOfGlobal(_, _) => {
+            CompileStrategy::StubCall(stubs::GET_PROP)
+        }
         IrOp::StoreGlobal(_, _) => CompileStrategy::StubCall(stubs::SET_PROP),
 
         // Object operations - call stubs

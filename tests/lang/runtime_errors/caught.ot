@@ -1,0 +1,59 @@
+// #121: runtime errors are ordinary exceptions: catchable, with the
+// standard classes, names and messages. (VM only: native code does not
+// compile `try` yet, #140.)
+
+function attempt(label, f) {
+  try {
+    f();
+    console.log(label, "no error");
+  } catch (e) {
+    console.log(label, e.name, "|", e.message, "|", e instanceof Error);
+  }
+}
+
+attempt("null read", function () { let o = null; return o.x; });
+attempt("undefined write", function () { let o; o.x = 1; });
+attempt("computed read", function () { let o = null; return o["k"]; });
+attempt("method on null", function () { let o = null; o.go(); });
+attempt("missing method", function () { let o = {}; o.go(); });
+attempt("call non-function", function () { let f = 5; f(); });
+attempt("unbound name", function () { return notDefinedAnywhere; });
+attempt("not a constructor", function () { let C = 1; new C(); });
+attempt("range", function () { "x".repeat(-1); });
+attempt("deep recursion", function () {
+  function down(n) { return down(n + 1); }
+  down(0);
+});
+
+// The class of the error.
+try {
+  null.x;
+} catch (e) {
+  console.log(e instanceof TypeError, e instanceof ReferenceError, e instanceof RangeError);
+}
+try {
+  nope;
+} catch (e) {
+  console.log(e instanceof ReferenceError, e instanceof TypeError);
+}
+
+// Execution continues after a caught runtime error.
+let after = 0;
+for (let i = 0; i < 3; i++) {
+  try {
+    if (i == 1) null.x;
+    after++;
+  } catch (e) {
+    after += 10;
+  }
+}
+console.log(after);
+
+// A runtime error inside a callee unwinds to the caller's catch.
+function inner() { return undefined.y; }
+function outer() { return inner(); }
+try {
+  outer();
+} catch (e) {
+  console.log("outer caught", e.message);
+}

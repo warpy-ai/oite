@@ -116,9 +116,11 @@ function codegenRegImm(cg: Codegen, op: number, reg: number, imm: number): void 
     codegenVarint(cg, imm);
 }
 
-function codegenJump(cg: Codegen, op: number, target: number): void {
-    codegenOp(cg, op);
-    codegenU32(cg, target);
+// A jump target: a placeholder offset, patched once the function's blocks
+// all have offsets (`codegenFunction`), so forward jumps resolve too.
+function codegenJumpTarget(cg: Codegen, label: string): void {
+    cg.jumpPatches.push({ offset: ByteStream.length(cg.stream), label: label });
+    codegenU32(cg, 0);
 }
 
 // ============================================================================
@@ -181,16 +183,15 @@ function codegenInstruction(cg: Codegen, inst: IrInstruction, labelToOffset: { [
     }
 
     if (inst.opcode == IrOpCode.JUMP) {
-        let targetOffset: number = labelToOffset[inst.args[0].label];
-        codegenJump(cg, bcOp, targetOffset);
+        codegenOp(cg, bcOp);
+        codegenJumpTarget(cg, inst.label);
         return;
     }
 
     if (inst.opcode == IrOpCode.JUMP_IF_FALSE) {
-        let targetOffset: number = labelToOffset[inst.args[1].label];
         codegenOp(cg, bcOp);
         codegenReg(cg, inst.args[0]);
-        codegenU32(cg, targetOffset);
+        codegenJumpTarget(cg, inst.label);
         return;
     }
 
@@ -249,6 +250,7 @@ function codegenFunction(cg: Codegen, func: IrFunction): void {
     }
 
     let labelToOffset: { [key: string]: number } = {};
+    cg.jumpPatches = [];
 
     i = 0;
     while (i < func.blocks.length) {
@@ -256,6 +258,13 @@ function codegenFunction(cg: Codegen, func: IrFunction): void {
         let offset: number = ByteStream.length(cg.stream);
         labelToOffset[block.label] = offset;
         codegenBlock(cg, block, labelToOffset);
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < cg.jumpPatches.length) {
+        let patch = cg.jumpPatches[i];
+        ByteStream.patchU32(cg.stream, patch.offset, labelToOffset[patch.label]);
         i = i + 1;
     }
 

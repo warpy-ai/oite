@@ -1,0 +1,10 @@
+// An uncaught `throw` reports the error the same way. (VM only: native
+// code does not compile `throw` yet, #140.)
+function check(n) {
+  if (n < 0) {
+    throw new RangeError("negative: " + n);
+  }
+  return n;
+}
+console.log(check(1));
+check(-2);

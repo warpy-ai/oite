@@ -183,11 +183,16 @@ Oite core includes only essential primitives:
 | ------------ | ------------------------------------------------------------ |
 | `console`    | `log`, `error`                                               |
 | `String`     | `fromCharCode`                                               |
+| `Math`       | `floor`, `round`, `min`, `max`, `pow`, `sqrt`, `random`, ... and constants |
+| `Date`       | `now` (the bootstrap compiler times itself with it)          |
+| Errors       | `Error`, `TypeError`, `ReferenceError`, `RangeError`, `SyntaxError` (written in Oite: `std/core/error.ot`) |
 | `ByteStream` | Binary data manipulation for bootstrap compiler              |
 | `fs`         | `readFileSync`, `writeFileSync`, `writeBinaryFile` (minimal) |
 | `require`    | Module loading                                               |
 
-> **Note:** Full standard library (Math, Date, JSON, comprehensive fs/path, HTTP, TLS, etc.) will be provided by the **Rolls** ecosystem. See `docs/future/rolls-design.md`.
+> **Note:** The rest of the standard library (full `Date`, comprehensive fs/path, HTTP, TLS, etc.) will be provided by the **Rolls** ecosystem. See `docs/future/rolls-design.md`.
+
+Runtime errors are exceptions: reading a property of `null`/`undefined` or calling a non-function throws a `TypeError`, an unbound name a `ReferenceError`, and so on. An uncaught exception prints `Uncaught TypeError: ...` and exits with status 1, on the VM and in native code alike.
 
 ---
 

@@ -125,13 +125,7 @@ fn to_int32(v: OtValue) -> i32 {
 
 /// Number to string, as the language prints numbers.
 pub fn number_to_string(n: f64) -> String {
-    if n.is_nan() {
-        "NaN".to_string()
-    } else if n.is_infinite() {
-        if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string()
-    } else {
-        n.to_string()
-    }
+    builtins::number_to_string(n)
 }
 
 /// `String(v)`: the conversion used by `+` with a string operand.
@@ -476,17 +470,49 @@ fn initial_globals() -> HashMap<String, u64> {
         builtin(ot_builtin_object_keys),
     );
     g.insert("Object".to_string(), object);
+    // `Math`: one built-in serves every function member; its environment
+    // is the member's index in `MATH_FUNCTIONS`.
+    let math = ot_alloc_object();
+    let m = OtValue::from_bits(math);
+    for (i, name) in builtins::MATH_FUNCTIONS.iter().enumerate() {
+        let f = ot_make_closure(ot_builtin_math as *const u8, number(i as f64));
+        set_property(m, name, f);
+    }
+    for (name, value) in builtins::MATH_CONSTANTS {
+        set_property(m, name, number(*value));
+    }
+    g.insert("Math".to_string(), math);
+    let date = ot_alloc_object();
+    set_property(
+        OtValue::from_bits(date),
+        "now",
+        builtin(ot_builtin_date_now),
+    );
+    g.insert("Date".to_string(), date);
     g.insert("undefined".to_string(), undefined());
     g.insert("NaN".to_string(), number(f64::NAN));
     g.insert("Infinity".to_string(), number(f64::INFINITY));
     g
 }
 
-/// Read a global variable; `undefined` if it was never set.
+/// Read a global variable; a `ReferenceError` if it was never set.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_get_global(key: *const u8, key_len: usize) -> u64 {
     let key = unsafe { name(key, key_len) };
-    GLOBALS.with(|g| g.borrow().get(key).copied().unwrap_or_else(undefined))
+    match GLOBALS.with(|g| g.borrow().get(key).copied()) {
+        Some(v) => v,
+        None => runtime_error(&format!("ReferenceError: {key} is not defined")),
+    }
+}
+
+/// `typeof name` of a global: "undefined" if it was never set.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_typeof_global(key: *const u8, key_len: usize) -> u64 {
+    let key = unsafe { name(key, key_len) };
+    match GLOBALS.with(|g| g.borrow().get(key).copied()) {
+        Some(v) => ot_typeof(v),
+        None => new_string("undefined"),
+    }
 }
 
 /// Write a global variable.
@@ -562,6 +588,15 @@ pub extern "C" fn ot_call_method(
                 unsafe { *arr.elements.add(i) = *v };
             }
             arr.len = elems.len() as u32;
+            return outcome(result, recv);
+        }
+    }
+
+    // Number methods, shared with the VM.
+    if r.is_number() {
+        let a = unsafe { args(argv, argc) };
+        if let Some(result) = builtins::number_method(&NativeHost, r.as_number_unchecked(), key, a)
+        {
             return outcome(result, recv);
         }
     }
@@ -653,7 +688,7 @@ fn outcome(result: Result<builtins::Outcome<u64>, builtins::Error>, recv: u64) -
             }
             out
         }
-        Err(msg) => runtime_error(&msg),
+        Err(e) => runtime_error(&e.to_string()),
     }
 }
 
@@ -1043,6 +1078,35 @@ pub extern "C" fn ot_builtin_console_error(
     let _ = std::io::stdout().flush();
     eprintln!("{}", line);
     undefined()
+}
+
+/// A `Math` function; `env` is its index in `MATH_FUNCTIONS`.
+pub extern "C" fn ot_builtin_math(_this: u64, argv: *const u64, argc: usize, env: u64) -> u64 {
+    let a = unsafe { args(argv, argc) };
+    let nums: Vec<f64> = a
+        .iter()
+        .map(|v| {
+            let v = OtValue::from_bits(*v);
+            if object(v).is_some() && as_str(v).is_none() {
+                to_number(OtValue::from_bits(new_string(&value_to_string(v))))
+            } else {
+                to_number(v)
+            }
+        })
+        .collect();
+    let id = OtValue::from_bits(env).as_number_unchecked() as usize;
+    let name = builtins::MATH_FUNCTIONS.get(id).copied().unwrap_or("");
+    number(builtins::math_call(name, &nums))
+}
+
+/// `Date.now()`
+pub extern "C" fn ot_builtin_date_now(
+    _this: u64,
+    _argv: *const u64,
+    _argc: usize,
+    _env: u64,
+) -> u64 {
+    number(builtins::date_now())
 }
 
 /// `Object.keys(obj)`: own property names, in insertion order. (`for...in`

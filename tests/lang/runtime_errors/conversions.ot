@@ -1,0 +1,29 @@
+// backends: vm jit aot
+// `+`, typeof, hoisting and `let` without a value: things that used to read
+// an unbound name or produce `undefined` silently.
+
+console.log(1 + true, null + 1, true + true, [1, 2] + "", "n: " + null, "u: " + undefined);
+console.log("o: " + {}, [] + [], [1, [2, 3]] + "");
+console.log(typeof notDeclared, typeof console, typeof 1, typeof "s");
+
+console.log(hoisted(2));
+function hoisted(n) {
+  return n * 21;
+}
+
+function varHoisting() {
+  let before = v;
+  var v = 5;
+  return [before, v];
+}
+console.log(varHoisting());
+
+let unset;
+console.log(unset);
+let list = [];
+for (let i = 0; i < 2; i++) {
+  let fresh;
+  list.push(fresh);
+  fresh = i;
+}
+console.log(list);

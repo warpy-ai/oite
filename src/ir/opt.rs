@@ -545,6 +545,7 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
         IrOp::Const(_, _)
         | IrOp::LoadLocal(_, _)
         | IrOp::LoadGlobal(_, _)
+        | IrOp::TypeOfGlobal(_, _)
         | IrOp::NewObject(_)
         | IrOp::NewArray(_)
         | IrOp::LoadThis(_)

@@ -345,7 +345,18 @@ try {
 } finally {
   cleanup();
 }
+
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
 ```
+
+Runtime errors are exceptions too: `null.x` throws a `TypeError`, an unbound
+name a `ReferenceError`. An uncaught one prints `Uncaught TypeError: ...` and
+exits with status 1.
 
 ## Memory Model
 

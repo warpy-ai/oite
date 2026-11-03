@@ -1,6 +1,7 @@
 /// Maximum call stack depth to prevent stack overflow in deeply recursive code
 pub const MAX_CALL_STACK_DEPTH: usize = 1000;
 
+pub mod errors;
 pub mod module_cache;
 pub mod opcodes;
 pub mod property;
@@ -245,6 +246,9 @@ pub struct VM {
     pub total_instructions: u64,
     pub exception_handlers: Vec<ExceptionHandler>,
     pub current_exception: Option<JsValue>,
+    /// Report an uncaught exception and exit (the `oitec` binary) instead
+    /// of panicking (embedded VMs, tests).
+    pub exit_on_uncaught: bool,
     pub current_module_path: Option<PathBuf>,
     pub async_runtime: Option<Runtime>,
     pub async_task_tx: Option<mpsc::Sender<JsValue>>,
@@ -297,6 +301,7 @@ impl VM {
             total_instructions: 0,
             exception_handlers: Vec::new(),
             current_exception: None,
+            exit_on_uncaught: false,
             current_module_path: None,
             async_runtime: None,
             async_task_tx: Some(tx),
@@ -707,10 +712,8 @@ impl VM {
     fn execute_task(&mut self, task: Task) {
         // Stack overflow protection
         if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
-            panic!(
-                "Stack overflow: maximum call depth of {} exceeded",
-                MAX_CALL_STACK_DEPTH
-            );
+            let _ = self.throw_error("RangeError", "Maximum call stack size exceeded");
+            return;
         }
 
         match task.function_ptr {
@@ -743,7 +746,10 @@ impl VM {
                 let _ = func(self, task.args);
             }
 
-            _ => panic!("Target is not callable"),
+            other => {
+                let shown = crate::stdlib::inspect(self, &other);
+                let _ = self.throw_error("TypeError", format!("{shown} is not a function"));
+            }
         }
     }
 
@@ -814,8 +820,7 @@ impl VM {
             }
         }
 
-        // No handler found - panic with uncaught exception
-        panic!("Uncaught exception: {:?}", exception);
+        self.report_uncaught(&exception)
     }
 
     /// Pop `n` call arguments, in call order.
@@ -831,7 +836,9 @@ impl VM {
     /// means there is no such method.
     fn finish_builtin(
         &mut self,
-        result: Option<Result<crate::runtime::builtins::Outcome<JsValue>, String>>,
+        result: Option<
+            Result<crate::runtime::builtins::Outcome<JsValue>, crate::runtime::builtins::Error>,
+        >,
         receiver: JsValue,
         name: &str,
     ) -> ExecResult {
@@ -846,17 +853,86 @@ impl VM {
                 });
                 self.stack.push(JsValue::Object(ptr));
             }
-            Some(Err(msg)) => return self.throw_exception(JsValue::String(msg)),
+            Some(Err(e)) => return self.throw_error(e.kind, e.message),
             None => {
                 let shown = crate::stdlib::inspect(self, &receiver);
-                return self.throw_exception(JsValue::String(format!(
-                    "TypeError: {}.{} is not a function",
-                    shown, name
-                )));
+                return self
+                    .throw_error("TypeError", format!("{}.{} is not a function", shown, name));
             }
         }
         self.ip += 1;
         ExecResult::Continue
+    }
+
+    /// The parent class of the constructor running in the current frame:
+    /// `__super__` of the class it was called for (`new_target`).
+    fn load_super(&self) -> JsValue {
+        let new_target = self
+            .call_stack
+            .last()
+            .and_then(|frame| frame.new_target.as_ref());
+        if let Some(JsValue::Object(ptr)) = new_target
+            && let Some(HeapObject {
+                data: HeapData::Object(props),
+            }) = self.heap.get(*ptr)
+        {
+            return props
+                .get("__super__")
+                .cloned()
+                .unwrap_or(JsValue::Undefined);
+        }
+        JsValue::Undefined
+    }
+
+    /// `super(...args)`: run the parent constructor on the current `this`.
+    /// Its frame's `new_target` is the parent class, so a `super(...)` inside
+    /// it reaches the grandparent.
+    fn call_super(&mut self, super_ctor: JsValue, args: Vec<JsValue>) -> ExecResult {
+        // super() must be called before accessing `this`
+        if let Some(frame) = self.call_stack.last_mut() {
+            frame.super_called = true;
+        }
+        let ctor_fn = match &super_ctor {
+            JsValue::Function { .. } => super_ctor.clone(),
+            JsValue::Object(ptr) => match self.heap.get(*ptr) {
+                Some(HeapObject {
+                    data: HeapData::Object(props),
+                }) => props
+                    .get("constructor")
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined),
+                _ => JsValue::Undefined,
+            },
+            _ => JsValue::Undefined,
+        };
+        let JsValue::Function { address, env } = ctor_fn else {
+            return self.throw_error(
+                "TypeError",
+                "Super constructor is not a constructor".to_string(),
+            );
+        };
+        let this_context = self
+            .call_stack
+            .last()
+            .map(|f| f.this_context.clone())
+            .unwrap_or(JsValue::Undefined);
+        self.push_call_args(&args, address);
+        let new_target = match super_ctor {
+            JsValue::Object(_) => Some(super_ctor),
+            _ => None,
+        };
+        self.call_stack.push(Frame {
+            return_address: self.ip + 1,
+            locals: HashMap::new(),
+            indexed_locals: Vec::new(),
+            this_context,
+            new_target,
+            super_called: false,
+            resume_ip: None,
+            env,
+        });
+        self.ip = address;
+        ExecResult::ContinueNoIpInc
     }
 
     /// Number of parameters of the bytecode function at `address`: the
@@ -874,6 +950,11 @@ impl VM {
     /// arguments as given shifted every parameter whenever the counts
     /// differed (`f(1)` against `function f(a, b)` bound `b = 1`).
     fn push_call_args(&mut self, args: &[JsValue], address: usize) {
+        if matches!(self.program.get(address), Some(OpCode::SuperForward)) {
+            self.stack.extend(args.iter().cloned());
+            self.stack.push(JsValue::Number(args.len() as f64));
+            return;
+        }
         let n = if address == 0 {
             args.len()
         } else {
@@ -953,8 +1034,12 @@ impl VM {
                     {
                         props.insert(name.to_string(), value);
                     }
-                } else {
-                    // Object was not an Object, silently ignore or could panic
+                } else if matches!(target, JsValue::Null | JsValue::Undefined) {
+                    let shown = self.to_js_string(&target);
+                    return self.throw_error(
+                        "TypeError",
+                        format!("Cannot set properties of {shown} (setting '{name}')"),
+                    );
                 }
             }
 
@@ -983,17 +1068,16 @@ impl VM {
                     return ExecResult::Continue;
                 }
 
+                if matches!(target, JsValue::Null | JsValue::Undefined) {
+                    let shown = self.to_js_string(&target);
+                    let key = self.to_js_string(&key_val);
+                    return self.throw_error(
+                        "TypeError",
+                        format!("Cannot set properties of {shown} (setting '{key}')"),
+                    );
+                }
                 if let JsValue::Object(ptr) = target {
-                    // Convert key to string
-                    let key_name = match &key_val {
-                        JsValue::String(s) => s.clone(),
-                        JsValue::Number(n) => crate::stdlib::number_to_string(n),
-                        JsValue::Object(_) => {
-                            // For objects, use default string representation
-                            "[object Object]".to_string()
-                        }
-                        _ => format!("{:?}", key_val),
-                    };
+                    let key_name = self.to_js_string(&key_val);
 
                     if let Some(heap_item) = self.heap.get_mut(ptr)
                         && let HeapData::Object(props) = &mut heap_item.data
@@ -1010,6 +1094,14 @@ impl VM {
                 }
                 let key_val = self.stack.pop().unwrap();
                 let target = self.stack.pop().unwrap();
+                if matches!(target, JsValue::Null | JsValue::Undefined) {
+                    let shown = self.to_js_string(&target);
+                    let key = self.to_js_string(&key_val);
+                    return self.throw_error(
+                        "TypeError",
+                        format!("Cannot read properties of {shown} (reading '{key}')"),
+                    );
+                }
 
                 match (target, key_val) {
                     (JsValue::Object(ptr), JsValue::Number(idx)) => {
@@ -1026,13 +1118,7 @@ impl VM {
                         self.stack.push(JsValue::Undefined);
                     }
                     (JsValue::Object(ptr), key_val) => {
-                        // Convert key to string
-                        let key_name = match &key_val {
-                            JsValue::String(s) => s.clone(),
-                            JsValue::Number(n) => crate::stdlib::number_to_string(n),
-                            JsValue::Object(_) => "[object Object]".to_string(),
-                            _ => format!("{:?}", key_val),
-                        };
+                        let key_name = self.to_js_string(&key_val);
 
                         // Check if this is an array - handle string numeric indices
                         if let Some(heap_obj) = self.heap.get(ptr) {
@@ -1228,8 +1314,15 @@ impl VM {
                             self.stack.push(JsValue::Undefined);
                         }
                     }
+                    Some(target @ (JsValue::Null | JsValue::Undefined)) => {
+                        let shown = self.to_js_string(&target);
+                        return self.throw_error(
+                            "TypeError",
+                            format!("Cannot read properties of {shown} (reading '{name}')"),
+                        );
+                    }
                     _ => {
-                        // For any other type, push undefined
+                        // Other primitives have no properties here.
                         self.stack.push(JsValue::Undefined);
                     }
                 }
@@ -1272,9 +1365,17 @@ impl VM {
                     .last()
                     .and_then(|f| f.locals.get(&name))
                     .or_else(|| self.call_stack[0].locals.get(&name))
-                    .cloned()
-                    .unwrap_or(JsValue::Undefined);
-                self.stack.push(value);
+                    .cloned();
+                match value {
+                    Some(value) => self.stack.push(value),
+                    // Compiler temporaries (`%...`) may be read before they
+                    // are first written.
+                    None if name.starts_with('%') => self.stack.push(JsValue::Undefined),
+                    None => {
+                        return self
+                            .throw_error("ReferenceError", format!("{name} is not defined"));
+                    }
+                }
             }
 
             OpCode::LoadClosureEnv => {
@@ -1295,10 +1396,7 @@ impl VM {
             OpCode::Call(arg_count) => {
                 // Stack overflow protection
                 if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
-                    panic!(
-                        "Stack overflow: maximum call depth of {} exceeded",
-                        MAX_CALL_STACK_DEPTH
-                    );
+                    return self.throw_error("RangeError", "Maximum call stack size exceeded");
                 }
 
                 let callee = self.stack.pop().expect("Missing callee");
@@ -1371,9 +1469,10 @@ impl VM {
                                 self.ip = address;
                                 return ExecResult::ContinueNoIpInc;
                             } else {
-                                panic!(
-                                    "Object is not callable (no __call__ property): Object({})",
-                                    ptr
+                                let shown = crate::stdlib::inspect(self, &JsValue::Object(ptr));
+                                return self.throw_error(
+                                    "TypeError",
+                                    format!("{shown} is not a function"),
                                 );
                             }
                         } else {
@@ -1381,20 +1480,8 @@ impl VM {
                         }
                     }
                     other => {
-                        // Print the last few instructions for context
-                        let start = self.ip.saturating_sub(5);
-                        let end = (self.ip + 3).min(self.program.len());
-                        eprintln!("Context around ip={}:", self.ip);
-                        for i in start..end {
-                            let marker = if i == self.ip { ">>>" } else { "   " };
-                            eprintln!("{} {}: {:?}", marker, i, self.program.get(i));
-                        }
-                        panic!(
-                            "Target is not callable: {:?} at ip={}, call_stack_depth={}",
-                            other,
-                            self.ip,
-                            self.call_stack.len()
-                        );
+                        let shown = crate::stdlib::inspect(self, &other);
+                        return self.throw_error("TypeError", format!("{shown} is not a function"));
                     }
                 }
             }
@@ -1404,6 +1491,14 @@ impl VM {
                     return ExecResult::Stop;
                 }
                 let frame = self.call_stack.pop().expect("Missing frame");
+                // A constructor (`new`, or `super(...)`) results in `this`
+                // unless it returns an object of its own.
+                if frame.new_target.is_some()
+                    && !matches!(self.stack.last(), Some(JsValue::Object(_)))
+                {
+                    self.stack.pop();
+                    self.stack.push(frame.this_context.clone());
+                }
                 self.ip = frame.return_address;
                 if self.ip == usize::MAX {
                     return ExecResult::Stop;
@@ -1416,57 +1511,26 @@ impl VM {
             }
 
             OpCode::Add => {
-                let b = self.stack.pop().unwrap();
-                let a = self.stack.pop().unwrap();
-
-                match (a, b) {
-                    (JsValue::Number(a_num), JsValue::Number(b_num)) => {
-                        self.stack.push(JsValue::Number(a_num + b_num));
+                let b = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let a = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let result = match (a, b) {
+                    (JsValue::Number(x), JsValue::Number(y)) => JsValue::Number(x + y),
+                    (JsValue::String(mut x), JsValue::String(y)) => {
+                        x.push_str(&y);
+                        JsValue::String(x)
                     }
-                    (JsValue::String(mut a_str), JsValue::String(b_str)) => {
-                        a_str.push_str(&b_str);
-                        self.stack.push(JsValue::String(a_str));
+                    // A string or object operand makes `+` concatenate.
+                    (a, b)
+                        if matches!(a, JsValue::String(_) | JsValue::Object(_))
+                            || matches!(b, JsValue::String(_) | JsValue::Object(_)) =>
+                    {
+                        let mut s = self.to_js_string(&a);
+                        s.push_str(&self.to_js_string(&b));
+                        JsValue::String(s)
                     }
-                    (JsValue::String(a_str), b) => {
-                        let b_str = match b {
-                            JsValue::Number(n) => crate::stdlib::number_to_string(n),
-                            JsValue::Boolean(b) => b.to_string(),
-                            JsValue::Null => "null".to_string(),
-                            JsValue::Undefined => "undefined".to_string(),
-                            JsValue::String(s) => s,
-                            JsValue::Object(ptr) => format!("Object({})", ptr),
-                            JsValue::Function { address, env: _env } => {
-                                format!("Function({})", address)
-                            }
-                            JsValue::NativeFunction(idx) => {
-                                format!("NativeFunction({})", idx)
-                            }
-                            _ => "".to_string(),
-                        };
-                        self.stack.push(JsValue::String(a_str + &b_str[..]));
-                    }
-                    (a, JsValue::String(b_str)) => {
-                        let a_str = match a {
-                            JsValue::Number(n) => crate::stdlib::number_to_string(n),
-                            JsValue::Boolean(b) => b.to_string(),
-                            JsValue::Null => "null".to_string(),
-                            JsValue::Undefined => "undefined".to_string(),
-                            JsValue::String(s) => s,
-                            JsValue::Object(ptr) => format!("Object({})", ptr),
-                            JsValue::Function { address, env: _env } => {
-                                format!("Function({})", address)
-                            }
-                            JsValue::NativeFunction(idx) => {
-                                format!("NativeFunction({})", idx)
-                            }
-                            _ => "".to_string(),
-                        };
-                        self.stack.push(JsValue::String(a_str + &b_str[..]));
-                    }
-                    _ => {
-                        self.stack.push(JsValue::Undefined);
-                    }
-                }
+                    (a, b) => JsValue::Number(errors::to_number(&a) + errors::to_number(&b)),
+                };
+                self.stack.push(result);
             }
             OpCode::And => {
                 let b = self.stack.pop().unwrap();
@@ -1526,18 +1590,18 @@ impl VM {
 
             OpCode::TypeOf => {
                 let val = self.stack.pop().unwrap_or(JsValue::Undefined);
-                let type_str = match val {
-                    JsValue::Number(_) => "number",
-                    JsValue::String(_) => "string",
-                    JsValue::Boolean(_) => "boolean",
-                    JsValue::Object(_) => "object",
-                    JsValue::Function { .. } => "function",
-                    JsValue::NativeFunction(_) => "function",
-                    JsValue::Null => "object", // typeof null === "object" in JS
-                    JsValue::Undefined => "undefined",
-                    JsValue::Accessor(_, _) => "function",
-                    JsValue::Promise(_) => "object",
-                };
+                self.stack
+                    .push(JsValue::String(js_typeof(&val).to_string()));
+            }
+
+            OpCode::TypeOfName(name) => {
+                // `typeof x` of an unbound name is "undefined", not an error.
+                let type_str = self
+                    .call_stack
+                    .last()
+                    .and_then(|f| f.locals.get(&name))
+                    .or_else(|| self.call_stack[0].locals.get(&name))
+                    .map_or("undefined", js_typeof);
                 self.stack.push(JsValue::String(type_str.to_string()));
             }
 
@@ -2050,10 +2114,7 @@ impl VM {
             OpCode::Construct(arg_count) => {
                 // Stack overflow protection
                 if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
-                    panic!(
-                        "Stack overflow: maximum call depth of {} exceeded",
-                        MAX_CALL_STACK_DEPTH
-                    );
+                    return self.throw_error("RangeError", "Maximum call stack size exceeded");
                 }
 
                 // Stack layout: [..., arg1, arg2, ..., constructor]
@@ -2096,8 +2157,12 @@ impl VM {
                                     // The native function will handle construction itself
                                     (0usize, None, proto, constructor_val.clone())
                                 }
-                                Some(other) => {
-                                    panic!("Constructor is not a Function, it's {:?}", other);
+                                Some(_) => {
+                                    let shown = crate::stdlib::inspect(self, &constructor_val);
+                                    return self.throw_error(
+                                        "TypeError",
+                                        format!("{shown} is not a constructor"),
+                                    );
                                 }
                                 None => {
                                     // No constructor property - this is a "constructor object" like Promise
@@ -2112,10 +2177,16 @@ impl VM {
                                 }
                             }
                         } else {
-                            panic!("Constructor is not an object with properties");
+                            let shown = crate::stdlib::inspect(self, &constructor_val);
+                            return self
+                                .throw_error("TypeError", format!("{shown} is not a constructor"));
                         }
                     }
-                    _ => panic!("Constructor is not a function or class"),
+                    _ => {
+                        let shown = crate::stdlib::inspect(self, &constructor_val);
+                        return self
+                            .throw_error("TypeError", format!("{shown} is not a constructor"));
+                    }
                 };
 
                 // Create new object with prototype
@@ -2634,10 +2705,8 @@ impl VM {
                         } else if let JsValue::Function { address, env } = method {
                             // Stack overflow protection
                             if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
-                                panic!(
-                                    "Stack overflow: maximum call depth of {} exceeded",
-                                    MAX_CALL_STACK_DEPTH
-                                );
+                                return self
+                                    .throw_error("RangeError", "Maximum call stack size exceeded");
                             }
 
                             // Collect arguments
@@ -2666,7 +2735,9 @@ impl VM {
                             self.ip = address;
                             return ExecResult::ContinueNoIpInc;
                         }
-                        panic!("Method {} not found on object", name);
+                        let shown = crate::stdlib::inspect(self, &JsValue::Object(ptr));
+                        return self
+                            .throw_error("TypeError", format!("{shown}.{name} is not a function"));
                     }
                     // Handle Promise.then and Promise.catch methods
                     JsValue::Promise(promise) => {
@@ -2694,10 +2765,28 @@ impl VM {
                             }
                         }
                     }
-                    _ => {
-                        self.stack.push(JsValue::Undefined);
-                        self.ip += 1;
-                        return ExecResult::Continue;
+                    JsValue::Number(n) => {
+                        let args = self.pop_args(arg_count);
+                        let result = crate::runtime::builtins::number_method(
+                            &VmHost(&self.heap),
+                            n,
+                            &name,
+                            &args,
+                        );
+                        return self.finish_builtin(result, JsValue::Number(n), &name);
+                    }
+                    other => {
+                        let _ = self.pop_args(arg_count);
+                        let shown = self.to_js_string(&other);
+                        if matches!(other, JsValue::Null | JsValue::Undefined) {
+                            return self.throw_error(
+                                "TypeError",
+                                format!("Cannot read properties of {shown} (reading '{name}')"),
+                            );
+                        }
+                        let shown = crate::stdlib::inspect(self, &other);
+                        return self
+                            .throw_error("TypeError", format!("{shown}.{name} is not a function"));
                     }
                 }
             }
@@ -2778,95 +2867,26 @@ impl VM {
             }
 
             OpCode::LoadSuper => {
-                // Load __super__ from current frame's new_target (wrapper object)
-                // The wrapper object has __super__ property pointing to the parent class
-                let frame = self.call_stack.last();
-
-                let new_target = frame.and_then(|frame| frame.new_target.as_ref());
-
-                let super_val = new_target
-                    .and_then(|wrapper| {
-                        if let JsValue::Object(ptr) = wrapper {
-                            self.heap.get(*ptr).and_then(|obj| {
-                                if let HeapData::Object(props) = &obj.data {
-                                    props.get("__super__").cloned()
-                                } else {
-                                    None
-                                }
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(JsValue::Undefined);
+                let super_val = self.load_super();
                 self.stack.push(super_val);
             }
 
             OpCode::CallSuper(arg_count) => {
-                // Mark that super() has been called in the derived class constructor
-                // This is required by JavaScript: super() must be called before accessing `this`
-                if let Some(frame) = self.call_stack.last_mut() {
-                    frame.super_called = true;
-                }
-
-                // Call the super constructor with current this context
                 // Stack: [args..., super_constructor]
-                let super_ctor = self
-                    .stack
-                    .pop()
-                    .expect("CallSuper: missing super constructor");
-                let mut args = Vec::with_capacity(arg_count);
-                for _ in 0..arg_count {
-                    args.push(self.stack.pop().expect("CallSuper: missing argument"));
-                }
+                let super_ctor = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let args = self.pop_args(arg_count);
+                return self.call_super(super_ctor, args);
+            }
 
-                // Get the actual constructor function
-                let ctor_fn = match super_ctor {
-                    JsValue::Function { .. } => super_ctor.clone(),
-                    JsValue::Object(ptr) => {
-                        // Get constructor from object
-                        if let Some(HeapObject {
-                            data: HeapData::Object(props),
-                        }) = self.heap.get(ptr)
-                        {
-                            props
-                                .get("constructor")
-                                .cloned()
-                                .unwrap_or(JsValue::Undefined)
-                        } else {
-                            JsValue::Undefined
-                        }
-                    }
-                    _ => panic!(
-                        "CallSuper: super is not a constructor, got {:?}",
-                        super_ctor
-                    ),
+            OpCode::SuperForward => {
+                // Stack: [args..., count]
+                let count = match self.stack.pop() {
+                    Some(JsValue::Number(n)) => n as usize,
+                    _ => 0,
                 };
-
-                if let JsValue::Function { address, env } = ctor_fn {
-                    // Get current this context
-                    let this_context = self.call_stack.last().unwrap().this_context.clone();
-
-                    args.reverse();
-                    self.push_call_args(&args, address);
-
-                    let frame = Frame {
-                        return_address: self.ip + 1,
-                        locals: HashMap::new(),
-                        indexed_locals: Vec::new(),
-                        this_context,
-                        new_target: None,
-                        super_called: false,
-                        resume_ip: None,
-                        env,
-                    };
-
-                    self.call_stack.push(frame);
-                    self.ip = address;
-                    return ExecResult::ContinueNoIpInc;
-                } else {
-                    panic!("CallSuper: super constructor is not a function");
-                }
+                let args = self.pop_args(count);
+                let super_ctor = self.load_super();
+                return self.call_super(super_ctor, args);
             }
 
             OpCode::GetSuperProp(name) => {
@@ -3494,6 +3514,22 @@ impl crate::runtime::builtins::Host for VmHost<'_> {
 }
 
 /// JavaScript `ToInt32`: the integer the bitwise operators work on.
+/// The `typeof` of a value.
+fn js_typeof(v: &JsValue) -> &'static str {
+    match v {
+        JsValue::Number(_) => "number",
+        JsValue::String(_) => "string",
+        JsValue::Boolean(_) => "boolean",
+        JsValue::Object(_) => "object",
+        JsValue::Function { .. } => "function",
+        JsValue::NativeFunction(_) => "function",
+        JsValue::Null => "object", // typeof null === "object" in JS
+        JsValue::Undefined => "undefined",
+        JsValue::Accessor(_, _) => "function",
+        JsValue::Promise(_) => "object",
+    }
+}
+
 fn to_int32(n: f64) -> i32 {
     if !n.is_finite() {
         return 0;
