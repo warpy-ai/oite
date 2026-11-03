@@ -13,7 +13,7 @@
 //!   (see `heap::NativeFn`). Missing arguments read as `undefined`.
 //! - Names (properties, globals) are passed as a UTF-8 pointer and length.
 
-use super::abi::OtValue;
+use super::abi::{EXCEPTION_BITS, OtValue};
 use super::builtins;
 use super::heap::{
     HeapPtr, NativeArray, NativeFn, NativeFunction, NativeObject, NativeString, ObjectHeader,
@@ -39,14 +39,108 @@ fn number(n: f64) -> u64 {
     OtValue::number(n).to_bits()
 }
 
-/// Report an uncaught runtime error and exit.
-///
-/// Native code has no exception support yet (#120), so this cannot be caught.
-/// Output written so far is flushed first so it is not lost.
-fn runtime_error(msg: &str) -> ! {
+/// An unrecoverable condition (out of memory): report it and exit.
+fn fatal_error(msg: &str) -> ! {
     let _ = std::io::stdout().flush();
     eprintln!("Uncaught {}", msg);
     std::process::exit(1);
+}
+
+// =========================================================================
+// Exceptions
+// =========================================================================
+//
+// Native code has no unwinding. A function that throws stores the thrown
+// value in `PENDING` and returns `EXCEPTION_BITS`; the code that called it
+// sees that result and jumps to its `catch`/`finally`, or returns
+// `EXCEPTION_BITS` itself. A `catch` takes the value back out of `PENDING`.
+
+thread_local! {
+    static PENDING: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Prototype objects of the error kinds, created on first use.
+    static ERROR_PROTOS: RefCell<HashMap<&'static str, u64>> = RefCell::new(HashMap::new());
+}
+
+/// `throw value`: returns `EXCEPTION_BITS`, which the caller propagates.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_throw(value: u64) -> u64 {
+    PENDING.with(|p| p.set(value));
+    EXCEPTION_BITS
+}
+
+/// The exception in flight, for a `catch` (or a `finally` that will
+/// rethrow it). Clears it.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_take_exception() -> u64 {
+    PENDING.with(|p| p.replace(undefined()))
+}
+
+/// End of a `finally`: rethrow `value` if the `finally` was entered because
+/// of an exception (`thrown` is true); otherwise continue (`undefined`).
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_rethrow(thrown: u64, value: u64) -> u64 {
+    if ot_truthy(thrown) != 0 {
+        ot_throw(value)
+    } else {
+        undefined()
+    }
+}
+
+/// An exception reached the top of the program: report it and exit 1.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_report_uncaught() {
+    let exception = OtValue::from_bits(ot_take_exception());
+    let text = match as_str(exception) {
+        Some(s) => s.to_string(),
+        None => inspect(exception),
+    };
+    let _ = std::io::stdout().flush();
+    eprintln!("Uncaught {}", text);
+    std::process::exit(1);
+}
+
+/// The prototype for errors of `kind`: `{ name: kind }`, marked as an error.
+fn error_proto(kind: &'static str) -> u64 {
+    ERROR_PROTOS.with(|protos| {
+        *protos.borrow_mut().entry(kind).or_insert_with(|| {
+            let proto = ot_alloc_object();
+            let p = OtValue::from_bits(proto);
+            set_property(p, "name", new_string(kind));
+            set_property(p, "__error__", boolean(true));
+            proto
+        })
+    })
+}
+
+/// Throw a new `kind` error ("TypeError", ...) with `message`, as the VM's
+/// error classes do: `e.name`, `e.message`, printed as `TypeError: message`.
+fn throw_error(kind: &'static str, message: &str) -> u64 {
+    let error = ot_alloc_object();
+    let e = OtValue::from_bits(error);
+    set_property(e, "message", new_string(message));
+    set_property(e, "__proto__", error_proto(kind));
+    ot_throw(error)
+}
+
+/// Whether `ptr` is an error object (its prototype chain is marked).
+fn is_error(ptr: HeapPtr) -> bool {
+    let v = OtValue::from_bits(get_property(OtValue::pointer(ptr), "__error__"));
+    v.is_boolean() && v.as_boolean_unchecked()
+}
+
+/// `TypeError: message`, as `Error.prototype.toString` gives it.
+fn error_summary(ptr: HeapPtr) -> String {
+    let v = OtValue::pointer(ptr);
+    let name = value_to_string(OtValue::from_bits(get_property(v, "name")));
+    let message = match OtValue::from_bits(get_property(v, "message")) {
+        m if m.is_undefined() => String::new(),
+        m => value_to_string(m),
+    };
+    match (name.is_empty(), message.is_empty()) {
+        (_, true) => name,
+        (true, false) => message,
+        (false, false) => format!("{name}: {message}"),
+    }
 }
 
 /// The heap object behind a value, with its kind.
@@ -159,6 +253,7 @@ fn value_to_string(v: OtValue) -> String {
                 .join(",")
         }
         Some((_, ObjectKind::Function)) => "function".to_string(),
+        Some((ptr, ObjectKind::Object)) if is_error(ptr) => error_summary(ptr),
         _ => "[object Object]".to_string(),
     }
 }
@@ -186,7 +281,7 @@ fn array_reserve(arr: &mut NativeArray, needed: usize) {
     let new_size = Layout::array::<u64>(new_cap).unwrap().size();
     let p = unsafe { realloc(arr.elements as *mut u8, old, new_size) } as *mut u64;
     if p.is_null() {
-        runtime_error("RangeError: out of memory growing an array");
+        fatal_error("RangeError: out of memory growing an array");
     }
     arr.elements = p;
     arr.capacity = new_cap as u32;
@@ -213,11 +308,14 @@ fn array_push(arr: &mut NativeArray, value: u64) -> usize {
 fn get_property(v: OtValue, key: &str) -> u64 {
     let Some((ptr, kind)) = object(v) else {
         if v.is_null() || v.is_undefined() {
-            runtime_error(&format!(
-                "TypeError: Cannot read properties of {} (reading '{}')",
-                value_to_string(v),
-                key
-            ));
+            return throw_error(
+                "TypeError",
+                &format!(
+                    "Cannot read properties of {} (reading '{}')",
+                    value_to_string(v),
+                    key
+                ),
+            );
         }
         return undefined();
     };
@@ -265,7 +363,8 @@ fn get_property(v: OtValue, key: &str) -> u64 {
     }
 }
 
-fn set_property(v: OtValue, key: &str, value: u64) {
+/// `v.key = value`; `undefined`, or `EXCEPTION_BITS` if it throws.
+fn set_property(v: OtValue, key: &str, value: u64) -> u64 {
     match object(v) {
         Some((ptr, ObjectKind::Object)) => {
             let map = props(ptr);
@@ -296,14 +395,18 @@ fn set_property(v: OtValue, key: &str, value: u64) {
         Some(_) => {}
         None => {
             if v.is_null() || v.is_undefined() {
-                runtime_error(&format!(
-                    "TypeError: Cannot set properties of {} (setting '{}')",
-                    value_to_string(v),
-                    key
-                ));
+                return throw_error(
+                    "TypeError",
+                    &format!(
+                        "Cannot set properties of {} (setting '{}')",
+                        value_to_string(v),
+                        key
+                    ),
+                );
             }
         }
     }
+    undefined()
 }
 
 /// An index or key value as a property name.
@@ -383,7 +486,7 @@ pub extern "C" fn ot_get_prop(obj: u64, key: *const u8, key_len: usize) -> u64 {
 
 /// `obj.key = value`
 #[unsafe(no_mangle)]
-pub extern "C" fn ot_set_prop(obj: u64, key: *const u8, key_len: usize, value: u64) {
+pub extern "C" fn ot_set_prop(obj: u64, key: *const u8, key_len: usize, value: u64) -> u64 {
     set_property(
         OtValue::from_bits(obj),
         unsafe { name(key, key_len) },
@@ -409,12 +512,12 @@ pub extern "C" fn ot_get_index(obj: u64, key: u64) -> u64 {
 
 /// `obj[key] = value`
 #[unsafe(no_mangle)]
-pub extern "C" fn ot_set_index(obj: u64, key: u64, value: u64) {
+pub extern "C" fn ot_set_index(obj: u64, key: u64, value: u64) -> u64 {
     let o = OtValue::from_bits(obj);
     let k = OtValue::from_bits(key);
     if let (Some((ptr, ObjectKind::Array)), Some(i)) = (object(o), index_of(k)) {
         array_set(array(ptr), i, value);
-        return;
+        return undefined();
     }
     set_property(o, &key_string(k), value)
 }
@@ -440,7 +543,7 @@ pub extern "C" fn ot_array_len(arr: u64) -> u64 {
 pub extern "C" fn ot_array_push(arr: u64, value: u64) -> u64 {
     match object(OtValue::from_bits(arr)) {
         Some((ptr, ObjectKind::Array)) => number(array_push(array(ptr), value) as f64),
-        _ => runtime_error("TypeError: push called on a non-array"),
+        _ => throw_error("TypeError", "push called on a non-array"),
     }
 }
 
@@ -482,6 +585,7 @@ fn initial_globals() -> HashMap<String, u64> {
         set_property(m, name, number(*value));
     }
     g.insert("Math".to_string(), math);
+    g.insert("String".to_string(), builtin(ot_builtin_string));
     let date = ot_alloc_object();
     set_property(
         OtValue::from_bits(date),
@@ -501,7 +605,7 @@ pub extern "C" fn ot_get_global(key: *const u8, key_len: usize) -> u64 {
     let key = unsafe { name(key, key_len) };
     match GLOBALS.with(|g| g.borrow().get(key).copied()) {
         Some(v) => v,
-        None => runtime_error(&format!("ReferenceError: {key} is not defined")),
+        None => throw_error("ReferenceError", &format!("{key} is not defined")),
     }
 }
 
@@ -517,11 +621,12 @@ pub extern "C" fn ot_typeof_global(key: *const u8, key_len: usize) -> u64 {
 
 /// Write a global variable.
 #[unsafe(no_mangle)]
-pub extern "C" fn ot_set_global(key: *const u8, key_len: usize, value: u64) {
+pub extern "C" fn ot_set_global(key: *const u8, key_len: usize, value: u64) -> u64 {
     let key = unsafe { name(key, key_len) };
     GLOBALS.with(|g| {
         g.borrow_mut().insert(key.to_string(), value);
     });
+    undefined()
 }
 
 // =========================================================================
@@ -537,10 +642,10 @@ pub extern "C" fn ot_call(func: u64, this: u64, argv: *const u64, argc: usize) -
             let f: NativeFn = unsafe { std::mem::transmute(func.code) };
             f(this, argv, argc, func.env)
         }
-        _ => runtime_error(&format!(
-            "TypeError: {} is not a function",
-            inspect(OtValue::from_bits(func))
-        )),
+        _ => throw_error(
+            "TypeError",
+            &format!("{} is not a function", inspect(OtValue::from_bits(func))),
+        ),
     }
 }
 
@@ -610,14 +715,16 @@ pub extern "C" fn ot_call_method(
     }
 
     let method = get_property(r, key);
+    if method == EXCEPTION_BITS {
+        return method;
+    }
     if let Some((_, ObjectKind::Function)) = object(OtValue::from_bits(method)) {
         return ot_call(method, recv, argv, argc);
     }
-    runtime_error(&format!(
-        "TypeError: {}.{} is not a function",
-        inspect(r),
-        key
-    ))
+    throw_error(
+        "TypeError",
+        &format!("{}.{} is not a function", inspect(r), key),
+    )
 }
 
 /// The native value representation, for the shared built-in methods.
@@ -688,7 +795,7 @@ fn outcome(result: Result<builtins::Outcome<u64>, builtins::Error>, recv: u64) -
             }
             out
         }
-        Err(e) => runtime_error(&e.to_string()),
+        Err(e) => throw_error(e.kind, &e.message),
     }
 }
 
@@ -1009,6 +1116,27 @@ fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> String {
                         .collect();
                     format!("[ {} ]", parts.join(", "))
                 }
+            } else if is_error(ptr) {
+                // `TypeError: message`, then any other own properties.
+                let summary = error_summary(ptr);
+                let map = props(ptr);
+                let mut keys: Vec<&(String, u64)> = map
+                    .iter()
+                    .filter(|(k, _)| !k.starts_with("__") && k != "message")
+                    .collect();
+                keys.sort_by(|a, b| a.0.cmp(&b.0));
+                if keys.is_empty() || too_deep {
+                    summary
+                } else {
+                    let parts: Vec<String> = keys
+                        .into_iter()
+                        .map(|(k, bits)| {
+                            let val = inspect_inner(OtValue::from_bits(*bits), depth + 1, seen);
+                            format!("{}: {}", k, val)
+                        })
+                        .collect();
+                    format!("{} {{ {} }}", summary, parts.join(", "))
+                }
             } else {
                 let map = props(ptr);
                 let mut keys: Vec<&(String, u64)> =
@@ -1097,6 +1225,14 @@ pub extern "C" fn ot_builtin_math(_this: u64, argv: *const u64, argc: usize, env
     let id = OtValue::from_bits(env).as_number_unchecked() as usize;
     let name = builtins::MATH_FUNCTIONS.get(id).copied().unwrap_or("");
     number(builtins::math_call(name, &nums))
+}
+
+/// `String(value)`
+pub extern "C" fn ot_builtin_string(_this: u64, argv: *const u64, argc: usize, _env: u64) -> u64 {
+    match unsafe { args(argv, argc) }.first() {
+        Some(v) => new_string(&value_to_string(OtValue::from_bits(*v))),
+        None => new_string(""),
+    }
 }
 
 /// `Date.now()`

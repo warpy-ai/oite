@@ -244,6 +244,9 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         IrOp::Phi(_, _) => CompileStrategy::NoOp, // Handled by register allocation
         IrOp::Copy(_, _) => CompileStrategy::Inline(InlineOp::Copy),
         IrOp::LoadThis(_) | IrOp::LoadEnv(_) => CompileStrategy::Inline(InlineOp::LoadLocal),
+        IrOp::Throw(_) | IrOp::TakeException(_) | IrOp::Rethrow(_, _) => {
+            CompileStrategy::StubCall(stubs::GET_PROP)
+        }
 
         // Borrow operations - handled by register allocation or inline
         IrOp::Borrow(_, _) => CompileStrategy::Inline(InlineOp::Copy), // Just copy ptr

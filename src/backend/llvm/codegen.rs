@@ -28,6 +28,7 @@ const TAG_BOOLEAN: u64 = 0x0001_0000_0000_0000;
 const TAG_NULL: u64 = 0x0002_0000_0000_0000;
 const TAG_UNDEFINED: u64 = 0x0003_0000_0000_0000;
 const UNDEFINED: u64 = QNAN | TAG_UNDEFINED;
+use crate::runtime::abi::EXCEPTION_BITS;
 const FALSE: u64 = QNAN | TAG_BOOLEAN;
 const TRUE: u64 = QNAN | TAG_BOOLEAN | 1;
 
@@ -154,7 +155,23 @@ impl LlvmCodegen {
                 LLVMConstInt(i64_ty, 0, 0),
                 LLVMConstInt(i64_ty, UNDEFINED, 0),
             ];
-            LLVMBuildCall2(b, self.fn_ty, ot_main, args.as_mut_ptr(), 4, NONAME);
+            let result = LLVMBuildCall2(b, self.fn_ty, ot_main, args.as_mut_ptr(), 4, NONAME);
+            // An exception no `catch` handled: report it and exit 1.
+            let thrown = LLVMBuildICmp(
+                b,
+                LLVMIntPredicate::LLVMIntEQ,
+                result,
+                LLVMConstInt(i64_ty, EXCEPTION_BITS, 0),
+                NONAME,
+            );
+            let uncaught = LLVMAppendBasicBlockInContext(ctx, main, b"uncaught\0".as_ptr() as _);
+            let done = LLVMAppendBasicBlockInContext(ctx, main, b"done\0".as_ptr() as _);
+            LLVMBuildCondBr(b, thrown, uncaught, done);
+            LLVMPositionBuilderAtEnd(b, uncaught);
+            let (report, report_ty) = self.runtime["ot_report_uncaught"];
+            LLVMBuildCall2(b, report_ty, report, std::ptr::null_mut(), 0, NONAME);
+            LLVMBuildUnreachable(b);
+            LLVMPositionBuilderAtEnd(b, done);
             let (exit, exit_ty) = self.runtime["ot_runtime_exit"];
             LLVMBuildCall2(b, exit_ty, exit, std::ptr::null_mut(), 0, NONAME);
             LLVMBuildRet(b, LLVMConstInt(i32_ty, 0, 0));
@@ -218,15 +235,28 @@ impl LlvmCodegen {
                 direct: HashMap::new(),
                 this: LLVMGetParam(f, 0),
                 env: LLVMGetParam(f, 3),
+                function: f,
+                last_call: None,
+                exception_return: None,
             };
             fx.prologue_setup(func, f)?;
 
             for block in &func.blocks {
                 LLVMPositionBuilderAtEnd(fx.builder, fx.blocks[&block.id]);
                 for op in &block.ops {
+                    fx.last_call = None;
                     fx.op(op)?;
+                    if op.can_throw()
+                        && let Some(r) = fx.last_call
+                    {
+                        fx.check_exception(r, block.unwind);
+                    }
                 }
                 fx.terminator(&block.terminator)?;
+            }
+            if let Some(blk) = fx.exception_return {
+                LLVMPositionBuilderAtEnd(fx.builder, blk);
+                LLVMBuildRet(fx.builder, fx.c(EXCEPTION_BITS));
             }
 
             // The prologue falls through to the IR entry block.
@@ -272,6 +302,14 @@ struct Fx<'a> {
     this: LLVMValueRef,
     /// This function's own closure environment.
     env: LLVMValueRef,
+    /// The function being compiled.
+    function: LLVMValueRef,
+    /// Result of the last call emitted: what an op that can throw is
+    /// checked against `EXCEPTION_BITS`.
+    last_call: Option<LLVMValueRef>,
+    /// Block returning `EXCEPTION_BITS`, for exceptions no `catch` in this
+    /// function handles.
+    exception_return: Option<LLVMBasicBlockRef>,
 }
 
 impl Fx<'_> {
@@ -318,14 +356,67 @@ impl Fx<'_> {
         unsafe {
             let (f, ty) = self.cg.runtime[name];
             let mut args = args.to_vec();
-            LLVMBuildCall2(
+            let r = LLVMBuildCall2(
                 self.builder,
                 ty,
                 f,
                 args.as_mut_ptr(),
                 args.len() as u32,
                 NONAME,
-            )
+            );
+            self.last_call = Some(r);
+            r
+        }
+    }
+
+    /// After an op that can throw: if its result is `EXCEPTION_BITS`, go
+    /// to the block's unwind target, or return the exception to the caller.
+    unsafe fn check_exception(&mut self, result: LLVMValueRef, unwind: Option<BlockId>) {
+        unsafe {
+            let ctx = self.cg.context;
+            let thrown = LLVMBuildICmp(
+                self.builder,
+                LLVMIntPredicate::LLVMIntEQ,
+                result,
+                self.c(EXCEPTION_BITS),
+                NONAME,
+            );
+            // Exceptions are rare: `llvm.expect(thrown, false)` keeps the
+            // normal path straight-line.
+            let name = b"llvm.expect";
+            let id = LLVMLookupIntrinsicID(name.as_ptr() as _, name.len());
+            let i1 = LLVMInt1TypeInContext(ctx);
+            let mut tys = [i1];
+            let expect = LLVMGetIntrinsicDeclaration(self.cg.module, id, tys.as_mut_ptr(), 1);
+            let mut params = [i1, i1];
+            let expect_ty = LLVMFunctionType(i1, params.as_mut_ptr(), 2, 0);
+            let mut args = [thrown, LLVMConstInt(i1, 0, 0)];
+            let thrown = LLVMBuildCall2(
+                self.builder,
+                expect_ty,
+                expect,
+                args.as_mut_ptr(),
+                2,
+                NONAME,
+            );
+            let target = match unwind {
+                Some(u) => self.blocks[&u],
+                None => match self.exception_return {
+                    Some(blk) => blk,
+                    None => {
+                        let blk = LLVMAppendBasicBlockInContext(
+                            ctx,
+                            self.function,
+                            b"exception_return\0".as_ptr() as _,
+                        );
+                        self.exception_return = Some(blk);
+                        blk
+                    }
+                },
+            };
+            let next = LLVMAppendBasicBlockInContext(ctx, self.function, b"ok\0".as_ptr() as _);
+            LLVMBuildCondBr(self.builder, thrown, target, next);
+            LLVMPositionBuilderAtEnd(self.builder, next);
         }
     }
 
@@ -788,14 +879,16 @@ impl Fx<'_> {
                                 None => undefined,
                             };
                             let mut a = [undefined, argv, argc, env];
-                            LLVMBuildCall2(
+                            let r = LLVMBuildCall2(
                                 self.builder,
                                 self.cg.fn_ty,
                                 f,
                                 a.as_mut_ptr(),
                                 4,
                                 NONAME,
-                            )
+                            );
+                            self.last_call = Some(r);
+                            r
                         }
                         None => {
                             let f = self.get(*callee)?;
@@ -803,6 +896,18 @@ impl Fx<'_> {
                         }
                     };
                     self.set(*d, r);
+                }
+                IrOp::Throw(v) => {
+                    let v = self.get(*v)?;
+                    self.rt("ot_throw", &[v]);
+                }
+                IrOp::TakeException(d) => {
+                    let r = self.rt("ot_take_exception", &[]);
+                    self.set(*d, r);
+                }
+                IrOp::Rethrow(thrown, v) => {
+                    let args = [self.get(*thrown)?, self.get(*v)?];
+                    self.rt("ot_rethrow", &args);
                 }
                 IrOp::CallMethod(d, recv, name, args) => {
                     let r = self.get(*recv)?;
