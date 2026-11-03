@@ -1,0 +1,5 @@
+// backends: vm jit aot
+// Calling a method that does not exist is an error, not `undefined`.
+console.log("before");
+"abc".nope();
+console.log("not reached");

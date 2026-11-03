@@ -14,6 +14,7 @@
 //! - Names (properties, globals) are passed as a UTF-8 pointer and length.
 
 use super::abi::OtValue;
+use super::builtins;
 use super::heap::{
     HeapPtr, NativeArray, NativeFn, NativeFunction, NativeObject, NativeString, ObjectHeader,
     ObjectKind, PropertyMap, heap,
@@ -537,6 +538,27 @@ pub extern "C" fn ot_call_method(
             }
             _ => {}
         }
+        // Every other array method is shared with the VM. It works on a
+        // copy of the elements, which is written back afterwards.
+        let mut elems: Vec<u64> = (0..arr.len as usize)
+            .map(|i| unsafe { *arr.elements.add(i) })
+            .collect();
+        if let Some(result) = builtins::array_method(&NativeHost, &mut elems, key, a) {
+            array_reserve(arr, elems.len());
+            for (i, v) in elems.iter().enumerate() {
+                unsafe { *arr.elements.add(i) = *v };
+            }
+            arr.len = elems.len() as u32;
+            return outcome(result, recv);
+        }
+    }
+
+    // String methods, shared with the VM.
+    if let Some(s) = as_str(r) {
+        let a = unsafe { args(argv, argc) };
+        if let Some(result) = builtins::string_method(&NativeHost, s, key, a) {
+            return outcome(result, recv);
+        }
     }
 
     let method = get_property(r, key);
@@ -548,6 +570,78 @@ pub extern "C" fn ot_call_method(
         inspect(r),
         key
     ))
+}
+
+/// The native value representation, for the shared built-in methods.
+struct NativeHost;
+
+impl builtins::Host for NativeHost {
+    type Value = u64;
+
+    fn number(&self, v: &u64) -> Option<f64> {
+        OtValue::from_bits(*v).as_number()
+    }
+
+    fn string<'a>(&'a self, v: &'a u64) -> Option<&'a str> {
+        as_str(OtValue::from_bits(*v))
+    }
+
+    fn to_string(&self, v: &u64) -> String {
+        value_to_string(OtValue::from_bits(*v))
+    }
+
+    fn strict_equal(&self, a: &u64, b: &u64) -> bool {
+        strict_equal(OtValue::from_bits(*a), OtValue::from_bits(*b))
+    }
+
+    fn array_elements(&self, v: &u64) -> Option<Vec<u64>> {
+        match object(OtValue::from_bits(*v)) {
+            Some((ptr, ObjectKind::Array)) => {
+                let arr = array(ptr);
+                Some(
+                    (0..arr.len as usize)
+                        .map(|i| unsafe { *arr.elements.add(i) })
+                        .collect(),
+                )
+            }
+            _ => None,
+        }
+    }
+
+    fn make_number(&self, n: f64) -> u64 {
+        number(n)
+    }
+
+    fn make_string(&self, s: String) -> u64 {
+        new_string(&s)
+    }
+
+    fn make_bool(&self, b: bool) -> u64 {
+        boolean(b)
+    }
+
+    fn undefined(&self) -> u64 {
+        undefined()
+    }
+}
+
+/// Turn a built-in method's result into a value.
+fn outcome(result: Result<builtins::Outcome<u64>, builtins::Error>, recv: u64) -> u64 {
+    match result {
+        Ok(builtins::Outcome::Value(v)) => v,
+        Ok(builtins::Outcome::This) => recv,
+        Ok(builtins::Outcome::NewArray(elems)) => {
+            let out = ot_alloc_array(elems.len());
+            if let Some((ptr, _)) = object(OtValue::from_bits(out)) {
+                let arr = array(ptr);
+                for v in elems {
+                    array_push(arr, v);
+                }
+            }
+            out
+        }
+        Err(msg) => runtime_error(&msg),
+    }
 }
 
 // =========================================================================

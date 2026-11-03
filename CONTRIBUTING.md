@@ -48,6 +48,9 @@ must fail with an error. It must never approximate.
 - Language semantics for native code live in the runtime
   (`src/runtime/stubs.rs`), which both native backends call. Put behaviour
   there rather than in one backend's code generator.
+- Built-in string and array methods live in `src/runtime/builtins.rs`, once,
+  for the VM and native code alike. Add or change a method there, not in
+  `src/vm/mod.rs`.
 
 ### 3. Nothing is dropped silently
 
