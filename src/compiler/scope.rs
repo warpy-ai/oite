@@ -76,6 +76,37 @@ pub fn param_prop_ident(p: &ParamOrTsParamProp) -> Option<Ident> {
     }
 }
 
+/// The binding holding what a field decorator returned (the initializer
+/// each instance's value goes through), and the identifiers that declare
+/// it (at the decorator) and read it (in the constructor).
+pub fn field_init_ident(dec_span: Span) -> Ident {
+    Ident::new(
+        format!("%fieldinit{}", dec_span.lo.0).into(),
+        dec_span,
+        Default::default(),
+    )
+}
+
+pub fn field_init_use(dec_span: Span) -> Ident {
+    Ident::new(
+        format!("%fieldinit{}", dec_span.lo.0).into(),
+        Span::new(dec_span.hi, dec_span.hi),
+        Default::default(),
+    )
+}
+
+/// The decorators of a class's instance fields, in source order.
+pub fn instance_field_decorators(c: &Class) -> Vec<&Decorator> {
+    c.body
+        .iter()
+        .flat_map(|m| match m {
+            ClassMember::ClassProp(p) if !p.is_static => p.decorators.iter().collect(),
+            ClassMember::PrivateProp(p) if !p.is_static => p.decorators.iter().collect(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
 /// `%super` as an identifier at `span`, for the scope tables.
 pub fn super_ident(span: Span) -> Ident {
     Ident::new(SUPER_LOCAL.into(), span, Default::default())
@@ -553,13 +584,24 @@ impl Visit for Resolver {
     fn visit_class(&mut self, c: &Class) {
         c.decorators.visit_with(self);
         let saved = self.current;
+        let field_decorators = instance_field_decorators(c);
         if let Some(parent) = &c.super_class {
             parent.visit_with(self);
+        }
+        // The class scope: `%super`, and what field decorators return.
+        if c.super_class.is_some() || !field_decorators.is_empty() {
             self.push_scope(Kind::Block, c.span);
+        }
+        if c.super_class.is_some() {
             self.declare_in(self.current, SUPER_LOCAL);
             // At the class's span: the parent expression's own span is
             // taken by its identifiers.
             self.occurrence(&super_ident(c.span));
+        }
+        for d in &field_decorators {
+            let ident = field_init_ident(d.span);
+            self.declare_in(self.current, ident.sym.as_ref());
+            self.occurrence(&ident);
         }
         let ctor = c.body.iter().find_map(|m| match m {
             ClassMember::Constructor(k) => Some(k),
@@ -584,6 +626,9 @@ impl Visit for Resolver {
                 _ => {}
             }
         }
+        for d in &field_decorators {
+            self.occurrence(&field_init_use(d.span));
+        }
         if let Some(body) = ctor.and_then(|k| k.body.as_ref()) {
             self.hoist_stmts(&body.stmts);
             for s in &body.stmts {
@@ -595,17 +640,27 @@ impl Visit for Resolver {
         for m in &c.body {
             match m {
                 ClassMember::Method(m) => {
+                    m.function.decorators.visit_with(self);
                     m.key.visit_with(self);
                     m.function.visit_with(self);
                 }
-                ClassMember::PrivateMethod(m) => m.function.visit_with(self),
+                ClassMember::PrivateMethod(m) => {
+                    m.function.decorators.visit_with(self);
+                    m.function.visit_with(self);
+                }
                 ClassMember::ClassProp(p) => {
+                    p.decorators.visit_with(self);
                     p.key.visit_with(self);
                     if p.is_static {
                         p.value.visit_with(self);
                     }
                 }
-                ClassMember::PrivateProp(p) if p.is_static => p.value.visit_with(self),
+                ClassMember::PrivateProp(p) => {
+                    p.decorators.visit_with(self);
+                    if p.is_static {
+                        p.value.visit_with(self);
+                    }
+                }
                 _ => {}
             }
         }

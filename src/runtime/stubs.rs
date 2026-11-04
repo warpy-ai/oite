@@ -993,6 +993,28 @@ pub extern "C" fn ot_call_method(
         }
     }
 
+    // `f.call(thisArg, ...args)`, `f.apply(thisArg, array)`
+    if let Some((_, ObjectKind::Function)) = object(r)
+        && (key == "call" || key == "apply")
+    {
+        let a = unsafe { args(argv, argc) };
+        let this = a.first().copied().unwrap_or_else(undefined);
+        if key == "call" {
+            let rest = if a.is_empty() { a } else { &a[1..] };
+            return ot_call(recv, this, rest.as_ptr(), rest.len());
+        }
+        let list: Vec<u64> = match a.get(1).and_then(|v| object(OtValue::from_bits(*v))) {
+            Some((ptr, ObjectKind::Array)) => {
+                let arr = array(ptr);
+                (0..arr.len as usize)
+                    .map(|i| unsafe { *arr.elements.add(i) })
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        return ot_call(recv, this, list.as_ptr(), list.len());
+    }
+
     // Number methods, shared with the VM.
     if r.is_number() {
         let a = unsafe { args(argv, argc) };

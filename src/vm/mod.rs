@@ -1255,6 +1255,10 @@ impl VM {
 
                                     if let JsValue::Function { address, env } = val {
                                         let this_context = JsValue::Object(ptr);
+                                        // No arguments: a getter's parameters
+                                        // are undefined (without this, they
+                                        // popped the caller's values).
+                                        self.push_call_args(&[], address);
 
                                         let frame = Frame {
                                             return_address: self.ip + 1,
@@ -2835,6 +2839,34 @@ impl VM {
                             }
                         }
                     }
+                    // `f.call(thisArg, ...args)`, `f.apply(thisArg, array)`
+                    f @ (JsValue::Function { .. } | JsValue::NativeFunction(_))
+                        if name == "call" || name == "apply" =>
+                    {
+                        let mut args = self.pop_args(arg_count);
+                        let this = if args.is_empty() {
+                            JsValue::Undefined
+                        } else {
+                            args.remove(0)
+                        };
+                        if name == "apply" {
+                            args = match args.first() {
+                                Some(JsValue::Object(ptr)) => match self.heap.get(*ptr) {
+                                    Some(HeapObject {
+                                        data: HeapData::Array(items),
+                                    }) => items.clone(),
+                                    _ => Vec::new(),
+                                },
+                                _ => Vec::new(),
+                            };
+                        }
+                        match self.call_sync(&f, this, args) {
+                            Ok(v) => self.stack.push(v),
+                            Err(e) => return self.throw_exception(e),
+                        }
+                        self.ip += 1;
+                        return ExecResult::Continue;
+                    }
                     JsValue::Number(n) => {
                         let args = self.pop_args(arg_count);
                         let result = crate::runtime::builtins::number_method(
@@ -3060,6 +3092,7 @@ impl VM {
                 };
                 let getter = self.get_prop_with_proto_chain(ptr, &format!("getter:{}", name));
                 if let JsValue::Function { address, env } = getter {
+                    self.push_call_args(&[], address);
                     self.call_stack.push(Frame {
                         return_address: self.ip + 1,
                         locals: HashMap::new(),

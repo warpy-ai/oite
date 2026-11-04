@@ -1,0 +1,3 @@
+11 14 20
+decorate method make static; decorate method inc; note inc private=false; decorate getter hidden; note #secret private=true; field count; field #hidden; call make; call inc; call hidden
+class:Widget
