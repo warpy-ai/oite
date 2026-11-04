@@ -1153,8 +1153,8 @@ impl Lowerer {
             | OpCode::ModuleResolutionError { .. } => {
                 return Err(native_unsupported("modules (`import`)"));
             }
-            OpCode::Await => {
-                return Err(native_unsupported("`await`"));
+            OpCode::Await | OpCode::AsyncStart | OpCode::AsyncResolve | OpCode::AsyncReject => {
+                return Err(native_unsupported("`async` / `await`"));
             }
 
             // Bitwise operators - emit as number operations
@@ -1271,7 +1271,9 @@ fn native_refusal(op: &OpCode) -> Option<&'static str> {
         | OpCode::GetExport { .. }
         | OpCode::ModuleResolutionError { .. } => "modules (`import`)",
         OpCode::Require => "`require`",
-        OpCode::Await => "`await`",
+        OpCode::Await | OpCode::AsyncStart | OpCode::AsyncResolve | OpCode::AsyncReject => {
+            "`async` / `await`"
+        }
         _ => return None,
     })
 }

@@ -4,6 +4,7 @@ pub const MAX_CALL_STACK_DEPTH: usize = 1000;
 pub mod errors;
 pub mod module_cache;
 pub mod opcodes;
+pub mod promise;
 pub mod property;
 pub mod stdlib_setup;
 pub mod value;
@@ -12,8 +13,6 @@ pub use crate::compiler::Compiler;
 pub use crate::vm::module_cache::CachedModule;
 pub use crate::vm::module_cache::ModuleCache;
 pub use crate::vm::opcodes::OpCode;
-pub use crate::vm::value::AsyncContext;
-pub use crate::vm::value::ContinuationCallback;
 pub use crate::vm::value::HeapData;
 pub use crate::vm::value::HeapObject;
 pub use crate::vm::value::JsValue;
@@ -215,6 +214,7 @@ pub struct Task {
 }
 
 pub struct TimerTask {
+    id: usize,
     due: Instant,
     task: Task,
 }
@@ -260,11 +260,15 @@ pub struct VM {
     pub module_cache: ModuleCache,
     pub compiler: Compiler,
     /// Async/await continuation state
-    pub async_context: Option<AsyncContext>,
-    /// Queue for resolved promise values to be processed
-    pub resolved_queue: Vec<(ContinuationCallback, JsValue)>,
-    /// Current promise being constructed (for resolve/reject callbacks)
-    pub current_promise: Option<Promise>,
+    /// Promise reactions waiting to run.
+    pub microtasks: std::collections::VecDeque<promise::Microtask>,
+    /// Async functions waiting for a promise, by id.
+    pub suspended: HashMap<usize, promise::Suspended>,
+    /// `Promise.all` calls in progress, by id.
+    pub promise_alls: HashMap<usize, promise::AllState>,
+    pub next_async_id: usize,
+    /// Rejected promises nothing reacted to (yet).
+    pub unhandled_rejections: Vec<Promise>,
 }
 
 impl Default for VM {
@@ -314,9 +318,11 @@ impl VM {
             async_task_tx: Some(tx),
             module_cache: ModuleCache::new(),
             compiler: Compiler::new(),
-            async_context: None,
-            resolved_queue: Vec::new(),
-            current_promise: None,
+            microtasks: std::collections::VecDeque::new(),
+            suspended: HashMap::new(),
+            promise_alls: HashMap::new(),
+            next_async_id: 0,
+            unhandled_rejections: Vec::new(),
         }
     }
 
@@ -496,79 +502,6 @@ impl VM {
         Ok(exports)
     }
 
-    /// Poll a promise until it's resolved (synchronous wait)
-    /// Returns the resolved value or undefined if timeout/error
-    pub fn poll_promise(&mut self, promise: &Promise, timeout_ms: u64) -> JsValue {
-        let start = std::time::Instant::now();
-        let sleep_duration = std::time::Duration::from_millis(1);
-
-        loop {
-            match promise.get_state() {
-                PromiseState::Fulfilled => {
-                    let value = promise.get_value().unwrap_or(JsValue::Undefined);
-                    return value;
-                }
-                PromiseState::Rejected => {
-                    let value = promise.get_value().unwrap_or(JsValue::Undefined);
-                    return value;
-                }
-                PromiseState::Pending => {
-                    let elapsed = start.elapsed().as_millis();
-                    if elapsed > timeout_ms as u128 {
-                        return JsValue::Undefined;
-                    }
-                    // Brief sleep to avoid busy-waiting
-                    std::thread::sleep(sleep_duration);
-                }
-            }
-        }
-    }
-
-    /// Register a callback to be invoked when a promise resolves
-    pub fn register_promise_callback(
-        &mut self,
-        promise: &Promise,
-        callback: Box<dyn FnOnce(JsValue) + Send>,
-    ) {
-        let promise = promise.clone();
-        // Spawn a thread to wait for the promise
-        std::thread::spawn(move || {
-            let sleep_duration = std::time::Duration::from_millis(1);
-            loop {
-                match promise.get_state() {
-                    PromiseState::Fulfilled => {
-                        let value = promise.get_value().unwrap_or(JsValue::Undefined);
-                        callback(value);
-                        break;
-                    }
-                    PromiseState::Rejected => {
-                        let value = promise.get_value().unwrap_or(JsValue::Undefined);
-                        callback(value);
-                        break;
-                    }
-                    PromiseState::Pending => {
-                        std::thread::sleep(sleep_duration);
-                    }
-                }
-            }
-        });
-    }
-
-    /// Check if we're currently in an async context (has saved continuation)
-    pub fn is_in_async_context(&self) -> bool {
-        self.async_context.is_some()
-    }
-
-    /// Get the current async context if any
-    pub fn get_async_context(&self) -> Option<&AsyncContext> {
-        self.async_context.as_ref()
-    }
-
-    /// Set the async context (for awaiting)
-    pub fn set_async_context(&mut self, context: Option<AsyncContext>) {
-        self.async_context = context;
-    }
-
     pub fn setup_stdlib(&mut self) {
         stdlib_setup::setup_stdlib(self);
     }
@@ -584,14 +517,24 @@ impl VM {
         idx
     }
 
-    pub fn schedule_timer(&mut self, callback: JsValue, delay_ms: u64) {
+    /// `setTimeout(callback, delay_ms)`; returns the timer's id.
+    pub fn schedule_timer(&mut self, callback: JsValue, delay_ms: u64) -> usize {
+        let id = self.next_async_id;
+        self.next_async_id += 1;
         self.timers.push(TimerTask {
+            id,
             due: Instant::now() + Duration::from_millis(delay_ms),
             task: Task {
                 function_ptr: callback,
                 args: vec![],
             },
         });
+        id
+    }
+
+    /// `clearTimeout(id)`
+    pub fn cancel_timer(&mut self, id: usize) {
+        self.timers.retain(|t| t.id != id);
     }
 
     pub fn load_program(&mut self, bytecode: Vec<OpCode>) {
@@ -622,15 +565,18 @@ impl VM {
     }
 
     pub fn run_event_loop(&mut self) {
-        // 1) Run the initial script to completion.
+        // 1) Run the initial script to completion, then its microtasks.
         self.run_until_halt();
+        self.run_microtasks();
 
-        // 2) Drain the event loop: timers -> task queue -> execute task.
+        // 2) Drain the event loop: timers -> task queue -> execute task,
+        //    each followed by the microtasks it queued.
         loop {
             self.pump_timers();
 
             if let Some(task) = self.task_queue.pop_front() {
                 self.execute_task(task);
+                self.run_microtasks();
                 continue;
             }
 
@@ -650,6 +596,10 @@ impl VM {
                 break;
             }
         }
+
+        // 3) A rejection nothing handled is reported like an uncaught
+        //    exception.
+        self.report_unhandled_rejection();
     }
 
     fn next_timer_due(&self) -> Option<Instant> {
@@ -684,47 +634,11 @@ impl VM {
         crate::vm::property::find_setter_with_proto_chain(self, obj_ptr, name)
     }
 
+    /// Run a task (a timer's callback). An exception it throws is
+    /// uncaught.
     fn execute_task(&mut self, task: Task) {
-        // Stack overflow protection
-        if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
-            let _ = self.throw_error("RangeError", "Maximum call stack size exceeded");
-            return;
-        }
-
-        match task.function_ptr {
-            JsValue::Function { address, env } => {
-                // Push args in call order so the function prologue `Store(...)` consumes correctly.
-                for arg in task.args {
-                    self.stack.push(arg);
-                }
-
-                let frame = Frame {
-                    return_address: usize::MAX, // sentinel: stop when returning
-                    locals: HashMap::new(),
-                    indexed_locals: Vec::new(),
-                    this_context: JsValue::Undefined,
-                    new_target: None,
-                    super_called: false,
-                    resume_ip: None,
-                    // Captured variables stay in the heap env object; Load/Store
-                    // resolve through it so mutations are shared across calls.
-                    env,
-                };
-
-                self.call_stack.push(frame);
-                self.ip = address;
-                self.run_until_return_sentinel();
-            }
-
-            JsValue::NativeFunction(idx) => {
-                let func = self.native_functions[idx];
-                let _ = func(self, task.args);
-            }
-
-            other => {
-                let shown = crate::stdlib::inspect(self, &other);
-                let _ = self.throw_error("TypeError", format!("{shown} is not a function"));
-            }
+        if let Err(e) = self.call_value(&task.function_ptr, JsValue::Undefined, task.args) {
+            self.report_uncaught(&e);
         }
     }
 
@@ -1359,6 +1273,13 @@ impl VM {
                             self.stack.push(JsValue::Undefined);
                         }
                     }
+                    // Promise methods are handled by CallMethod; a function-
+                    // typed value so `typeof p.then` is "function".
+                    Some(JsValue::Promise(_))
+                        if matches!(name.as_str(), "then" | "catch" | "finally") =>
+                    {
+                        self.stack.push(JsValue::NativeFunction(0));
+                    }
                     Some(target @ (JsValue::Null | JsValue::Undefined)) => {
                         let shown = self.to_js_string(&target);
                         return self.throw_error(
@@ -1477,13 +1398,23 @@ impl VM {
                         return ExecResult::ContinueNoIpInc;
                     }
                     JsValue::NativeFunction(idx) => {
-                        args.reverse();
+                        // (The arguments are in call order already; they
+                        // were reversed a second time here, so `fetch(url,
+                        // options)` got `(options, url)`.)
                         let func = self.native_functions[idx];
                         let result = func(self, args);
                         if let Some(e) = self.native_throw.take() {
                             return self.throw_exception(e);
                         }
                         self.stack.push(result);
+                    }
+                    JsValue::Object(ptr) if self.resolver_of(ptr).is_some() => {
+                        // `resolve(v)` / `reject(e)` of a `new Promise`
+                        let callee = JsValue::Object(ptr);
+                        match self.call_value(&callee, JsValue::Undefined, args) {
+                            Ok(v) => self.stack.push(v),
+                            Err(e) => return self.throw_exception(e),
+                        }
                     }
                     JsValue::Object(ptr) => {
                         // Check if object has a __call__ property (callable object like String)
@@ -1493,7 +1424,6 @@ impl VM {
                         {
                             if let Some(JsValue::NativeFunction(idx)) = props.get("__call__") {
                                 let idx = *idx;
-                                args.reverse();
                                 let func = self.native_functions[idx];
                                 let result = func(self, args);
                                 if let Some(e) = self.native_throw.take() {
@@ -2240,9 +2170,6 @@ impl VM {
                                     // For Promise-like objects, we treat the object itself as the constructor
                                     // and call a special constructor handler
                                     // For now, we'll panic with a helpful message
-                                    eprintln!(
-                                        "Warning: 'new' on object without constructor - treating as constructor object"
-                                    );
                                     // Create a placeholder that will be handled specially
                                     (0usize, None, proto, constructor_val.clone())
                                 }
@@ -2276,8 +2203,12 @@ impl VM {
                     props.insert("__proto__".to_string(), JsValue::Object(proto_ptr));
                 }
 
-                // Push args back for function prologue
-                self.push_call_args(&args, address);
+                // Arguments for a compiled constructor's prologue. (A native
+                // one takes them directly: pushing them too left them on the
+                // stack, where the next call took one as its argument.)
+                if address != 0 {
+                    self.push_call_args(&args, address);
+                }
 
                 // Create frame with `this` bound to the new object
                 let frame = Frame {
@@ -2333,71 +2264,12 @@ impl VM {
                         // If an iterable is passed, we'd need to iterate it - for now just create empty
                         self.stack.push(JsValue::Object(set_ptr));
                     } else if constructor_type == "Promise" {
-                        // Handle Promise construction specially
-                        // new Promise((resolve, reject) => { ... })
-
-                        // The executor should be the first argument
+                        // `new Promise(executor)`: the executor runs now.
                         let executor = args.first().cloned().unwrap_or(JsValue::Undefined);
-
-                        // Create a new pending promise
-                        let promise = Promise::new();
-
-                        // If we have an executor function, call it synchronously
-                        if let JsValue::Function {
-                            address: exec_addr,
-                            env,
-                        } = executor
-                        {
-                            // Set the current promise so resolve/reject can access it
-                            self.current_promise = Some(promise.clone());
-
-                            // Create resolve function
-                            let resolve_idx = self.register_native(|vm, args| {
-                                let value = args.first().cloned().unwrap_or(JsValue::Undefined);
-                                if let Some(p) = vm.current_promise.take() {
-                                    p.set_value(value, true);
-                                }
-                                JsValue::Undefined
-                            });
-
-                            // Create reject function
-                            let reject_idx = self.register_native(|vm, args| {
-                                let reason = args.first().cloned().unwrap_or(JsValue::Undefined);
-                                if let Some(p) = vm.current_promise.take() {
-                                    p.set_value(reason, false);
-                                }
-                                JsValue::Undefined
-                            });
-
-                            // Create a frame for the executor
-                            let mut exec_frame = Frame {
-                                return_address: self.ip + 1,
-                                locals: HashMap::new(),
-                                indexed_locals: Vec::new(),
-                                this_context: JsValue::Undefined,
-                                new_target: Some(executor.clone()),
-                                super_called: false,
-                                resume_ip: None,
-                                env,
-                            };
-
-                            // Set up locals: resolve and reject
-                            exec_frame.locals.insert(
-                                "resolve".to_string(),
-                                JsValue::NativeFunction(resolve_idx),
-                            );
-                            exec_frame
-                                .locals
-                                .insert("reject".to_string(), JsValue::NativeFunction(reject_idx));
-
-                            // Push the frame and jump to executor
-                            self.call_stack.push(exec_frame);
-                            self.ip = exec_addr;
-                            return ExecResult::ContinueNoIpInc;
+                        match self.construct_promise(executor) {
+                            Ok(p) => self.stack.push(JsValue::Promise(p)),
+                            Err(e) => return self.throw_exception(e),
                         }
-
-                        // If no executor or invalid executor, just return the Promise
-                        self.stack.push(JsValue::Promise(promise));
                     } else {
                         // Regular native constructor - push a frame with this_context
                         let native_frame = Frame {
@@ -2815,29 +2687,39 @@ impl VM {
                     }
                     // Handle Promise.then and Promise.catch methods
                     JsValue::Promise(promise) => {
-                        match name.as_str() {
+                        let mut args = self.pop_args(arg_count).into_iter();
+                        let mut arg = || args.next().unwrap_or(JsValue::Undefined);
+                        let result = match name.as_str() {
                             "then" => {
-                                // promise.then(onFulfilled)
-                                let on_fulfilled = self.stack.pop().unwrap_or(JsValue::Undefined);
-                                let result_promise = promise.then(Some(on_fulfilled));
-                                self.stack.push(JsValue::Promise(result_promise));
-                                self.ip += 1;
-                                return ExecResult::Continue;
+                                let (f, r) = (arg(), arg());
+                                self.promise_then(&promise, f, r)
                             }
                             "catch" => {
-                                // promise.catch(onRejected)
-                                let on_rejected = self.stack.pop().unwrap_or(JsValue::Undefined);
-                                let result_promise = promise.catch(Some(on_rejected));
-                                self.stack.push(JsValue::Promise(result_promise));
-                                self.ip += 1;
-                                return ExecResult::Continue;
+                                let r = arg();
+                                self.promise_then(&promise, JsValue::Undefined, r)
+                            }
+                            "finally" => {
+                                let on_finally = arg();
+                                let result = Promise::new();
+                                self.add_reaction(
+                                    &promise,
+                                    value::Reaction::Finally {
+                                        on_finally,
+                                        result: result.clone(),
+                                    },
+                                );
+                                result
                             }
                             _ => {
-                                self.stack.push(JsValue::Undefined);
-                                self.ip += 1;
-                                return ExecResult::Continue;
+                                return self.throw_error(
+                                    "TypeError",
+                                    format!("Promise.{name} is not a function"),
+                                );
                             }
-                        }
+                        };
+                        self.stack.push(JsValue::Promise(result));
+                        self.ip += 1;
+                        return ExecResult::Continue;
                     }
                     // `f.call(thisArg, ...args)`, `f.apply(thisArg, array)`
                     f @ (JsValue::Function { .. } | JsValue::NativeFunction(_))
@@ -3154,6 +3036,19 @@ impl VM {
                 // Stack: [constructor, object] -> pops both, pushes boolean
                 let constructor = self.stack.pop().unwrap_or(JsValue::Undefined);
                 let obj = self.stack.pop().unwrap_or(JsValue::Undefined);
+                // `x instanceof Object` holds for every object.
+                if self.call_stack[0].locals.get("Object") == Some(&constructor) {
+                    let is_object = matches!(
+                        obj,
+                        JsValue::Object(_)
+                            | JsValue::Promise(_)
+                            | JsValue::Function { .. }
+                            | JsValue::NativeFunction(_)
+                    );
+                    self.stack.push(JsValue::Boolean(is_object));
+                    self.ip += 1;
+                    return ExecResult::Continue;
+                }
 
                 let result = match (obj, constructor) {
                     // obj instanceof Function (special case: function is not an object)
@@ -3376,34 +3271,103 @@ impl VM {
             }
 
             OpCode::Await => {
-                // Stack: [promise] -> [result]
-                //
-                // Still a synchronous poll, not a suspension point (#122).
-                // Every non-throwing path must fall through to the ip
-                // increment at the end of `exec_one`; an early
-                // `return ExecResult::Continue` re-executes this instruction
-                // forever.
-                match self.stack.pop() {
-                    Some(JsValue::Promise(promise)) => match promise.get_state() {
-                        PromiseState::Fulfilled => {
-                            let value = promise.get_value().unwrap_or(JsValue::Undefined);
-                            self.stack.push(value);
+                // Stack: [value] -> [result]. Suspends the async function
+                // until the value (as a promise) settles.
+                let value = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let base = match self
+                    .call_stack
+                    .last()
+                    .and_then(|f| f.locals.get(promise::STACK_BASE_LOCAL))
+                {
+                    Some(JsValue::Number(n)) => *n as usize,
+                    // Not in an async function (top-level await): run
+                    // microtasks until the promise settles.
+                    _ => {
+                        let p = self.to_promise(value);
+                        self.run_microtasks();
+                        match p.get_state() {
+                            PromiseState::Rejected => {
+                                let reason = p.get_value().unwrap_or(JsValue::Undefined);
+                                return self.throw_exception(reason);
+                            }
+                            _ => self.stack.push(p.get_value().unwrap_or(JsValue::Undefined)),
                         }
-                        PromiseState::Rejected => {
-                            // `await` on a rejected promise throws the reason.
-                            let reason = promise.get_value().unwrap_or(JsValue::Undefined);
-                            return self.throw_exception(reason);
-                        }
-                        PromiseState::Pending => {
-                            // Poll until resolved (with timeout)
-                            let result = self.poll_promise(&promise, 1000);
-                            self.stack.push(result);
-                        }
-                    },
-                    // `await v` on a non-promise yields `v` itself.
-                    Some(other) => self.stack.push(other),
-                    None => self.stack.push(JsValue::Undefined),
+                        self.ip += 1;
+                        return ExecResult::Continue;
+                    }
+                };
+                let p = self.to_promise(value);
+                let frame = self.call_stack.pop().expect("await outside a frame");
+                let depth = self.call_stack.len();
+                let stack = self.stack.split_off(base.min(self.stack.len()));
+                let mut handlers = Vec::new();
+                while let Some(h) = self.exception_handlers.last() {
+                    if h.call_stack_depth <= depth {
+                        break;
+                    }
+                    let mut h = self.exception_handlers.pop().unwrap();
+                    h.stack_depth = h.stack_depth.saturating_sub(base);
+                    h.call_stack_depth -= depth;
+                    handlers.push(h);
                 }
+                handlers.reverse();
+                let own_promise = frame
+                    .locals
+                    .get(promise::PROMISE_LOCAL)
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined);
+                let return_address = frame.return_address;
+                let id = self.next_async_id;
+                self.next_async_id += 1;
+                self.suspended.insert(
+                    id,
+                    promise::Suspended {
+                        frame,
+                        stack,
+                        handlers,
+                        resume_ip: self.ip + 1,
+                    },
+                );
+                self.add_reaction(&p, value::Reaction::Resume(id));
+                // Like `return`: the caller gets the function's promise.
+                self.stack.push(own_promise);
+                self.ip = return_address;
+                if self.ip == usize::MAX {
+                    return ExecResult::Stop;
+                }
+                return ExecResult::ContinueNoIpInc;
+            }
+
+            OpCode::AsyncStart => {
+                // An async function's promise; its stack part starts here.
+                let base = self.stack.len();
+                if let Some(frame) = self.call_stack.last_mut() {
+                    frame.locals.insert(
+                        promise::STACK_BASE_LOCAL.to_string(),
+                        JsValue::Number(base as f64),
+                    );
+                }
+                self.stack.push(JsValue::Promise(Promise::new()));
+            }
+
+            OpCode::AsyncResolve => {
+                // [value, promise] -> [promise]
+                let p = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let value = self.stack.pop().unwrap_or(JsValue::Undefined);
+                if let JsValue::Promise(promise) = &p {
+                    self.resolve_promise(promise, value);
+                }
+                self.stack.push(p);
+            }
+
+            OpCode::AsyncReject => {
+                // [reason, promise] -> [promise]
+                let p = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let reason = self.stack.pop().unwrap_or(JsValue::Undefined);
+                if let JsValue::Promise(promise) = &p {
+                    self.settle_promise(promise, reason, false);
+                }
+                self.stack.push(p);
             }
 
             OpCode::GetExport {

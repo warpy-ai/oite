@@ -1,0 +1,26 @@
+// #139: `await` suspends; `.then` callbacks run as microtasks, after the
+// synchronous code, in order.
+let log = [];
+
+Promise.resolve(1).then(function (x) {
+  log.push("then " + x);
+});
+
+async function task(name, n) {
+  log.push(name + " start");
+  for (let i = 0; i < n; i++) {
+    await null;
+    log.push(name + " step " + i);
+  }
+  log.push(name + " end");
+  return name.toUpperCase();
+}
+
+let a = task("a", 2);
+let b = task("b", 1);
+log.push("sync done");
+
+Promise.all([a, b, 3]).then(function (values) {
+  log.push("all " + values.join(","));
+  console.log(log.join("\n"));
+});

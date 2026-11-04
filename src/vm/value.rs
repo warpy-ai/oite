@@ -90,18 +90,21 @@ impl Promise {
         let state = Arc::new(Mutex::new(PromiseInternal {
             state: PromiseState::Pending,
             value: None,
-            handlers: Vec::new(),
+            reactions: Vec::new(),
+            handled: false,
         }));
         Self { state }
     }
 
+    /// A promise already fulfilled with `value`.
     pub fn with_value(value: JsValue) -> Self {
-        let state = Arc::new(Mutex::new(PromiseInternal {
-            state: PromiseState::Fulfilled,
-            value: Some(value),
-            handlers: Vec::new(),
-        }));
-        Self { state }
+        let p = Self::new();
+        {
+            let mut internal = p.state.lock().unwrap();
+            internal.state = PromiseState::Fulfilled;
+            internal.value = Some(value);
+        }
+        p
     }
 
     pub fn get_state(&self) -> PromiseState {
@@ -113,154 +116,44 @@ impl Promise {
         let internal = self.state.lock().unwrap();
         internal.value.clone()
     }
-
-    pub fn set_value(&self, value: JsValue, is_fulfilled: bool) {
-        let mut internal = self.state.lock().unwrap();
-
-        if matches!(internal.state, PromiseState::Pending) {
-            internal.state = if is_fulfilled {
-                PromiseState::Fulfilled
-            } else {
-                PromiseState::Rejected
-            };
-            let value_to_store = value.clone();
-            internal.value = Some(value);
-
-            let handlers = internal.handlers.clone();
-            internal.handlers.clear();
-
-            drop(internal);
-
-            for handler in handlers {
-                if is_fulfilled {
-                    if let Some(on_fulfilled) = handler.on_fulfilled
-                        && let JsValue::Function { address, env } = *on_fulfilled
-                    {
-                        let _ = address;
-                        let _ = env;
-                        let _ = value_to_store;
-                    }
-                } else if let Some(on_rejected) = handler.on_rejected
-                    && let JsValue::Function { address, env } = *on_rejected
-                {
-                    let _ = address;
-                    let _ = env;
-                    let _ = value_to_store;
-                }
-            }
-        }
-    }
-
-    pub fn then(&self, on_fulfilled: Option<JsValue>) -> Self {
-        let mut internal = self.state.lock().unwrap();
-
-        match internal.state {
-            PromiseState::Pending => {
-                internal.handlers.push(PromiseHandler {
-                    on_fulfilled: on_fulfilled.map(Box::new),
-                    on_rejected: None,
-                    continuation: None,
-                });
-                self.clone()
-            }
-            PromiseState::Fulfilled => {
-                if let Some(handler) = on_fulfilled {
-                    Promise::with_value(handler)
-                } else {
-                    Promise::with_value(internal.value.clone().unwrap_or(JsValue::Undefined))
-                }
-            }
-            PromiseState::Rejected => {
-                Promise::with_value(internal.value.clone().unwrap_or(JsValue::Undefined))
-            }
-        }
-    }
-
-    pub fn catch(&self, on_rejected: Option<JsValue>) -> Self {
-        let mut internal = self.state.lock().unwrap();
-
-        match internal.state {
-            PromiseState::Pending => {
-                internal.handlers.push(PromiseHandler {
-                    on_fulfilled: None,
-                    on_rejected: on_rejected.map(Box::new),
-                    continuation: None,
-                });
-                self.clone()
-            }
-            PromiseState::Fulfilled => {
-                Promise::with_value(internal.value.clone().unwrap_or(JsValue::Undefined))
-            }
-            PromiseState::Rejected => {
-                if let Some(handler) = on_rejected {
-                    Promise::with_value(handler)
-                } else {
-                    Promise::with_value(internal.value.clone().unwrap_or(JsValue::Undefined))
-                }
-            }
-        }
-    }
-
-    /// Register a continuation for async/await
-    pub fn then_await(&self, on_fulfilled: Option<JsValue>, continuation: Continuation) -> Self {
-        let mut internal = self.state.lock().unwrap();
-
-        match internal.state {
-            PromiseState::Pending => {
-                internal.handlers.push(PromiseHandler {
-                    on_fulfilled: on_fulfilled.map(Box::new),
-                    on_rejected: None,
-                    continuation: Some(continuation),
-                });
-                self.clone()
-            }
-            PromiseState::Fulfilled => {
-                // Already fulfilled, create resolved promise with value
-                Promise::with_value(internal.value.clone().unwrap_or(JsValue::Undefined))
-            }
-            PromiseState::Rejected => {
-                Promise::with_value(internal.value.clone().unwrap_or(JsValue::Undefined))
-            }
-        }
-    }
 }
 
+/// A promise's state. Settling is done by the VM (`vm::promise`), which
+/// queues the reactions as microtasks.
 #[derive(Debug, Clone)]
 pub struct PromiseInternal {
     pub state: PromiseState,
     pub value: Option<JsValue>,
-    pub handlers: Vec<PromiseHandler>,
+    /// What runs when the promise settles.
+    pub reactions: Vec<Reaction>,
+    /// Whether a reaction was ever attached (else a rejection is unhandled).
+    pub handled: bool,
 }
 
+/// Something waiting for a promise to settle.
 #[derive(Debug, Clone)]
-pub struct PromiseHandler {
-    pub on_fulfilled: Option<Box<JsValue>>,
-    pub on_rejected: Option<Box<JsValue>>,
-    /// Continuation for async/await - stores resume IP when awaiting
-    /// Uses Arc<Frame> to avoid import cycles
-    pub continuation: Option<Continuation>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Continuation {
-    pub resume_ip: usize,
-    /// Stores the frame state for resuming async function
-    /// We store locals separately to avoid import cycle
-    pub locals: HashMap<String, JsValue>,
-    pub this_context: JsValue,
-}
-
-/// Continuation callback type for async operations
-pub type ContinuationCallback = Box<dyn FnOnce(JsValue) + Send>;
-
-/// Context for async/await continuations
-#[derive(Debug, Clone)]
-pub struct AsyncContext {
-    pub resume_ip: usize,
-    /// Stores the frame state for resuming async function
-    pub locals: HashMap<String, JsValue>,
-    pub this_context: JsValue,
-    pub promise: Promise,
+pub enum Reaction {
+    /// `.then(onFulfilled, onRejected)`; `result` is the promise `then`
+    /// returned.
+    Then {
+        on_fulfilled: JsValue,
+        on_rejected: JsValue,
+        result: Promise,
+    },
+    /// `.finally(onFinally)`
+    Finally {
+        on_finally: JsValue,
+        result: Promise,
+    },
+    /// Settle this promise the same way (a promise resolved with another).
+    Adopt(Promise),
+    /// Attach `Adopt(target)` to `source` (queued, as JavaScript's
+    /// promise-resolve-thenable job is).
+    AdoptLater(Promise, Promise),
+    /// Resume the suspended async function with this id.
+    Resume(usize),
+    /// Element `index` of the `Promise.all` with this id.
+    All { id: usize, index: usize },
 }
 
 #[derive(Debug, Clone)]

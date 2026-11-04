@@ -46,6 +46,12 @@ pub enum OpCode {
     /// `typeof name` for a plain variable: like `Load(name)` then `TypeOf`,
     /// except that an unbound name gives "undefined" instead of throwing.
     TypeOfName(String),
+    /// Start of an async function: [] -> [its promise] (kept in a local).
+    AsyncStart,
+    /// Resolve the async function's promise: [value, promise] -> [promise]
+    AsyncResolve,
+    /// Reject it (an exception left the body): [reason, promise] -> [promise]
+    AsyncReject,
     /// `String(v)`, as in a template literal: an object's own `toString`
     /// (or `valueOf`) converts it. [v] -> [string]
     ToStr,

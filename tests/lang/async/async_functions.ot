@@ -1,0 +1,66 @@
+// Async functions: await on values and promises, errors, try/finally.
+function delayValue(v) {
+  return new Promise(function (resolve) {
+    resolve(v);
+  });
+}
+
+async function sum(list) {
+  let total = 0;
+  for (const x of list) {
+    total += await delayValue(x);
+  }
+  return total;
+}
+
+async function fails() {
+  await null;
+  throw new RangeError("too big");
+}
+
+async function guarded() {
+  try {
+    await fails();
+    return "no";
+  } catch (e) {
+    return "caught " + e.name + ": " + e.message;
+  } finally {
+    console.log("guarded finally");
+  }
+}
+
+class Store {
+  constructor() {
+    this.items = [];
+  }
+  async add(x) {
+    await null;
+    this.items.push(x);
+    return this.items.length;
+  }
+}
+
+async function main() {
+  console.log("sum", await sum([1, 2, 3]));
+  console.log(await guarded());
+  let s = new Store();
+  let n1 = await s.add("a");
+  let n2 = await s.add("b");
+  console.log("store", n1, n2, s.items);
+  let arrow = async (x) => (await delayValue(x)) * 2;
+  console.log("arrow", await arrow(21));
+  // An async function returns a promise right away.
+  let pending = sum([10]);
+  console.log("is promise", pending instanceof Object, typeof pending.then);
+  console.log("later", await pending);
+  try {
+    await fails();
+  } catch (e) {
+    console.log("main caught", e.message);
+  }
+}
+
+main().then(function () {
+  console.log("main done");
+});
+console.log("main started");

@@ -261,6 +261,9 @@ enum FnKind {
     },
 }
 
+/// Local holding an async function's promise (`vm::promise::PROMISE_LOCAL`).
+const ASYNC_PROMISE: &str = "%promise";
+
 pub struct Codegen {
     pub instructions: Vec<OpCode>,
     scope_stack: Vec<Vec<String>>,
@@ -328,12 +331,12 @@ impl Codegen {
         }
     }
 
-    /// `[value] -> [Promise.resolve(value)]`, used to wrap the result of an
-    /// async function. Method calls take `[args..., receiver]`.
-    fn emit_promise_resolve(&mut self) {
-        self.instructions.push(OpCode::Load("Promise".to_string()));
+    /// `[value] -> [promise]`: an async function's result resolves its
+    /// promise, which is what the function returns.
+    fn emit_async_return(&mut self) {
         self.instructions
-            .push(OpCode::CallMethod("resolve".to_string(), 1));
+            .push(OpCode::Load(ASYNC_PROMISE.to_string()));
+        self.instructions.push(OpCode::AsyncResolve);
     }
 
     /// `x op= v`, `o.p op= v`, `o[k] op= v`: read, combine, write back,
@@ -1414,6 +1417,27 @@ impl Codegen {
             _ => {}
         }
 
+        // An async function: its promise, and an implicit `try` around the
+        // body whose `catch` rejects the promise.
+        let async_try = if is_async {
+            self.instructions.push(OpCode::AsyncStart);
+            self.instructions
+                .push(OpCode::Let(ASYNC_PROMISE.to_string()));
+            let setup = self.instructions.len();
+            self.instructions.push(OpCode::SetupTry {
+                catch_addr: 0,
+                finally_addr: 0,
+            });
+            self.try_stack.push(TryRegion {
+                part: TryPart::Try,
+                env: None,
+                finalizer: None,
+            });
+            Some(setup)
+        } else {
+            None
+        };
+
         let param_names: Vec<String> = pats.iter().flat_map(|p| scope::pattern_names(p)).collect();
         self.hoist_body(stmts, &param_names);
         let mut last_instr_was_return = false;
@@ -1432,11 +1456,26 @@ impl Codegen {
                 self.instructions.push(OpCode::LoadThis);
             } else {
                 self.instructions.push(OpCode::Push(JsValue::Undefined));
-                if is_async {
-                    self.emit_promise_resolve();
-                }
+            }
+            if is_async {
+                self.unwind_tries(0);
+                self.emit_async_return();
             }
             self.instructions.push(OpCode::Return);
+        }
+
+        if let Some(setup) = async_try {
+            self.try_stack.pop();
+            // catch: [reason] -> the promise rejects with it.
+            let catch_addr = self.instructions.len();
+            self.instructions
+                .push(OpCode::Load(ASYNC_PROMISE.to_string()));
+            self.instructions.push(OpCode::AsyncReject);
+            self.instructions.push(OpCode::Return);
+            self.instructions[setup] = OpCode::SetupTry {
+                catch_addr,
+                finally_addr: 0,
+            };
         }
 
         self.env_active = prev_env;
@@ -1782,9 +1821,8 @@ impl Codegen {
                 // Leaving every `try` in this function: pop the handlers and
                 // run the `finally` blocks, with the return value on the stack.
                 self.unwind_tries(0);
-                // For async functions, wrap the return value in Promise.resolve()
                 if self.in_async_function {
-                    self.emit_promise_resolve();
+                    self.emit_async_return();
                 }
                 self.instructions.push(OpCode::Return);
             }
@@ -2469,57 +2507,32 @@ impl Codegen {
                 }
             }
             Expr::Arrow(arrow) => {
-                // `(a, b) => expr` or `(a, b) => { ... }`
+                // `(a, b) => expr` or `(a, b) => { ... }`; an expression body
+                // is `{ return expr; }`.
                 let value_idx = self.emit_function_value(arrow.span, 0);
                 let jump_idx = self.emit_jump();
                 let body_start = self.instructions.len();
                 self.patch_function_value(value_idx, body_start);
-
-                let prev_in_function = self.in_function;
-                let prev_async = self.in_async_function;
-                self.in_function = true;
-                self.in_async_function = arrow.is_async;
-                let prev_control = self.enter_function_control();
-
                 let pats: Vec<&Pat> = arrow.params.iter().collect();
-                let params = self.bind_params(&pats);
-                let prev_env = self.function_prologue(arrow.span, &params);
-                self.apply_param_defaults(&pats);
-
-                match &*arrow.body {
+                let owned;
+                let stmts: &[Stmt] = match &*arrow.body {
+                    BlockStmtOrExpr::BlockStmt(block) => &block.stmts,
                     BlockStmtOrExpr::Expr(e) => {
-                        // Expression-bodied arrows implicitly return the expression.
-                        self.gen_expr(e);
-                        if arrow.is_async {
-                            self.emit_promise_resolve();
-                        }
-                        self.instructions.push(OpCode::Return);
+                        owned = [Stmt::Return(ReturnStmt {
+                            span: e.span(),
+                            arg: Some(e.clone()),
+                        })];
+                        &owned
                     }
-                    BlockStmtOrExpr::BlockStmt(block) => {
-                        let param_names: Vec<String> =
-                            pats.iter().flat_map(|p| scope::pattern_names(p)).collect();
-                        self.hoist_body(&block.stmts, &param_names);
-                        let mut last_instr_was_return = false;
-                        for s in &block.stmts {
-                            let before = self.instructions.len();
-                            self.gen_stmt(s);
-                            last_instr_was_return = self.instructions.len() > before
-                                && matches!(self.instructions.last(), Some(OpCode::Return));
-                        }
-                        if !last_instr_was_return {
-                            self.instructions.push(OpCode::Push(JsValue::Undefined));
-                            if arrow.is_async {
-                                self.emit_promise_resolve();
-                            }
-                            self.instructions.push(OpCode::Return);
-                        }
-                    }
-                }
-
-                self.env_active = prev_env;
-                self.in_function = prev_in_function;
-                self.in_async_function = prev_async;
-                self.leave_function_control(prev_control);
+                };
+                self.gen_function_body(
+                    arrow.span,
+                    &pats,
+                    stmts,
+                    arrow.is_async,
+                    FnKind::Plain,
+                    &[],
+                );
                 self.patch_jump_here(jump_idx);
             }
             Expr::Lit(Lit::Num(num)) => {

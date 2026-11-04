@@ -19,6 +19,7 @@ pub fn setup_stdlib(vm: &mut VM) {
     setup_globals(vm);
     setup_map_set(vm);
     setup_math_date(vm);
+    setup_timers(vm);
     setup_process(vm);
     setup_fetch(vm);
     setup_object(vm);
@@ -33,28 +34,59 @@ pub fn setup_stdlib(vm: &mut VM) {
 fn setup_promise(vm: &mut VM) {
     use crate::vm::value::Promise;
 
-    fn native_promise_resolve(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-        match args.into_iter().next() {
-            // Resolving with a promise adopts it.
-            Some(JsValue::Promise(p)) => JsValue::Promise(p),
-            Some(v) => JsValue::Promise(Promise::with_value(v)),
-            None => JsValue::Promise(Promise::with_value(JsValue::Undefined)),
+    fn native_promise_resolve(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+        // A promise is returned as it is.
+        if let Some(JsValue::Promise(p)) = args.first() {
+            return JsValue::Promise(p.clone());
+        }
+        let p = Promise::new();
+        vm.resolve_promise(&p, args.into_iter().next().unwrap_or(JsValue::Undefined));
+        JsValue::Promise(p)
+    }
+
+    fn native_promise_reject(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+        let reason = args.into_iter().next().unwrap_or(JsValue::Undefined);
+        let p = Promise::new();
+        vm.settle_promise(&p, reason, false);
+        JsValue::Promise(p)
+    }
+
+    fn array_items(vm: &VM, v: Option<&JsValue>) -> Vec<JsValue> {
+        match v {
+            Some(JsValue::Object(ptr)) => match vm.heap.get(*ptr) {
+                Some(HeapObject {
+                    data: HeapData::Array(items),
+                }) => items.clone(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
         }
     }
 
-    fn native_promise_reject(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-        let reason = args.into_iter().next().unwrap_or(JsValue::Undefined);
-        let p = Promise::new();
-        p.set_value(reason, false);
-        JsValue::Promise(p)
+    fn native_promise_all(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+        let items = array_items(vm, args.first());
+        JsValue::Promise(vm.promise_all(items))
+    }
+
+    fn native_promise_race(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+        let result = Promise::new();
+        for v in array_items(vm, args.first()) {
+            let p = vm.to_promise(v);
+            vm.add_reaction(&p, crate::vm::value::Reaction::Adopt(result.clone()));
+        }
+        JsValue::Promise(result)
     }
 
     let resolve_idx = vm.register_native(native_promise_resolve);
     let reject_idx = vm.register_native(native_promise_reject);
+    let all_idx = vm.register_native(native_promise_all);
+    let race_idx = vm.register_native(native_promise_race);
     let mut props = std::collections::HashMap::new();
     props.insert("__type__".to_string(), JsValue::String("Promise".into()));
     props.insert("resolve".to_string(), JsValue::NativeFunction(resolve_idx));
     props.insert("reject".to_string(), JsValue::NativeFunction(reject_idx));
+    props.insert("all".to_string(), JsValue::NativeFunction(all_idx));
+    props.insert("race".to_string(), JsValue::NativeFunction(race_idx));
     let ptr = vm.heap.len();
     vm.heap.push(HeapObject {
         data: HeapData::Object(props),
@@ -485,4 +517,27 @@ fn setup_math_date(vm: &mut VM) {
     let globals = &mut vm.call_stack[0].locals;
     globals.insert("Math".into(), JsValue::Object(math_ptr));
     globals.insert("Date".into(), JsValue::Object(date_ptr));
+}
+
+/// `setTimeout(callback, ms)` and `clearTimeout(id)`.
+fn setup_timers(vm: &mut VM) {
+    fn set_timeout(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+        let callback = args.first().cloned().unwrap_or(JsValue::Undefined);
+        let delay = match args.get(1) {
+            Some(JsValue::Number(n)) if *n > 0.0 => *n as u64,
+            _ => 0,
+        };
+        JsValue::Number(vm.schedule_timer(callback, delay) as f64)
+    }
+    fn clear_timeout(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+        if let Some(JsValue::Number(id)) = args.first() {
+            vm.cancel_timer(*id as usize);
+        }
+        JsValue::Undefined
+    }
+    let set_idx = vm.register_native(set_timeout);
+    let clear_idx = vm.register_native(clear_timeout);
+    let globals = &mut vm.call_stack[0].locals;
+    globals.insert("setTimeout".into(), JsValue::NativeFunction(set_idx));
+    globals.insert("clearTimeout".into(), JsValue::NativeFunction(clear_idx));
 }

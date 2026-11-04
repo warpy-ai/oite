@@ -1,0 +1,48 @@
+// `new Promise`, chaining, errors, finally, race.
+let p = new Promise(function (resolve, reject) {
+  resolve(42);
+});
+p.then(function (v) {
+  console.log("resolved", v);
+  return v + 1;
+})
+  .then(function (v) {
+    console.log("chained", v);
+    throw new Error("boom");
+  })
+  .then(function () {
+    console.log("skipped");
+  })
+  .catch(function (e) {
+    console.log("caught", e.message);
+    return "recovered";
+  })
+  .finally(function () {
+    console.log("finally");
+  })
+  .then(function (v) {
+    console.log("after finally", v);
+  });
+
+// An executor that throws rejects the promise.
+new Promise(function () {
+  throw new TypeError("bad executor");
+}).catch(function (e) {
+  console.log("executor threw", e.name);
+});
+
+// Resolving with a promise adopts it.
+let inner = new Promise(function (resolve) {
+  resolve("inner value");
+});
+Promise.resolve(inner).then(function (v) {
+  console.log("adopted", v);
+});
+
+Promise.race([new Promise(function () {}), Promise.resolve("fast")]).then(function (v) {
+  console.log("race", v);
+});
+Promise.reject("nope").then(null, function (r) {
+  console.log("rejected", r);
+});
+console.log(typeof Promise.resolve, p instanceof Object);
