@@ -1059,22 +1059,14 @@ impl VM {
                     let setter_addr_and_env = self.find_setter_with_proto_chain(ptr, &name);
 
                     if let Some((address, env)) = setter_addr_and_env {
-                        self.stack.push(value.clone());
-                        let this_context = JsValue::Object(ptr);
-                        let frame = Frame {
-                            return_address: self.ip + 1,
-                            locals: HashMap::new(),
-                            indexed_locals: Vec::new(),
-                            this_context,
-                            new_target: None,
-                            super_called: false,
-                            resume_ip: None,
-                            env,
-                        };
-
-                        self.call_stack.push(frame);
-                        self.ip = address;
-                        return ExecResult::ContinueNoIpInc;
+                        // Run to completion: a setter's result is discarded
+                        // (left on the stack, it shifted every later value).
+                        let setter = JsValue::Function { address, env };
+                        if let Err(e) = self.call_sync(&setter, JsValue::Object(ptr), vec![value]) {
+                            return self.throw_exception(e);
+                        }
+                        self.ip += 1;
+                        return ExecResult::Continue;
                     }
 
                     // No setter found, store the value directly
@@ -2966,10 +2958,18 @@ impl VM {
 
             OpCode::GetPrivate(key) => {
                 let target = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let getter_key = format!("getter:{key}");
                 match target {
                     JsValue::Object(ptr) if self.has_prop_in_chain(ptr, &key) => {
                         let value = self.get_prop_with_proto_chain(ptr, &key);
                         self.stack.push(value);
+                    }
+                    JsValue::Object(ptr) if self.has_prop_in_chain(ptr, &getter_key) => {
+                        let getter = self.get_prop_with_proto_chain(ptr, &getter_key);
+                        match self.call_sync(&getter, JsValue::Object(ptr), Vec::new()) {
+                            Ok(v) => self.stack.push(v),
+                            Err(e) => return self.throw_exception(e),
+                        }
                     }
                     _ => {
                         let name = errors::private_name(&key);
@@ -2994,7 +2994,20 @@ impl VM {
                             props.insert(key.clone(), value);
                             true
                         }
-                        _ => false,
+                        _ => {
+                            let setter_key = format!("setter:{key}");
+                            if self.has_prop_in_chain(ptr, &setter_key) {
+                                let setter = self.get_prop_with_proto_chain(ptr, &setter_key);
+                                if let Err(e) =
+                                    self.call_sync(&setter, JsValue::Object(ptr), vec![value])
+                                {
+                                    return self.throw_exception(e);
+                                }
+                                true
+                            } else {
+                                false
+                            }
+                        }
                     },
                     _ => false,
                 };
@@ -3007,6 +3020,33 @@ impl VM {
                         ),
                     );
                 }
+            }
+
+            OpCode::In => {
+                let target = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let key = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let key = self.to_js_string(&key);
+                let found = match &target {
+                    JsValue::Object(ptr) => match self.heap.get(*ptr).map(|o| &o.data) {
+                        Some(HeapData::Array(items)) => {
+                            key == "length" || key.parse::<usize>().is_ok_and(|i| i < items.len())
+                        }
+                        Some(HeapData::Object(_)) => {
+                            self.has_prop_in_chain(*ptr, &key)
+                                || self.has_prop_in_chain(*ptr, &format!("getter:{key}"))
+                                || self.has_prop_in_chain(*ptr, &format!("setter:{key}"))
+                        }
+                        _ => false,
+                    },
+                    other => {
+                        let shown = crate::stdlib::inspect(self, other);
+                        return self.throw_error(
+                            "TypeError",
+                            format!("Cannot use 'in' operator to search for '{key}' in {shown}"),
+                        );
+                    }
+                };
+                self.stack.push(JsValue::Boolean(found));
             }
 
             OpCode::GetSuperProp(name) => {

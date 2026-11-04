@@ -2453,6 +2453,18 @@ impl Codegen {
             Expr::OptChain(chain) => {
                 self.gen_opt_chain_expr(chain);
             }
+            Expr::Bin(bin) if bin.op == BinaryOp::In => {
+                // `key in obj`; `#x in obj` asks for the private member.
+                match bin.left.as_ref() {
+                    Expr::PrivateName(pn) => {
+                        let key = self.private_key(&pn.name);
+                        self.instructions.push(OpCode::Push(JsValue::String(key)));
+                    }
+                    left => self.gen_expr(left),
+                }
+                self.gen_expr(&bin.right);
+                self.instructions.push(OpCode::In);
+            }
             Expr::Bin(bin) => {
                 self.gen_expr(&bin.left);
                 self.gen_expr(&bin.right);
@@ -3234,11 +3246,13 @@ impl Codegen {
                     (key, &m.function, m.is_static)
                 }
                 ClassMember::PrivateMethod(m) => {
-                    if m.kind != MethodKind::Method {
-                        self.unsupported("private getters and setters");
-                        continue;
-                    }
-                    (self.private_key(&m.key.name), &m.function, m.is_static)
+                    let name = self.private_key(&m.key.name);
+                    let key = match m.kind {
+                        MethodKind::Getter => format!("getter:{}", name),
+                        MethodKind::Setter => format!("setter:{}", name),
+                        MethodKind::Method => name,
+                    };
+                    (key, &m.function, m.is_static)
                 }
                 _ => continue,
             };

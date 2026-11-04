@@ -990,6 +990,11 @@ impl Fx<'_> {
                     let r = self.rt("ot_call", &[f, t, argv, argc]);
                     self.set(*d, r);
                 }
+                IrOp::In(d, k, o) => {
+                    let args = [self.get(*k)?, self.get(*o)?];
+                    let r = self.rt("ot_in", &args);
+                    self.set(*d, r);
+                }
                 IrOp::InstanceOf(d, v, c) => {
                     let args = [self.get(*v)?, self.get(*c)?];
                     let r = self.rt("ot_instanceof", &args);

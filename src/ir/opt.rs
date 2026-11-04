@@ -529,7 +529,7 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
             }
         }
         IrOp::SuperForward(_, parent) => resolve(parent),
-        IrOp::InstanceOf(_, v, c) => {
+        IrOp::InstanceOf(_, v, c) | IrOp::In(_, v, c) => {
             resolve(v);
             resolve(c);
         }

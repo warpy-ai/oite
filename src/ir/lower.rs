@@ -790,6 +790,14 @@ impl Lowerer {
                 self.push(dst);
             }
 
+            OpCode::In => {
+                // [key, obj]
+                let obj = self.pop()?;
+                let key = self.pop()?;
+                let dst = self.alloc_value(IrType::Boolean);
+                self.emit(IrOp::In(dst, key, obj));
+                self.push(dst);
+            }
             OpCode::InstanceOf => {
                 // [value, ctor]
                 let ctor = self.pop()?;

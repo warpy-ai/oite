@@ -1,0 +1,21 @@
+// backends: vm jit aot
+// `key in obj`: own and inherited properties, accessors, array indices.
+let o = { a: 1, b: undefined };
+console.log("a" in o, "b" in o, "c" in o);
+class P {
+  base = 1;
+  get computed() {
+    return 2;
+  }
+  method() {}
+}
+class C extends P {}
+let c = new C();
+console.log("base" in c, "computed" in c, "method" in c, "missing" in c);
+let arr = [10, 20];
+console.log(0 in arr, 1 in arr, 2 in arr, "length" in arr);
+try {
+  console.log("x" in 5);
+} catch (e) {
+  console.log(e.name);
+}

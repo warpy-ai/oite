@@ -134,6 +134,9 @@ pub enum OpCode {
     /// `obj.#x = value`: the object must have the private field.
     /// [obj, value] -> []
     SetPrivate(String),
+    /// `key in obj`: whether the object or its prototype chain has the
+    /// property (a getter or setter counts). [key, obj] -> [bool]
+    In,
     /// `super.name`: `name` looked up from `base` (the parent's prototype,
     /// or the parent in a static method); a getter runs with `this`.
     /// [this, base] -> [value]

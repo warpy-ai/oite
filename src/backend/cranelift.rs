@@ -91,6 +91,7 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_get_private,
         ot_set_private,
         ot_to_str,
+        ot_in,
         ot_stack_init,
         ot_stack_overflow,
     )
@@ -869,6 +870,7 @@ impl Fx<'_> {
                 self.values.insert(*d, r);
             }
             IrOp::InstanceOf(d, v, c) => self.rt_binop(b, *d, "ot_instanceof", *v, *c)?,
+            IrOp::In(d, k, o) => self.rt_binop(b, *d, "ot_in", *k, *o)?,
             IrOp::GetSuperProp(d, this, base, name) => {
                 let t = self.get(*this)?;
                 let o = self.get(*base)?;

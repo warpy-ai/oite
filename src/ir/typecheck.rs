@@ -234,7 +234,7 @@ impl<'a> TypeChecker<'a> {
             | IrOp::GetSuperProp(dst, _, _, _) => {
                 self.set_type(*dst, IrType::Any);
             }
-            IrOp::InstanceOf(dst, _, _) => {
+            IrOp::InstanceOf(dst, _, _) | IrOp::In(dst, _, _) => {
                 self.set_type(*dst, IrType::Boolean);
             }
 

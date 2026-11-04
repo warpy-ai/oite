@@ -1,3 +1,0 @@
-// #126: unknown operators are errors, not warnings.
-let o = { a: 1 };
-console.log("a" in o);

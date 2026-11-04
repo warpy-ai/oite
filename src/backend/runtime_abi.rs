@@ -71,6 +71,7 @@ pub const RUNTIME: &[(&str, bool, &[Ty])] = {
         ("ot_instanceof", true, &[Val, Val]),
         ("ot_get_private", true, &[Val, Ptr, Len]),
         ("ot_to_str", true, &[Val]),
+        ("ot_in", true, &[Val, Val]),
         ("ot_stack_init", false, &[]),
         ("ot_stack_overflow", true, &[]),
         ("ot_set_private", true, &[Val, Ptr, Len, Val]),

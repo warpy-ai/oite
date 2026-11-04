@@ -499,6 +499,8 @@ pub enum IrOp {
     CallWithThis(ValueId, ValueId, ValueId, Vec<ValueId>),
     /// `value instanceof ctor`
     InstanceOf(ValueId, ValueId, ValueId),
+    /// `key in obj`: (dst, key, obj).
+    In(ValueId, ValueId, ValueId),
     /// `super.name`: (dst, this, base, name); a getter runs with `this`.
     GetSuperProp(ValueId, ValueId, ValueId, String),
     /// `obj.#x`: throws if the object lacks the private member.
@@ -623,6 +625,7 @@ impl IrOp {
                 | IrOp::SuperForward(_, _)
                 | IrOp::CallWithThis(_, _, _, _)
                 | IrOp::InstanceOf(_, _, _)
+                | IrOp::In(_, _, _)
                 | IrOp::GetSuperProp(_, _, _, _)
                 | IrOp::GetPrivate(_, _, _)
                 | IrOp::SetPrivate(_, _, _)
@@ -678,6 +681,7 @@ impl IrOp {
             | IrOp::SuperForward(d, _)
             | IrOp::CallWithThis(d, _, _, _)
             | IrOp::InstanceOf(d, _, _)
+            | IrOp::In(d, _, _)
             | IrOp::GetSuperProp(d, _, _, _)
             | IrOp::CallMethod(d, _, _, _)
             | IrOp::MakeClosure(d, _, _)
@@ -818,7 +822,7 @@ impl IrOp {
                 uses
             }
             IrOp::SuperForward(_, parent) => vec![*parent],
-            IrOp::InstanceOf(_, v, c) => vec![*v, *c],
+            IrOp::InstanceOf(_, v, c) | IrOp::In(_, v, c) => vec![*v, *c],
             IrOp::GetSuperProp(_, this, base, _) => vec![*this, *base],
             IrOp::CallMethod(_, obj, _, args) => {
                 let mut uses = vec![*obj];
@@ -1346,6 +1350,7 @@ impl fmt::Display for IrOp {
                 )
             }
             IrOp::InstanceOf(d, v, c) => write!(f, "{} = instanceof {}, {}", d, v, c),
+            IrOp::In(d, k, o) => write!(f, "{} = in {}, {}", d, k, o),
             IrOp::GetSuperProp(d, this, base, name) => {
                 write!(f, "{} = get.super {}.{} [this={}]", d, base, name, this)
             }

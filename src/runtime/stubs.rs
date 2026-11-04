@@ -485,10 +485,13 @@ fn private_name(key: &str) -> &str {
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_get_private(obj: u64, key: *const u8, key_len: usize) -> u64 {
     let key = unsafe { name(key, key_len) };
-    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(obj))
-        && let Some(v) = lookup(ptr, key)
-    {
-        return v;
+    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(obj)) {
+        if let Some(v) = lookup(ptr, key) {
+            return v;
+        }
+        if let Some(getter) = lookup(ptr, &format!("getter:{key}")) {
+            return ot_call(getter, obj, std::ptr::null(), 0);
+        }
     }
     throw_error(
         "TypeError",
@@ -503,11 +506,15 @@ pub extern "C" fn ot_get_private(obj: u64, key: *const u8, key_len: usize) -> u6
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_set_private(obj: u64, key: *const u8, key_len: usize, value: u64) -> u64 {
     let key = unsafe { name(key, key_len) };
-    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(obj))
-        && let Some(entry) = props(ptr).iter_mut().find(|(k, _)| k == key)
-    {
-        entry.1 = value;
-        return undefined();
+    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(obj)) {
+        if let Some(entry) = props(ptr).iter_mut().find(|(k, _)| k == key) {
+            entry.1 = value;
+            return undefined();
+        }
+        if let Some(setter) = lookup(ptr, &format!("setter:{key}")) {
+            let r = ot_call(setter, obj, &value, 1);
+            return if r == EXCEPTION_BITS { r } else { undefined() };
+        }
     }
     throw_error(
         "TypeError",
@@ -516,6 +523,34 @@ pub extern "C" fn ot_set_private(obj: u64, key: *const u8, key_len: usize, value
             private_name(key)
         ),
     )
+}
+
+/// `key in obj`: the object or its prototype chain has the property (a
+/// getter or setter counts).
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_in(key: u64, obj: u64) -> u64 {
+    let key = value_to_string(OtValue::from_bits(key));
+    match object(OtValue::from_bits(obj)) {
+        Some((ptr, ObjectKind::Object)) => boolean(
+            lookup(ptr, &key).is_some()
+                || lookup(ptr, &format!("getter:{key}")).is_some()
+                || lookup(ptr, &format!("setter:{key}")).is_some(),
+        ),
+        Some((ptr, ObjectKind::Array)) => boolean(
+            key == "length"
+                || key
+                    .parse::<usize>()
+                    .is_ok_and(|i| i < array(ptr).len as usize),
+        ),
+        _ => throw_error(
+            "TypeError",
+            &format!(
+                "Cannot use 'in' operator to search for '{}' in {}",
+                key,
+                inspect(OtValue::from_bits(obj))
+            ),
+        ),
+    }
 }
 
 /// `value instanceof ctor`: whether `ctor.prototype` is on `value`'s
