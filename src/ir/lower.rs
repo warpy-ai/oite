@@ -86,6 +86,11 @@ pub struct Lowerer {
     /// The `SetupTry` (by index) that each `EnterFinally` ends the
     /// `finally` of.
     finally_owner: HashMap<usize, usize>,
+    /// Instruction indices that start the code after an `await` (a resume
+    /// block of an async function).
+    await_resumes: HashSet<usize>,
+    /// Resume blocks by resume point.
+    resume_points: Vec<BlockId>,
 }
 
 /// Where a bytecode variable name lives in native code.
@@ -151,6 +156,8 @@ impl Lowerer {
             block_handlers: HashMap::new(),
             catch_starts: HashSet::new(),
             finally_owner: HashMap::new(),
+            await_resumes: HashSet::new(),
+            resume_points: Vec::new(),
         }
     }
 
@@ -184,8 +191,27 @@ impl Lowerer {
         // Pass 2: Create blocks for each boundary
         self.create_blocks(instructions);
 
+        // An async function that awaits is compiled as a resumable
+        // function: block 0 dispatches to the start or to a resume block.
+        let reachable = self.reachable_instructions(instructions);
+        if reachable
+            .iter()
+            .any(|&i| matches!(instructions[i], OpCode::Await))
+        {
+            if self.func.name == "main" {
+                return Err(native_unsupported("top-level `await`"));
+            }
+            self.func.is_async = true;
+            let start = self.func.alloc_block();
+            self.instr_to_block.insert(0, start);
+            self.current_block = start;
+        }
+
         // Pass 3: Lower each instruction
         self.lower_instructions(instructions)?;
+        if self.func.is_async {
+            self.build_resume_dispatch();
+        }
 
         // Pass 4: Compute predecessors and insert phi nodes
         self.func.compute_predecessors();
@@ -224,6 +250,65 @@ impl Lowerer {
                 }
             }
         }
+    }
+
+    /// Instructions reachable from the start (through jumps and handlers).
+    fn reachable_instructions(&self, instructions: &[OpCode]) -> HashSet<usize> {
+        let mut seen = HashSet::new();
+        let mut work = vec![0usize];
+        while let Some(ip) = work.pop() {
+            if ip >= instructions.len() || !seen.insert(ip) {
+                continue;
+            }
+            match &instructions[ip] {
+                OpCode::Jump(t) => work.push(*t),
+                OpCode::JumpIfFalse(t) => {
+                    work.push(*t);
+                    work.push(ip + 1);
+                }
+                OpCode::Return | OpCode::Halt => {}
+                OpCode::SetupTry {
+                    catch_addr,
+                    finally_addr,
+                } => {
+                    for a in [*catch_addr, *finally_addr] {
+                        if a != 0 {
+                            work.push(a);
+                        }
+                    }
+                    work.push(ip + 1);
+                }
+                _ => work.push(ip + 1),
+            }
+        }
+        seen
+    }
+
+    /// Block 0 of a resumable function: a fresh call goes to the start; a
+    /// resumed one to the resume block of its resume point.
+    fn build_resume_dispatch(&mut self) {
+        let start = self.instr_to_block[&0];
+        let entry = BlockId(0);
+        let is_resume = self.alloc_value(IrType::Boolean);
+        self.func.block_mut(entry).push(IrOp::IsResume(is_resume));
+        let mut test = self.func.alloc_block();
+        self.func
+            .block_mut(entry)
+            .terminate(Terminator::Branch(is_resume, test, start));
+        let point = self.alloc_value(IrType::Any);
+        self.func.block_mut(test).push(IrOp::ResumePoint(point));
+        let points = self.resume_points.clone();
+        for (k, block) in points.iter().enumerate() {
+            let n = self.alloc_value(IrType::Number);
+            let eq = self.alloc_value(IrType::Boolean);
+            let next = self.func.alloc_block();
+            let b = self.func.block_mut(test);
+            b.push(IrOp::Const(n, Literal::Number(k as f64)));
+            b.push(IrOp::EqStrict(eq, point, n));
+            b.terminate(Terminator::Branch(eq, *block, next));
+            test = next;
+        }
+        self.func.block_mut(test).terminate(Terminator::Unreachable);
     }
 
     /// Find all instruction indices that start a new basic block.
@@ -268,7 +353,8 @@ impl Lowerer {
                         }
                     }
                 }
-                OpCode::PopTry => {
+                // The code after an `await` is where the function resumes.
+                OpCode::PopTry | OpCode::Await => {
                     self.block_starts.insert(i + 1);
                 }
                 _ => {}
@@ -430,6 +516,12 @@ impl Lowerer {
                     self.emit(IrOp::TakeException(exception));
                     self.push(exception);
                 }
+                if self.await_resumes.contains(&i) {
+                    // The awaited value (a rejection throws here).
+                    let value = self.alloc_value(IrType::Any);
+                    self.emit(IrOp::AwaitResult(value));
+                    self.push(value);
+                }
             }
 
             // Skip if we're in an unreachable block
@@ -439,6 +531,19 @@ impl Lowerer {
 
             // Before lowering jumps, save target block stack state
             match op {
+                // `await`: the operand stack (without the awaited value)
+                // carries over to the resume block, through the frame.
+                OpCode::Await if self.func.is_async => {
+                    let below = self.stack[..self.stack.len().saturating_sub(1)].to_vec();
+                    self.spill_stack(&below);
+                    if let Some(&resume) = self.instr_to_block.get(&(i + 1)) {
+                        block_stacks.entry(resume).or_insert(below);
+                        self.block_handlers
+                            .entry(resume)
+                            .or_insert_with(|| self.handlers.clone());
+                        self.await_resumes.insert(i + 1);
+                    }
+                }
                 OpCode::Jump(target) => {
                     let stack = self.stack.clone();
                     self.spill_stack(&stack);
@@ -1153,8 +1258,41 @@ impl Lowerer {
             | OpCode::ModuleResolutionError { .. } => {
                 return Err(native_unsupported("modules (`import`)"));
             }
-            OpCode::Await | OpCode::AsyncStart | OpCode::AsyncResolve | OpCode::AsyncReject => {
-                return Err(native_unsupported("`async` / `await`"));
+            OpCode::Await => {
+                if !self.func.is_async {
+                    return Err(native_unsupported("top-level `await`"));
+                }
+                let value = self.pop()?;
+                let resume = self
+                    .instr_to_block
+                    .get(&(idx + 1))
+                    .copied()
+                    .ok_or(LowerError::InvalidJumpTarget(idx + 1))?;
+                let k = self.resume_points.len() as u32;
+                self.resume_points.push(resume);
+                self.emit(IrOp::Await(value, k));
+                // Suspended: the caller gets the function's promise.
+                let slot = self.get_or_create_local("%promise");
+                let promise = self.alloc_value(IrType::Any);
+                self.emit(IrOp::LoadLocal(promise, slot));
+                self.terminate(Terminator::Return(Some(promise)));
+            }
+            OpCode::AsyncStart => {
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::AsyncStart(dst));
+                self.push(dst);
+            }
+            OpCode::AsyncResolve | OpCode::AsyncReject => {
+                // [value, promise] -> [promise]
+                let promise = self.pop()?;
+                let value = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(if matches!(op, OpCode::AsyncResolve) {
+                    IrOp::AsyncResolve(dst, promise, value)
+                } else {
+                    IrOp::AsyncReject(dst, promise, value)
+                });
+                self.push(dst);
             }
 
             // Bitwise operators - emit as number operations
@@ -1271,9 +1409,6 @@ fn native_refusal(op: &OpCode) -> Option<&'static str> {
         | OpCode::GetExport { .. }
         | OpCode::ModuleResolutionError { .. } => "modules (`import`)",
         OpCode::Require => "`require`",
-        OpCode::Await | OpCode::AsyncStart | OpCode::AsyncResolve | OpCode::AsyncReject => {
-            "`async` / `await`"
-        }
         _ => return None,
     })
 }

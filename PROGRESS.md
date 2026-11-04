@@ -17,7 +17,7 @@ where they say ✅ without a golden test behind them, trust the status page.
 | Component                                 | Status                                              |
 | ----------------------------------------- | --------------------------------------------------- |
 | Runtime kernel (NaN-boxing, allocator)    | 🟡 Works; no memory is ever freed ([#123](https://github.com/warpy-ai/oite/issues/123))            |
-| SSA IR + optimizations                    | 🟡 Works; refuses async, modules |
+| SSA IR + optimizations                    | 🟡 Works; refuses modules |
 | Native backends (Cranelift JIT, LLVM AOT) | 🟡 Functions, objects, arrays, strings, globals; see the status page |
 | Language features                         | 🟡 Most run in the VM only so far; see the status page |
 | Static type checking                      | ❌ Annotations parsed, not checked ([#124](https://github.com/warpy-ai/oite/issues/124))           |
@@ -160,9 +160,9 @@ Full TypeScript-style language with ownership semantics.
 - ES6 class syntax with constructors
 - `extends`, `super()`, prototype chain
 - Static/instance methods and properties
-- Getters, setters, private fields and methods (`#field`, per class, checked on access)
+- Getters, setters, private fields, methods and accessors (`#field`, per class, checked on access; `#field in obj`)
 - TypeScript parameter properties (`constructor(private x)`)
-- Class decorators (`@decorator`, `@decorator(args)`)
+- Decorators on classes, methods, accessors and fields (TC39 semantics; not parameters)
 - Class expressions; arrow functions use the enclosing `this`
 
 #### Modules
@@ -173,9 +173,10 @@ Full TypeScript-style language with ownership semantics.
 
 #### Async/Await
 
-- `async function` syntax
-- `Promise.resolve()`, `.then()`, `.catch()`
-- `await` expression handling
+- `async` functions and arrows; `await` suspends and resumes as a microtask
+- `new Promise`, `.then()` / `.catch()` / `.finally()`, `Promise.resolve` / `reject` / `all` / `race`
+- `setTimeout` / `clearTimeout`; unhandled rejections are reported (exit 1)
+- Native code compiles async functions as resumable functions with heap frames
 
 #### Minimal Standard Library
 

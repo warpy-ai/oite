@@ -1,3 +1,4 @@
+// backends: vm jit aot
 // Async functions: await on values and promises, errors, try/finally.
 function delayValue(v) {
   return new Promise(function (resolve) {

@@ -75,5 +75,13 @@ pub const RUNTIME: &[(&str, bool, &[Ty])] = {
         ("ot_stack_init", false, &[]),
         ("ot_stack_overflow", true, &[]),
         ("ot_set_private", true, &[Val, Ptr, Len, Val]),
+        ("ot_async_start", true, &[]),
+        ("ot_async_resolve", true, &[Val, Val]),
+        ("ot_async_reject", true, &[Val, Val]),
+        ("ot_async_enter", true, &[Ptr, Len, Len]),
+        ("ot_await", true, &[Val, Val, Val, Val, Val]),
+        ("ot_await_result", true, &[Val]),
+        ("ot_run_microtasks", false, &[]),
+        ("ot_run_event_loop", false, &[]),
     ]
 };

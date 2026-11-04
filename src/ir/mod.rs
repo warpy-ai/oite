@@ -501,6 +501,24 @@ pub enum IrOp {
     InstanceOf(ValueId, ValueId, ValueId),
     /// `key in obj`: (dst, key, obj).
     In(ValueId, ValueId, ValueId),
+
+    // ========================================================================
+    // Async functions (compiled as resumable functions)
+    // ========================================================================
+    /// A new async call's promise.
+    AsyncStart(ValueId),
+    /// Resolve / reject the function's promise: (dst = promise, promise, value).
+    AsyncResolve(ValueId, ValueId, ValueId),
+    AsyncReject(ValueId, ValueId, ValueId),
+    /// `await value`: register the function to be resumed at resume point
+    /// `k`; the block then returns the function's promise.
+    Await(ValueId, u32),
+    /// First op of a resume block: the awaited value (a rejection throws).
+    AwaitResult(ValueId),
+    /// Whether this call resumes a suspended call.
+    IsResume(ValueId),
+    /// Which resume point (a number).
+    ResumePoint(ValueId),
     /// `super.name`: (dst, this, base, name); a getter runs with `this`.
     GetSuperProp(ValueId, ValueId, ValueId, String),
     /// `obj.#x`: throws if the object lacks the private member.
@@ -626,6 +644,7 @@ impl IrOp {
                 | IrOp::CallWithThis(_, _, _, _)
                 | IrOp::InstanceOf(_, _, _)
                 | IrOp::In(_, _, _)
+                | IrOp::AwaitResult(_)
                 | IrOp::GetSuperProp(_, _, _, _)
                 | IrOp::GetPrivate(_, _, _)
                 | IrOp::SetPrivate(_, _, _)
@@ -682,6 +701,12 @@ impl IrOp {
             | IrOp::CallWithThis(d, _, _, _)
             | IrOp::InstanceOf(d, _, _)
             | IrOp::In(d, _, _)
+            | IrOp::AsyncStart(d)
+            | IrOp::AsyncResolve(d, _, _)
+            | IrOp::AsyncReject(d, _, _)
+            | IrOp::AwaitResult(d)
+            | IrOp::IsResume(d)
+            | IrOp::ResumePoint(d)
             | IrOp::GetSuperProp(d, _, _, _)
             | IrOp::CallMethod(d, _, _, _)
             | IrOp::MakeClosure(d, _, _)
@@ -725,7 +750,8 @@ impl IrOp {
             | IrOp::StructSetField(_, _, _)
             | IrOp::StructSetFieldNamed(_, _, _)
             | IrOp::Throw(_)
-            | IrOp::Rethrow(_, _) => None,
+            | IrOp::Rethrow(_, _)
+            | IrOp::Await(_, _) => None,
         }
     }
 
@@ -823,6 +849,12 @@ impl IrOp {
             }
             IrOp::SuperForward(_, parent) => vec![*parent],
             IrOp::InstanceOf(_, v, c) | IrOp::In(_, v, c) => vec![*v, *c],
+            IrOp::AsyncResolve(_, p, v) | IrOp::AsyncReject(_, p, v) => vec![*p, *v],
+            IrOp::Await(v, _) => vec![*v],
+            IrOp::AsyncStart(_)
+            | IrOp::AwaitResult(_)
+            | IrOp::IsResume(_)
+            | IrOp::ResumePoint(_) => vec![],
             IrOp::GetSuperProp(_, this, base, _) => vec![*this, *base],
             IrOp::CallMethod(_, obj, _, args) => {
                 let mut uses = vec![*obj];
@@ -943,6 +975,9 @@ pub struct IrFunction {
     pub value_types: HashMap<ValueId, IrType>,
     /// Value ownership and storage info (for borrow checking).
     pub value_info: HashMap<ValueId, ValueInfo>,
+    /// An async function with `await`s, compiled as a resumable function:
+    /// its locals live in a heap frame that survives suspension.
+    pub is_async: bool,
 }
 
 impl IrFunction {
@@ -958,6 +993,7 @@ impl IrFunction {
             next_lifetime: 0,
             value_types: HashMap::new(),
             value_info: HashMap::new(),
+            is_async: false,
         }
     }
 
@@ -1351,6 +1387,13 @@ impl fmt::Display for IrOp {
             }
             IrOp::InstanceOf(d, v, c) => write!(f, "{} = instanceof {}, {}", d, v, c),
             IrOp::In(d, k, o) => write!(f, "{} = in {}, {}", d, k, o),
+            IrOp::AsyncStart(d) => write!(f, "{} = async.start", d),
+            IrOp::AsyncResolve(d, p, v) => write!(f, "{} = async.resolve {}, {}", d, p, v),
+            IrOp::AsyncReject(d, p, v) => write!(f, "{} = async.reject {}, {}", d, p, v),
+            IrOp::Await(v, k) => write!(f, "await {} -> resume {}", v, k),
+            IrOp::AwaitResult(d) => write!(f, "{} = await.result", d),
+            IrOp::IsResume(d) => write!(f, "{} = is.resume", d),
+            IrOp::ResumePoint(d) => write!(f, "{} = resume.point", d),
             IrOp::GetSuperProp(d, this, base, name) => {
                 write!(f, "{} = get.super {}.{} [this={}]", d, base, name, this)
             }

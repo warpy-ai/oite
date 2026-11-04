@@ -60,6 +60,8 @@ impl JitRuntime {
     /// Run top-level code (`main`) and flush output.
     pub fn call_main(&self) -> Result<OtValue, BackendError> {
         let result = self.call_func("main", &[])?;
+        // Promise reactions and timers queued by `main`.
+        crate::runtime::stubs::ot_run_event_loop();
         crate::runtime::stubs::ot_runtime_exit();
         Ok(result)
     }

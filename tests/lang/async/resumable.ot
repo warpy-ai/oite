@@ -1,0 +1,104 @@
+// backends: vm jit aot
+// Await anywhere a value can be: loops, the middle of expressions, call
+// arguments, try/catch/finally, methods (`this`), closures, recursion.
+function later(v) {
+  return new Promise(function (resolve) {
+    setTimeout(function () { resolve(v); }, 0);
+  });
+}
+
+async function loops() {
+  let total = 0;
+  for (let i = 0; i < 5; i++) {
+    total += await later(i);
+  }
+  let j = 0;
+  while (j < 3) {
+    j = (await j) + 1;
+  }
+  return total * 10 + j;
+}
+
+function add3(a, b, c) { return a + b + c; }
+
+async function expressions() {
+  let x = 1 + (await later(2)) * 3;
+  let s = "a" + (await "b") + "c";
+  let r = add3(await 1, 10, await later(100));
+  let arr = [await 1, 2, await later(3)];
+  let obj = { k: await later("v"), n: arr.length };
+  return [x, s, r, arr.join(","), obj.k, obj.n].join(" ");
+}
+
+async function failing(msg) {
+  await later(0);
+  throw new Error(msg);
+}
+
+async function errors() {
+  let log = [];
+  try {
+    await failing("first");
+    log.push("not here");
+  } catch (e) {
+    log.push("caught " + e.message);
+  } finally {
+    log.push("finally");
+  }
+  try {
+    try {
+      await later(1);
+      throw "inner";
+    } finally {
+      log.push("inner finally " + (await later("x")));
+    }
+  } catch (e) {
+    log.push("outer caught " + e);
+  }
+  return log.join("; ");
+}
+
+class Counter {
+  constructor(start) {
+    this.count = start;
+  }
+  async bump(n) {
+    for (let i = 0; i < n; i++) {
+      this.count += await later(1);
+    }
+    return this.count;
+  }
+}
+
+async function closures() {
+  let seen = [];
+  const push = async (v) => {
+    seen.push(await later(v));
+    return seen.length;
+  };
+  await push("a");
+  await push("b");
+  const n = await push("c");
+  return seen.join("") + n;
+}
+
+async function fib(n) {
+  if (n < 2) return n;
+  return (await fib(n - 1)) + (await fib(n - 2));
+}
+
+async function main() {
+  console.log("loops", await loops());
+  console.log("expressions", await expressions());
+  console.log("errors", await errors());
+  const c = new Counter(10);
+  console.log("method", await c.bump(3), c.count);
+  console.log("closures", await closures());
+  console.log("fib", await fib(10));
+  const both = await Promise.all([fib(5), later("p"), 7]);
+  console.log("all", both.join(","));
+}
+
+console.log("start");
+main().then(function () { console.log("done"); });
+console.log("sync end");

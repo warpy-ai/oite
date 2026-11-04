@@ -174,6 +174,16 @@ impl LlvmCodegen {
             LLVMBuildCall2(b, report_ty, report, std::ptr::null_mut(), 0, NONAME);
             LLVMBuildUnreachable(b);
             LLVMPositionBuilderAtEnd(b, done);
+            // Promise reactions and timers queued by `main`.
+            let (event_loop, event_loop_ty) = self.runtime["ot_run_event_loop"];
+            LLVMBuildCall2(
+                b,
+                event_loop_ty,
+                event_loop,
+                std::ptr::null_mut(),
+                0,
+                NONAME,
+            );
             let (exit, exit_ty) = self.runtime["ot_runtime_exit"];
             LLVMBuildCall2(b, exit_ty, exit, std::ptr::null_mut(), 0, NONAME);
             LLVMBuildRet(b, LLVMConstInt(i32_ty, 0, 0));
@@ -254,6 +264,7 @@ impl LlvmCodegen {
                 last_call: None,
                 exception_return: None,
                 args: (LLVMGetParam(f, 1), LLVMGetParam(f, 2)),
+                frame: None,
             };
             fx.prologue_setup(func, f)?;
 
@@ -344,6 +355,9 @@ struct Fx<'a> {
     exception_return: Option<LLVMBasicBlockRef>,
     /// This function's own `argv` and `argc`.
     args: (LLVMValueRef, LLVMValueRef),
+    /// An async function's heap frame (see `ot_async_enter`): as a value
+    /// and as a pointer.
+    frame: Option<(LLVMValueRef, LLVMValueRef)>,
 }
 
 impl Fx<'_> {
@@ -551,13 +565,28 @@ impl Fx<'_> {
         unsafe {
             let b = self.prologue;
             let i64_ty = self.i64_ty();
-            for _ in &func.locals {
-                let slot = LLVMBuildAlloca(b, i64_ty, b"local\0".as_ptr() as _);
-                LLVMBuildStore(b, self.c(UNDEFINED), slot);
-                self.locals.push(slot);
-            }
             let argv = LLVMGetParam(f, 1);
             let argc = LLVMGetParam(f, 2);
+            if func.is_async {
+                // Locals live in a heap frame that survives an `await`.
+                let (enter, enter_ty) = self.cg.runtime["ot_async_enter"];
+                let slots = self.c(func.locals.len().max(func.params.len()) as u64);
+                let mut args = [argv, argc, slots];
+                let frame = LLVMBuildCall2(b, enter_ty, enter, args.as_mut_ptr(), 3, NONAME);
+                let frame_ptr = LLVMBuildIntToPtr(b, frame, self.ptr_ty(), NONAME);
+                self.frame = Some((frame, frame_ptr));
+                for i in 0..func.locals.len() {
+                    let mut idx = [self.c((crate::runtime::stubs::ASYNC_FRAME_HEADER + i) as u64)];
+                    let p = LLVMBuildGEP2(b, i64_ty, frame_ptr, idx.as_mut_ptr(), 1, NONAME);
+                    self.locals.push(p);
+                }
+            } else {
+                for _ in &func.locals {
+                    let slot = LLVMBuildAlloca(b, i64_ty, b"local\0".as_ptr() as _);
+                    LLVMBuildStore(b, self.c(UNDEFINED), slot);
+                    self.locals.push(slot);
+                }
+            }
             let undef_slot = LLVMBuildAlloca(b, i64_ty, b"undef\0".as_ptr() as _);
             LLVMBuildStore(b, self.c(UNDEFINED), undef_slot);
             for i in 0..func.params.len() {
@@ -1014,6 +1043,49 @@ impl Fx<'_> {
                 IrOp::Rethrow(thrown, v) => {
                     let args = [self.get(*thrown)?, self.get(*v)?];
                     self.rt("ot_rethrow", &args);
+                }
+                IrOp::AsyncStart(d) => {
+                    let r = self.rt("ot_async_start", &[]);
+                    self.set(*d, r);
+                }
+                IrOp::AsyncResolve(d, p, v) | IrOp::AsyncReject(d, p, v) => {
+                    let name = if matches!(op, IrOp::AsyncResolve(..)) {
+                        "ot_async_resolve"
+                    } else {
+                        "ot_async_reject"
+                    };
+                    let args = [self.get(*p)?, self.get(*v)?];
+                    let r = self.rt(name, &args);
+                    self.set(*d, r);
+                }
+                IrOp::IsResume(d) => {
+                    let resumed = LLVMBuildICmp(
+                        self.builder,
+                        LLVMIntPredicate::LLVMIntEQ,
+                        self.args.1,
+                        self.c(crate::runtime::stubs::ASYNC_RESUME_ARGC as u64),
+                        NONAME,
+                    );
+                    let r = self.box_bool(resumed);
+                    self.set(*d, r);
+                }
+                IrOp::ResumePoint(d) => {
+                    let (_, frame) = self.frame.unwrap();
+                    let r = LLVMBuildLoad2(self.builder, self.i64_ty(), frame, NONAME);
+                    self.set(*d, r);
+                }
+                IrOp::Await(v, k) => {
+                    let (frame, frame_ptr) = self.frame.unwrap();
+                    LLVMBuildStore(self.builder, self.c((*k as f64).to_bits()), frame_ptr);
+                    let code =
+                        LLVMBuildPtrToInt(self.builder, self.function, self.i64_ty(), NONAME);
+                    let args = [self.get(*v)?, frame, code, self.this, self.env];
+                    self.rt("ot_await", &args);
+                }
+                IrOp::AwaitResult(d) => {
+                    let (frame, _) = self.frame.unwrap();
+                    let r = self.rt("ot_await_result", &[frame]);
+                    self.set(*d, r);
                 }
                 IrOp::CallMethod(d, recv, name, args) => {
                     let r = self.get(*recv)?;

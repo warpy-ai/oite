@@ -1,3 +1,4 @@
+// backends: vm jit aot
 // #122: await on a plain value yields the value.
 async function g() {
   let v = await 5;

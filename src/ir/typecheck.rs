@@ -234,7 +234,15 @@ impl<'a> TypeChecker<'a> {
             | IrOp::GetSuperProp(dst, _, _, _) => {
                 self.set_type(*dst, IrType::Any);
             }
-            IrOp::InstanceOf(dst, _, _) | IrOp::In(dst, _, _) => {
+            IrOp::AsyncStart(dst)
+            | IrOp::AsyncResolve(dst, _, _)
+            | IrOp::AsyncReject(dst, _, _)
+            | IrOp::AwaitResult(dst)
+            | IrOp::ResumePoint(dst) => {
+                self.set_type(*dst, IrType::Any);
+            }
+            IrOp::Await(_, _) => {}
+            IrOp::InstanceOf(dst, _, _) | IrOp::In(dst, _, _) | IrOp::IsResume(dst) => {
                 self.set_type(*dst, IrType::Boolean);
             }
 

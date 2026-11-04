@@ -1,3 +1,4 @@
+// backends: vm jit aot
 // #139: `await` suspends; `.then` callbacks run as microtasks, after the
 // synchronous code, in order.
 let log = [];

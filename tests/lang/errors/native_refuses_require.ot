@@ -1,6 +1,5 @@
 // backends: jit aot
 // Constructs the native backends cannot run yet are refused, never
 // approximated.
-async function f() { await 1; return 1; }
-f();
-console.log("unreachable");
+const fs = require("fs");
+console.log("unreachable", fs);
