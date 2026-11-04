@@ -1,0 +1,129 @@
+// backends: vm jit aot
+// #140: `throw`, `try`/`catch`/`finally` behave the same on every backend.
+
+// A throw unwinds through any number of calls to the nearest catch.
+function level3(v) {
+  if (v < 0) throw { code: v, reason: "negative" };
+  return v * 2;
+}
+function level2(v) { return level3(v) + 1; }
+function level1(v) { return level2(v) + 1; }
+try {
+  console.log(level1(5));
+  console.log(level1(-3));
+  console.log("not reached");
+} catch (e) {
+  console.log("caught", e.code, e.reason);
+}
+
+// Any value can be thrown.
+let values = [];
+let things = ["text", 42, null, undefined, true, [1, 2]];
+for (let i = 0; i < things.length; i++) {
+  try {
+    throw things[i];
+  } catch (e) {
+    values.push(e);
+  }
+}
+console.log(values);
+
+// Rethrowing from a catch reaches the outer handler.
+try {
+  try {
+    throw "inner";
+  } catch (e) {
+    throw "rethrown " + e;
+  }
+} catch (e) {
+  console.log(e);
+}
+
+// finally runs on the normal path, on a caught throw, and on an uncaught
+// one (which then continues outward).
+let log = [];
+function run(mode) {
+  try {
+    log.push("try " + mode);
+    if (mode == "throw") throw "x";
+    return "returned";
+  } finally {
+    log.push("finally " + mode);
+  }
+}
+console.log(run("normal"));
+try {
+  run("throw");
+} catch (e) {
+  log.push("outer caught " + e);
+}
+console.log(log);
+
+// A throw inside finally replaces the pending exception.
+try {
+  try {
+    throw "first";
+  } finally {
+    throw "second";
+  }
+} catch (e) {
+  console.log(e);
+}
+
+// Nested finally blocks run innermost first while an exception passes.
+let order = [];
+try {
+  try {
+    try {
+      throw "deep";
+    } finally {
+      order.push(1);
+    }
+  } finally {
+    order.push(2);
+  }
+} catch (e) {
+  order.push("caught " + e);
+}
+console.log(order);
+
+// A try in a loop: each iteration has its own handler.
+let total = 0;
+for (let i = 0; i < 5; i++) {
+  try {
+    if (i % 2 == 1) throw i;
+    total += i;
+  } catch (e) {
+    total += 100 * e;
+  }
+}
+console.log(total);
+
+// A caught error does not disturb values computed before it.
+function partial(list) {
+  let sum = 0;
+  let i = 0;
+  try {
+    for (i = 0; i < list.length; i++) {
+      sum += list[i].value;
+    }
+  } catch (e) {
+    return "stopped at " + i + " with " + sum;
+  }
+  return sum;
+}
+console.log(partial([{ value: 1 }, { value: 2 }]), partial([{ value: 1 }, null, { value: 3 }]));
+
+// A try in a function called from a catch.
+function safe(f) {
+  try {
+    return f();
+  } catch (e) {
+    return "safe: " + e;
+  }
+}
+try {
+  throw "outer";
+} catch (e) {
+  console.log(safe(function () { throw e + " again"; }));
+}

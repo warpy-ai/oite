@@ -73,6 +73,19 @@ pub struct Lowerer {
     block_entry_stacks: HashMap<BlockId, Vec<ValueId>>,
     /// How bytecode variable names map to locals, globals and functions.
     names: NameResolver,
+    /// Enclosing `try` statements at the current instruction: where an
+    /// exception goes, innermost last. Bytecode installs and removes
+    /// handlers at run time (`SetupTry`, `PopTry`); code from the compiler
+    /// is structured, so the handlers at each point are known statically and
+    /// become each block's `unwind` target.
+    handlers: Vec<BlockId>,
+    /// Handlers at the entry of each block, set along the edges into it.
+    block_handlers: HashMap<BlockId, Vec<BlockId>>,
+    /// Instruction indices that start a `catch` block.
+    catch_starts: HashSet<usize>,
+    /// The `SetupTry` (by index) that each `EnterFinally` ends the
+    /// `finally` of.
+    finally_owner: HashMap<usize, usize>,
 }
 
 /// Where a bytecode variable name lives in native code.
@@ -134,6 +147,10 @@ impl Lowerer {
             local_values: HashMap::new(),
             block_entry_stacks: HashMap::new(),
             names: NameResolver::default(),
+            handlers: Vec::new(),
+            block_handlers: HashMap::new(),
+            catch_starts: HashSet::new(),
+            finally_owner: HashMap::new(),
         }
     }
 
@@ -162,6 +179,7 @@ impl Lowerer {
     pub fn lower(mut self, instructions: &[OpCode]) -> Result<IrFunction, LowerError> {
         // Pass 1: Identify basic block boundaries
         self.find_block_boundaries(instructions);
+        self.find_try_structure(instructions);
 
         // Pass 2: Create blocks for each boundary
         self.create_blocks(instructions);
@@ -173,6 +191,39 @@ impl Lowerer {
         self.func.compute_predecessors();
 
         Ok(self.func)
+    }
+
+    /// Where each `try` statement's `catch` starts, and which `EnterFinally`
+    /// ends each `finally`: the first one after the `finally` starts that
+    /// is not the end of a nested `try`'s `finally`.
+    fn find_try_structure(&mut self, instructions: &[OpCode]) {
+        for (s, op) in instructions.iter().enumerate() {
+            let OpCode::SetupTry {
+                catch_addr,
+                finally_addr,
+            } = op
+            else {
+                continue;
+            };
+            if *catch_addr != 0 {
+                self.catch_starts.insert(*catch_addr);
+            }
+            if *finally_addr == 0 {
+                continue;
+            }
+            let mut depth = 0;
+            for (j, op) in instructions.iter().enumerate().skip(*finally_addr) {
+                match op {
+                    OpCode::SetupTry { finally_addr, .. } if *finally_addr != 0 => depth += 1,
+                    OpCode::EnterFinally(_) if depth == 0 => {
+                        self.finally_owner.insert(j, s);
+                        break;
+                    }
+                    OpCode::EnterFinally(_) => depth -= 1,
+                    _ => {}
+                }
+            }
+        }
     }
 
     /// Find all instruction indices that start a new basic block.
@@ -204,9 +255,21 @@ impl Lowerer {
                         self.block_starts.insert(i + 1);
                     }
                 }
-                OpCode::Call(_) | OpCode::CallMethod(_, _) => {
-                    // Calls can throw, so next instruction could be a catch block
-                    // For now, we don't split on calls
+                // The handlers change here, and a block has one unwind
+                // target; `catch` and `finally` are entered by exceptions.
+                OpCode::SetupTry {
+                    catch_addr,
+                    finally_addr,
+                } => {
+                    self.block_starts.insert(i + 1);
+                    for addr in [*catch_addr, *finally_addr] {
+                        if addr != 0 {
+                            self.block_starts.insert(addr);
+                        }
+                    }
+                }
+                OpCode::PopTry => {
+                    self.block_starts.insert(i + 1);
                 }
                 _ => {}
             }
@@ -328,6 +391,9 @@ impl Lowerer {
                     self.spill_stack(&stack);
                     self.terminate(Terminator::Jump(new_block));
                     block_stacks.entry(new_block).or_insert(stack);
+                    self.block_handlers
+                        .entry(new_block)
+                        .or_insert_with(|| self.handlers.clone());
                 }
 
                 // Skip unreachable blocks (e.g., function bodies jumped over)
@@ -342,6 +408,18 @@ impl Lowerer {
                 let depth = block_stacks.get(&new_block).map_or(0, |s| s.len());
                 self.current_block = new_block;
                 self.reload_stack(depth);
+                self.handlers = self
+                    .block_handlers
+                    .get(&new_block)
+                    .cloned()
+                    .unwrap_or_default();
+                self.func.block_mut(new_block).unwind = self.handlers.last().copied();
+                if self.catch_starts.contains(&i) {
+                    // The VM pushes the exception for its catch block.
+                    let exception = self.alloc_value(IrType::Any);
+                    self.emit(IrOp::TakeException(exception));
+                    self.push(exception);
+                }
             }
 
             // Skip if we're in an unreachable block
@@ -356,6 +434,9 @@ impl Lowerer {
                     self.spill_stack(&stack);
                     if let Some(&target_block) = self.instr_to_block.get(target) {
                         block_stacks.entry(target_block).or_insert(stack);
+                        self.block_handlers
+                            .entry(target_block)
+                            .or_insert_with(|| self.handlers.clone());
                     }
                 }
                 OpCode::JumpIfFalse(target) => {
@@ -372,11 +453,17 @@ impl Lowerer {
                         block_stacks
                             .entry(target_block)
                             .or_insert_with(|| stack_after_pop.clone());
+                        self.block_handlers
+                            .entry(target_block)
+                            .or_insert_with(|| self.handlers.clone());
                     }
 
                     // Save for fall-through (true branch)
                     if let Some(&fall_through) = self.instr_to_block.get(&(i + 1)) {
                         block_stacks.entry(fall_through).or_insert(stack_after_pop);
+                        self.block_handlers
+                            .entry(fall_through)
+                            .or_insert_with(|| self.handlers.clone());
                     }
                 }
                 _ => {}
@@ -396,6 +483,75 @@ impl Lowerer {
             self.terminate(Terminator::Return(None));
         }
 
+        Ok(())
+    }
+
+    /// Locals of the `try` at `setup`: whether its `finally` was entered by
+    /// an exception, and that exception.
+    fn try_slots(&mut self, setup: usize) -> (u32, u32) {
+        (
+            self.get_or_create_local(&format!("%thrown{}", setup)),
+            self.get_or_create_local(&format!("%exception{}", setup)),
+        )
+    }
+
+    /// `SetupTry` at `idx`. An exception in the `try` block goes to the
+    /// `catch`; without one, or from inside the `catch`, it goes to a block
+    /// that records it and enters the `finally`, whose end rethrows it.
+    fn lower_setup_try(
+        &mut self,
+        idx: usize,
+        catch_addr: usize,
+        finally_addr: usize,
+    ) -> Result<(), LowerError> {
+        if !self.stack.is_empty() {
+            return Err(native_unsupported("`try` with values on the operand stack"));
+        }
+        let outer = self.handlers.clone();
+        let block_at = |l: &Self, addr: usize| {
+            l.instr_to_block
+                .get(&addr)
+                .copied()
+                .ok_or(LowerError::InvalidJumpTarget(addr))
+        };
+
+        let mut into_finally = None;
+        if finally_addr != 0 {
+            let finally_block = block_at(self, finally_addr)?;
+            let (thrown_slot, exc_slot) = self.try_slots(idx);
+            let no = self.alloc_value(IrType::Boolean);
+            self.emit(IrOp::Const(no, Literal::Boolean(false)));
+            self.emit(IrOp::StoreLocal(thrown_slot, no));
+            let undefined = self.alloc_value(IrType::Any);
+            self.emit(IrOp::Const(undefined, Literal::Undefined));
+            self.emit(IrOp::StoreLocal(exc_slot, undefined));
+
+            let block = self.func.alloc_block();
+            let exception = self.alloc_value(IrType::Any);
+            let yes = self.alloc_value(IrType::Boolean);
+            let b = self.func.block_mut(block);
+            b.push(IrOp::TakeException(exception));
+            b.push(IrOp::StoreLocal(exc_slot, exception));
+            b.push(IrOp::Const(yes, Literal::Boolean(true)));
+            b.push(IrOp::StoreLocal(thrown_slot, yes));
+            b.terminate(Terminator::Jump(finally_block));
+            b.unwind = outer.last().copied();
+            self.block_handlers
+                .entry(finally_block)
+                .or_insert_with(|| outer.clone());
+            into_finally = Some(block);
+        }
+
+        let target = if catch_addr != 0 {
+            let catch_block = block_at(self, catch_addr)?;
+            let mut in_catch = outer;
+            in_catch.extend(into_finally);
+            self.block_handlers.insert(catch_block, in_catch);
+            catch_block
+        } else {
+            into_finally.ok_or(LowerError::InvalidJumpTarget(idx))?
+        };
+        self.handlers.push(target);
         Ok(())
     }
 
@@ -428,6 +584,18 @@ impl Lowerer {
                 }
                 OpCode::Return | OpCode::Halt => {
                     // No successors
+                }
+                OpCode::SetupTry {
+                    catch_addr,
+                    finally_addr,
+                } => {
+                    // Exceptions enter the catch and finally blocks.
+                    for addr in [*catch_addr, *finally_addr] {
+                        if addr != 0 {
+                            worklist.push(addr);
+                        }
+                    }
+                    worklist.push(ip + 1);
                 }
                 _ => {
                     // Fall through to next instruction
@@ -872,16 +1040,32 @@ impl Lowerer {
                 ));
             }
 
+            OpCode::Throw => {
+                let value = self.pop()?;
+                self.emit(IrOp::Throw(value));
+            }
+            OpCode::SetupTry {
+                catch_addr,
+                finally_addr,
+            } => self.lower_setup_try(idx, *catch_addr, *finally_addr)?,
+            OpCode::PopTry => {
+                self.handlers.pop();
+            }
+            OpCode::EnterFinally(rethrow) => {
+                if *rethrow && let Some(&setup) = self.finally_owner.get(&idx) {
+                    let (thrown_slot, exc_slot) = self.try_slots(setup);
+                    let thrown = self.alloc_value(IrType::Any);
+                    self.emit(IrOp::LoadLocal(thrown, thrown_slot));
+                    let exception = self.alloc_value(IrType::Any);
+                    self.emit(IrOp::LoadLocal(exception, exc_slot));
+                    self.emit(IrOp::Rethrow(thrown, exception));
+                }
+            }
+
             // Not yet supported by the native backends. These used to lower
             // to no-ops or `undefined`, so native code silently computed
-            // wrong answers (e.g. a caught `throw` fell through to the code
-            // after it). Refusing is the only
-            // behaviour that cannot produce a wrong result.
-            OpCode::Throw | OpCode::SetupTry { .. } | OpCode::PopTry | OpCode::EnterFinally(_) => {
-                return Err(native_unsupported(
-                    "exceptions (`throw`, `try`/`catch`/`finally`)",
-                ));
-            }
+            // wrong answers. Refusing is the only behaviour that cannot
+            // produce a wrong result.
             OpCode::SetProto
             | OpCode::LoadSuper
             | OpCode::CallSuper(_)
@@ -1006,9 +1190,6 @@ pub struct ExtractedFunction {
 /// Constructs the native backends refuse, whichever function they are in.
 fn native_refusal(op: &OpCode) -> Option<&'static str> {
     Some(match op {
-        OpCode::Throw | OpCode::SetupTry { .. } | OpCode::PopTry | OpCode::EnterFinally(_) => {
-            "exceptions (`throw`, `try`/`catch`/`finally`)"
-        }
         OpCode::NewObjectWithProto
         | OpCode::SetProto
         | OpCode::LoadSuper
@@ -1200,6 +1381,23 @@ fn rebase_jump_targets(instructions: &[OpCode], base_addr: usize) -> Vec<OpCode>
             OpCode::JumpIfFalse(target) => {
                 let rebased = target.saturating_sub(base_addr);
                 OpCode::JumpIfFalse(rebased)
+            }
+            // 0 means "none".
+            OpCode::SetupTry {
+                catch_addr,
+                finally_addr,
+            } => {
+                let rebase = |a: usize| {
+                    if a == 0 {
+                        0
+                    } else {
+                        a.saturating_sub(base_addr)
+                    }
+                };
+                OpCode::SetupTry {
+                    catch_addr: rebase(*catch_addr),
+                    finally_addr: rebase(*finally_addr),
+                }
             }
             other => other.clone(),
         })

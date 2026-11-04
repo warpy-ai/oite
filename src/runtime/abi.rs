@@ -15,7 +15,8 @@
 //! - 0x1: Boolean (bit 0: 0=false, 1=true)
 //! - 0x2: Null
 //! - 0x3: Undefined
-//! - 0x4: Reserved (future: Symbol)
+//! - 0x4: Exception: not a value. Runtime functions and compiled functions
+//!   return it while an exception is in flight (`stubs::ot_throw`).
 
 use super::heap::HeapPtr;
 
@@ -34,6 +35,11 @@ const TAG_POINTER: u64 = 0x0000_0000_0000_0000;
 const TAG_BOOLEAN: u64 = 0x0001_0000_0000_0000;
 const TAG_NULL: u64 = 0x0002_0000_0000_0000;
 const TAG_UNDEFINED: u64 = 0x0003_0000_0000_0000;
+const TAG_EXCEPTION: u64 = 0x0004_0000_0000_0000;
+
+/// Returned instead of a value while an exception is in flight. Native code
+/// compares every result that may throw against it (`backend` codegen).
+pub const EXCEPTION_BITS: u64 = QNAN | TAG_EXCEPTION;
 
 /// A NaN-boxed value that can represent any tscl runtime value.
 ///

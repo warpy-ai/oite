@@ -418,10 +418,19 @@ impl Visit for Resolver {
     }
 
     fn visit_fn_expr(&mut self, f: &FnExpr) {
-        // The code generator does not bind a function expression's own
-        // name, so it is not declared here either: references to it resolve
-        // outward, as they always have.
+        // A named function expression's name is bound in a scope of its
+        // own, between the enclosing one and the function's: visible inside
+        // the function only (`(function f() { return f; })`).
+        let Some(ident) = &f.ident else {
+            f.function.visit_with(self);
+            return;
+        };
+        let saved = self.current;
+        self.push_scope(Kind::Block, ident.span);
+        self.declare_in(self.current, ident.sym.as_ref());
+        self.occurrence(ident);
         f.function.visit_with(self);
+        self.pop_scope(saved);
     }
 
     fn visit_function(&mut self, f: &Function) {

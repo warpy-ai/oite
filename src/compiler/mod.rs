@@ -2189,8 +2189,19 @@ impl Codegen {
     fn gen_expr_inner(&mut self, expr: &Expr) {
         match expr {
             Expr::Fn(fn_expr) => {
-                // `function (a, b) { ... }`: an anonymous function value.
-                self.gen_fn_decl(None, &fn_expr.function);
+                // `function (a, b) { ... }`: a function value. A name is
+                // bound for the function's own body; references to it are
+                // always from inside, so it lives in an environment.
+                match &fn_expr.ident {
+                    Some(ident) if self.scopes.env_scope(ident.span).is_some() => {
+                        let env = self.enter_scope_env(ident.span);
+                        self.gen_fn_decl(None, &fn_expr.function);
+                        self.instructions.push(OpCode::Dup);
+                        self.store_var(ident, true);
+                        self.exit_scope_env(env);
+                    }
+                    _ => self.gen_fn_decl(None, &fn_expr.function),
+                }
             }
             Expr::Arrow(arrow) => {
                 // `(a, b) => expr` or `(a, b) => { ... }`

@@ -280,7 +280,7 @@ impl<'a> TypeChecker<'a> {
             }
 
             // The closure environment is an object or undefined
-            IrOp::LoadEnv(dst) => {
+            IrOp::LoadEnv(dst) | IrOp::TakeException(dst) => {
                 self.set_type(*dst, IrType::Any);
             }
 
@@ -293,7 +293,9 @@ impl<'a> TypeChecker<'a> {
             | IrOp::DerefStore(_, _)
             | IrOp::EndBorrow(_)
             | IrOp::StructSetField(_, _, _)
-            | IrOp::StructSetFieldNamed(_, _, _) => {}
+            | IrOp::StructSetFieldNamed(_, _, _)
+            | IrOp::Throw(_)
+            | IrOp::Rethrow(_, _) => {}
 
             // Borrow operations
             IrOp::Borrow(dst, src) => {

@@ -58,17 +58,21 @@ fn compute_used_values(func: &IrFunction) -> HashSet<ValueId> {
 }
 
 /// Check if an operation has side effects.
+/// An op that can throw counts: deleting an unused `o.x` would also delete
+/// its `TypeError` when `o` is null.
 fn has_side_effects(op: &IrOp) -> bool {
-    matches!(
-        op,
-        IrOp::StoreLocal(_, _)
-            | IrOp::StoreGlobal(_, _)
-            | IrOp::SetProp(_, _, _)
-            | IrOp::SetElement(_, _, _)
-            | IrOp::ArrayPush(_, _)
-            | IrOp::Call(_, _, _)
-            | IrOp::CallMethod(_, _, _, _)
-    )
+    op.can_throw()
+        || matches!(
+            op,
+            IrOp::StoreLocal(_, _)
+                | IrOp::StoreGlobal(_, _)
+                | IrOp::SetProp(_, _, _)
+                | IrOp::SetElement(_, _, _)
+                | IrOp::ArrayPush(_, _)
+                | IrOp::Call(_, _, _)
+                | IrOp::CallMethod(_, _, _, _)
+                | IrOp::TakeException(_)
+        )
 }
 
 // ============================================================================
@@ -475,7 +479,11 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
             resolve(a);
         }
 
-        IrOp::StoreLocal(_, v) | IrOp::StoreGlobal(_, v) => {
+        IrOp::StoreLocal(_, v) | IrOp::StoreGlobal(_, v) | IrOp::Throw(v) => {
+            resolve(v);
+        }
+        IrOp::Rethrow(t, v) => {
+            resolve(t);
             resolve(v);
         }
 
@@ -550,6 +558,7 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
         | IrOp::NewArray(_)
         | IrOp::LoadThis(_)
         | IrOp::LoadEnv(_)
+        | IrOp::TakeException(_)
         | IrOp::StructNew(_, _) => {}
     }
 }
@@ -590,7 +599,13 @@ pub fn remove_unreachable_blocks(func: &mut IrFunction) {
         reachable.insert(block_id);
 
         let block = func.block(block_id);
-        for succ in block.terminator.successors() {
+        // A block's unwind target is reached when one of its ops throws.
+        for succ in block
+            .terminator
+            .successors()
+            .into_iter()
+            .chain(block.unwind)
+        {
             if !reachable.contains(&succ) {
                 worklist.push(succ);
             }

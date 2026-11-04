@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use super::runtime_abi::RUNTIME;
 use super::{BackendConfig, BackendError};
 use crate::ir::{BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId};
+use crate::runtime::abi::EXCEPTION_BITS;
 
 const QNAN: u64 = 0x7FFC_0000_0000_0000;
 const TAG_BOOLEAN: u64 = 0x0001_0000_0000_0000;
@@ -79,6 +80,10 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_to_boolean,
         ot_to_number,
         ot_runtime_exit,
+        ot_throw,
+        ot_take_exception,
+        ot_rethrow,
+        ot_report_uncaught,
     )
 }
 
@@ -193,6 +198,8 @@ impl CraneliftCodegen {
                     direct: HashMap::new(),
                     env: None,
                     this: None,
+                    last_call: None,
+                    exception_return: None,
                 };
                 fx.function(&mut builder, func)?;
                 builder.seal_all_blocks();
@@ -261,6 +268,12 @@ struct Fx<'a> {
     this: Option<Value>,
     /// This function's own closure environment.
     env: Option<Value>,
+    /// Result of the last call emitted: what an op that can throw is
+    /// checked against `EXCEPTION_BITS`.
+    last_call: Option<Value>,
+    /// Block returning `EXCEPTION_BITS`, for exceptions no `catch` in this
+    /// function handles.
+    exception_return: Option<Block>,
 }
 
 /// Names passed to the runtime live for the whole process.
@@ -300,10 +313,35 @@ impl Fx<'_> {
             .or_insert_with(|| self.module.declare_func_in_func(id, b.func));
         let call = b.ins().call(fref, args);
         if returns {
-            Some(b.inst_results(call)[0])
+            let r = b.inst_results(call)[0];
+            self.last_call = Some(r);
+            Some(r)
         } else {
             None
         }
+    }
+
+    /// After an op that can throw: if its result is `EXCEPTION_BITS`, go
+    /// to the block's unwind target, or return the exception to the caller.
+    fn check_exception(&mut self, b: &mut FunctionBuilder, result: Value, unwind: Option<BlockId>) {
+        let thrown = b
+            .ins()
+            .icmp_imm(IntCC::Equal, result, EXCEPTION_BITS as i64);
+        let target = match unwind {
+            Some(u) => self.blocks[&u],
+            None => match self.exception_return {
+                Some(blk) => blk,
+                None => {
+                    let blk = b.create_block();
+                    b.set_cold_block(blk);
+                    self.exception_return = Some(blk);
+                    blk
+                }
+            },
+        };
+        let next = b.create_block();
+        b.ins().brif(thrown, target, &[], next, &[]);
+        b.switch_to_block(next);
     }
 
     fn rt_v(&mut self, b: &mut FunctionBuilder, name: &str, args: &[Value]) -> Value {
@@ -418,9 +456,20 @@ impl Fx<'_> {
         for block in &func.blocks {
             b.switch_to_block(self.blocks[&block.id]);
             for op in &block.ops {
+                self.last_call = None;
                 self.op(b, op)?;
+                if op.can_throw()
+                    && let Some(r) = self.last_call
+                {
+                    self.check_exception(b, r, block.unwind);
+                }
             }
             self.terminator(b, &block.terminator)?;
+        }
+        if let Some(blk) = self.exception_return {
+            b.switch_to_block(blk);
+            let e = Self::c(b, EXCEPTION_BITS);
+            b.ins().return_(&[e]);
         }
         Ok(())
     }
@@ -725,7 +774,9 @@ impl Fx<'_> {
                         };
                         let fref = self.module.declare_func_in_func(id, b.func);
                         let call = b.ins().call(fref, &[undefined, argv, argc, env]);
-                        b.inst_results(call)[0]
+                        let r = b.inst_results(call)[0];
+                        self.last_call = Some(r);
+                        r
                     }
                     None => {
                         let f = self.get(*callee)?;
@@ -733,6 +784,18 @@ impl Fx<'_> {
                     }
                 };
                 self.values.insert(*d, r);
+            }
+            IrOp::Throw(v) => {
+                let v = self.get(*v)?;
+                self.rt(b, "ot_throw", &[v]);
+            }
+            IrOp::TakeException(d) => {
+                let r = self.rt_v(b, "ot_take_exception", &[]);
+                self.values.insert(*d, r);
+            }
+            IrOp::Rethrow(thrown, v) => {
+                let args = [self.get(*thrown)?, self.get(*v)?];
+                self.rt(b, "ot_rethrow", &args);
             }
             IrOp::CallMethod(d, recv, name, args) => {
                 let r = self.get(*recv)?;

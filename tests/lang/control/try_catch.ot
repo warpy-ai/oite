@@ -1,3 +1,4 @@
+// backends: vm jit aot
 function risky(n) {
   if (n > 0) { throw "bad"; }
   return 1;

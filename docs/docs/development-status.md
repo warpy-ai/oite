@@ -58,14 +58,14 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | `if`, `while`, `for`, `do..while`, `?:`    | Covered                              | Covered                           |
 | `break` / `continue`, with or without labels | Covered                            | Covered                           |
 | `switch`, labeled blocks                   | Covered                              | Covered                           |
-| `return` / `break` / `continue` out of `try` (runs `finally`) | Covered       | Refused                           |
+| `return` / `break` / `continue` out of `try` (runs `finally`) | Covered       | Covered                           |
 | `&&`, `\|\|`, `??` (short-circuit)         | Covered                              | Covered                           |
 | Optional chaining `?.`                     | Covered                              | Covered                           |
 | Sequence expressions `a, b`                | Covered                              | Covered                           |
 | Classes, `new`, `instanceof`               | Covered                              | Refused                           |
 | Error classes (`Error`, `TypeError`, `ReferenceError`, `RangeError`, `SyntaxError`), subclassing | Covered (`std/core/error.ot`) | Refused (classes) |
 | `extends`, `super`                         | Covered                              | Refused                           |
-| `try` / `catch` / `finally`, `throw`       | Covered                              | Refused                           |
+| `try` / `catch` / `finally`, `throw`       | Covered                              | Covered                           |
 | `async` / `await`                          | Partial: `await` polls synchronously; `.then` callbacks never run; `new Promise` aborts ([#122](https://github.com/warpy-ai/oite/issues/122)) | Refused |
 | ES modules (`import` / `export`)           | Works, not yet covered               | Refused                           |
 | Decorators, private fields, getters/setters | Implemented, not yet covered        | Refused                           |
@@ -73,7 +73,8 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | `Math`, `Date.now()`, number `toString` / `toFixed` | Covered                      | Covered (shared implementation)   |
 | `console.log` formatting                   | Covered                              | Covered (same formatter)          |
 | Generators, regex, tagged templates, class expressions | Compile error            | Compile error                     |
-| Runtime errors (`null.x`, unbound names, calling a non-function, ...) | Thrown as `TypeError` / `ReferenceError` / `RangeError`, catchable | Reported as `Uncaught TypeError: ...`, exit 1 (no `catch` until [#140](https://github.com/warpy-ai/oite/issues/140)) |
+| Runtime errors (`null.x`, unbound names, calling a non-function, ...) | Thrown as `TypeError` / `ReferenceError` / `RangeError`, catchable | Same (`e.name`, `e.message`; `instanceof` needs classes) |
+| Stack overflow                             | `RangeError`                         | Crashes (no depth check yet)      |
 | Uncaught exceptions                        | `Uncaught TypeError: ...` on stderr, exit 1 | Same                       |
 | String `length` / indexing                 | Counts UTF-8 bytes ([#133](https://github.com/warpy-ai/oite/issues/133))            | -                                 |
 | Type annotations                           | Parsed, not checked ([#124](https://github.com/warpy-ai/oite/issues/124))           | -                                 |
@@ -137,7 +138,7 @@ Oite Core is like "C without libc" — minimal and self-contained. These feature
 Correctness comes before new surface area (see [#136](https://github.com/warpy-ai/oite/issues/136)):
 
 1. **Language correctness**: async ([#139](https://github.com/warpy-ai/oite/issues/139)), the string model ([#133](https://github.com/warpy-ai/oite/issues/133)), callback methods (`map`, `filter`, ...)
-2. **Native backends**: exceptions ([#140](https://github.com/warpy-ai/oite/issues/140)), then classes, async and modules
+2. **Native backends**: classes (and with them `new`, `instanceof` and the error classes), async and modules
 3. **Compiler infrastructure**: source positions everywhere ([#125](https://github.com/warpy-ai/oite/issues/125)), type checking ([#124](https://github.com/warpy-ai/oite/issues/124))
 4. **Foundations**: language specification ([#135](https://github.com/warpy-ai/oite/issues/135)), memory reclamation ([#123](https://github.com/warpy-ai/oite/issues/123)), FFI ([#132](https://github.com/warpy-ai/oite/issues/132))
 5. **Rolls, Unroll, tooling**: after the above

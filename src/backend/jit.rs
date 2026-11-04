@@ -74,6 +74,10 @@ impl JitRuntime {
         let argv: Vec<u64> = args.iter().map(|a| a.to_bits()).collect();
         let undefined = OtValue::undefined().to_bits();
         let result = f(undefined, argv.as_ptr(), argv.len(), undefined);
+        if result == crate::runtime::abi::EXCEPTION_BITS {
+            // An exception no `catch` handled: report it and exit 1.
+            crate::runtime::stubs::ot_report_uncaught();
+        }
         Ok(OtValue::from_bits(result))
     }
 

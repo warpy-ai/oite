@@ -471,6 +471,19 @@ pub enum IrOp {
     /// `typeof name` of a global: "undefined" if it is unbound, where
     /// `LoadGlobal` throws a `ReferenceError`.
     TypeOfGlobal(ValueId, String),
+
+    // ========================================================================
+    // Exceptions
+    // ========================================================================
+    /// `throw value`. Control goes to the block's `unwind` target, or the
+    /// function returns with the exception in flight.
+    Throw(ValueId),
+    /// First op of a `catch` (or of the path into a `finally` that an
+    /// exception takes): the exception in flight. Clears it.
+    TakeException(ValueId),
+    /// End of a `finally`: `rethrow(thrown, value)` throws `value` again if
+    /// `thrown` is true (the `finally` was entered by an exception).
+    Rethrow(ValueId, ValueId),
     /// Store global by name: globals[name] = src
     StoreGlobal(String, ValueId),
 
@@ -564,6 +577,25 @@ pub enum IrOp {
 }
 
 impl IrOp {
+    /// Whether the op can throw, so native code checks its result for an
+    /// exception in flight.
+    pub fn can_throw(&self) -> bool {
+        matches!(
+            self,
+            IrOp::LoadGlobal(_, _)
+                | IrOp::GetProp(_, _, _)
+                | IrOp::SetProp(_, _, _)
+                | IrOp::GetElement(_, _, _)
+                | IrOp::SetElement(_, _, _)
+                | IrOp::ArrayLen(_, _)
+                | IrOp::ArrayPush(_, _)
+                | IrOp::Call(_, _, _)
+                | IrOp::CallMethod(_, _, _, _)
+                | IrOp::Throw(_)
+                | IrOp::Rethrow(_, _)
+        )
+    }
+
     /// Get the destination value (if any) of this operation.
     pub fn dest(&self) -> Option<ValueId> {
         match self {
@@ -617,6 +649,7 @@ impl IrOp {
             | IrOp::Copy(d, _)
             | IrOp::LoadThis(d)
             | IrOp::LoadEnv(d)
+            | IrOp::TakeException(d)
             // Borrow operations
             | IrOp::Borrow(d, _)
             | IrOp::BorrowMut(d, _)
@@ -644,7 +677,9 @@ impl IrOp {
             | IrOp::EndBorrow(_)
             // Struct operations without dest
             | IrOp::StructSetField(_, _, _)
-            | IrOp::StructSetFieldNamed(_, _, _) => None,
+            | IrOp::StructSetFieldNamed(_, _, _)
+            | IrOp::Throw(_)
+            | IrOp::Rethrow(_, _) => None,
         }
     }
 
@@ -704,8 +739,10 @@ impl IrOp {
             | IrOp::LoadGlobal(_, _)
             | IrOp::TypeOfGlobal(_, _)
             | IrOp::LoadThis(_)
-            | IrOp::LoadEnv(_) => vec![],
-            IrOp::StoreLocal(_, v) | IrOp::StoreGlobal(_, v) => vec![*v],
+            | IrOp::LoadEnv(_)
+            | IrOp::TakeException(_) => vec![],
+            IrOp::StoreLocal(_, v) | IrOp::StoreGlobal(_, v) | IrOp::Throw(v) => vec![*v],
+            IrOp::Rethrow(t, v) => vec![*t, *v],
 
             IrOp::NewObject(_) | IrOp::NewArray(_) => vec![],
             // Struct new
@@ -794,6 +831,10 @@ pub struct BasicBlock {
     pub terminator: Terminator,
     /// Predecessor blocks (filled during CFG construction).
     pub predecessors: Vec<BlockId>,
+    /// Where an exception thrown by one of the ops goes (`IrOp::can_throw`):
+    /// the enclosing `catch`, or the path into a `finally`. `None`: the
+    /// function returns with the exception in flight.
+    pub unwind: Option<BlockId>,
 }
 
 impl BasicBlock {
@@ -803,6 +844,7 @@ impl BasicBlock {
             ops: Vec::new(),
             terminator: Terminator::Unreachable,
             predecessors: Vec::new(),
+            unwind: None,
         }
     }
 
@@ -1254,6 +1296,9 @@ impl fmt::Display for IrOp {
             IrOp::Copy(d, s) => write!(f, "{} = copy {}", d, s),
             IrOp::LoadThis(d) => write!(f, "{} = load.this", d),
             IrOp::LoadEnv(d) => write!(f, "{} = load.env", d),
+            IrOp::Throw(v) => write!(f, "throw {}", v),
+            IrOp::TakeException(d) => write!(f, "{} = take.exception", d),
+            IrOp::Rethrow(t, v) => write!(f, "rethrow {}, {}", t, v),
             // Borrow operations
             IrOp::Borrow(d, s) => write!(f, "{} = borrow {}", d, s),
             IrOp::BorrowMut(d, s) => write!(f, "{} = borrow.mut {}", d, s),
@@ -1303,7 +1348,10 @@ impl fmt::Display for Terminator {
 
 impl fmt::Display for BasicBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "{}:", self.id)?;
+        match self.unwind {
+            Some(u) => writeln!(f, "{}:  (unwind {})", self.id, u)?,
+            None => writeln!(f, "{}:", self.id)?,
+        }
         for op in &self.ops {
             writeln!(f, "    {}", op)?;
         }

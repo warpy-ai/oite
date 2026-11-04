@@ -1,6 +1,6 @@
+// backends: vm jit aot
 // Leaving a `try` with return, break or continue runs its `finally` and
-// removes its exception handler. (VM only: native code does not compile
-// exceptions yet, #140.)
+// removes its exception handler.
 
 function ret() {
   try {
