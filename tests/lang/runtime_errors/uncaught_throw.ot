@@ -1,5 +1,5 @@
-// An uncaught `throw` reports the error the same way. (VM only: native
-// code does not compile `throw` yet, #140.)
+// backends: vm jit aot
+// An uncaught `throw` reports the error the same way.
 function check(n) {
   if (n < 0) {
     throw new RangeError("negative: " + n);

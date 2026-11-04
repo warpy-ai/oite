@@ -1,0 +1,62 @@
+// backends: vm jit aot
+// Arrow functions use the `this` of the function around them.
+
+class Cart {
+  items = [];
+  total = 0;
+  // An arrow in a field initializer: `this` is the instance.
+  add = (name, price) => {
+    this.items.push(name);
+    this.total += price;
+    return this;
+  };
+  constructor(owner) {
+    this.owner = owner;
+    this.greet = () => "cart of " + this.owner;
+  }
+  addAll(list) {
+    let each = (pair) => this.add(pair[0], pair[1]);
+    for (const pair of list) each(pair);
+    // Nested arrows see the same `this`.
+    let summary = () => () => this.owner + ": " + this.items.join(", ") + " = " + this.total;
+    return summary()();
+  }
+  later() {
+    // Kept after the method returns.
+    return () => this.total * 2;
+  }
+}
+
+let cart = new Cart("ana");
+console.log(cart.addAll([["apple", 3], ["pear", 4]]));
+let add = cart.add;
+add("plum", 1);
+console.log(cart.total, cart.greet(), cart.later()());
+
+// A plain function has its own `this`; an arrow inside it uses that one.
+class Outer {
+  constructor() {
+    this.name = "outer";
+  }
+  run() {
+    let self = this;
+    function inner() {
+      return this === undefined ? "own this" : "?";
+    }
+    let arrow = () => this === self;
+    return inner() + " " + arrow();
+  }
+}
+console.log(new Outer().run());
+
+// Objects' methods too.
+let counter = {
+  count: 0,
+  incrementer() {
+    return () => ++this.count;
+  },
+};
+let inc = counter.incrementer();
+inc();
+inc();
+console.log(counter.count);

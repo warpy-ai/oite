@@ -1,0 +1,7 @@
+// Deep recursion is a catchable RangeError. (VM only: native code has no
+// stack depth check yet.)
+try {
+  (function down(n) { return down(n + 1); })(0);
+} catch (err) {
+  console.log(err instanceof RangeError, err.message);
+}

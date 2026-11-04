@@ -1,4 +1,5 @@
-// Cycles print as [Circular]. Uses a class, so VM only for now.
+// backends: vm jit aot
+// Cycles print as [Circular].
 class Node {
   constructor() { this.name = "n"; this.self = this; }
 }

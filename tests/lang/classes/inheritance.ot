@@ -1,0 +1,133 @@
+// backends: vm jit aot
+// `extends`, `super(...)`, `super.method()`, static inheritance.
+
+class Animal {
+  legs = 4;
+  constructor(name) {
+    this.name = name;
+  }
+  speak() {
+    return this.name + " makes a sound";
+  }
+  describe() {
+    return this.name + " has " + this.legs + " legs";
+  }
+  static create(name) {
+    return new this(name);
+  }
+  static kind() {
+    return "animal";
+  }
+}
+
+class Dog extends Animal {
+  tricks = [];
+  constructor(name, breed) {
+    super(name);
+    this.breed = breed;
+  }
+  speak() {
+    return super.speak() + ", then barks";
+  }
+  learn(trick) {
+    this.tricks.push(trick);
+    return this;
+  }
+  static kind() {
+    return "dog, a kind of " + super.kind();
+  }
+}
+
+class Puppy extends Dog {
+  constructor(name) {
+    super(name, "unknown");
+    this.age = 0;
+  }
+  speak() {
+    return super.speak() + " (squeaky)";
+  }
+}
+
+// No constructor: the arguments go to the parent's.
+class Bird extends Animal {
+  legs = 2;
+  fly() {
+    return this.name + " flies";
+  }
+}
+
+let d = new Dog("Rex", "lab").learn("sit").learn("roll");
+console.log(d.speak(), "|", d.describe(), "|", d.breed, d.tricks);
+let pup = new Puppy("Bit");
+console.log(pup.speak(), pup.breed, pup.age, pup.legs);
+let b = new Bird("Tweety");
+console.log(b.fly(), b.describe(), b.speak());
+console.log(Dog.kind(), Puppy.kind(), Bird.kind());
+console.log(Animal.create("Generic").speak(), Bird.create("Robin").fly());
+
+console.log(pup instanceof Puppy, pup instanceof Dog, pup instanceof Animal, d instanceof Puppy);
+console.log(b instanceof Bird, b instanceof Dog);
+
+// Overriding a getter, and a super getter.
+class Shape {
+  get area() {
+    return 0;
+  }
+  get label() {
+    return "shape with area " + this.area;
+  }
+}
+class Square extends Shape {
+  constructor(side) {
+    super();
+    this.side = side;
+  }
+  get area() {
+    return this.side * this.side;
+  }
+  get label() {
+    return "square: " + super.label;
+  }
+}
+console.log(new Square(3).label, new Shape().label);
+
+// Methods capture variables, and classes can be made inside functions.
+function makeCounterClass(step) {
+  let made = 0;
+  return class_factory();
+  function class_factory() {
+    class Stepper {
+      constructor() {
+        made++;
+        this.value = 0;
+      }
+      next() {
+        this.value += step;
+        return this.value;
+      }
+      static made() {
+        return made;
+      }
+    }
+    return Stepper;
+  }
+}
+let S = makeCounterClass(5);
+let s1 = new S();
+let s2 = new S();
+s1.next();
+console.log(s1.next(), s2.next(), S.made());
+
+// An error thrown in a constructor propagates from `new`.
+class Strict extends Animal {
+  constructor(name) {
+    if (!name) throw "a name is required";
+    super(name);
+  }
+}
+try {
+  new Strict("");
+} catch (e) {
+  console.log("caught", e);
+}
+console.log(new Strict("ok").speak());
