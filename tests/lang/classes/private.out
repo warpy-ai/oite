@@ -1,0 +1,6 @@
+base child 11 22
+base []
+TypeError: Cannot read private member #secret from an object whose class did not declare it
+5
+TypeError: Cannot write private member #v to an object whose class did not declare it
+2 2

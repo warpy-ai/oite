@@ -84,6 +84,15 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_take_exception,
         ot_rethrow,
         ot_report_uncaught,
+        ot_construct,
+        ot_call_super,
+        ot_get_super_prop,
+        ot_instanceof,
+        ot_get_private,
+        ot_set_private,
+        ot_to_str,
+        ot_stack_init,
+        ot_stack_overflow,
     )
 }
 
@@ -200,6 +209,7 @@ impl CraneliftCodegen {
                     this: None,
                     last_call: None,
                     exception_return: None,
+                    args: None,
                 };
                 fx.function(&mut builder, func)?;
                 builder.seal_all_blocks();
@@ -274,6 +284,8 @@ struct Fx<'a> {
     /// Block returning `EXCEPTION_BITS`, for exceptions no `catch` in this
     /// function handles.
     exception_return: Option<Block>,
+    /// This function's own `argv` and `argc`.
+    args: Option<(Value, Value)>,
 }
 
 /// Names passed to the runtime live for the whole process.
@@ -407,6 +419,7 @@ impl Fx<'_> {
         let (this, argv, argc) = (params[0], params[1], params[2]);
         self.this = Some(this);
         self.env = Some(params[3]);
+        self.args = Some((argv, argc));
 
         for _ in &func.locals {
             let slot =
@@ -442,6 +455,20 @@ impl Fx<'_> {
                 }
             }
         }
+
+        // Stack overflow: below `OT_STACK_LIMIT`, throw a RangeError.
+        let limit_addr = Self::c(b, &crate::runtime::stubs::OT_STACK_LIMIT as *const _ as u64);
+        let limit = b.ins().load(types::I64, MemFlags::trusted(), limit_addr, 0);
+        let sp = b.ins().get_stack_pointer(types::I64);
+        let exhausted = b.ins().icmp(IntCC::UnsignedLessThan, sp, limit);
+        let overflow = b.create_block();
+        b.set_cold_block(overflow);
+        let body = b.create_block();
+        b.ins().brif(exhausted, overflow, &[], body, &[]);
+        b.switch_to_block(overflow);
+        let e = self.rt_v(b, "ot_stack_overflow", &[]);
+        b.ins().return_(&[e]);
+        b.switch_to_block(body);
 
         match func.blocks.first() {
             Some(first) => {
@@ -657,6 +684,7 @@ impl Fx<'_> {
             }
             IrOp::ToBool(d, x) => self.rt_unop(b, *d, "ot_to_boolean", *x)?,
             IrOp::ToNum(d, x) => self.rt_unop(b, *d, "ot_to_number", *x)?,
+            IrOp::ToStr(d, x) => self.rt_unop(b, *d, "ot_to_str", *x)?,
             IrOp::TypeOf(d, x) => self.rt_unop(b, *d, "ot_typeof", *x)?,
 
             IrOp::LoadLocal(d, slot) => {
@@ -726,6 +754,18 @@ impl Fx<'_> {
                 let (p, n) = self.name(b, name);
                 self.rt(b, "ot_set_prop", &[o, p, n, v]);
             }
+            IrOp::GetPrivate(d, obj, name) => {
+                let o = self.get(*obj)?;
+                let (p, n) = self.name(b, name);
+                let r = self.rt_v(b, "ot_get_private", &[o, p, n]);
+                self.values.insert(*d, r);
+            }
+            IrOp::SetPrivate(obj, name, v) => {
+                let o = self.get(*obj)?;
+                let v = self.get(*v)?;
+                let (p, n) = self.name(b, name);
+                self.rt(b, "ot_set_private", &[o, p, n, v]);
+            }
             IrOp::DeleteProp(d, obj, name) => {
                 let o = self.get(*obj)?;
                 let (p, n) = self.name(b, name);
@@ -788,6 +828,53 @@ impl Fx<'_> {
             IrOp::Throw(v) => {
                 let v = self.get(*v)?;
                 self.rt(b, "ot_throw", &[v]);
+            }
+            IrOp::Construct(d, ctor, args) => {
+                let c = self.get(*ctor)?;
+                let vals: Vec<Value> = args
+                    .iter()
+                    .map(|a| self.get(*a))
+                    .collect::<Result<_, _>>()?;
+                let (argv, argc) = self.arg_array(b, &vals);
+                let r = self.rt_v(b, "ot_construct", &[c, argv, argc]);
+                self.values.insert(*d, r);
+            }
+            IrOp::CallSuper(d, parent, args) => {
+                let p = self.get(*parent)?;
+                let vals: Vec<Value> = args
+                    .iter()
+                    .map(|a| self.get(*a))
+                    .collect::<Result<_, _>>()?;
+                let (argv, argc) = self.arg_array(b, &vals);
+                let this = self.this.unwrap();
+                let r = self.rt_v(b, "ot_call_super", &[p, this, argv, argc]);
+                self.values.insert(*d, r);
+            }
+            IrOp::SuperForward(d, parent) => {
+                let p = self.get(*parent)?;
+                let (argv, argc) = self.args.unwrap();
+                let this = self.this.unwrap();
+                let r = self.rt_v(b, "ot_call_super", &[p, this, argv, argc]);
+                self.values.insert(*d, r);
+            }
+            IrOp::CallWithThis(d, func, this, args) => {
+                let f = self.get(*func)?;
+                let t = self.get(*this)?;
+                let vals: Vec<Value> = args
+                    .iter()
+                    .map(|a| self.get(*a))
+                    .collect::<Result<_, _>>()?;
+                let (argv, argc) = self.arg_array(b, &vals);
+                let r = self.rt_v(b, "ot_call", &[f, t, argv, argc]);
+                self.values.insert(*d, r);
+            }
+            IrOp::InstanceOf(d, v, c) => self.rt_binop(b, *d, "ot_instanceof", *v, *c)?,
+            IrOp::GetSuperProp(d, this, base, name) => {
+                let t = self.get(*this)?;
+                let o = self.get(*base)?;
+                let (p, n) = self.name(b, name);
+                let r = self.rt_v(b, "ot_get_super_prop", &[t, o, p, n]);
+                self.values.insert(*d, r);
             }
             IrOp::TakeException(d) => {
                 let r = self.rt_v(b, "ot_take_exception", &[]);

@@ -7,6 +7,7 @@
 //! Full standard library functionality (fs, path, json, math, date, etc.)
 //! will be provided by Rolls packages in the future.
 
+use crate::runtime::builtins::is_hidden_key;
 use crate::vm::VM;
 use crate::vm::value::{HeapData, HeapObject, JsValue};
 
@@ -103,12 +104,13 @@ fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) 
                         .collect();
                     format!("[ {} ]", parts.join(", "))
                 }
+                HeapData::Object(_) if vm.is_class(*ptr) => vm.class_summary(*ptr),
                 HeapData::Object(props) if vm.is_error(*ptr) => {
                     // `TypeError: message`, then any other own properties.
                     let summary = vm.error_summary(*ptr);
                     let mut keys: Vec<&String> = props
                         .keys()
-                        .filter(|k| !k.starts_with("__") && *k != "message")
+                        .filter(|k| !is_hidden_key(k) && *k != "message")
                         .collect();
                     keys.sort();
                     if keys.is_empty() || too_deep {
@@ -125,7 +127,7 @@ fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) 
                 }
                 HeapData::Object(props) => {
                     let mut keys: Vec<&String> =
-                        props.keys().filter(|k| !k.starts_with("__")).collect();
+                        props.keys().filter(|k| !is_hidden_key(k)).collect();
                     keys.sort();
                     if keys.is_empty() {
                         "{}".to_string()
@@ -539,6 +541,15 @@ pub fn native_string_constructor(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     let Some(value) = args.first() else {
         return JsValue::String(String::new());
     };
+    // An object with its own `toString` / `valueOf` converts through it.
+    match vm.to_primitive(value, true) {
+        Ok(Some(p)) => return JsValue::String(vm.to_js_string(&p)),
+        Ok(None) => {}
+        Err(e) => {
+            vm.native_throw = Some(e);
+            return JsValue::Undefined;
+        }
+    }
     let result = match value {
         JsValue::Object(ptr) => match vm.heap.get(*ptr).map(|o| &o.data) {
             Some(HeapData::ByteStream(_)) => "[object ByteStream]".to_string(),
@@ -1035,7 +1046,11 @@ pub fn native_object_keys(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
         && let Some(HeapObject { data }) = vm.heap.get(*ptr)
     {
         let keys: Vec<JsValue> = match data {
-            HeapData::Object(props) => props.keys().map(|k| JsValue::String(k.clone())).collect(),
+            HeapData::Object(props) => props
+                .keys()
+                .filter(|k| !is_hidden_key(k))
+                .map(|k| JsValue::String(k.clone()))
+                .collect(),
             HeapData::Array(arr) => (0..arr.len())
                 .map(|i| JsValue::String(i.to_string()))
                 .collect(),

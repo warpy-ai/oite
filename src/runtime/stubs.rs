@@ -15,6 +15,7 @@
 
 use super::abi::{EXCEPTION_BITS, OtValue};
 use super::builtins;
+use super::builtins::is_hidden_key;
 use super::heap::{
     HeapPtr, NativeArray, NativeFn, NativeFunction, NativeObject, NativeString, ObjectHeader,
     ObjectKind, PropertyMap, heap,
@@ -61,6 +62,34 @@ thread_local! {
     static ERROR_PROTOS: RefCell<HashMap<&'static str, u64>> = RefCell::new(HashMap::new());
 }
 
+/// The lowest stack address compiled code may reach: every compiled
+/// function compares its stack pointer with it on entry and throws a
+/// RangeError below it. 0 (no limit) until `ot_stack_init`.
+#[unsafe(no_mangle)]
+pub static OT_STACK_LIMIT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Stack that recursion in compiled code may use, below where the program
+/// starts. Main threads get 8MB by default; the rest is left for the
+/// runtime and its callers.
+const STACK_BUDGET: usize = 4 << 20;
+
+/// Set `OT_STACK_LIMIT` from the current stack position.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_stack_init() {
+    let marker = 0u8;
+    let here = std::hint::black_box(&marker) as *const u8 as usize;
+    OT_STACK_LIMIT.store(
+        here.saturating_sub(STACK_BUDGET),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// A compiled function found the stack exhausted.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_stack_overflow() -> u64 {
+    throw_error("RangeError", "Maximum call stack size exceeded")
+}
+
 /// `throw value`: returns `EXCEPTION_BITS`, which the caller propagates.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_throw(value: u64) -> u64 {
@@ -99,8 +128,16 @@ pub extern "C" fn ot_report_uncaught() {
     std::process::exit(1);
 }
 
-/// The prototype for errors of `kind`: `{ name: kind }`, marked as an error.
+/// The prototype for errors of `kind`: the `prototype` of the class of
+/// that name (std/core/error.ot, compiled into every native program), or
+/// `{ name: kind }` marked as an error without it.
 fn error_proto(kind: &'static str) -> u64 {
+    if let Some(class) = GLOBALS.with(|g| g.borrow().get(kind).copied())
+        && let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(class))
+        && let Some(proto) = lookup(ptr, "prototype")
+    {
+        return proto;
+    }
     ERROR_PROTOS.with(|protos| {
         *protos.borrow_mut().entry(kind).or_insert_with(|| {
             let proto = ot_alloc_object();
@@ -122,10 +159,28 @@ fn throw_error(kind: &'static str, message: &str) -> u64 {
     ot_throw(error)
 }
 
-/// Whether `ptr` is an error object (its prototype chain is marked).
+/// Whether `ptr` is an error object: `Error.prototype` is on its
+/// prototype chain (or, without the error classes, the chain is marked).
 fn is_error(ptr: HeapPtr) -> bool {
-    let v = OtValue::from_bits(get_property(OtValue::pointer(ptr), "__error__"));
-    v.is_boolean() && v.as_boolean_unchecked()
+    let error_proto = GLOBALS
+        .with(|g| g.borrow().get("Error").copied())
+        .and_then(|c| object(OtValue::from_bits(c)))
+        .and_then(|(c, _)| lookup(c, "prototype"));
+    if let Some(target) = error_proto {
+        let mut cur = ptr;
+        for _ in 0..1000 {
+            match props(cur).iter().find(|(k, _)| k == "__proto__") {
+                Some((_, p)) if *p == target => return true,
+                Some((_, p)) => match object(OtValue::from_bits(*p)) {
+                    Some((next, ObjectKind::Object)) => cur = next,
+                    _ => return false,
+                },
+                None => return false,
+            }
+        }
+        return false;
+    }
+    lookup(ptr, "__error__") == Some(boolean(true))
 }
 
 /// `TypeError: message`, as `Error.prototype.toString` gives it.
@@ -304,6 +359,191 @@ fn array_push(arr: &mut NativeArray, value: u64) -> usize {
     len + 1
 }
 
+thread_local! {
+    /// Whether a getter or setter was ever defined: until then property
+    /// access skips looking for them.
+    static HAS_ACCESSORS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `key` on the object at `ptr` or its prototype chain, without accessors.
+fn lookup(ptr: HeapPtr, key: &str) -> Option<u64> {
+    let mut cur = ptr;
+    for _ in 0..1000 {
+        let map = props(cur);
+        if let Some((_, bits)) = map.iter().find(|(k, _)| k == key) {
+            return Some(*bits);
+        }
+        let (_, proto) = map.iter().find(|(k, _)| k == "__proto__")?;
+        match object(OtValue::from_bits(*proto)) {
+            Some((p, ObjectKind::Object)) => cur = p,
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Whether the object at `ptr` is a class (marked `__class__`).
+fn is_class(ptr: HeapPtr) -> bool {
+    props(ptr)
+        .iter()
+        .any(|(k, v)| k == "__class__" && *v == boolean(true))
+}
+
+/// `[class C]` or `[class C extends P]`, as Node prints a class.
+fn class_summary(ptr: HeapPtr) -> String {
+    let name_of = |p: HeapPtr| match lookup(p, "name").and_then(|n| as_str(OtValue::from_bits(n))) {
+        Some(n) => n.to_string(),
+        None => "(anonymous)".to_string(),
+    };
+    let parent = props(ptr)
+        .iter()
+        .find(|(k, _)| k == "__proto__")
+        .and_then(|(_, p)| object(OtValue::from_bits(*p)))
+        .filter(|(p, kind)| *kind == ObjectKind::Object && is_class(*p));
+    match parent {
+        Some((p, _)) => format!("[class {} extends {}]", name_of(ptr), name_of(p)),
+        None => format!("[class {}]", name_of(ptr)),
+    }
+}
+
+/// The result of `new`: what the constructor returned if it is an object,
+/// otherwise `this`.
+fn construct_result(result: u64, this: u64) -> u64 {
+    if result == EXCEPTION_BITS {
+        return result;
+    }
+    match object(OtValue::from_bits(result)) {
+        Some((_, kind)) if kind != ObjectKind::String => result,
+        _ => this,
+    }
+}
+
+/// Run `ctor` (a class, or a plain function) as a constructor on `this`.
+fn run_constructor(ctor: u64, this: u64, argv: *const u64, argc: usize) -> Option<u64> {
+    let c = OtValue::from_bits(ctor);
+    let code = match object(c)? {
+        (ptr, ObjectKind::Object) if is_class(ptr) => lookup(ptr, "constructor")?,
+        (_, ObjectKind::Function) => ctor,
+        _ => return None,
+    };
+    Some(construct_result(ot_call(code, this, argv, argc), this))
+}
+
+/// `new ctor(...args)`
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_construct(ctor: u64, argv: *const u64, argc: usize) -> u64 {
+    let this = ot_alloc_object();
+    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(ctor))
+        && let Some(proto) = lookup(ptr, "prototype")
+    {
+        set_property(OtValue::from_bits(this), "__proto__", proto);
+    }
+    match run_constructor(ctor, this, argv, argc) {
+        Some(r) => r,
+        None => throw_error(
+            "TypeError",
+            &format!("{} is not a constructor", inspect(OtValue::from_bits(ctor))),
+        ),
+    }
+}
+
+/// `super(...args)`: the parent class's constructor on the current `this`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_call_super(parent: u64, this: u64, argv: *const u64, argc: usize) -> u64 {
+    match run_constructor(parent, this, argv, argc) {
+        Some(r) => r,
+        None => throw_error("TypeError", "Super constructor is not a constructor"),
+    }
+}
+
+/// `super.key`: looked up from `base`; a getter runs with `this`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_get_super_prop(this: u64, base: u64, key: *const u8, key_len: usize) -> u64 {
+    let key = unsafe { name(key, key_len) };
+    let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(base)) else {
+        return undefined();
+    };
+    match lookup(ptr, &format!("getter:{key}")) {
+        Some(g)
+            if matches!(
+                object(OtValue::from_bits(g)),
+                Some((_, ObjectKind::Function))
+            ) =>
+        {
+            ot_call(g, this, std::ptr::null(), 0)
+        }
+        _ => lookup(ptr, key).unwrap_or_else(undefined),
+    }
+}
+
+/// `#x` from a private member's key (`#x@<class>`), for messages.
+fn private_name(key: &str) -> &str {
+    key.split('@').next().unwrap_or(key)
+}
+
+/// `obj.#x`: a TypeError if the object lacks the private member.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_get_private(obj: u64, key: *const u8, key_len: usize) -> u64 {
+    let key = unsafe { name(key, key_len) };
+    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(obj))
+        && let Some(v) = lookup(ptr, key)
+    {
+        return v;
+    }
+    throw_error(
+        "TypeError",
+        &format!(
+            "Cannot read private member {} from an object whose class did not declare it",
+            private_name(key)
+        ),
+    )
+}
+
+/// `obj.#x = value`: a TypeError if the object lacks the private field.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_set_private(obj: u64, key: *const u8, key_len: usize, value: u64) -> u64 {
+    let key = unsafe { name(key, key_len) };
+    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(obj))
+        && let Some(entry) = props(ptr).iter_mut().find(|(k, _)| k == key)
+    {
+        entry.1 = value;
+        return undefined();
+    }
+    throw_error(
+        "TypeError",
+        &format!(
+            "Cannot write private member {} to an object whose class did not declare it",
+            private_name(key)
+        ),
+    )
+}
+
+/// `value instanceof ctor`: whether `ctor.prototype` is on `value`'s
+/// prototype chain. (A plain function counts as matching, as on the VM.)
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_instanceof(value: u64, ctor: u64) -> u64 {
+    let proto = match object(OtValue::from_bits(ctor)) {
+        Some((_, ObjectKind::Function)) => return boolean(true),
+        Some((ptr, ObjectKind::Object)) => lookup(ptr, "prototype"),
+        _ => None,
+    };
+    let Some(proto) = proto else {
+        return boolean(false);
+    };
+    let mut cur = OtValue::from_bits(value);
+    for _ in 0..1000 {
+        let Some((ptr, ObjectKind::Object)) = object(cur) else {
+            return boolean(false);
+        };
+        match props(ptr).iter().find(|(k, _)| k == "__proto__") {
+            Some((_, p)) if *p == proto => return boolean(true),
+            Some((_, p)) => cur = OtValue::from_bits(*p),
+            None => return boolean(false),
+        }
+    }
+    boolean(false)
+}
+
 /// Property lookup, following `__proto__`.
 fn get_property(v: OtValue, key: &str) -> u64 {
     let Some((ptr, kind)) = object(v) else {
@@ -321,6 +561,15 @@ fn get_property(v: OtValue, key: &str) -> u64 {
     };
     match kind {
         ObjectKind::Object => {
+            if HAS_ACCESSORS.with(|a| a.get())
+                && let Some(getter) = lookup(ptr, &format!("getter:{key}"))
+                && matches!(
+                    object(OtValue::from_bits(getter)),
+                    Some((_, ObjectKind::Function))
+                )
+            {
+                return ot_call(getter, v.to_bits(), std::ptr::null(), 0);
+            }
             let mut cur = ptr;
             for _ in 0..1000 {
                 let map = props(cur);
@@ -367,6 +616,18 @@ fn get_property(v: OtValue, key: &str) -> u64 {
 fn set_property(v: OtValue, key: &str, value: u64) -> u64 {
     match object(v) {
         Some((ptr, ObjectKind::Object)) => {
+            if key.starts_with("getter:") || key.starts_with("setter:") {
+                HAS_ACCESSORS.with(|a| a.set(true));
+            } else if HAS_ACCESSORS.with(|a| a.get())
+                && let Some(setter) = lookup(ptr, &format!("setter:{key}"))
+                && matches!(
+                    object(OtValue::from_bits(setter)),
+                    Some((_, ObjectKind::Function))
+                )
+            {
+                let r = ot_call(setter, v.to_bits(), &value, 1);
+                return if r == EXCEPTION_BITS { r } else { undefined() };
+            }
             let map = props(ptr);
             if let Some(entry) = map.iter_mut().find(|(k, _)| k == key) {
                 entry.1 = value;
@@ -806,10 +1067,18 @@ fn outcome(result: Result<builtins::Outcome<u64>, builtins::Error>, recv: u64) -
 /// `a + b`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_add_any(a: u64, b: u64) -> u64 {
-    let va = OtValue::from_bits(a);
-    let vb = OtValue::from_bits(b);
+    let mut va = OtValue::from_bits(a);
+    let mut vb = OtValue::from_bits(b);
     if va.is_number() && vb.is_number() {
         return number(va.as_number_unchecked() + vb.as_number_unchecked());
+    }
+    // An object with its own `valueOf` / `toString` converts through it.
+    for v in [&mut va, &mut vb] {
+        match to_primitive(*v, false) {
+            Ok(Some(p)) => *v = p,
+            Ok(None) => {}
+            Err(e) => return e,
+        }
     }
     let a_str =
         as_str(va).is_some() || matches!(object(va), Some((_, k)) if k != ObjectKind::String);
@@ -999,6 +1268,7 @@ pub extern "C" fn ot_typeof(a: u64) -> u64 {
         match object(v) {
             Some((_, ObjectKind::String)) => "string",
             Some((_, ObjectKind::Function)) => "function",
+            Some((ptr, ObjectKind::Object)) if is_class(ptr) => "function",
             _ => "object",
         }
     };
@@ -1021,31 +1291,6 @@ pub extern "C" fn ot_to_number(a: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_new_target() -> u64 {
     undefined()
-}
-
-/// `obj instanceof ctor`: is `ctor.prototype` on `obj`'s `__proto__` chain?
-#[unsafe(no_mangle)]
-pub extern "C" fn ot_instanceof(obj: u64, ctor: u64) -> u64 {
-    let proto = get_property(OtValue::from_bits(ctor), "prototype");
-    let Some(target) = OtValue::from_bits(proto).as_pointer() else {
-        return boolean(false);
-    };
-    let mut cur = OtValue::from_bits(obj);
-    for _ in 0..1000 {
-        let Some((ptr, ObjectKind::Object)) = object(cur) else {
-            break;
-        };
-        let next = props(ptr)
-            .iter()
-            .find(|(k, _)| k == "__proto__")
-            .map(|(_, v)| OtValue::from_bits(*v));
-        match next {
-            Some(p) if p.as_pointer() == Some(target) => return boolean(true),
-            Some(p) => cur = p,
-            None => break,
-        }
-    }
-    boolean(false)
 }
 
 /// Flush buffered output. Called when a native program exits.
@@ -1116,13 +1361,15 @@ fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> String {
                         .collect();
                     format!("[ {} ]", parts.join(", "))
                 }
+            } else if is_class(ptr) {
+                class_summary(ptr)
             } else if is_error(ptr) {
                 // `TypeError: message`, then any other own properties.
                 let summary = error_summary(ptr);
                 let map = props(ptr);
                 let mut keys: Vec<&(String, u64)> = map
                     .iter()
-                    .filter(|(k, _)| !k.starts_with("__") && k != "message")
+                    .filter(|(k, _)| !is_hidden_key(k) && k != "message")
                     .collect();
                 keys.sort_by(|a, b| a.0.cmp(&b.0));
                 if keys.is_empty() || too_deep {
@@ -1140,7 +1387,7 @@ fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> String {
             } else {
                 let map = props(ptr);
                 let mut keys: Vec<&(String, u64)> =
-                    map.iter().filter(|(k, _)| !k.starts_with("__")).collect();
+                    map.iter().filter(|(k, _)| !is_hidden_key(k)).collect();
                 keys.sort_by(|a, b| a.0.cmp(&b.0));
                 if keys.is_empty() {
                     "{}".to_string()
@@ -1229,10 +1476,64 @@ pub extern "C" fn ot_builtin_math(_this: u64, argv: *const u64, argc: usize, env
 
 /// `String(value)`
 pub extern "C" fn ot_builtin_string(_this: u64, argv: *const u64, argc: usize, _env: u64) -> u64 {
-    match unsafe { args(argv, argc) }.first() {
-        Some(v) => new_string(&value_to_string(OtValue::from_bits(*v))),
-        None => new_string(""),
+    let Some(v) = unsafe { args(argv, argc) }.first() else {
+        return new_string("");
+    };
+    let v = match to_primitive(OtValue::from_bits(*v), true) {
+        Ok(Some(p)) => p,
+        Ok(None) => OtValue::from_bits(*v),
+        Err(e) => return e,
+    };
+    new_string(&value_to_string(v))
+}
+
+/// `String(v)`, as in a template literal.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_to_str(v: u64) -> u64 {
+    let value = OtValue::from_bits(v);
+    if as_str(value).is_some() {
+        return v;
     }
+    let value = match to_primitive(value, true) {
+        Ok(Some(p)) => p,
+        Ok(None) => value,
+        Err(e) => return e,
+    };
+    new_string(&value_to_string(value))
+}
+
+/// JavaScript `ToPrimitive` for an object with a compiled `valueOf` or
+/// `toString` (`prefer_string`: `toString` first). `Ok(None)`: no such
+/// method; `Err`: it threw (`EXCEPTION_BITS`).
+fn to_primitive(v: OtValue, prefer_string: bool) -> Result<Option<OtValue>, u64> {
+    let Some((ptr, ObjectKind::Object)) = object(v) else {
+        return Ok(None);
+    };
+    let order = if prefer_string {
+        ["toString", "valueOf"]
+    } else {
+        ["valueOf", "toString"]
+    };
+    for name in order {
+        let Some(method) = lookup(ptr, name) else {
+            continue;
+        };
+        if !matches!(
+            object(OtValue::from_bits(method)),
+            Some((_, ObjectKind::Function))
+        ) {
+            continue;
+        }
+        let result = ot_call(method, v.to_bits(), std::ptr::null(), 0);
+        if result == EXCEPTION_BITS {
+            return Err(result);
+        }
+        let r = OtValue::from_bits(result);
+        if !matches!(object(r), Some((_, kind)) if kind != ObjectKind::String) {
+            return Ok(Some(r));
+        }
+    }
+    Ok(None)
 }
 
 /// `Date.now()`
@@ -1263,7 +1564,7 @@ pub extern "C" fn ot_builtin_object_keys(
         Some((ptr, ObjectKind::Object)) => {
             let names: Vec<String> = props(ptr)
                 .iter()
-                .filter(|(k, _)| !k.starts_with("__") && !k.starts_with('%'))
+                .filter(|(k, _)| !is_hidden_key(k))
                 .map(|(k, _)| k.clone())
                 .collect();
             for k in names {

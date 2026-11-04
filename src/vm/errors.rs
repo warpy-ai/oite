@@ -83,6 +83,71 @@ impl VM {
         false
     }
 
+    /// Whether `key` is on the object at `ptr` or its prototype chain.
+    pub fn has_prop_in_chain(&self, ptr: usize, key: &str) -> bool {
+        let mut current = ptr;
+        for _ in 0..1000 {
+            let Some(HeapObject {
+                data: HeapData::Object(props),
+            }) = self.heap.get(current)
+            else {
+                return false;
+            };
+            if props.contains_key(key) {
+                return true;
+            }
+            match props.get("__proto__") {
+                Some(JsValue::Object(p)) => current = *p,
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Whether the object at `ptr` is a class (`class C {}` evaluates to an
+    /// object marked `__class__`).
+    pub fn is_class(&self, ptr: usize) -> bool {
+        matches!(
+            self.heap.get(ptr),
+            Some(HeapObject { data: HeapData::Object(props) })
+                if matches!(props.get("__class__"), Some(JsValue::Boolean(true)))
+        )
+    }
+
+    /// `[class C]`, or `[class C extends P]`, as Node prints a class.
+    pub fn class_summary(&self, ptr: usize) -> String {
+        let name = match self.get_prop_with_proto_chain(ptr, "name") {
+            JsValue::String(s) => s,
+            _ => "(anonymous)".to_string(),
+        };
+        let parent = match self.heap.get(ptr) {
+            Some(HeapObject {
+                data: HeapData::Object(props),
+            }) => match props.get("__proto__") {
+                Some(JsValue::Object(p)) if self.is_class(*p) => {
+                    match self.get_prop_with_proto_chain(*p, "name") {
+                        JsValue::String(s) => Some(s),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        match parent {
+            Some(p) => format!("[class {name} extends {p}]"),
+            None => format!("[class {name}]"),
+        }
+    }
+
+    /// The `typeof` of a value: classes are functions.
+    pub fn typeof_value(&self, v: &JsValue) -> &'static str {
+        match v {
+            JsValue::Object(ptr) if self.is_class(*ptr) => "function",
+            other => super::js_typeof(other),
+        }
+    }
+
     /// `"TypeError: message"`, as `Error.prototype.toString` gives it.
     pub fn error_summary(&self, ptr: usize) -> String {
         let name = match self.get_prop_with_proto_chain(ptr, "name") {
@@ -183,4 +248,9 @@ pub fn to_number(v: &JsValue) -> f64 {
         }
         _ => f64::NAN,
     }
+}
+
+/// `#x` from a private member's key (`#x@<class>`), for messages.
+pub fn private_name(key: &str) -> &str {
+    key.split('@').next().unwrap_or(key)
 }

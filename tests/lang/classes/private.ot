@@ -1,0 +1,75 @@
+// backends: vm jit aot
+// Private names belong to the class that declares them.
+
+class Base {
+  #secret = "base";
+  #count = 0;
+  baseSecret() {
+    return this.#secret;
+  }
+  bump() {
+    this.#count++;
+    this.#count += 10;
+    return this.#count;
+  }
+  static peek(obj) {
+    return obj.#secret;
+  }
+}
+
+// A subclass's `#secret` is a different field.
+class Child extends Base {
+  #secret = "child";
+  childSecret() {
+    return this.#secret;
+  }
+}
+
+let c = new Child();
+console.log(c.baseSecret(), c.childSecret(), c.bump(), c.bump());
+console.log(Base.peek(c), Object.keys(c));
+
+// Reading or writing a private member an object lacks throws.
+try {
+  Base.peek({});
+} catch (e) {
+  console.log(e.name + ": " + e.message);
+}
+class Writer {
+  #v = 1;
+  static set(obj, v) {
+    obj.#v = v;
+    return obj.#v;
+  }
+}
+console.log(Writer.set(new Writer(), 5));
+try {
+  Writer.set({ v: 1 }, 2);
+} catch (e) {
+  console.log(e.name + ": " + e.message);
+}
+
+// Private methods and static private members.
+class Vault {
+  static #instances = 0;
+  #items = [];
+  constructor() {
+    Vault.#instances++;
+  }
+  add(x) {
+    if (this.#valid(x)) this.#items.push(x);
+    return this;
+  }
+  #valid(x) {
+    return x > 0;
+  }
+  get size() {
+    return this.#items.length;
+  }
+  static count() {
+    return Vault.#instances;
+  }
+}
+new Vault();
+let v = new Vault().add(1).add(-2).add(3);
+console.log(v.size, Vault.count());

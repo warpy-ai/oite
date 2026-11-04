@@ -219,8 +219,12 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
 
         // Object operations - call stubs
         IrOp::NewObject(_) => CompileStrategy::StubCall(stubs::ALLOC_OBJECT),
-        IrOp::GetProp(_, _, _) => CompileStrategy::StubCall(stubs::GET_PROP),
-        IrOp::SetProp(_, _, _) => CompileStrategy::StubCall(stubs::SET_PROP),
+        IrOp::GetProp(_, _, _) | IrOp::GetPrivate(_, _, _) => {
+            CompileStrategy::StubCall(stubs::GET_PROP)
+        }
+        IrOp::SetProp(_, _, _) | IrOp::SetPrivate(_, _, _) => {
+            CompileStrategy::StubCall(stubs::SET_PROP)
+        }
         IrOp::GetElement(_, _, _) => CompileStrategy::StubCall(stubs::GET_ELEMENT),
         IrOp::SetElement(_, _, _) => CompileStrategy::StubCall(stubs::SET_ELEMENT),
 
@@ -230,7 +234,13 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         IrOp::ArrayPush(_, _) => CompileStrategy::StubCall(stubs::CALL),    // .push method
 
         // Function operations
-        IrOp::Call(_, _, _) => CompileStrategy::StubCall(stubs::CALL),
+        IrOp::Call(_, _, _)
+        | IrOp::Construct(_, _, _)
+        | IrOp::CallSuper(_, _, _)
+        | IrOp::SuperForward(_, _)
+        | IrOp::CallWithThis(_, _, _, _)
+        | IrOp::InstanceOf(_, _, _)
+        | IrOp::GetSuperProp(_, _, _, _) => CompileStrategy::StubCall(stubs::CALL),
         IrOp::CallMethod(_, _, _, _) => CompileStrategy::StubCall(stubs::CALL),
         IrOp::MakeClosure(_, _, _) => CompileStrategy::StubCall(stubs::ALLOC_OBJECT),
 
@@ -239,6 +249,7 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         IrOp::TypeGuard(_, _, _) => CompileStrategy::Inline(InlineOp::Copy),
         IrOp::ToBool(_, _) => CompileStrategy::StubCall(stubs::TO_BOOLEAN),
         IrOp::ToNum(_, _) => CompileStrategy::StubCall(stubs::TO_NUMBER),
+        IrOp::ToStr(_, _) => CompileStrategy::StubCall(stubs::TO_NUMBER),
 
         // SSA operations
         IrOp::Phi(_, _) => CompileStrategy::NoOp, // Handled by register allocation

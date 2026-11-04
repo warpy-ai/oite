@@ -648,3 +648,14 @@ pub fn number_to_string(n: f64) -> String {
     };
     if n < 0.0 { format!("-{body}") } else { body }
 }
+
+/// Property names that `console.log` and `Object.keys` leave out: internal
+/// ones (`__proto__`, `%parent`), private fields (`#x`) and accessors
+/// (`getter:x`, `setter:x`).
+pub fn is_hidden_key(key: &str) -> bool {
+    key.starts_with("__")
+        || key.starts_with('%')
+        || key.starts_with('#')
+        || key.starts_with("getter:")
+        || key.starts_with("setter:")
+}

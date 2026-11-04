@@ -246,6 +246,11 @@ pub struct VM {
     pub total_instructions: u64,
     pub exception_handlers: Vec<ExceptionHandler>,
     pub current_exception: Option<JsValue>,
+    /// An exception that reached a `call_sync` barrier.
+    barrier_exception: Option<JsValue>,
+    /// An exception a native function throws: set instead of returning,
+    /// thrown by the VM when the function returns.
+    pub native_throw: Option<JsValue>,
     /// Report an uncaught exception and exit (the `oitec` binary) instead
     /// of panicking (embedded VMs, tests).
     pub exit_on_uncaught: bool,
@@ -301,6 +306,8 @@ impl VM {
             total_instructions: 0,
             exception_handlers: Vec::new(),
             current_exception: None,
+            barrier_exception: None,
+            native_throw: None,
             exit_on_uncaught: false,
             current_module_path: None,
             async_runtime: None,
@@ -609,39 +616,7 @@ impl VM {
     /// locations in the combined program.
     pub fn append_program(&mut self, bytecode: Vec<OpCode>) -> usize {
         let start_offset = self.program.len();
-
-        // Rebase all address-containing instructions
-        for op in bytecode {
-            let rebased_op = match op {
-                OpCode::Jump(addr) => OpCode::Jump(addr + start_offset),
-                OpCode::JumpIfFalse(addr) => OpCode::JumpIfFalse(addr + start_offset),
-                OpCode::MakeClosure(addr) => OpCode::MakeClosure(addr + start_offset),
-                OpCode::Push(JsValue::Function { address, env }) => {
-                    OpCode::Push(JsValue::Function {
-                        address: address + start_offset,
-                        env,
-                    })
-                }
-                OpCode::SetupTry {
-                    catch_addr,
-                    finally_addr,
-                } => OpCode::SetupTry {
-                    catch_addr: if catch_addr != 0 {
-                        catch_addr + start_offset
-                    } else {
-                        0
-                    },
-                    finally_addr: if finally_addr != 0 {
-                        finally_addr + start_offset
-                    } else {
-                        0
-                    },
-                },
-                other => other,
-            };
-            self.program.push(rebased_op);
-        }
-
+        self.program.extend(rebase_program(bytecode, start_offset));
         self.ip = start_offset;
         start_offset
     }
@@ -753,6 +728,93 @@ impl VM {
         }
     }
 
+    /// Run `f(args)` with `this` to completion, from inside an instruction
+    /// (implicit conversions call a user's `valueOf` / `toString`). An
+    /// exception it throws comes back as `Err`, for the caller to throw.
+    pub(crate) fn call_sync(
+        &mut self,
+        f: &JsValue,
+        this: JsValue,
+        args: Vec<JsValue>,
+    ) -> Result<JsValue, JsValue> {
+        let (address, env) = match f {
+            JsValue::Function { address, env } => (*address, *env),
+            JsValue::NativeFunction(idx) => {
+                let func = self.native_functions[*idx];
+                let result = func(self, args);
+                return match self.native_throw.take() {
+                    Some(e) => Err(e),
+                    None => Ok(result),
+                };
+            }
+            _ => return Ok(JsValue::Undefined),
+        };
+        if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
+            return Err(self.make_error("RangeError", "Maximum call stack size exceeded".into()));
+        }
+        let saved_ip = self.ip;
+        let handlers = self.exception_handlers.len();
+        self.exception_handlers.push(ExceptionHandler {
+            catch_addr: CALL_SYNC_BARRIER,
+            finally_addr: 0,
+            stack_depth: self.stack.len(),
+            call_stack_depth: self.call_stack.len(),
+        });
+        self.push_call_args(&args, address);
+        self.call_stack.push(Frame {
+            return_address: usize::MAX,
+            locals: HashMap::new(),
+            indexed_locals: Vec::new(),
+            this_context: this,
+            new_target: None,
+            super_called: false,
+            resume_ip: None,
+            env,
+        });
+        self.ip = address;
+        self.run_until_return_sentinel();
+        self.ip = saved_ip;
+        if let Some(exception) = self.barrier_exception.take() {
+            return Err(exception);
+        }
+        self.exception_handlers.truncate(handlers);
+        Ok(self.stack.pop().unwrap_or(JsValue::Undefined))
+    }
+
+    /// JavaScript `ToPrimitive` for an object with a user-defined
+    /// `valueOf` or `toString` (string hint: `toString` first). `None`: no
+    /// such method, so the value converts as before.
+    pub(crate) fn to_primitive(
+        &mut self,
+        v: &JsValue,
+        prefer_string: bool,
+    ) -> Result<Option<JsValue>, JsValue> {
+        let JsValue::Object(ptr) = v else {
+            return Ok(None);
+        };
+        if !matches!(
+            self.heap.get(*ptr).map(|o| &o.data),
+            Some(HeapData::Object(_))
+        ) {
+            return Ok(None);
+        }
+        let order = if prefer_string {
+            ["toString", "valueOf"]
+        } else {
+            ["valueOf", "toString"]
+        };
+        for name in order {
+            let method = self.get_prop_with_proto_chain(*ptr, name);
+            if matches!(method, JsValue::Function { .. }) {
+                let result = self.call_sync(&method, v.clone(), Vec::new())?;
+                if !matches!(result, JsValue::Object(_)) {
+                    return Ok(Some(result));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     fn run_until_return_sentinel(&mut self) {
         // Runs until the current frame returns to usize::MAX.
         loop {
@@ -791,6 +853,13 @@ impl VM {
             // Unwind call stack if needed
             while self.call_stack.len() > handler.call_stack_depth {
                 self.call_stack.pop();
+            }
+
+            // The barrier of a `call_sync`: hand the exception back to it.
+            if handler.catch_addr == CALL_SYNC_BARRIER {
+                self.barrier_exception = Some(exception);
+                self.ip = usize::MAX;
+                return ExecResult::Stop;
             }
 
             if handler.catch_addr != 0 {
@@ -864,26 +933,6 @@ impl VM {
         ExecResult::Continue
     }
 
-    /// The parent class of the constructor running in the current frame:
-    /// `__super__` of the class it was called for (`new_target`).
-    fn load_super(&self) -> JsValue {
-        let new_target = self
-            .call_stack
-            .last()
-            .and_then(|frame| frame.new_target.as_ref());
-        if let Some(JsValue::Object(ptr)) = new_target
-            && let Some(HeapObject {
-                data: HeapData::Object(props),
-            }) = self.heap.get(*ptr)
-        {
-            return props
-                .get("__super__")
-                .cloned()
-                .unwrap_or(JsValue::Undefined);
-        }
-        JsValue::Undefined
-    }
-
     /// `super(...args)`: run the parent constructor on the current `this`.
     /// Its frame's `new_target` is the parent class, so a `super(...)` inside
     /// it reaches the grandparent.
@@ -950,7 +999,7 @@ impl VM {
     /// arguments as given shifted every parameter whenever the counts
     /// differed (`f(1)` against `function f(a, b)` bound `b = 1`).
     fn push_call_args(&mut self, args: &[JsValue], address: usize) {
-        if matches!(self.program.get(address), Some(OpCode::SuperForward)) {
+        if matches!(self.program.get(address), Some(OpCode::ForwardArgs)) {
             self.stack.extend(args.iter().cloned());
             self.stack.push(JsValue::Number(args.len() as f64));
             return;
@@ -1435,6 +1484,9 @@ impl VM {
                         args.reverse();
                         let func = self.native_functions[idx];
                         let result = func(self, args);
+                        if let Some(e) = self.native_throw.take() {
+                            return self.throw_exception(e);
+                        }
                         self.stack.push(result);
                     }
                     JsValue::Object(ptr) => {
@@ -1448,6 +1500,9 @@ impl VM {
                                 args.reverse();
                                 let func = self.native_functions[idx];
                                 let result = func(self, args);
+                                if let Some(e) = self.native_throw.take() {
+                                    return self.throw_exception(e);
+                                }
                                 self.stack.push(result);
                             } else if let Some(JsValue::Function { address, env }) =
                                 props.get("__call__")
@@ -1511,8 +1566,17 @@ impl VM {
             }
 
             OpCode::Add => {
-                let b = self.stack.pop().unwrap_or(JsValue::Undefined);
-                let a = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let mut b = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let mut a = self.stack.pop().unwrap_or(JsValue::Undefined);
+                // An object with its own `valueOf` / `toString` converts
+                // through it first.
+                for v in [&mut a, &mut b] {
+                    match self.to_primitive(v, false) {
+                        Ok(Some(p)) => *v = p,
+                        Ok(None) => {}
+                        Err(e) => return self.throw_exception(e),
+                    }
+                }
                 let result = match (a, b) {
                     (JsValue::Number(x), JsValue::Number(y)) => JsValue::Number(x + y),
                     (JsValue::String(mut x), JsValue::String(y)) => {
@@ -1588,10 +1652,20 @@ impl VM {
                 }
             }
 
+            OpCode::ToStr => {
+                let v = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let v = match self.to_primitive(&v, true) {
+                    Ok(Some(p)) => p,
+                    Ok(None) => v,
+                    Err(e) => return self.throw_exception(e),
+                };
+                self.stack.push(JsValue::String(self.to_js_string(&v)));
+            }
+
             OpCode::TypeOf => {
                 let val = self.stack.pop().unwrap_or(JsValue::Undefined);
                 self.stack
-                    .push(JsValue::String(js_typeof(&val).to_string()));
+                    .push(JsValue::String(self.typeof_value(&val).to_string()));
             }
 
             OpCode::TypeOfName(name) => {
@@ -1601,7 +1675,8 @@ impl VM {
                     .last()
                     .and_then(|f| f.locals.get(&name))
                     .or_else(|| self.call_stack[0].locals.get(&name))
-                    .map_or("undefined", js_typeof);
+                    .cloned();
+                let type_str = type_str.map_or("undefined", |v| self.typeof_value(&v));
                 self.stack.push(JsValue::String(type_str.to_string()));
             }
 
@@ -2698,6 +2773,9 @@ impl VM {
                             args.reverse();
                             let func = self.native_functions[idx];
                             let result = func(self, args);
+                            if let Some(e) = self.native_throw.take() {
+                                return self.throw_exception(e);
+                            }
                             self.stack.push(result);
                             // Increment IP before returning since we return early
                             self.ip += 1;
@@ -2866,11 +2944,6 @@ impl VM {
                 }
             }
 
-            OpCode::LoadSuper => {
-                let super_val = self.load_super();
-                self.stack.push(super_val);
-            }
-
             OpCode::CallSuper(arg_count) => {
                 // Stack: [args..., super_constructor]
                 let super_ctor = self.stack.pop().unwrap_or(JsValue::Undefined);
@@ -2878,184 +2951,128 @@ impl VM {
                 return self.call_super(super_ctor, args);
             }
 
+            OpCode::ForwardArgs => {}
+
             OpCode::SuperForward => {
-                // Stack: [args..., count]
+                // Stack: [args..., count, parent]
+                let super_ctor = self.stack.pop().unwrap_or(JsValue::Undefined);
                 let count = match self.stack.pop() {
                     Some(JsValue::Number(n)) => n as usize,
                     _ => 0,
                 };
                 let args = self.pop_args(count);
-                let super_ctor = self.load_super();
                 return self.call_super(super_ctor, args);
             }
 
+            OpCode::GetPrivate(key) => {
+                let target = self.stack.pop().unwrap_or(JsValue::Undefined);
+                match target {
+                    JsValue::Object(ptr) if self.has_prop_in_chain(ptr, &key) => {
+                        let value = self.get_prop_with_proto_chain(ptr, &key);
+                        self.stack.push(value);
+                    }
+                    _ => {
+                        let name = errors::private_name(&key);
+                        return self.throw_error(
+                            "TypeError",
+                            format!(
+                                "Cannot read private member {name} from an object whose class did not declare it"
+                            ),
+                        );
+                    }
+                }
+            }
+
+            OpCode::SetPrivate(key) => {
+                let value = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let target = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let owned = match target {
+                    JsValue::Object(ptr) => match self.heap.get_mut(ptr) {
+                        Some(HeapObject {
+                            data: HeapData::Object(props),
+                        }) if props.contains_key(&key) => {
+                            props.insert(key.clone(), value);
+                            true
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                if !owned {
+                    let name = errors::private_name(&key);
+                    return self.throw_error(
+                        "TypeError",
+                        format!(
+                            "Cannot write private member {name} to an object whose class did not declare it"
+                        ),
+                    );
+                }
+            }
+
             OpCode::GetSuperProp(name) => {
-                // Get property from super's prototype
-                // Stack: [] -> [property_value]
-                // For super.prop, we look up the property on the parent class's prototype
-                // We get the parent class from the current frame's context or prototype chain
-
-                // Try to get __super__ from new_target first (for super() calls in constructors)
-                let super_obj = self
-                    .call_stack
-                    .last()
-                    .and_then(|frame| frame.new_target.as_ref())
-                    .and_then(|wrapper| {
-                        if let JsValue::Object(ptr) = wrapper {
-                            self.heap.get(*ptr).and_then(|obj| {
-                                if let HeapData::Object(props) = &obj.data {
-                                    props.get("__super__").cloned()
-                                } else {
-                                    None
-                                }
-                            })
-                        } else {
-                            None
-                        }
+                // Stack: [this, base]
+                let base = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let this = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let JsValue::Object(ptr) = base else {
+                    self.stack.push(JsValue::Undefined);
+                    self.ip += 1;
+                    return ExecResult::Continue;
+                };
+                let getter = self.get_prop_with_proto_chain(ptr, &format!("getter:{}", name));
+                if let JsValue::Function { address, env } = getter {
+                    self.call_stack.push(Frame {
+                        return_address: self.ip + 1,
+                        locals: HashMap::new(),
+                        indexed_locals: Vec::new(),
+                        this_context: this,
+                        new_target: None,
+                        super_called: false,
+                        resume_ip: None,
+                        env,
                     });
-
-                // If new_target doesn't have __super__, try to get it from this_context's prototype chain
-                let prop_val = if let Some(JsValue::Object(super_ptr)) = super_obj {
-                    // Look for the property on the parent's prototype
-                    let proto = {
-                        if let Some(HeapObject {
-                            data: HeapData::Object(props),
-                        }) = self.heap.get(super_ptr)
-                        {
-                            props.get("prototype").cloned()
-                        } else {
-                            None
-                        }
-                    };
-
-                    if let Some(JsValue::Object(proto_ptr)) = proto {
-                        self.get_prop_with_proto_chain(proto_ptr, &name)
-                    } else {
-                        self.get_prop_with_proto_chain(super_ptr, &name)
-                    }
-                } else {
-                    // Fallback: use this_context's prototype chain
-                    // This handles super.prop() calls in methods where new_target is not set
-                    let this_context = self.call_stack.last().map(|frame| &frame.this_context);
-
-                    if let Some(JsValue::Object(this_ptr)) = this_context {
-                        // Walk up the prototype chain to find the property
-                        self.get_prop_with_proto_chain(*this_ptr, &name)
-                    } else {
-                        JsValue::Undefined
-                    }
-                };
-
-                self.stack.push(prop_val);
+                    self.ip = address;
+                    return ExecResult::ContinueNoIpInc;
+                }
+                let value = self.get_prop_with_proto_chain(ptr, &name);
+                self.stack.push(value);
             }
 
-            // === Private fields ===
-            OpCode::GetPrivateProp(field_index) => {
-                // Stack: [this] -> pops this, looks up private field, pushes value
-                let this_val = self.stack.pop().expect("GetPrivateProp: missing this");
-
-                let field_value = match &this_val {
-                    JsValue::Object(this_ptr) => {
-                        // Get the private field storage from the instance
-                        // We store "__private_storage__" on each instance pointing to the class's storage
-                        let private_storage_ptr = if let Some(HeapObject {
-                            data: HeapData::Object(props),
-                        }) = self.heap.get(*this_ptr)
-                        {
-                            props.get("__private_storage__").cloned()
-                        } else {
-                            None
-                        };
-
-                        // Look up the private field in the class's private storage
-                        if let Some(JsValue::Object(storage_ptr)) = private_storage_ptr {
-                            if let Some(HeapObject {
-                                data: HeapData::Array(field_map),
-                            }) = self.heap.get(storage_ptr)
-                            {
-                                // Each entry is a WeakMap for one private field
-                                if field_index >= field_map.len() {
-                                    JsValue::Undefined
-                                } else if let Some(JsValue::Object(weakmap_ptr)) =
-                                    field_map.get(field_index)
-                                {
-                                    // Look up this instance in the WeakMap
-                                    // For simplicity, we use a regular Map since Rust's
-                                    // WeakMap equivalent isn't available in our VM
-                                    if let Some(HeapObject {
-                                        data: HeapData::Object(field_map),
-                                    }) = self.heap.get(*weakmap_ptr)
-                                    {
-                                        let key = this_ptr.to_string();
-                                        field_map.get(&key).cloned().unwrap_or(JsValue::Undefined)
-                                    } else {
-                                        JsValue::Undefined
-                                    }
-                                } else {
-                                    JsValue::Undefined
-                                }
-                            } else {
-                                JsValue::Undefined
-                            }
-                        } else {
-                            JsValue::Undefined
+            OpCode::CallWithThis(arg_count) => {
+                // Stack: [args..., f, this]
+                let this = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let callee = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let args = self.pop_args(arg_count);
+                match callee {
+                    JsValue::Function { address, env } => {
+                        if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
+                            return self
+                                .throw_error("RangeError", "Maximum call stack size exceeded");
                         }
+                        self.push_call_args(&args, address);
+                        self.call_stack.push(Frame {
+                            return_address: self.ip + 1,
+                            locals: HashMap::new(),
+                            indexed_locals: Vec::new(),
+                            this_context: this,
+                            new_target: None,
+                            super_called: false,
+                            resume_ip: None,
+                            env,
+                        });
+                        self.ip = address;
+                        return ExecResult::ContinueNoIpInc;
                     }
-                    _ => JsValue::Undefined,
-                };
-
-                self.stack.push(field_value);
-            }
-
-            OpCode::SetPrivateProp(field_index) => {
-                // Stack: [value, this] -> pops both, sets private field
-                let value = self.stack.pop().expect("SetPrivateProp: missing value");
-                let this_val = self.stack.pop().expect("SetPrivateProp: missing this");
-
-                if let JsValue::Object(this_ptr) = this_val {
-                    // Get the private field storage info first (before any mutable borrows)
-                    let weakmap_ptr = {
-                        // Get the private field storage from the instance
-                        let private_storage_ptr = if let Some(HeapObject {
-                            data: HeapData::Object(props),
-                        }) = self.heap.get(this_ptr)
-                        {
-                            props.get("__private_storage__").cloned()
-                        } else {
-                            None
-                        };
-
-                        if let Some(JsValue::Object(storage_ptr)) = private_storage_ptr {
-                            if let Some(HeapObject {
-                                data: HeapData::Array(field_map),
-                            }) = self.heap.get(storage_ptr)
-                            {
-                                if field_index < field_map.len() {
-                                    if let Some(JsValue::Object(w_ptr)) = field_map.get(field_index)
-                                    {
-                                        Some(*w_ptr)
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
+                    JsValue::NativeFunction(idx) => {
+                        let func = self.native_functions[idx];
+                        let result = func(self, args);
+                        if let Some(e) = self.native_throw.take() {
+                            return self.throw_exception(e);
                         }
-                    };
-
-                    // Now do the mutable operation
-                    if let Some(w_ptr) = weakmap_ptr {
-                        let key = this_ptr.to_string();
-                        if let Some(heap_item) = self.heap.get_mut(w_ptr)
-                            && let HeapData::Object(field_map) = &mut heap_item.data
-                        {
-                            field_map.insert(key, value);
-                        }
+                        self.stack.push(result);
+                    }
+                    other => {
+                        let shown = crate::stdlib::inspect(self, &other);
+                        return self.throw_error("TypeError", format!("{shown} is not a function"));
                     }
                 }
             }
@@ -3134,48 +3151,6 @@ impl VM {
                     .and_then(|frame| frame.new_target.clone())
                     .unwrap_or(JsValue::Undefined);
                 self.stack.push(new_target);
-            }
-
-            OpCode::ApplyDecorator => {
-                // Apply a decorator to a target (class, method, or field: [decorator, target] ->)
-                // Stack [decorated]
-                // The decorator is called as: decorator(target)
-                // NOTE: Stack order is [wrapper, decorator] (wrapper at bottom, decorator on top)
-                // So first pop gets decorator, second pop gets target
-                let decorator = self.stack.pop().expect("ApplyDecorator: missing decorator");
-                let target = self.stack.pop().expect("ApplyDecorator: missing target");
-
-                match decorator {
-                    JsValue::Function { address, env } => {
-                        // Clone target for use in the frame
-                        let target_for_frame = target.clone();
-
-                        // Call the decorator function with the target
-                        // Stack should be: [decorator, target] -> Call(1) pops target as arg, decorator as callee
-                        self.stack.push(decorator);
-                        self.stack.push(target);
-
-                        // Create a frame for the decorator call
-                        let frame = Frame {
-                            return_address: self.ip + 1,
-                            locals: HashMap::new(),
-                            indexed_locals: Vec::new(),
-                            this_context: target_for_frame.clone(),
-                            new_target: Some(target_for_frame),
-                            super_called: false,
-                            resume_ip: None,
-                            env,
-                        };
-
-                        self.call_stack.push(frame);
-                        self.ip = address;
-                        return ExecResult::ContinueNoIpInc;
-                    }
-                    _ => {
-                        // If decorator is not a function, return target unchanged
-                        self.stack.push(target);
-                    }
-                }
             }
 
             OpCode::ImportAsync(_specifier) => {
@@ -3514,6 +3489,36 @@ impl crate::runtime::builtins::Host for VmHost<'_> {
 }
 
 /// JavaScript `ToInt32`: the integer the bitwise operators work on.
+/// `catch_addr` of the exception handler a `call_sync` installs.
+const CALL_SYNC_BARRIER: usize = usize::MAX;
+
+/// `bytecode` moved to start at `offset`: every instruction address in it
+/// (jumps, functions, handlers) shifted by `offset`.
+pub fn rebase_program(bytecode: Vec<OpCode>, offset: usize) -> Vec<OpCode> {
+    let shift = |addr: usize| if addr != 0 { addr + offset } else { 0 };
+    bytecode
+        .into_iter()
+        .map(|op| match op {
+            OpCode::Jump(addr) => OpCode::Jump(addr + offset),
+            OpCode::JumpIfFalse(addr) => OpCode::JumpIfFalse(addr + offset),
+            OpCode::MakeClosure(addr) => OpCode::MakeClosure(addr + offset),
+            OpCode::Push(JsValue::Function { address, env }) => OpCode::Push(JsValue::Function {
+                address: address + offset,
+                env,
+            }),
+            // 0 means "none".
+            OpCode::SetupTry {
+                catch_addr,
+                finally_addr,
+            } => OpCode::SetupTry {
+                catch_addr: shift(catch_addr),
+                finally_addr: shift(finally_addr),
+            },
+            other => other,
+        })
+        .collect()
+}
+
 /// The `typeof` of a value.
 fn js_typeof(v: &JsValue) -> &'static str {
     match v {

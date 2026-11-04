@@ -484,6 +484,27 @@ pub enum IrOp {
     /// End of a `finally`: `rethrow(thrown, value)` throws `value` again if
     /// `thrown` is true (the `finally` was entered by an exception).
     Rethrow(ValueId, ValueId),
+
+    // ========================================================================
+    // Classes
+    // ========================================================================
+    /// `new ctor(args)`
+    Construct(ValueId, ValueId, Vec<ValueId>),
+    /// `super(args)`: the parent class's constructor on this `this`.
+    CallSuper(ValueId, ValueId, Vec<ValueId>),
+    /// An implicit constructor's `super(...args)`: the parent's constructor
+    /// with this function's own arguments.
+    SuperForward(ValueId, ValueId),
+    /// `f(args)` with an explicit `this`: (dst, f, this, args).
+    CallWithThis(ValueId, ValueId, ValueId, Vec<ValueId>),
+    /// `value instanceof ctor`
+    InstanceOf(ValueId, ValueId, ValueId),
+    /// `super.name`: (dst, this, base, name); a getter runs with `this`.
+    GetSuperProp(ValueId, ValueId, ValueId, String),
+    /// `obj.#x`: throws if the object lacks the private member.
+    GetPrivate(ValueId, ValueId, String),
+    /// `obj.#x = value`: throws if the object lacks the private field.
+    SetPrivate(ValueId, String, ValueId),
     /// Store global by name: globals[name] = src
     StoreGlobal(String, ValueId),
 
@@ -524,6 +545,8 @@ pub enum IrOp {
     ToBool(ValueId, ValueId),
     /// Convert to number: dst = ToNumber(val)
     ToNum(ValueId, ValueId),
+    /// `String(v)`: an object's own `toString` converts it (may throw).
+    ToStr(ValueId, ValueId),
     /// TypeOf operator: dst = typeof(val) as string
     TypeOf(ValueId, ValueId),
     /// Delete property: dst = delete obj.prop (returns bool)
@@ -583,6 +606,8 @@ impl IrOp {
         matches!(
             self,
             IrOp::LoadGlobal(_, _)
+                | IrOp::AddAny(_, _, _)
+                | IrOp::ToStr(_, _)
                 | IrOp::GetProp(_, _, _)
                 | IrOp::SetProp(_, _, _)
                 | IrOp::GetElement(_, _, _)
@@ -593,6 +618,14 @@ impl IrOp {
                 | IrOp::CallMethod(_, _, _, _)
                 | IrOp::Throw(_)
                 | IrOp::Rethrow(_, _)
+                | IrOp::Construct(_, _, _)
+                | IrOp::CallSuper(_, _, _)
+                | IrOp::SuperForward(_, _)
+                | IrOp::CallWithThis(_, _, _, _)
+                | IrOp::InstanceOf(_, _, _)
+                | IrOp::GetSuperProp(_, _, _, _)
+                | IrOp::GetPrivate(_, _, _)
+                | IrOp::SetPrivate(_, _, _)
         )
     }
 
@@ -635,16 +668,24 @@ impl IrOp {
             | IrOp::TypeOfGlobal(d, _)
             | IrOp::NewObject(d)
             | IrOp::GetProp(d, _, _)
+            | IrOp::GetPrivate(d, _, _)
             | IrOp::GetElement(d, _, _)
             | IrOp::NewArray(d)
             | IrOp::ArrayLen(d, _)
             | IrOp::Call(d, _, _)
+            | IrOp::Construct(d, _, _)
+            | IrOp::CallSuper(d, _, _)
+            | IrOp::SuperForward(d, _)
+            | IrOp::CallWithThis(d, _, _, _)
+            | IrOp::InstanceOf(d, _, _)
+            | IrOp::GetSuperProp(d, _, _, _)
             | IrOp::CallMethod(d, _, _, _)
             | IrOp::MakeClosure(d, _, _)
             | IrOp::TypeCheck(d, _, _)
             | IrOp::TypeGuard(d, _, _)
             | IrOp::ToBool(d, _)
             | IrOp::ToNum(d, _)
+            | IrOp::ToStr(d, _)
             | IrOp::Phi(d, _)
             | IrOp::Copy(d, _)
             | IrOp::LoadThis(d)
@@ -670,6 +711,7 @@ impl IrOp {
             IrOp::StoreLocal(_, _)
             | IrOp::StoreGlobal(_, _)
             | IrOp::SetProp(_, _, _)
+            | IrOp::SetPrivate(_, _, _)
             | IrOp::SetElement(_, _, _)
             | IrOp::ArrayPush(_, _)
             // Borrow operations without dest
@@ -722,6 +764,7 @@ impl IrOp {
             | IrOp::Not(_, a)
             | IrOp::ToBool(_, a)
             | IrOp::ToNum(_, a)
+            | IrOp::ToStr(_, a)
             | IrOp::Copy(_, a)
             | IrOp::ArrayLen(_, a)
             | IrOp::TypeCheck(_, a, _)
@@ -748,8 +791,8 @@ impl IrOp {
             // Struct new
             IrOp::StructNew(_, _) => vec![],
 
-            IrOp::GetProp(_, obj, _) => vec![*obj],
-            IrOp::SetProp(obj, _, val) => vec![*obj, *val],
+            IrOp::GetProp(_, obj, _) | IrOp::GetPrivate(_, obj, _) => vec![*obj],
+            IrOp::SetProp(obj, _, val) | IrOp::SetPrivate(obj, _, val) => vec![*obj, *val],
             IrOp::TypeOf(_, val) => vec![*val],
             IrOp::DeleteProp(_, obj, _) => vec![*obj],
             IrOp::GetElement(_, obj, key) => vec![*obj, *key],
@@ -762,11 +805,21 @@ impl IrOp {
             IrOp::StructSetField(dst, _, val) => vec![*dst, *val],
             IrOp::StructSetFieldNamed(dst, _, val) => vec![*dst, *val],
 
-            IrOp::Call(_, func, args) => {
+            IrOp::Call(_, func, args)
+            | IrOp::Construct(_, func, args)
+            | IrOp::CallSuper(_, func, args) => {
                 let mut uses = vec![*func];
                 uses.extend(args.iter().copied());
                 uses
             }
+            IrOp::CallWithThis(_, func, this, args) => {
+                let mut uses = vec![*func, *this];
+                uses.extend(args.iter().copied());
+                uses
+            }
+            IrOp::SuperForward(_, parent) => vec![*parent],
+            IrOp::InstanceOf(_, v, c) => vec![*v, *c],
+            IrOp::GetSuperProp(_, this, base, _) => vec![*this, *base],
             IrOp::CallMethod(_, obj, _, args) => {
                 let mut uses = vec![*obj];
                 uses.extend(args.iter().copied());
@@ -1259,6 +1312,10 @@ impl fmt::Display for IrOp {
             IrOp::NewObject(d) => write!(f, "{} = new.object", d),
             IrOp::GetProp(d, obj, name) => write!(f, "{} = get.prop {}, .{}", d, obj, name),
             IrOp::SetProp(obj, name, val) => write!(f, "set.prop {}, .{}, {}", obj, name, val),
+            IrOp::GetPrivate(d, obj, name) => write!(f, "{} = get.private {}, .{}", d, obj, name),
+            IrOp::SetPrivate(obj, name, val) => {
+                write!(f, "set.private {}, .{}, {}", obj, name, val)
+            }
             IrOp::GetElement(d, obj, key) => write!(f, "{} = get.elem {}, [{}]", d, obj, key),
             IrOp::SetElement(obj, key, val) => write!(f, "set.elem {}, [{}], {}", obj, key, val),
             IrOp::NewArray(d) => write!(f, "{} = new.array", d),
@@ -1267,6 +1324,30 @@ impl fmt::Display for IrOp {
             IrOp::Call(d, func, args) => {
                 let args_str: Vec<_> = args.iter().map(|a| format!("{}", a)).collect();
                 write!(f, "{} = call {}({})", d, func, args_str.join(", "))
+            }
+            IrOp::Construct(d, func, args) => {
+                let args_str: Vec<_> = args.iter().map(|a| format!("{}", a)).collect();
+                write!(f, "{} = new {}({})", d, func, args_str.join(", "))
+            }
+            IrOp::CallSuper(d, parent, args) => {
+                let args_str: Vec<_> = args.iter().map(|a| format!("{}", a)).collect();
+                write!(f, "{} = call.super {}({})", d, parent, args_str.join(", "))
+            }
+            IrOp::SuperForward(d, parent) => write!(f, "{} = call.super {}(...)", d, parent),
+            IrOp::CallWithThis(d, func, this, args) => {
+                let args_str: Vec<_> = args.iter().map(|a| format!("{}", a)).collect();
+                write!(
+                    f,
+                    "{} = call {}[this={}]({})",
+                    d,
+                    func,
+                    this,
+                    args_str.join(", ")
+                )
+            }
+            IrOp::InstanceOf(d, v, c) => write!(f, "{} = instanceof {}, {}", d, v, c),
+            IrOp::GetSuperProp(d, this, base, name) => {
+                write!(f, "{} = get.super {}.{} [this={}]", d, base, name, this)
             }
             IrOp::CallMethod(d, obj, method, args) => {
                 let args_str: Vec<_> = args.iter().map(|a| format!("{}", a)).collect();
@@ -1286,6 +1367,7 @@ impl fmt::Display for IrOp {
             IrOp::TypeGuard(d, v, ty) => write!(f, "{} = typeguard {}, {}", d, v, ty),
             IrOp::ToBool(d, v) => write!(f, "{} = to.bool {}", d, v),
             IrOp::ToNum(d, v) => write!(f, "{} = to.num {}", d, v),
+            IrOp::ToStr(d, v) => write!(f, "{} = to.str {}", d, v),
             IrOp::Phi(d, entries) => {
                 let entries_str: Vec<_> = entries
                     .iter()

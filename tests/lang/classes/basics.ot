@@ -1,0 +1,119 @@
+// backends: vm jit aot
+// Classes: constructors, methods, `this`, fields, statics, accessors.
+
+class Point {
+  x = 0;
+  y = 0;
+  constructor(x, y = 10) {
+    this.x = x;
+    this.y = y;
+  }
+  add(other) {
+    return new Point(this.x + other.x, this.y + other.y);
+  }
+  toString() {
+    return "(" + this.x + ", " + this.y + ")";
+  }
+  // A method without `return` results in undefined.
+  nothing() {}
+  static origin() {
+    return new Point(0, 0);
+  }
+}
+let p = new Point(1, 2).add(new Point(3));
+console.log(p.x, p.y, p.toString(), p.nothing());
+console.log(Point.origin().toString(), typeof Point, typeof p, typeof p.add);
+
+// Field initializers run before the constructor body, in order, and see
+// `this` and the constructor's scope.
+let created = 0;
+class Counter {
+  count = 0;
+  id = ++created;
+  label = "counter " + this.id;
+  constructor(start) {
+    this.count = this.count + start;
+  }
+  increment(by = 1) {
+    this.count += by;
+    return this;
+  }
+}
+let c = new Counter(5).increment().increment(10);
+console.log(c.count, c.id, c.label, new Counter(0).label);
+
+// Static fields and methods live on the class.
+class Config {
+  static version = 3;
+  static name2 = "cfg";
+  static describe() {
+    return this.name2 + " v" + this.version;
+  }
+}
+Config.version++;
+console.log(Config.version, Config.describe());
+
+// Getters and setters.
+class Temperature {
+  celsius = 0;
+  get fahrenheit() {
+    return this.celsius * 9 / 5 + 32;
+  }
+  set fahrenheit(f) {
+    this.celsius = (f - 32) * 5 / 9;
+  }
+  static get unit() {
+    return "C";
+  }
+}
+let t = new Temperature();
+t.fahrenheit = 212;
+console.log(t.celsius, t.fahrenheit, Temperature.unit);
+
+// Private fields and methods.
+class Account {
+  #balance = 0;
+  #log = [];
+  deposit(n) {
+    this.#check(n);
+    this.#balance += n;
+    this.#log.push("+" + n);
+    return this;
+  }
+  #check(n) {
+    if (n <= 0) throw "invalid amount " + n;
+  }
+  get balance() {
+    return this.#balance;
+  }
+  history() {
+    return this.#log.join(" ");
+  }
+}
+let a = new Account().deposit(10).deposit(5);
+console.log(a.balance, a.history(), Object.keys(a));
+try {
+  a.deposit(-1);
+} catch (e) {
+  console.log(e);
+}
+
+// Methods are shared through the prototype; instances have their own fields.
+let p1 = new Point(1, 1);
+let p2 = new Point(2, 2);
+console.log(p1.add === p2.add, p1.x != p2.x, p1 instanceof Point, {} instanceof Point);
+
+// A constructor that returns an object replaces `this`.
+class Factory {
+  constructor(kind) {
+    if (kind == "plain") return { made: "plain" };
+    this.made = "instance";
+  }
+}
+console.log(new Factory("plain").made, new Factory("x").made);
+
+// `new` on a plain function.
+function Legacy(v) {
+  this.v = v;
+}
+console.log(new Legacy(7).v);

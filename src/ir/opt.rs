@@ -462,6 +462,7 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
         | IrOp::Not(_, a)
         | IrOp::ToBool(_, a)
         | IrOp::ToNum(_, a)
+        | IrOp::ToStr(_, a)
         | IrOp::Copy(_, a)
         | IrOp::ArrayLen(_, a)
         | IrOp::TypeCheck(_, a, _)
@@ -487,11 +488,11 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
             resolve(v);
         }
 
-        IrOp::GetProp(_, obj, _) => {
+        IrOp::GetProp(_, obj, _) | IrOp::GetPrivate(_, obj, _) => {
             resolve(obj);
         }
 
-        IrOp::SetProp(obj, _, val) => {
+        IrOp::SetProp(obj, _, val) | IrOp::SetPrivate(obj, _, val) => {
             resolve(obj);
             resolve(val);
         }
@@ -512,11 +513,29 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
             resolve(val);
         }
 
-        IrOp::Call(_, func_val, args) => {
+        IrOp::Call(_, func_val, args)
+        | IrOp::Construct(_, func_val, args)
+        | IrOp::CallSuper(_, func_val, args) => {
             resolve(func_val);
             for arg in args {
                 resolve(arg);
             }
+        }
+        IrOp::CallWithThis(_, func_val, this, args) => {
+            resolve(func_val);
+            resolve(this);
+            for arg in args {
+                resolve(arg);
+            }
+        }
+        IrOp::SuperForward(_, parent) => resolve(parent),
+        IrOp::InstanceOf(_, v, c) => {
+            resolve(v);
+            resolve(c);
+        }
+        IrOp::GetSuperProp(_, this, base, _) => {
+            resolve(this);
+            resolve(base);
         }
 
         IrOp::CallMethod(_, obj, _, args) => {

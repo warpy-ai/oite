@@ -1,0 +1,33 @@
+// backends: vm jit aot
+// Class decorators: `C = decorator(C)`, innermost first; a decorator that
+// returns undefined keeps the class.
+let log = [];
+function register(cls) {
+  log.push("register " + cls.name);
+}
+function sealed(cls) {
+  log.push("sealed " + cls.name);
+  cls.sealed = true;
+  return cls;
+}
+function withVersion(v) {
+  return function (cls) {
+    log.push("version " + v);
+    cls.version = v;
+  };
+}
+function replace(cls) {
+  return class Replacement {
+    describe() { return "replaced " + cls.name; }
+  };
+}
+
+@register
+@sealed
+@withVersion(2)
+class Service {}
+
+@replace
+class Original {}
+
+console.log(log, Service.sealed, Service.version, new Original().describe());

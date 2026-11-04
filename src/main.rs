@@ -150,6 +150,28 @@ fn load_core(vm: &mut VM, compiler: &mut Compiler) {
     vm.run_until_halt();
 }
 
+/// A program for native code: the core library (the error classes) runs
+/// first, as on the VM, then `bytecode`.
+fn with_core(
+    compiler: &mut Compiler,
+    bytecode: Vec<vm::opcodes::OpCode>,
+) -> Vec<vm::opcodes::OpCode> {
+    let mut program = match compiler.compile(vm::errors::CORE_ERRORS) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("Failed to compile the core library: {}", e);
+            std::process::exit(1);
+        }
+    };
+    // It falls through into the program instead of halting.
+    if matches!(program.last(), Some(vm::opcodes::OpCode::Halt)) {
+        program.pop();
+    }
+    let offset = program.len();
+    program.extend(vm::rebase_program(bytecode, offset));
+    program
+}
+
 /// Load and run a pre-compiled bytecode file
 fn run_binary_file(vm: &mut VM, path: &str) -> Result<(), String> {
     let bytes =
@@ -559,6 +581,7 @@ fn run_jit(filename: &str) {
     }
 
     // Lower to SSA IR (using lower_module to extract all functions)
+    let bytecode = with_core(&mut compiler, bytecode);
     match ir::lower::lower_module(&bytecode) {
         Ok(mut module) => {
             // Show extracted functions
@@ -941,6 +964,7 @@ fn build_file(args: &[String]) {
         };
 
         // Lower to SSA IR
+        let bytecode = with_core(&mut compiler, bytecode);
         let mut module = match ir::lower::lower_module(&bytecode) {
             Ok(m) => m,
             Err(e) => {

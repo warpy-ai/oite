@@ -46,6 +46,9 @@ pub enum OpCode {
     /// `typeof name` for a plain variable: like `Load(name)` then `TypeOf`,
     /// except that an unbound name gives "undefined" instead of throwing.
     TypeOfName(String),
+    /// `String(v)`, as in a template literal: an object's own `toString`
+    /// (or `valueOf`) converts it. [v] -> [string]
+    ToStr,
     Delete(String),  // delete operator - removes property from object
     NewArray(usize), // Creates array of size N
     StoreElement,    // Pops index, value, and array_ptr -> arr[idx] = val
@@ -113,23 +116,28 @@ pub enum OpCode {
     // === Class inheritance ===
     /// Set the __proto__ of an object: pops [obj, proto] -> sets obj.__proto__ = proto, pushes obj
     SetProto,
-    /// Load the super constructor: reads __super__ from current frame, pushes it
-    LoadSuper,
-    /// Call super constructor: pops [args...] and calls __super__ with current this context
+    /// `super(args)`: run the parent class's constructor on the current
+    /// `this`. [args..., parent] -> [this]
     CallSuper(usize),
-    /// First instruction of a derived class's implicit constructor: call the
-    /// super constructor with every argument. The caller pushes all the
-    /// arguments, then their count: [args..., count] -> [result]
+    /// First instruction of a derived class's implicit constructor: its
+    /// caller passes every argument, then their count. A no-op itself.
+    ForwardArgs,
+    /// The implicit constructor's `super(...args)`.
+    /// [args..., count, parent] -> [this]
     SuperForward,
-    /// Get property from super's prototype: pops super object, pushes property value
+    /// `f.call(this, args)`: call with an explicit `this` (`super.m(args)`).
+    /// [args..., f, this] -> [result]
+    CallWithThis(usize),
+    /// `obj.#x`: like `GetProp`, but an object without the private member
+    /// throws a TypeError. [obj] -> [value]
+    GetPrivate(String),
+    /// `obj.#x = value`: the object must have the private field.
+    /// [obj, value] -> []
+    SetPrivate(String),
+    /// `super.name`: `name` looked up from `base` (the parent's prototype,
+    /// or the parent in a static method); a getter runs with `this`.
+    /// [this, base] -> [value]
     GetSuperProp(String),
-
-    // === Private fields ===
-    /// Get a private field: pops `this` from stack, looks up field in class's private storage,
-    /// pushes the field value. The index refers to the class's private field descriptor.
-    GetPrivateProp(usize),
-    /// Set a private field: pops value and `this` from stack, sets field in class's private storage.
-    SetPrivateProp(usize),
 
     // === instanceof ===
     /// InstanceOf: pops constructor and object, checks if constructor.prototype is in object's prototype chain
@@ -139,12 +147,6 @@ pub enum OpCode {
     /// NewTarget: pushes the constructor that was called with new (stored in frame)
     /// This implements the ES6 new.target meta-property
     NewTarget,
-
-    // === Decorators ===
-    /// ApplyDecorator: applies a decorator to a class, method, or field
-    /// Stack: [target, decorator] -> [decorated_target]
-    /// The decorator is called with the target and returns the decorated result
-    ApplyDecorator,
 
     // === ES Modules ===
     /// ImportAsync: Asynchronously load a module

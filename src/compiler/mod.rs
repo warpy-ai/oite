@@ -1,4 +1,5 @@
 use crate::vm::opcodes::OpCode;
+use std::collections::HashMap;
 use swc_ecma_ast::*;
 pub mod borrow_ck;
 pub mod scope;
@@ -235,6 +236,25 @@ struct ControlState {
     pending_labels: Vec<String>,
 }
 
+/// An instance field: its property name (`#x` for a private one) and its
+/// initializer.
+type ClassField = (String, Option<Box<Expr>>);
+
+/// What a function body belongs to; it decides the implicit result and
+/// what runs before the body.
+#[derive(Clone, Copy, PartialEq)]
+enum FnKind {
+    Plain,
+    Method {
+        is_static: bool,
+    },
+    /// A class constructor (`implicit`: the class declares none).
+    Ctor {
+        derived: bool,
+        implicit: bool,
+    },
+}
+
 pub struct Codegen {
     pub instructions: Vec<OpCode>,
     scope_stack: Vec<Vec<String>>,
@@ -249,10 +269,15 @@ pub struct Codegen {
     /// Function declarations already defined at the top of their
     /// statement list (hoisting), by span.
     hoisted_fns: std::collections::HashSet<scope::SpanKey>,
-    /// Maps private field names to their indices for the current class
-    private_field_indices: std::collections::HashMap<String, usize>,
-    /// Maps private method names to their indices for the current class
-    private_method_indices: std::collections::HashMap<String, usize>,
+    /// Instance fields of the class whose derived constructor is being
+    /// compiled: `super(...)` initializes them once it returns.
+    class_fields: Option<std::rc::Rc<Vec<ClassField>>>,
+    /// Compiling a static method: `super` is the parent class itself, not
+    /// its prototype.
+    in_static_method: bool,
+    /// Private names of the enclosing classes, innermost last: `#x` -> its
+    /// property key, unique to the class that declares it.
+    private_names: Vec<HashMap<String, String>>,
     /// Warnings collected during compilation
     pub warnings: Vec<String>,
     /// Hard errors collected during code generation. Compilation fails if
@@ -286,8 +311,9 @@ impl Codegen {
             try_stack: Vec::new(),
             pending_labels: Vec::new(),
             hoisted_fns: std::collections::HashSet::new(),
-            private_field_indices: std::collections::HashMap::new(),
-            private_method_indices: std::collections::HashMap::new(),
+            class_fields: None,
+            in_static_method: false,
+            private_names: Vec::new(),
             warnings: Vec::new(),
             errors: Vec::new(),
             current_span: Span::default(),
@@ -341,19 +367,18 @@ impl Codegen {
                 self.store_var(&id.id, false);
             }
             SimpleAssignTarget::Member(member) => match &member.prop {
-                MemberProp::Ident(prop) => {
-                    let name = prop.sym.to_string();
+                MemberProp::Ident(_) | MemberProp::PrivateName(_) => {
                     // [obj] -> [obj, cur] -> [obj, cur, rhs] -> [obj, v]
                     self.gen_expr(&member.obj);
                     self.instructions.push(OpCode::Dup);
-                    self.instructions.push(OpCode::GetProp(name.clone()));
+                    self.emit_member_get(&member.prop);
                     self.gen_expr(&assign.right);
                     self.instructions.push(op);
                     // [obj, v] -> [v, obj, v] -> SetProp -> [v]
                     self.instructions.push(OpCode::Dup);
                     self.instructions.push(OpCode::Swap3);
                     self.instructions.push(OpCode::Swap);
-                    self.instructions.push(OpCode::SetProp(name));
+                    self.emit_member_set(&member.prop);
                 }
                 MemberProp::Computed(computed) => {
                     let obj = format!("%obj{}", self.instructions.len());
@@ -375,10 +400,6 @@ impl Codegen {
                     self.instructions.push(OpCode::Swap);
                     self.instructions.push(OpCode::Load(key));
                     self.instructions.push(OpCode::SetPropComputed);
-                }
-                MemberProp::PrivateName(_) => {
-                    self.unsupported("compound assignment to a private field");
-                    self.instructions.push(OpCode::Push(JsValue::Undefined));
                 }
             },
             _ => {
@@ -509,6 +530,11 @@ impl Codegen {
                     self.instructions.push(OpCode::Load(name.clone()));
                     self.store_var(p, true);
                 }
+            }
+            // Arrow functions inside read this function's `this` from here.
+            if captured.iter().any(|n| n == scope::THIS_LOCAL) {
+                self.instructions.push(OpCode::LoadThis);
+                self.store_var(&scope::this_ident(scope::this_decl_span(fn_span)), true);
             }
         }
         prev
@@ -1324,18 +1350,64 @@ impl Codegen {
         let body_start = self.instructions.len();
         self.patch_function_value(value_idx, body_start);
 
+        let pats: Vec<&Pat> = fn_decl.params.iter().map(|p| &p.pat).collect();
+        let stmts: &[Stmt] = fn_decl.body.as_ref().map_or(&[], |b| b.stmts.as_slice());
+        self.gen_function_body(fn_decl.span, &pats, stmts, is_async, FnKind::Plain, &[]);
+        self.patch_jump_here(jump_idx);
+    }
+
+    /// The body of a function whose value was just emitted: parameters,
+    /// the environment, hoisting, the statements and the implicit result.
+    /// A constructor also initializes the instance `fields` (a derived one
+    /// once `super(...)` returns) and results in `this`.
+    fn gen_function_body(
+        &mut self,
+        span: Span,
+        pats: &[&Pat],
+        stmts: &[Stmt],
+        is_async: bool,
+        kind: FnKind,
+        fields: &[ClassField],
+    ) {
         let prev_in_function = self.in_function;
         let prev_async = self.in_async_function;
+        let prev_fields = self.class_fields.take();
+        let prev_static = self.in_static_method;
         self.in_function = true;
         self.in_async_function = is_async;
+        self.in_static_method = matches!(kind, FnKind::Method { is_static: true });
         let prev_control = self.enter_function_control();
 
-        let pats: Vec<&Pat> = fn_decl.params.iter().map(|p| &p.pat).collect();
-        let params = self.bind_params(&pats);
-        let prev_env = self.function_prologue(fn_decl.span, &params);
-        self.apply_param_defaults(&pats);
+        let implicit_super = matches!(
+            kind,
+            FnKind::Ctor {
+                derived: true,
+                implicit: true
+            }
+        );
+        if implicit_super {
+            // Must be first: the VM passes every argument to a function
+            // that starts with it (`constructor(...args) { super(...args) }`).
+            self.instructions.push(OpCode::ForwardArgs);
+        }
+        let params = self.bind_params(pats);
+        let prev_env = self.function_prologue(span, &params);
+        self.apply_param_defaults(pats);
 
-        let stmts: &[Stmt] = fn_decl.body.as_ref().map_or(&[], |b| b.stmts.as_slice());
+        match kind {
+            FnKind::Ctor { derived: false, .. } => self.emit_field_inits(fields),
+            FnKind::Ctor { implicit: true, .. } => {
+                self.load_var(&scope::super_ident(span));
+                self.instructions.push(OpCode::SuperForward);
+                self.instructions.push(OpCode::Pop);
+                self.emit_field_inits(fields);
+            }
+            FnKind::Ctor { .. } => {
+                self.class_fields = Some(std::rc::Rc::new(fields.to_vec()));
+            }
+            _ => {}
+        }
+
         let param_names: Vec<String> = pats.iter().flat_map(|p| scope::pattern_names(p)).collect();
         self.hoist_body(stmts, &param_names);
         let mut last_instr_was_return = false;
@@ -1348,10 +1420,15 @@ impl Codegen {
 
         if !last_instr_was_return {
             // Expression statements pop their value, so nothing is left on
-            // the stack: the implicit result is `undefined`.
-            self.instructions.push(OpCode::Push(JsValue::Undefined));
-            if is_async {
-                self.emit_promise_resolve();
+            // the stack: the implicit result is `undefined` (`this` for a
+            // constructor).
+            if matches!(kind, FnKind::Ctor { .. }) {
+                self.instructions.push(OpCode::LoadThis);
+            } else {
+                self.instructions.push(OpCode::Push(JsValue::Undefined));
+                if is_async {
+                    self.emit_promise_resolve();
+                }
             }
             self.instructions.push(OpCode::Return);
         }
@@ -1359,8 +1436,97 @@ impl Codegen {
         self.env_active = prev_env;
         self.in_function = prev_in_function;
         self.in_async_function = prev_async;
+        self.class_fields = prev_fields;
+        self.in_static_method = prev_static;
         self.leave_function_control(prev_control);
-        self.patch_jump_here(jump_idx);
+    }
+
+    /// `this.name = initializer` for each instance field.
+    fn emit_field_inits(&mut self, fields: &[ClassField]) {
+        for (name, value) in fields {
+            self.instructions.push(OpCode::LoadThis);
+            match value {
+                Some(v) => self.gen_expr(v),
+                None => self.instructions.push(OpCode::Push(JsValue::Undefined)),
+            }
+            self.instructions.push(OpCode::SetProp(name.clone()));
+        }
+    }
+
+    /// The property key of private name `#name`: `#name@<class>`, so that
+    /// classes in a chain that both declare `#x` keep separate fields.
+    fn private_key(&self, name: &str) -> String {
+        self.private_names
+            .iter()
+            .rev()
+            .find_map(|names| names.get(name).cloned())
+            .unwrap_or_else(|| format!("#{}", name))
+    }
+
+    /// The property name of `obj.name` or `obj.#name`.
+    fn member_key(&self, prop: &MemberProp) -> Option<String> {
+        match prop {
+            MemberProp::Ident(id) => Some(id.sym.to_string()),
+            MemberProp::PrivateName(p) => Some(self.private_key(&p.name)),
+            MemberProp::Computed(_) => None,
+        }
+    }
+
+    /// `[obj] -> [obj.name]`; a private member the object lacks throws.
+    fn emit_member_get(&mut self, prop: &MemberProp) {
+        match prop {
+            MemberProp::PrivateName(p) => {
+                let key = self.private_key(&p.name);
+                self.instructions.push(OpCode::GetPrivate(key));
+            }
+            _ => {
+                let key = self.member_key(prop).unwrap_or_default();
+                self.instructions.push(OpCode::GetProp(key));
+            }
+        }
+    }
+
+    /// `[obj, value] -> []` for `obj.name = value`.
+    fn emit_member_set(&mut self, prop: &MemberProp) {
+        match prop {
+            MemberProp::PrivateName(p) => {
+                let key = self.private_key(&p.name);
+                self.instructions.push(OpCode::SetPrivate(key));
+            }
+            _ => {
+                let key = self.member_key(prop).unwrap_or_default();
+                self.instructions.push(OpCode::SetProp(key));
+            }
+        }
+    }
+
+    /// `[] -> [parent]` for `super` at `span`: the parent class itself in a
+    /// static method, its prototype otherwise.
+    fn emit_super_base(&mut self, span: Span) {
+        self.load_var(&scope::super_ident(span));
+        if !self.in_static_method {
+            self.instructions
+                .push(OpCode::GetProp("prototype".to_string()));
+        }
+    }
+
+    /// `super.name` / `super[key]`: the property of the parent class (in a
+    /// static method) or of its prototype.
+    fn gen_super_prop(&mut self, sp: &swc_ecma_ast::SuperPropExpr) {
+        match &sp.prop {
+            swc_ecma_ast::SuperProp::Ident(id) => {
+                // A getter found on the parent runs with this `this`.
+                self.instructions.push(OpCode::LoadThis);
+                self.emit_super_base(sp.obj.span);
+                self.instructions
+                    .push(OpCode::GetSuperProp(id.sym.to_string()));
+            }
+            swc_ecma_ast::SuperProp::Computed(c) => {
+                self.emit_super_base(sp.obj.span);
+                self.gen_expr(&c.expr);
+                self.instructions.push(OpCode::GetPropComputed);
+            }
+        }
     }
 
     fn gen_var_decl(&mut self, var_decl: &VarDecl) {
@@ -2418,14 +2584,41 @@ impl Codegen {
                 // them again, leaving junk on the stack.
                 if let Callee::Expr(callee_expr) = &call_expr.callee
                     && let Expr::Member(member) = callee_expr.as_ref()
-                    && let MemberProp::Ident(id) = &member.prop
+                    && let Some(key) = self.member_key(&member.prop)
                 {
                     for arg in &call_expr.args {
                         self.gen_expr(&arg.expr);
                     }
                     self.gen_expr(&member.obj);
                     self.instructions
-                        .push(OpCode::CallMethod(id.sym.to_string(), call_expr.args.len()));
+                        .push(OpCode::CallMethod(key, call_expr.args.len()));
+                    return;
+                }
+                // `super.name(args)`: the parent's method, with this `this`.
+                if let Callee::Expr(callee_expr) = &call_expr.callee
+                    && let Expr::SuperProp(sp) = callee_expr.as_ref()
+                {
+                    for arg in &call_expr.args {
+                        self.gen_expr(&arg.expr);
+                    }
+                    self.gen_super_prop(sp);
+                    self.instructions.push(OpCode::LoadThis);
+                    self.instructions
+                        .push(OpCode::CallWithThis(call_expr.args.len()));
+                    return;
+                }
+                // `super(args)`: the parent constructor runs on `this`; then
+                // this class's instance fields are initialized.
+                if let Callee::Super(sup) = &call_expr.callee {
+                    for arg in &call_expr.args {
+                        self.gen_expr(&arg.expr);
+                    }
+                    self.load_var(&scope::super_ident(sup.span));
+                    self.instructions
+                        .push(OpCode::CallSuper(call_expr.args.len()));
+                    if let Some(fields) = self.class_fields.clone() {
+                        self.emit_field_inits(&fields);
+                    }
                     return;
                 }
                 // detect if this is a 'require' call
@@ -2443,27 +2636,12 @@ impl Codegen {
                 for arg in &call_expr.args {
                     self.gen_expr(&arg.expr);
                 }
-                // Load the function
                 match &call_expr.callee {
                     Callee::Expr(expr) => self.gen_expr(expr),
-                    Callee::Super(_) => {
-                        // For super() calls, we need to:
-                        // 1. Load __super__ from the frame's locals
-                        // 2. The CallSuper opcode will use it
-                        self.instructions.push(OpCode::LoadSuper);
-                    }
+                    Callee::Super(_) => unreachable!("handled above"),
                     Callee::Import(_) => self.unsupported("dynamic `import()`"),
                 }
-                // Call it
-                match &call_expr.callee {
-                    Callee::Super(_) => {
-                        // Use CallSuper opcode for super() calls
-                        self.instructions.push(OpCode::CallSuper(arg_count));
-                    }
-                    _ => {
-                        self.instructions.push(OpCode::Call(arg_count));
-                    }
-                }
+                self.instructions.push(OpCode::Call(arg_count));
             }
             Expr::Assign(assign_expr) if assign_expr.op != AssignOp::Assign => {
                 self.gen_compound_assign(assign_expr);
@@ -2509,29 +2687,9 @@ impl Codegen {
                                     self.instructions.push(OpCode::SetPropComputed);
                                 }
                                 MemberProp::PrivateName(pn) => {
-                                    // obj.#field = value - use SetPrivateProp
-                                    let field_name = format!("#{}", pn.name);
-
-                                    // If this is the first time seeing this private field, assign it an index
-                                    if !self.private_field_indices.contains_key(&field_name) {
-                                        let new_index = self.private_field_indices.len();
-                                        self.private_field_indices
-                                            .insert(field_name.clone(), new_index);
-                                    }
-
-                                    if let Some(field_index) =
-                                        self.private_field_indices.get(&field_name)
-                                    {
-                                        self.instructions
-                                            .push(OpCode::SetPrivateProp(*field_index));
-                                    } else {
-                                        eprintln!(
-                                            "Warning: Private field '{}' not found",
-                                            field_name
-                                        );
-                                        // Pop the value
-                                        self.instructions.push(OpCode::Pop);
-                                    }
+                                    // obj.#name = value
+                                    let key = self.private_key(&pn.name);
+                                    self.instructions.push(OpCode::SetPrivate(key));
                                 }
                             }
                         }
@@ -2604,25 +2762,7 @@ impl Codegen {
                     }
                 }
             }
-            Expr::SuperProp(super_prop) => {
-                // Handle super.prop or super[expr]
-                // Stack: [] -> [property_value]
-                // For super.prop, we use GetSuperProp which looks up on the prototype chain
-
-                match &super_prop.prop {
-                    // Handle super.prop
-                    swc_ecma_ast::SuperProp::Ident(id) => {
-                        self.instructions
-                            .push(OpCode::GetSuperProp(id.sym.to_string()));
-                    }
-                    // Handle super[expr]
-                    swc_ecma_ast::SuperProp::Computed(_computed) => {
-                        // For computed super properties, we need a different opcode
-                        // For now, just push undefined
-                        self.instructions.push(OpCode::Push(JsValue::Undefined));
-                    }
-                }
-            }
+            Expr::SuperProp(super_prop) => self.gen_super_prop(super_prop),
             Expr::Member(member) => {
                 // Regular obj.prop access
                 // 1. Load the Object/Array
@@ -2638,30 +2778,19 @@ impl Codegen {
                         self.gen_expr(&computed.expr); // Push the index expression
                         self.instructions.push(OpCode::GetPropComputed);
                     }
-                    // Handle #privateField
+                    // `obj.#name`: a property named `#name`.
                     MemberProp::PrivateName(pn) => {
-                        // Private field name in swc doesn't include the #
-                        // We need to add it to our tracking
-                        let field_name = format!("#{}", pn.name);
-
-                        // If this is the first time seeing this private field in the current class context,
-                        // assign it an index
-                        if !self.private_field_indices.contains_key(&field_name) {
-                            let new_index = self.private_field_indices.len();
-                            self.private_field_indices
-                                .insert(field_name.clone(), new_index);
-                        }
-
-                        if let Some(field_index) = self.private_field_indices.get(&field_name) {
-                            self.instructions.push(OpCode::GetPrivateProp(*field_index));
-                        } else {
-                            eprintln!("Warning: Private field '{}' not found", field_name);
-                            self.instructions.push(OpCode::Push(JsValue::Undefined));
-                        }
+                        self.instructions
+                            .push(OpCode::GetPrivate(self.private_key(&pn.name)));
                     }
                 }
             }
-            Expr::This(_) => {
+            Expr::This(t) => {
+                // In an arrow function: the enclosing function's `this`.
+                if let VarRef::Env { .. } = self.scopes.var(t.span) {
+                    self.load_var(&scope::this_ident(t.span));
+                    return;
+                }
                 self.instructions.push(OpCode::LoadThis);
             }
             Expr::MetaProp(meta_prop) => {
@@ -2768,7 +2897,8 @@ impl Codegen {
                     // If there's a corresponding expression, compile and concatenate it
                     if i < tpl.exprs.len() {
                         self.gen_expr(&tpl.exprs[i]);
-                        // Concatenate the expression result
+                        // `${v}` is String(v): a `toString` comes first.
+                        self.instructions.push(OpCode::ToStr);
                         self.instructions.push(OpCode::Add);
                     }
                 }
@@ -2803,11 +2933,6 @@ impl Codegen {
                         }
                         self.store_var(id, false);
                     }
-                } else if let Expr::Member(member) = update_expr.arg.as_ref()
-                    && matches!(member.prop, MemberProp::PrivateName(_))
-                {
-                    self.unsupported("`++`/`--` on a private field");
-                    self.instructions.push(OpCode::Push(JsValue::Undefined));
                 } else if let Expr::Member(member) = update_expr.arg.as_ref() {
                     // Member expression: obj.prop++ / ++obj.prop / obj[key]++ / ++obj[key]
                     let op = update_expr.op;
@@ -2818,14 +2943,13 @@ impl Codegen {
                         self.gen_expr(&member.obj);
                         self.instructions.push(OpCode::Dup);
                         match &member.prop {
-                            MemberProp::Ident(id) => {
-                                self.instructions.push(OpCode::GetProp(id.sym.to_string()));
+                            MemberProp::Ident(_) | MemberProp::PrivateName(_) => {
+                                self.emit_member_get(&member.prop);
                             }
                             MemberProp::Computed(c) => {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::GetPropComputed);
                             }
-                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                         self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
                         if op == UpdateOp::PlusPlus {
@@ -2835,26 +2959,24 @@ impl Codegen {
                         }
                         // Stack: [obj, new_val] -> SetProp -> []
                         match &member.prop {
-                            MemberProp::Ident(id) => {
-                                self.instructions.push(OpCode::SetProp(id.sym.to_string()));
+                            MemberProp::Ident(_) | MemberProp::PrivateName(_) => {
+                                self.emit_member_set(&member.prop);
                             }
                             MemberProp::Computed(c) => {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::SetPropComputed);
                             }
-                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                         // Reload the new value
                         self.gen_expr(&member.obj);
                         match &member.prop {
-                            MemberProp::Ident(id) => {
-                                self.instructions.push(OpCode::GetProp(id.sym.to_string()));
+                            MemberProp::Ident(_) | MemberProp::PrivateName(_) => {
+                                self.emit_member_get(&member.prop);
                             }
                             MemberProp::Computed(c) => {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::GetPropComputed);
                             }
-                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                     } else {
                         // obj.prop++: get old value, save it, compute new, store back
@@ -2864,27 +2986,25 @@ impl Codegen {
                         self.gen_expr(&member.obj);
                         self.instructions.push(OpCode::Dup);
                         match &member.prop {
-                            MemberProp::Ident(id) => {
-                                self.instructions.push(OpCode::GetProp(id.sym.to_string()));
+                            MemberProp::Ident(_) | MemberProp::PrivateName(_) => {
+                                self.emit_member_get(&member.prop);
                             }
                             MemberProp::Computed(c) => {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::GetPropComputed);
                             }
-                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                         // Stack: [obj, old_val] -> Swap -> [old_val, obj]
                         self.instructions.push(OpCode::Swap);
                         self.instructions.push(OpCode::Dup);
                         match &member.prop {
-                            MemberProp::Ident(id) => {
-                                self.instructions.push(OpCode::GetProp(id.sym.to_string()));
+                            MemberProp::Ident(_) | MemberProp::PrivateName(_) => {
+                                self.emit_member_get(&member.prop);
                             }
                             MemberProp::Computed(c) => {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::GetPropComputed);
                             }
-                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                         self.instructions.push(OpCode::Push(JsValue::Number(1.0)));
                         if op == UpdateOp::PlusPlus {
@@ -2894,14 +3014,13 @@ impl Codegen {
                         }
                         // Stack: [old_val, obj, new_val] -> SetProp -> [old_val]
                         match &member.prop {
-                            MemberProp::Ident(id) => {
-                                self.instructions.push(OpCode::SetProp(id.sym.to_string()));
+                            MemberProp::Ident(_) | MemberProp::PrivateName(_) => {
+                                self.emit_member_set(&member.prop);
                             }
                             MemberProp::Computed(c) => {
                                 self.gen_expr(&c.expr);
                                 self.instructions.push(OpCode::SetPropComputed);
                             }
-                            MemberProp::PrivateName(_) => unreachable!("rejected above"),
                         }
                     }
                 }
@@ -2936,7 +3055,10 @@ impl Codegen {
             Expr::Lit(_) => self.unsupported("this literal"),
             Expr::TaggedTpl(_) => self.unsupported("tagged template literals"),
             Expr::Yield(_) => self.unsupported("`yield`"),
-            Expr::Class(_) => self.unsupported("class expressions"),
+            Expr::Class(class_expr) => {
+                let name = class_expr.ident.as_ref().map(|id| id.sym.to_string());
+                self.gen_class(&class_expr.class, name.as_deref());
+            }
             Expr::PrivateName(_) => self.unsupported("bare private name"),
             Expr::JSXMember(_)
             | Expr::JSXNamespacedName(_)
@@ -2947,473 +3069,270 @@ impl Codegen {
         }
     }
 
+    /// A class: a wrapper object (`constructor`, `prototype`, `name`, static
+    /// members) whose `prototype` holds the methods. A derived class links
+    /// both to its parent's, and binds the parent as `%super`, which the
+    /// constructor and methods reach as a captured variable.
+    /// Stack: [] -> [class]
     fn gen_class(&mut self, class: &Class, name: Option<&str>) {
-        // Check if this class has a superclass
-        let has_super = class.super_class.is_some();
-
-        // Clear previous private field/method indices
-        self.private_field_indices.clear();
-        self.private_method_indices.clear();
-
-        // Handle class decorators
-        // Compile class decorators: @decorator class Foo {}
-        // Each decorator is applied to the class after it's created
-        let class_decorators: Vec<&Decorator> = class.decorators.iter().collect();
-
-        // For now, we just store decorator count - actual application happens after class is created
-        let _decorator_count = class_decorators.len();
-
-        // For now, we don't parse private fields from class body in this swc version
-        // Private fields would be handled as regular fields with special naming
-
-        // Collect constructor params and body
-        let mut constructor_params: Vec<String> = Vec::new();
-        let mut constructor_body: Option<&BlockStmt> = None;
-
-        // Collect private field declarations for initialization
-        let mut private_field_decls: Vec<(String, &Expr)> = Vec::new();
-
-        // Collect class property declarations
-        let mut class_prop_decls: Vec<(String, &Expr)> = Vec::new();
-
         for member in &class.body {
-            match member {
-                ClassMember::PrivateMethod(_) => self.unsupported("private methods (`#m() {}`)"),
-                ClassMember::StaticBlock(_) => self.unsupported("static initialization blocks"),
-                ClassMember::AutoAccessor(_) => self.unsupported("`accessor` class fields"),
-                ClassMember::Constructor(_)
-                | ClassMember::Method(_)
-                | ClassMember::ClassProp(_)
-                | ClassMember::PrivateProp(_)
-                | ClassMember::TsIndexSignature(_)
-                | ClassMember::Empty(_) => {}
-            }
-        }
-
-        for member in &class.body {
-            if let ClassMember::Constructor(ctor) = member {
-                for param in &ctor.params {
-                    match param {
-                        ParamOrTsParamProp::Param(p) => {
-                            if let Pat::Ident(id) = &p.pat {
-                                constructor_params.push(id.id.sym.to_string());
-                            }
-                        }
-                        ParamOrTsParamProp::TsParamProp(ts_prop) => {
-                            if let TsParamPropParam::Ident(id) = &ts_prop.param {
-                                constructor_params.push(id.id.sym.to_string());
-                            }
-                        }
-                    }
+            let member_decorated = match member {
+                ClassMember::StaticBlock(_) => {
+                    self.unsupported("static initialization blocks");
+                    false
                 }
-                constructor_body = ctor.body.as_ref();
-            }
-
-            // Collect private field declarations
-            if let ClassMember::PrivateProp(prop) = member {
-                let field_name = format!("#{}", prop.key.name);
-                if !self.private_field_indices.contains_key(&field_name) {
-                    let new_index = self.private_field_indices.len();
-                    self.private_field_indices
-                        .insert(field_name.clone(), new_index);
+                ClassMember::AutoAccessor(_) => {
+                    self.unsupported("`accessor` class fields");
+                    false
                 }
-                if let Some(value) = &prop.value {
-                    private_field_decls.push((field_name, value.as_ref()));
+                ClassMember::Method(m) => {
+                    !m.function.decorators.is_empty()
+                        || m.function.params.iter().any(|p| !p.decorators.is_empty())
                 }
-            }
-
-            // Collect public class property declarations
-            if let ClassMember::ClassProp(prop) = member {
-                let prop_name = match &prop.key {
-                    PropName::Ident(id) => id.sym.to_string(),
-                    PropName::Str(s) => s.value.to_string_lossy().into_owned(),
-                    PropName::Num(num) => num.value.to_string(),
-                    _ => {
-                        self.unsupported("computed class property names");
-                        continue;
-                    }
-                };
-                if let Some(value) = &prop.value {
-                    class_prop_decls.push((prop_name, value.as_ref()));
-                }
+                ClassMember::PrivateMethod(m) => !m.function.decorators.is_empty(),
+                ClassMember::ClassProp(p) => !p.decorators.is_empty(),
+                ClassMember::PrivateProp(p) => !p.decorators.is_empty(),
+                ClassMember::Constructor(k) => k.params.iter().any(|p| match p {
+                    ParamOrTsParamProp::Param(p) => !p.decorators.is_empty(),
+                    ParamOrTsParamProp::TsParamProp(tp) => !tp.decorators.is_empty(),
+                }),
+                _ => false,
+            };
+            if member_decorated {
+                self.unsupported("decorators on class members (only class decorators are)");
             }
         }
+        let id = self.instructions.len();
+        let wrapper = format!("%class{}", id);
+        let proto = format!("%proto{}", id);
+        let private: HashMap<String, String> = class
+            .body
+            .iter()
+            .filter_map(|m| match m {
+                ClassMember::PrivateProp(p) => Some(p.key.name.to_string()),
+                ClassMember::PrivateMethod(m) => Some(m.key.name.to_string()),
+                _ => None,
+            })
+            .map(|n| (n.clone(), format!("#{}@{}", n, class.span.lo.0)))
+            .collect();
+        self.private_names.push(private);
 
-        // Store private field indices for use in constructor
-        let _private_field_count = 0; // Will be set dynamically as we encounter private fields
+        let super_env = class.super_class.as_ref().map(|parent| {
+            self.gen_expr(parent);
+            let env = self.enter_scope_env(class.span);
+            self.store_var(&scope::super_ident(class.span), true);
+            env
+        });
+        let parent_span = class.super_class.as_ref().map(|_| class.span);
 
-        // Create constructor function
-        let constructor_start = self.instructions.len() + 2;
-        self.instructions.push(OpCode::Push(JsValue::Function {
-            address: constructor_start,
-            env: None,
-        }));
-
-        // Jump over constructor body
-        let jump_idx = self.instructions.len();
-        self.instructions.push(OpCode::Jump(0));
-
-        // Constructor body
-        let saved_in_function = self.in_function;
-        self.in_function = true;
-        let saved_control = self.enter_function_control();
-
-        for param in constructor_params.iter().rev() {
-            self.instructions.push(OpCode::Let(param.clone()));
-        }
-        if has_super && constructor_body.is_none() {
-            // The implicit `constructor(...args) { super(...args); }`.
-            self.instructions.push(OpCode::SuperForward);
-            self.instructions.push(OpCode::Pop);
-        }
-
-        // Set up private field storage for this instance
-        // Create storage array for private fields (one entry per field)
-        // Simplified approach: create storage, then for each field, dup, push index, create object, swap, store
-        self.instructions.push(OpCode::NewArray(16));
-        // Stack: [storage]
-        for i in 0..16 {
-            // Dup storage to keep it on stack
-            self.instructions.push(OpCode::Dup);
-            // Stack: [storage, storage]
-            // Push index
-            self.instructions
-                .push(OpCode::Push(JsValue::Number(i as f64)));
-            // Stack: [storage, storage, index]
-            // Create object (this will be the "WeakMap" for this field)
-            self.instructions.push(OpCode::NewObject);
-            // Stack: [storage, storage, index, field_map]
-            // Swap to get [storage, storage, field_map, index]
-            self.instructions.push(OpCode::Swap);
-            // Stack: [storage, storage, field_map, index]
-            // Store: pops index, value, array - stores value at index in array
-            self.instructions.push(OpCode::StoreElement);
-            // Stack: [storage]
-        }
-
-        // Store the private storage array in this.__private_storage__,
-        // keeping a copy for the local of the same name.
-        // Stack: [storage]
-        self.instructions.push(OpCode::Dup);
-        self.instructions.push(OpCode::LoadThis);
-        // Stack: [storage, storage, this]
-        self.instructions.push(OpCode::Swap);
-        // Stack: [storage, this, storage]
-        self.instructions
-            .push(OpCode::SetProp("__private_storage__".to_string()));
-        // Stack: [storage]
-
-        // Store the private storage array in a temp for later use. (This
-        // used to pop a value the constructor did not own: one of the stray
-        // objects every `new` left on the stack.)
-        self.instructions
-            .push(OpCode::Let("__private_storage__".to_string()));
-        // Stack: []
-
-        // Initialize private field declarations
-        for (field_name, value_expr) in &private_field_decls {
-            // Generate the value
-            self.gen_expr(value_expr);
-            // Stack: [value]
-
-            // Get the field index
-            if let Some(field_index) = self.private_field_indices.get(field_name) {
-                // Load this
-                self.instructions.push(OpCode::LoadThis);
-                // Stack: [value, this]
-                // Swap to get [this, value]
-                self.instructions.push(OpCode::Swap);
-                // Stack: [this, value]
-                self.instructions.push(OpCode::SetPrivateProp(*field_index));
-                // Stack: []
-            }
-        }
-
-        // Initialize class property declarations
-        for (prop_name, value_expr) in &class_prop_decls {
-            // Generate the value
-            self.gen_expr(value_expr);
-            // Stack: [value]
-
-            // Load this
-            self.instructions.push(OpCode::LoadThis);
-            // Stack: [value, this]
-            // Swap to get [this, value]
-            self.instructions.push(OpCode::Swap);
-            // Stack: [this, value]
-            // Set the property
-            self.instructions.push(OpCode::SetProp(prop_name.clone()));
-            // Stack: []
-        }
-
-        if let Some(body) = constructor_body {
-            self.hoist_body(&body.stmts, &constructor_params);
-            for stmt in &body.stmts {
-                self.gen_stmt(stmt);
-            }
-        }
-
-        self.instructions.push(OpCode::LoadThis);
-        self.instructions.push(OpCode::Return);
-        self.in_function = saved_in_function;
-        self.leave_function_control(saved_control);
-
-        // Backpatch jump
-        let after_constructor = self.instructions.len();
-        if let OpCode::Jump(ref mut addr) = self.instructions[jump_idx] {
-            *addr = after_constructor;
-        }
-
-        // Stack: [constructor]
-
-        // Save constructor to temp
-        self.instructions.push(OpCode::Let("__ctor__".to_string()));
-        // Stack: []
-
-        // If there's a superclass, compile it and get its prototype
-        if has_super {
-            // Compile the superclass expression
-            self.gen_expr(class.super_class.as_ref().unwrap());
-            // Stack: [parent_wrapper]
-            // Save parent wrapper to temp
-            self.instructions
-                .push(OpCode::Let("__parent__".to_string()));
-            // Stack: []
-
-            // Get parent's prototype: parent_wrapper.prototype
-            self.instructions
-                .push(OpCode::Load("__parent__".to_string()));
-            // Stack: [parent_wrapper]
+        // The prototype, inheriting from the parent's.
+        self.instructions.push(OpCode::NewObject);
+        self.instructions.push(OpCode::Let(proto.clone()));
+        if let Some(ps) = parent_span {
+            self.instructions.push(OpCode::Load(proto.clone()));
+            self.load_var(&scope::super_ident(ps));
             self.instructions
                 .push(OpCode::GetProp("prototype".to_string()));
-            // Stack: [parent_prototype]
-            // Save parent prototype for prototype chain
-            self.instructions
-                .push(OpCode::Let("__parent_proto__".to_string()));
-            // Stack: []
-        }
-
-        // Create prototype object
-        self.instructions.push(OpCode::NewObject);
-        // Stack: [prototype]
-
-        // Save prototype to temp
-        self.instructions.push(OpCode::Let("__proto__".to_string()));
-        // Stack: []
-
-        // Set prototype.__proto__ = parent_prototype (for inheritance)
-        if has_super {
-            self.instructions
-                .push(OpCode::Load("__proto__".to_string()));
-            // Stack: [prototype]
-            self.instructions
-                .push(OpCode::Load("__parent_proto__".to_string()));
-            // Stack: [prototype, parent_prototype]
             self.instructions
                 .push(OpCode::SetProp("__proto__".to_string()));
-            // Stack: []
         }
 
-        // Create wrapper object for the class
+        // The class object; static members inherit from the parent class.
         self.instructions.push(OpCode::NewObject);
-        // Stack: [wrapper]
-        // Store wrapper in temp for later retrieval (methods will consume the stack)
+        self.instructions.push(OpCode::Let(wrapper.clone()));
+        // Marks a class: `typeof` is "function", printed as `[class C]`.
+        self.instructions.push(OpCode::Load(wrapper.clone()));
+        self.instructions.push(OpCode::Push(JsValue::Boolean(true)));
         self.instructions
-            .push(OpCode::Let("__wrapper__".to_string()));
-        // Stack: []
-
-        // Set wrapper.name = class name (for decorator target.name)
+            .push(OpCode::SetProp("__class__".to_string()));
         if let Some(class_name) = name {
-            self.instructions
-                .push(OpCode::Load("__wrapper__".to_string()));
-            // Stack: [wrapper]
+            self.instructions.push(OpCode::Load(wrapper.clone()));
             self.instructions
                 .push(OpCode::Push(JsValue::String(class_name.to_string())));
-            // Stack: [wrapper, name_string]
             self.instructions.push(OpCode::SetProp("name".to_string()));
-            // Stack: []
         }
-
-        // Now set prototype.constructor = wrapper
-        self.instructions
-            .push(OpCode::Load("__proto__".to_string()));
-        // Stack: [prototype]
-        self.instructions
-            .push(OpCode::Load("__wrapper__".to_string()));
-        // Stack: [prototype, wrapper]
-        self.instructions
-            .push(OpCode::SetProp("constructor".to_string()));
-        // Stack: []
-
-        // Set wrapper.constructor = constructor
-        self.instructions
-            .push(OpCode::Load("__wrapper__".to_string()));
-        // Stack: [wrapper]
-        self.instructions.push(OpCode::Load("__ctor__".to_string()));
-        // Stack: [wrapper, constructor]
-        self.instructions
-            .push(OpCode::SetProp("constructor".to_string()));
-        // Stack: []
-
-        // Set wrapper.prototype = prototype
-        self.instructions
-            .push(OpCode::Load("__wrapper__".to_string()));
-        // Stack: [wrapper]
-        self.instructions
-            .push(OpCode::Load("__proto__".to_string()));
-        // Stack: [wrapper, prototype]
+        self.instructions.push(OpCode::Load(wrapper.clone()));
+        self.instructions.push(OpCode::Load(proto.clone()));
         self.instructions
             .push(OpCode::SetProp("prototype".to_string()));
-        // Stack: []
-
-        // If there's a superclass, also store it in the wrapper for super() calls
-        if has_super {
+        self.instructions.push(OpCode::Load(proto.clone()));
+        self.instructions.push(OpCode::Load(wrapper.clone()));
+        self.instructions
+            .push(OpCode::SetProp("constructor".to_string()));
+        if let Some(ps) = parent_span {
+            self.instructions.push(OpCode::Load(wrapper.clone()));
+            self.load_var(&scope::super_ident(ps));
             self.instructions
-                .push(OpCode::Load("__wrapper__".to_string()));
-            // Stack: [wrapper]
-            self.instructions
-                .push(OpCode::Load("__parent__".to_string()));
-            // Stack: [wrapper, parent]
-            self.instructions
-                .push(OpCode::SetProp("__super__".to_string()));
-            // Stack: []
+                .push(OpCode::SetProp("__proto__".to_string()));
         }
 
-        // Add methods to prototype
-        for member in &class.body {
-            if let ClassMember::Method(method) = member {
-                // Determine the property name based on method kind
-                let (prop_name, is_getter, is_setter) = match &method.key {
-                    PropName::Ident(id) => {
-                        let name = id.sym.to_string();
-                        match method.kind {
-                            MethodKind::Getter => (format!("getter:{}", name), true, false),
-                            MethodKind::Setter => (format!("setter:{}", name), false, true),
-                            MethodKind::Method => (name, false, false),
-                        }
-                    }
-                    PropName::Str(s) => {
-                        let name = s.value.to_string_lossy().into_owned();
-                        match method.kind {
-                            MethodKind::Getter => (format!("getter:{}", name), true, false),
-                            MethodKind::Setter => (format!("setter:{}", name), false, true),
-                            MethodKind::Method => (name, false, false),
-                        }
-                    }
-                    PropName::Num(num) => {
-                        let name = num.value.to_string();
-                        match method.kind {
-                            MethodKind::Getter => (format!("getter:{}", name), true, false),
-                            MethodKind::Setter => (format!("setter:{}", name), false, true),
-                            MethodKind::Method => (name, false, false),
-                        }
-                    }
-                    _ => {
-                        self.unsupported("computed class method names");
-                        continue;
-                    }
+        // The constructor, with the instance fields.
+        let fields: Vec<ClassField> = class
+            .body
+            .iter()
+            .filter_map(|m| match m {
+                ClassMember::ClassProp(p) if !p.is_static => {
+                    self.class_key(&p.key).map(|k| (k, p.value.clone()))
+                }
+                ClassMember::PrivateProp(p) if !p.is_static => {
+                    Some((self.private_key(&p.key.name), p.value.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        let ctor = class.body.iter().find_map(|m| match m {
+            ClassMember::Constructor(k) => Some(k),
+            _ => None,
+        });
+        let derived = class.super_class.is_some();
+        self.instructions.push(OpCode::Load(wrapper.clone()));
+        match ctor {
+            Some(k) => {
+                let owned: Vec<Pat> = k.params.iter().map(scope::ctor_param_pat).collect();
+                let pats: Vec<&Pat> = owned.iter().collect();
+                // `constructor(private x)` assigns `this.x = x` first, like
+                // a field initialized from the parameter.
+                let mut ctor_fields: Vec<ClassField> = k
+                    .params
+                    .iter()
+                    .filter_map(scope::param_prop_ident)
+                    .map(|id| (id.sym.to_string(), Some(Box::new(Expr::Ident(id)))))
+                    .collect();
+                ctor_fields.extend(fields.iter().cloned());
+                let stmts: &[Stmt] = k.body.as_ref().map_or(&[], |b| b.stmts.as_slice());
+                let kind = FnKind::Ctor {
+                    derived,
+                    implicit: false,
                 };
-
-                let unique_name = format!("__method_{}", prop_name.replace(":", "_"));
-
-                // Get parameters - getters have no params, setters have one param (value)
-                let params: Vec<String> = if is_getter {
-                    Vec::new() // Getters take no parameters
-                } else if is_setter {
-                    // Setters take one parameter (the value)
-                    method
-                        .function
-                        .params
-                        .iter()
-                        .filter_map(|p| {
-                            if let Pat::Ident(id) = &p.pat {
-                                Some(id.id.sym.to_string())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect()
-                } else {
-                    method
-                        .function
-                        .params
-                        .iter()
-                        .filter_map(|p| {
-                            if let Pat::Ident(id) = &p.pat {
-                                Some(id.id.sym.to_string())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect()
+                self.gen_member_function(k.span, &pats, stmts, false, kind, &ctor_fields);
+            }
+            None => {
+                let kind = FnKind::Ctor {
+                    derived,
+                    implicit: true,
                 };
-
-                // Push function placeholder
-                let method_start = self.instructions.len() + 2;
-                self.instructions.push(OpCode::Push(JsValue::Function {
-                    address: method_start,
-                    env: None,
-                }));
-
-                // Jump over method body
-                let method_jump_idx = self.instructions.len();
-                self.instructions.push(OpCode::Jump(0));
-
-                // Compile method body
-                let saved_in_function = self.in_function;
-                self.in_function = true;
-                let saved_control = self.enter_function_control();
-
-                for param in params.iter().rev() {
-                    self.instructions.push(OpCode::Let(param.clone()));
-                }
-
-                if let Some(body) = &method.function.body {
-                    self.hoist_body(&body.stmts, &params);
-                    for stmt in &body.stmts {
-                        self.gen_stmt(stmt);
-                    }
-                }
-
-                self.instructions.push(OpCode::LoadThis);
-                self.instructions.push(OpCode::Return);
-                self.in_function = saved_in_function;
-                self.leave_function_control(saved_control);
-
-                // Backpatch method jump
-                let after_method = self.instructions.len();
-                if let OpCode::Jump(ref mut addr) = self.instructions[method_jump_idx] {
-                    *addr = after_method;
-                }
-
-                // Store method in a temp
-                self.instructions.push(OpCode::Let(unique_name.clone()));
-
-                // Set prototype.method = method_function (or getter/setter)
-                self.instructions
-                    .push(OpCode::Load("__proto__".to_string()));
-                // Stack: [prototype]
-                self.instructions.push(OpCode::Load(unique_name.clone()));
-                // Stack: [prototype, method]
-                self.instructions.push(OpCode::SetProp(prop_name));
-                // Stack: []
+                let span = scope::implicit_ctor_span(class.span);
+                self.gen_member_function(span, &[], &[], false, kind, &fields);
             }
         }
-
-        // Restore wrapper to stack for return
         self.instructions
-            .push(OpCode::Load("__wrapper__".to_string()));
-        // Stack: [wrapper]
+            .push(OpCode::SetProp("constructor".to_string()));
 
-        // Apply class decorators (in reverse order, as per spec)
-        // @decorator class Foo {} compiles to:
-        // [class definition] -> [decorator] -> ApplyDecorator -> [decorated_class]
-        for decorator in class_decorators.iter().rev() {
-            // Compile the decorator expression
-            self.gen_expr(&decorator.expr);
-            // Stack should be: [wrapper, decorator]
-            self.instructions.push(OpCode::ApplyDecorator);
-            // Stack: [decorated_wrapper]
+        // Methods (on the prototype, or the class for static ones), then
+        // static fields.
+        for member in &class.body {
+            let (key, function, is_static) = match member {
+                ClassMember::Method(m) => {
+                    let Some(name) = self.class_key(&m.key) else {
+                        continue;
+                    };
+                    let key = match m.kind {
+                        MethodKind::Getter => format!("getter:{}", name),
+                        MethodKind::Setter => format!("setter:{}", name),
+                        MethodKind::Method => name,
+                    };
+                    (key, &m.function, m.is_static)
+                }
+                ClassMember::PrivateMethod(m) => {
+                    if m.kind != MethodKind::Method {
+                        self.unsupported("private getters and setters");
+                        continue;
+                    }
+                    (self.private_key(&m.key.name), &m.function, m.is_static)
+                }
+                _ => continue,
+            };
+            if function.is_generator {
+                self.unsupported("generator methods");
+            }
+            let target = if is_static { &wrapper } else { &proto };
+            self.instructions.push(OpCode::Load(target.clone()));
+            let pats: Vec<&Pat> = function.params.iter().map(|p| &p.pat).collect();
+            let stmts: &[Stmt] = function.body.as_ref().map_or(&[], |b| b.stmts.as_slice());
+            self.gen_member_function(
+                function.span,
+                &pats,
+                stmts,
+                function.is_async,
+                FnKind::Method { is_static },
+                &[],
+            );
+            self.instructions.push(OpCode::SetProp(key));
         }
+        for member in &class.body {
+            let (key, value) = match member {
+                ClassMember::ClassProp(p) if p.is_static => match self.class_key(&p.key) {
+                    Some(k) => (k, &p.value),
+                    None => continue,
+                },
+                ClassMember::PrivateProp(p) if p.is_static => {
+                    (self.private_key(&p.key.name), &p.value)
+                }
+                _ => continue,
+            };
+            self.instructions.push(OpCode::Load(wrapper.clone()));
+            match value {
+                Some(v) => self.gen_expr(v),
+                None => self.instructions.push(OpCode::Push(JsValue::Undefined)),
+            }
+            self.instructions.push(OpCode::SetProp(key));
+        }
+
+        self.instructions.push(OpCode::Load(wrapper));
+        if let Some(env) = super_env {
+            self.exit_scope_env(env);
+        }
+        self.private_names.pop();
+
+        // Class decorators apply innermost (last) first:
+        // `C = decorator(C)`, unless the decorator returns undefined.
+        for decorator in class.decorators.iter().rev() {
+            // [C] -> [C, C, decorator] -> Call -> [C, result]
+            self.instructions.push(OpCode::Dup);
+            self.gen_expr(&decorator.expr);
+            self.instructions.push(OpCode::Call(1));
+            // [C, result] -> [result], or [C] if it is undefined
+            self.instructions.push(OpCode::Dup);
+            self.instructions.push(OpCode::Push(JsValue::Undefined));
+            self.instructions.push(OpCode::Eq);
+            let keep_result = self.emit_jump_if_false();
+            self.instructions.push(OpCode::Pop);
+            let end = self.emit_jump();
+            self.patch_jump_here(keep_result);
+            self.instructions.push(OpCode::Swap);
+            self.instructions.push(OpCode::Pop);
+            self.patch_jump_here(end);
+        }
+    }
+
+    /// The name of a class member's key; computed keys are unsupported.
+    fn class_key(&mut self, key: &PropName) -> Option<String> {
+        match key {
+            PropName::Ident(id) => Some(id.sym.to_string()),
+            PropName::Str(s) => Some(s.value.to_string_lossy().into_owned()),
+            PropName::Num(n) => Some(crate::stdlib::number_to_string(n.value)),
+            _ => {
+                self.unsupported("computed class member names");
+                None
+            }
+        }
+    }
+
+    /// `[] -> [function]` for a constructor or method.
+    fn gen_member_function(
+        &mut self,
+        span: Span,
+        pats: &[&Pat],
+        stmts: &[Stmt],
+        is_async: bool,
+        kind: FnKind,
+        fields: &[ClassField],
+    ) {
+        let value_idx = self.emit_function_value(span, 0);
+        let jump_idx = self.emit_jump();
+        let body_start = self.instructions.len();
+        self.patch_function_value(value_idx, body_start);
+        self.gen_function_body(span, pats, stmts, is_async, kind, fields);
+        self.patch_jump_here(jump_idx);
     }
 }

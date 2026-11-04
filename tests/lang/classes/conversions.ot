@@ -1,0 +1,53 @@
+// backends: vm jit aot
+// Implicit conversion uses a class's own `valueOf` / `toString`.
+
+class Money {
+  constructor(cents) {
+    this.cents = cents;
+  }
+  valueOf() {
+    return this.cents / 100;
+  }
+  toString() {
+    return "$" + (this.cents / 100).toFixed(2);
+  }
+}
+let price = new Money(1250);
+// `+` prefers valueOf; String() and template literals prefer toString.
+console.log(price + 1, String(price), `${price}`, "total: " + price);
+
+class Name {
+  constructor(first, last) {
+    this.first = first;
+    this.last = last;
+  }
+  toString() {
+    return this.first + " " + this.last;
+  }
+}
+let n = new Name("Ada", "Lovelace");
+console.log("hello " + n, `${n}!`, String(n), [n.first, n.last].join("/"));
+
+// Errors convert through Error.prototype.toString.
+let err = new TypeError("bad input");
+console.log("got " + err, `${err}`);
+
+// An exception from toString propagates.
+class Broken {
+  toString() {
+    throw new Error("cannot convert");
+  }
+}
+try {
+  console.log("x" + new Broken());
+} catch (e) {
+  console.log("caught", e.message);
+}
+try {
+  String(new Broken());
+} catch (e) {
+  console.log("caught again", e.message);
+}
+
+// Plain objects and arrays convert as before.
+console.log("" + {}, "" + [1, 2], `${[3, 4]}`);

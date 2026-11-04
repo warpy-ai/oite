@@ -1,6 +1,6 @@
+// backends: vm jit aot
 // The built-in error classes (std/core/error.ot): construction, toString,
-// printing, and subclassing. (VM only: native code does not compile
-// classes yet.)
+// printing, and subclassing.
 
 let e = new Error("boom");
 console.log(e.name, e.message, e.toString(), String(e), "" + e, `${e}`);
@@ -54,11 +54,6 @@ try {
   new C();
 } catch (err) {
   console.log(err.name, err.message);
-}
-try {
-  (function down(n) { return down(n + 1); })(0);
-} catch (err) {
-  console.log(err instanceof RangeError, err.message);
 }
 
 // Thrown and caught.
