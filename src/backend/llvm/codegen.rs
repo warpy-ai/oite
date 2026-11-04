@@ -148,6 +148,8 @@ impl LlvmCodegen {
                 LLVMBuildStore(b, obj, *global);
             }
 
+            let (init, init_ty) = self.runtime["ot_stack_init"];
+            LLVMBuildCall2(b, init_ty, init, std::ptr::null_mut(), 0, NONAME);
             let ot_main = self.functions["main"];
             let mut args = [
                 LLVMConstInt(i64_ty, UNDEFINED, 0),
@@ -177,6 +179,19 @@ impl LlvmCodegen {
             LLVMBuildRet(b, LLVMConstInt(i32_ty, 0, 0));
             LLVMDisposeBuilder(b);
             Ok(())
+        }
+    }
+
+    /// The runtime's `OT_STACK_LIMIT`, declared once in the module.
+    unsafe fn stack_limit_global(&mut self) -> LLVMValueRef {
+        unsafe {
+            let name = b"OT_STACK_LIMIT\0";
+            let existing = LLVMGetNamedGlobal(self.module, name.as_ptr() as _);
+            if !existing.is_null() {
+                return existing;
+            }
+            let i64_ty = LLVMInt64TypeInContext(self.context);
+            LLVMAddGlobal(self.module, i64_ty, name.as_ptr() as _)
         }
     }
 
@@ -260,9 +275,25 @@ impl LlvmCodegen {
                 LLVMBuildRet(fx.builder, fx.c(EXCEPTION_BITS));
             }
 
-            // The prologue falls through to the IR entry block.
+            // The prologue falls through to the IR entry block, unless the
+            // stack is exhausted: below `OT_STACK_LIMIT`, throw a RangeError.
             if let Some(first) = func.blocks.first() {
-                LLVMBuildBr(fx.prologue, fx.blocks[&first.id]);
+                let i64_ty = fx.i64_ty();
+                // The address of a slot in this frame stands for the stack
+                // pointer (`llvm.frameaddress` would force a frame pointer).
+                let probe = LLVMBuildAlloca(fx.prologue, LLVMInt8TypeInContext(ctx), NONAME);
+                let sp = LLVMBuildPtrToInt(fx.prologue, probe, i64_ty, NONAME);
+                let limit_global = fx.cg.stack_limit_global();
+                let limit = LLVMBuildLoad2(fx.prologue, i64_ty, limit_global, NONAME);
+                let exhausted =
+                    LLVMBuildICmp(fx.prologue, LLVMIntPredicate::LLVMIntULT, sp, limit, NONAME);
+                let overflow =
+                    LLVMAppendBasicBlockInContext(ctx, f, b"stack_overflow\0".as_ptr() as _);
+                LLVMBuildCondBr(fx.prologue, exhausted, overflow, fx.blocks[&first.id]);
+                LLVMPositionBuilderAtEnd(fx.prologue, overflow);
+                let (so, so_ty) = fx.cg.runtime["ot_stack_overflow"];
+                let e = LLVMBuildCall2(fx.prologue, so_ty, so, std::ptr::null_mut(), 0, NONAME);
+                LLVMBuildRet(fx.prologue, e);
             } else {
                 LLVMBuildRet(fx.prologue, fx.c(UNDEFINED));
             }
@@ -760,6 +791,10 @@ impl Fx<'_> {
                     let r = self.rt("ot_to_number", &[self.get(*a)?]);
                     self.set(*d, r);
                 }
+                IrOp::ToStr(d, a) => {
+                    let r = self.rt("ot_to_str", &[self.get(*a)?]);
+                    self.set(*d, r);
+                }
                 IrOp::TypeOf(d, a) => {
                     let r = self.rt("ot_typeof", &[self.get(*a)?]);
                     self.set(*d, r);
@@ -832,6 +867,18 @@ impl Fx<'_> {
                     let v = self.get(*v)?;
                     let (p, n) = self.string(name);
                     self.rt("ot_set_prop", &[o, p, n, v]);
+                }
+                IrOp::GetPrivate(d, obj, name) => {
+                    let o = self.get(*obj)?;
+                    let (p, n) = self.string(name);
+                    let r = self.rt("ot_get_private", &[o, p, n]);
+                    self.set(*d, r);
+                }
+                IrOp::SetPrivate(obj, name, v) => {
+                    let o = self.get(*obj)?;
+                    let v = self.get(*v)?;
+                    let (p, n) = self.string(name);
+                    self.rt("ot_set_private", &[o, p, n, v]);
                 }
                 IrOp::DeleteProp(d, obj, name) => {
                     let o = self.get(*obj)?;

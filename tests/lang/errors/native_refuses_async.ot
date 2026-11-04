@@ -1,7 +1,6 @@
 // backends: jit aot
 // Constructs the native backends cannot run yet are refused, never
 // approximated.
-function tag(cls) { return cls; }
-@tag
-class A {}
+async function f() { await 1; return 1; }
+f();
 console.log("unreachable");

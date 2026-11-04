@@ -64,20 +64,22 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Sequence expressions `a, b`                | Covered                              | Covered                           |
 | Classes, `new`, `instanceof`, fields, static members | Covered                    | Covered                           |
 | `extends`, `super(...)`, `super.method()`  | Covered                              | Covered                           |
-| Getters and setters, private fields and methods (`#x`, not enforced as private) | Covered | Covered               |
+| Getters and setters, private fields and methods (`#x`, per class, checked) | Covered | Covered                  |
+| TypeScript parameter properties (`constructor(private x)`) | Covered | Covered                              |
+| Class decorators (`@dec class C {}`)      | Covered                              | Covered                           |
 | Arrow functions use the enclosing `this`   | Covered                              | Covered                           |
 | Error classes (`Error`, `TypeError`, `ReferenceError`, `RangeError`, `SyntaxError`), subclassing | Covered (`std/core/error.ot`) | Covered (same classes, compiled in) |
 | `try` / `catch` / `finally`, `throw`       | Covered                              | Covered                           |
 | `async` / `await`                          | Partial: `await` polls synchronously; `.then` callbacks never run; `new Promise` aborts ([#122](https://github.com/warpy-ai/oite/issues/122)) | Refused |
 | ES modules (`import` / `export`)           | Works, not yet covered               | Refused                           |
-| Decorators                                 | Implemented, not yet covered         | Refused                           |
-| Implicit conversion calling a user `toString()` (`"" + obj`) | No: gives `[object Object]` | No                     |
+| Decorators on methods, fields, parameters  | Compile error                        | Compile error                     |
+| Implicit conversion through a user `valueOf` / `toString` (`"" + obj`, `${obj}`, `String(obj)`) | Covered | Covered       |
 | Template literals                          | Covered                              | Covered                           |
 | `Math`, `Date.now()`, number `toString` / `toFixed` | Covered                      | Covered (shared implementation)   |
 | `console.log` formatting                   | Covered                              | Covered (same formatter)          |
-| Generators, regex, tagged templates, class expressions | Compile error            | Compile error                     |
+| Generators, regex, tagged templates        | Compile error                        | Compile error                     |
 | Runtime errors (`null.x`, unbound names, calling a non-function, ...) | Thrown as `TypeError` / `ReferenceError` / `RangeError`, catchable | Same                       |
-| Stack overflow                             | `RangeError`                         | Crashes (no depth check yet)      |
+| Stack overflow                             | `RangeError`                         | `RangeError` (stack-pointer check) |
 | Uncaught exceptions                        | `Uncaught TypeError: ...` on stderr, exit 1 | Same                       |
 | String `length` / indexing                 | Counts UTF-8 bytes ([#133](https://github.com/warpy-ai/oite/issues/133))            | -                                 |
 | Type annotations                           | Parsed, not checked ([#124](https://github.com/warpy-ai/oite/issues/124))           | -                                 |
@@ -141,7 +143,7 @@ Oite Core is like "C without libc" — minimal and self-contained. These feature
 Correctness comes before new surface area (see [#136](https://github.com/warpy-ai/oite/issues/136)):
 
 1. **Language correctness**: async ([#139](https://github.com/warpy-ai/oite/issues/139)), the string model ([#133](https://github.com/warpy-ai/oite/issues/133)), callback methods (`map`, `filter`, ...)
-2. **Native backends**: async, modules, decorators, a stack depth check
+2. **Native backends**: async and modules
 3. **Compiler infrastructure**: source positions everywhere ([#125](https://github.com/warpy-ai/oite/issues/125)), type checking ([#124](https://github.com/warpy-ai/oite/issues/124))
 4. **Foundations**: language specification ([#135](https://github.com/warpy-ai/oite/issues/135)), memory reclamation ([#123](https://github.com/warpy-ai/oite/issues/123)), FFI ([#132](https://github.com/warpy-ai/oite/issues/132))
 5. **Rolls, Unroll, tooling**: after the above

@@ -1,4 +1,5 @@
 use crate::vm::opcodes::OpCode;
+use std::collections::HashMap;
 use swc_ecma_ast::*;
 pub mod borrow_ck;
 pub mod scope;
@@ -254,15 +255,6 @@ enum FnKind {
     },
 }
 
-/// The property name of `obj.name` or `obj.#name`.
-fn member_key(prop: &MemberProp) -> Option<String> {
-    match prop {
-        MemberProp::Ident(id) => Some(id.sym.to_string()),
-        MemberProp::PrivateName(p) => Some(format!("#{}", p.name)),
-        MemberProp::Computed(_) => None,
-    }
-}
-
 pub struct Codegen {
     pub instructions: Vec<OpCode>,
     scope_stack: Vec<Vec<String>>,
@@ -283,6 +275,9 @@ pub struct Codegen {
     /// Compiling a static method: `super` is the parent class itself, not
     /// its prototype.
     in_static_method: bool,
+    /// Private names of the enclosing classes, innermost last: `#x` -> its
+    /// property key, unique to the class that declares it.
+    private_names: Vec<HashMap<String, String>>,
     /// Warnings collected during compilation
     pub warnings: Vec<String>,
     /// Hard errors collected during code generation. Compilation fails if
@@ -318,6 +313,7 @@ impl Codegen {
             hoisted_fns: std::collections::HashSet::new(),
             class_fields: None,
             in_static_method: false,
+            private_names: Vec::new(),
             warnings: Vec::new(),
             errors: Vec::new(),
             current_span: Span::default(),
@@ -372,18 +368,17 @@ impl Codegen {
             }
             SimpleAssignTarget::Member(member) => match &member.prop {
                 MemberProp::Ident(_) | MemberProp::PrivateName(_) => {
-                    let name = member_key(&member.prop).unwrap_or_default();
                     // [obj] -> [obj, cur] -> [obj, cur, rhs] -> [obj, v]
                     self.gen_expr(&member.obj);
                     self.instructions.push(OpCode::Dup);
-                    self.instructions.push(OpCode::GetProp(name.clone()));
+                    self.emit_member_get(&member.prop);
                     self.gen_expr(&assign.right);
                     self.instructions.push(op);
                     // [obj, v] -> [v, obj, v] -> SetProp -> [v]
                     self.instructions.push(OpCode::Dup);
                     self.instructions.push(OpCode::Swap3);
                     self.instructions.push(OpCode::Swap);
-                    self.instructions.push(OpCode::SetProp(name));
+                    self.emit_member_set(&member.prop);
                 }
                 MemberProp::Computed(computed) => {
                     let obj = format!("%obj{}", self.instructions.len());
@@ -1455,6 +1450,53 @@ impl Codegen {
                 None => self.instructions.push(OpCode::Push(JsValue::Undefined)),
             }
             self.instructions.push(OpCode::SetProp(name.clone()));
+        }
+    }
+
+    /// The property key of private name `#name`: `#name@<class>`, so that
+    /// classes in a chain that both declare `#x` keep separate fields.
+    fn private_key(&self, name: &str) -> String {
+        self.private_names
+            .iter()
+            .rev()
+            .find_map(|names| names.get(name).cloned())
+            .unwrap_or_else(|| format!("#{}", name))
+    }
+
+    /// The property name of `obj.name` or `obj.#name`.
+    fn member_key(&self, prop: &MemberProp) -> Option<String> {
+        match prop {
+            MemberProp::Ident(id) => Some(id.sym.to_string()),
+            MemberProp::PrivateName(p) => Some(self.private_key(&p.name)),
+            MemberProp::Computed(_) => None,
+        }
+    }
+
+    /// `[obj] -> [obj.name]`; a private member the object lacks throws.
+    fn emit_member_get(&mut self, prop: &MemberProp) {
+        match prop {
+            MemberProp::PrivateName(p) => {
+                let key = self.private_key(&p.name);
+                self.instructions.push(OpCode::GetPrivate(key));
+            }
+            _ => {
+                let key = self.member_key(prop).unwrap_or_default();
+                self.instructions.push(OpCode::GetProp(key));
+            }
+        }
+    }
+
+    /// `[obj, value] -> []` for `obj.name = value`.
+    fn emit_member_set(&mut self, prop: &MemberProp) {
+        match prop {
+            MemberProp::PrivateName(p) => {
+                let key = self.private_key(&p.name);
+                self.instructions.push(OpCode::SetPrivate(key));
+            }
+            _ => {
+                let key = self.member_key(prop).unwrap_or_default();
+                self.instructions.push(OpCode::SetProp(key));
+            }
         }
     }
 
@@ -2542,7 +2584,7 @@ impl Codegen {
                 // them again, leaving junk on the stack.
                 if let Callee::Expr(callee_expr) = &call_expr.callee
                     && let Expr::Member(member) = callee_expr.as_ref()
-                    && let Some(key) = member_key(&member.prop)
+                    && let Some(key) = self.member_key(&member.prop)
                 {
                     for arg in &call_expr.args {
                         self.gen_expr(&arg.expr);
@@ -2646,8 +2688,8 @@ impl Codegen {
                                 }
                                 MemberProp::PrivateName(pn) => {
                                     // obj.#name = value
-                                    self.instructions
-                                        .push(OpCode::SetProp(format!("#{}", pn.name)));
+                                    let key = self.private_key(&pn.name);
+                                    self.instructions.push(OpCode::SetPrivate(key));
                                 }
                             }
                         }
@@ -2739,7 +2781,7 @@ impl Codegen {
                     // `obj.#name`: a property named `#name`.
                     MemberProp::PrivateName(pn) => {
                         self.instructions
-                            .push(OpCode::GetProp(format!("#{}", pn.name)));
+                            .push(OpCode::GetPrivate(self.private_key(&pn.name)));
                     }
                 }
             }
@@ -2855,7 +2897,8 @@ impl Codegen {
                     // If there's a corresponding expression, compile and concatenate it
                     if i < tpl.exprs.len() {
                         self.gen_expr(&tpl.exprs[i]);
-                        // Concatenate the expression result
+                        // `${v}` is String(v): a `toString` comes first.
+                        self.instructions.push(OpCode::ToStr);
                         self.instructions.push(OpCode::Add);
                     }
                 }
@@ -2901,8 +2944,7 @@ impl Codegen {
                         self.instructions.push(OpCode::Dup);
                         match &member.prop {
                             MemberProp::Ident(_) | MemberProp::PrivateName(_) => {
-                                let key = member_key(&member.prop).unwrap_or_default();
-                                self.instructions.push(OpCode::GetProp(key));
+                                self.emit_member_get(&member.prop);
                             }
                             MemberProp::Computed(c) => {
                                 self.gen_expr(&c.expr);
@@ -2918,8 +2960,7 @@ impl Codegen {
                         // Stack: [obj, new_val] -> SetProp -> []
                         match &member.prop {
                             MemberProp::Ident(_) | MemberProp::PrivateName(_) => {
-                                let key = member_key(&member.prop).unwrap_or_default();
-                                self.instructions.push(OpCode::SetProp(key));
+                                self.emit_member_set(&member.prop);
                             }
                             MemberProp::Computed(c) => {
                                 self.gen_expr(&c.expr);
@@ -2930,8 +2971,7 @@ impl Codegen {
                         self.gen_expr(&member.obj);
                         match &member.prop {
                             MemberProp::Ident(_) | MemberProp::PrivateName(_) => {
-                                let key = member_key(&member.prop).unwrap_or_default();
-                                self.instructions.push(OpCode::GetProp(key));
+                                self.emit_member_get(&member.prop);
                             }
                             MemberProp::Computed(c) => {
                                 self.gen_expr(&c.expr);
@@ -2947,8 +2987,7 @@ impl Codegen {
                         self.instructions.push(OpCode::Dup);
                         match &member.prop {
                             MemberProp::Ident(_) | MemberProp::PrivateName(_) => {
-                                let key = member_key(&member.prop).unwrap_or_default();
-                                self.instructions.push(OpCode::GetProp(key));
+                                self.emit_member_get(&member.prop);
                             }
                             MemberProp::Computed(c) => {
                                 self.gen_expr(&c.expr);
@@ -2960,8 +2999,7 @@ impl Codegen {
                         self.instructions.push(OpCode::Dup);
                         match &member.prop {
                             MemberProp::Ident(_) | MemberProp::PrivateName(_) => {
-                                let key = member_key(&member.prop).unwrap_or_default();
-                                self.instructions.push(OpCode::GetProp(key));
+                                self.emit_member_get(&member.prop);
                             }
                             MemberProp::Computed(c) => {
                                 self.gen_expr(&c.expr);
@@ -2977,8 +3015,7 @@ impl Codegen {
                         // Stack: [old_val, obj, new_val] -> SetProp -> [old_val]
                         match &member.prop {
                             MemberProp::Ident(_) | MemberProp::PrivateName(_) => {
-                                let key = member_key(&member.prop).unwrap_or_default();
-                                self.instructions.push(OpCode::SetProp(key));
+                                self.emit_member_set(&member.prop);
                             }
                             MemberProp::Computed(c) => {
                                 self.gen_expr(&c.expr);
@@ -3018,7 +3055,10 @@ impl Codegen {
             Expr::Lit(_) => self.unsupported("this literal"),
             Expr::TaggedTpl(_) => self.unsupported("tagged template literals"),
             Expr::Yield(_) => self.unsupported("`yield`"),
-            Expr::Class(_) => self.unsupported("class expressions"),
+            Expr::Class(class_expr) => {
+                let name = class_expr.ident.as_ref().map(|id| id.sym.to_string());
+                self.gen_class(&class_expr.class, name.as_deref());
+            }
             Expr::PrivateName(_) => self.unsupported("bare private name"),
             Expr::JSXMember(_)
             | Expr::JSXNamespacedName(_)
@@ -3036,15 +3076,46 @@ impl Codegen {
     /// Stack: [] -> [class]
     fn gen_class(&mut self, class: &Class, name: Option<&str>) {
         for member in &class.body {
-            match member {
-                ClassMember::StaticBlock(_) => self.unsupported("static initialization blocks"),
-                ClassMember::AutoAccessor(_) => self.unsupported("`accessor` class fields"),
-                _ => {}
+            let member_decorated = match member {
+                ClassMember::StaticBlock(_) => {
+                    self.unsupported("static initialization blocks");
+                    false
+                }
+                ClassMember::AutoAccessor(_) => {
+                    self.unsupported("`accessor` class fields");
+                    false
+                }
+                ClassMember::Method(m) => {
+                    !m.function.decorators.is_empty()
+                        || m.function.params.iter().any(|p| !p.decorators.is_empty())
+                }
+                ClassMember::PrivateMethod(m) => !m.function.decorators.is_empty(),
+                ClassMember::ClassProp(p) => !p.decorators.is_empty(),
+                ClassMember::PrivateProp(p) => !p.decorators.is_empty(),
+                ClassMember::Constructor(k) => k.params.iter().any(|p| match p {
+                    ParamOrTsParamProp::Param(p) => !p.decorators.is_empty(),
+                    ParamOrTsParamProp::TsParamProp(tp) => !tp.decorators.is_empty(),
+                }),
+                _ => false,
+            };
+            if member_decorated {
+                self.unsupported("decorators on class members (only class decorators are)");
             }
         }
         let id = self.instructions.len();
         let wrapper = format!("%class{}", id);
         let proto = format!("%proto{}", id);
+        let private: HashMap<String, String> = class
+            .body
+            .iter()
+            .filter_map(|m| match m {
+                ClassMember::PrivateProp(p) => Some(p.key.name.to_string()),
+                ClassMember::PrivateMethod(m) => Some(m.key.name.to_string()),
+                _ => None,
+            })
+            .map(|n| (n.clone(), format!("#{}@{}", n, class.span.lo.0)))
+            .collect();
+        self.private_names.push(private);
 
         let super_env = class.super_class.as_ref().map(|parent| {
             self.gen_expr(parent);
@@ -3104,7 +3175,7 @@ impl Codegen {
                     self.class_key(&p.key).map(|k| (k, p.value.clone()))
                 }
                 ClassMember::PrivateProp(p) if !p.is_static => {
-                    Some((format!("#{}", p.key.name), p.value.clone()))
+                    Some((self.private_key(&p.key.name), p.value.clone()))
                 }
                 _ => None,
             })
@@ -3117,21 +3188,23 @@ impl Codegen {
         self.instructions.push(OpCode::Load(wrapper.clone()));
         match ctor {
             Some(k) => {
-                let mut pats: Vec<&Pat> = Vec::new();
-                for p in &k.params {
-                    match p {
-                        ParamOrTsParamProp::Param(p) => pats.push(&p.pat),
-                        ParamOrTsParamProp::TsParamProp(_) => {
-                            self.unsupported("TypeScript parameter properties")
-                        }
-                    }
-                }
+                let owned: Vec<Pat> = k.params.iter().map(scope::ctor_param_pat).collect();
+                let pats: Vec<&Pat> = owned.iter().collect();
+                // `constructor(private x)` assigns `this.x = x` first, like
+                // a field initialized from the parameter.
+                let mut ctor_fields: Vec<ClassField> = k
+                    .params
+                    .iter()
+                    .filter_map(scope::param_prop_ident)
+                    .map(|id| (id.sym.to_string(), Some(Box::new(Expr::Ident(id)))))
+                    .collect();
+                ctor_fields.extend(fields.iter().cloned());
                 let stmts: &[Stmt] = k.body.as_ref().map_or(&[], |b| b.stmts.as_slice());
                 let kind = FnKind::Ctor {
                     derived,
                     implicit: false,
                 };
-                self.gen_member_function(k.span, &pats, stmts, false, kind, &fields);
+                self.gen_member_function(k.span, &pats, stmts, false, kind, &ctor_fields);
             }
             None => {
                 let kind = FnKind::Ctor {
@@ -3165,7 +3238,7 @@ impl Codegen {
                         self.unsupported("private getters and setters");
                         continue;
                     }
-                    (format!("#{}", m.key.name), &m.function, m.is_static)
+                    (self.private_key(&m.key.name), &m.function, m.is_static)
                 }
                 _ => continue,
             };
@@ -3193,7 +3266,7 @@ impl Codegen {
                     None => continue,
                 },
                 ClassMember::PrivateProp(p) if p.is_static => {
-                    (format!("#{}", p.key.name), &p.value)
+                    (self.private_key(&p.key.name), &p.value)
                 }
                 _ => continue,
             };
@@ -3209,12 +3282,26 @@ impl Codegen {
         if let Some(env) = super_env {
             self.exit_scope_env(env);
         }
+        self.private_names.pop();
 
-        // Class decorators apply in reverse order:
-        // [class] [decorator] ApplyDecorator -> [decorated class]
+        // Class decorators apply innermost (last) first:
+        // `C = decorator(C)`, unless the decorator returns undefined.
         for decorator in class.decorators.iter().rev() {
+            // [C] -> [C, C, decorator] -> Call -> [C, result]
+            self.instructions.push(OpCode::Dup);
             self.gen_expr(&decorator.expr);
-            self.instructions.push(OpCode::ApplyDecorator);
+            self.instructions.push(OpCode::Call(1));
+            // [C, result] -> [result], or [C] if it is undefined
+            self.instructions.push(OpCode::Dup);
+            self.instructions.push(OpCode::Push(JsValue::Undefined));
+            self.instructions.push(OpCode::Eq);
+            let keep_result = self.emit_jump_if_false();
+            self.instructions.push(OpCode::Pop);
+            let end = self.emit_jump();
+            self.patch_jump_here(keep_result);
+            self.instructions.push(OpCode::Swap);
+            self.instructions.push(OpCode::Pop);
+            self.patch_jump_here(end);
         }
     }
 

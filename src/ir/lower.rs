@@ -721,6 +721,13 @@ impl Lowerer {
                 }
             },
 
+            OpCode::ToStr => {
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::String);
+                self.emit(IrOp::ToStr(dst, a));
+                self.push(dst);
+            }
+
             OpCode::TypeOf => {
                 let a = self.pop()?;
                 let dst = self.alloc_value(IrType::String);
@@ -793,9 +800,6 @@ impl Lowerer {
             }
             OpCode::NewTarget => {
                 return Err(native_unsupported("`new.target`"));
-            }
-            OpCode::ApplyDecorator => {
-                return Err(native_unsupported("decorators"));
             }
 
             // Logical operations
@@ -1069,6 +1073,17 @@ impl Lowerer {
                 self.emit(IrOp::CallWithThis(dst, func, this, args));
                 self.push(dst);
             }
+            OpCode::GetPrivate(key) => {
+                let obj = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::GetPrivate(dst, obj, key.clone()));
+                self.push(dst);
+            }
+            OpCode::SetPrivate(key) => {
+                let value = self.pop()?;
+                let obj = self.pop()?;
+                self.emit(IrOp::SetPrivate(obj, key.clone(), value));
+            }
             OpCode::GetSuperProp(name) => {
                 // [this, base]
                 let base = self.pop()?;
@@ -1244,7 +1259,6 @@ fn native_refusal(op: &OpCode) -> Option<&'static str> {
     Some(match op {
         OpCode::NewObjectWithProto | OpCode::SetProto => "`SetProto`",
         OpCode::NewTarget => "`new.target`",
-        OpCode::ApplyDecorator => "decorators",
         OpCode::ImportAsync(_)
         | OpCode::GetExport { .. }
         | OpCode::ModuleResolutionError { .. } => "modules (`import`)",

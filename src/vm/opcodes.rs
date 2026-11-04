@@ -46,6 +46,9 @@ pub enum OpCode {
     /// `typeof name` for a plain variable: like `Load(name)` then `TypeOf`,
     /// except that an unbound name gives "undefined" instead of throwing.
     TypeOfName(String),
+    /// `String(v)`, as in a template literal: an object's own `toString`
+    /// (or `valueOf`) converts it. [v] -> [string]
+    ToStr,
     Delete(String),  // delete operator - removes property from object
     NewArray(usize), // Creates array of size N
     StoreElement,    // Pops index, value, and array_ptr -> arr[idx] = val
@@ -125,6 +128,12 @@ pub enum OpCode {
     /// `f.call(this, args)`: call with an explicit `this` (`super.m(args)`).
     /// [args..., f, this] -> [result]
     CallWithThis(usize),
+    /// `obj.#x`: like `GetProp`, but an object without the private member
+    /// throws a TypeError. [obj] -> [value]
+    GetPrivate(String),
+    /// `obj.#x = value`: the object must have the private field.
+    /// [obj, value] -> []
+    SetPrivate(String),
     /// `super.name`: `name` looked up from `base` (the parent's prototype,
     /// or the parent in a static method); a getter runs with `this`.
     /// [this, base] -> [value]
@@ -138,12 +147,6 @@ pub enum OpCode {
     /// NewTarget: pushes the constructor that was called with new (stored in frame)
     /// This implements the ES6 new.target meta-property
     NewTarget,
-
-    // === Decorators ===
-    /// ApplyDecorator: applies a decorator to a class, method, or field
-    /// Stack: [target, decorator] -> [decorated_target]
-    /// The decorator is called with the target and returns the decorated result
-    ApplyDecorator,
 
     // === ES Modules ===
     /// ImportAsync: Asynchronously load a module

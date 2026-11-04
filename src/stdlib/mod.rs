@@ -541,6 +541,15 @@ pub fn native_string_constructor(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     let Some(value) = args.first() else {
         return JsValue::String(String::new());
     };
+    // An object with its own `toString` / `valueOf` converts through it.
+    match vm.to_primitive(value, true) {
+        Ok(Some(p)) => return JsValue::String(vm.to_js_string(&p)),
+        Ok(None) => {}
+        Err(e) => {
+            vm.native_throw = Some(e);
+            return JsValue::Undefined;
+        }
+    }
     let result = match value {
         JsValue::Object(ptr) => match vm.heap.get(*ptr).map(|o| &o.data) {
             Some(HeapData::ByteStream(_)) => "[object ByteStream]".to_string(),

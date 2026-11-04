@@ -170,6 +170,7 @@ fn serialize_op(output: &mut String, op: &IrOp) {
         IrOp::SetProp(obj, name, val) => {
             output.push_str(&format!("set.prop {}, .{}, {}", obj, name, val))
         }
+        IrOp::GetPrivate(_, _, _) | IrOp::SetPrivate(_, _, _) => output.push_str(&op.to_string()),
         IrOp::GetElement(d, obj, key) => {
             output.push_str(&format!("{} = get.elem {}, [{}]", d, obj, key))
         }
@@ -206,6 +207,7 @@ fn serialize_op(output: &mut String, op: &IrOp) {
         IrOp::TypeGuard(d, v, ty) => output.push_str(&format!("{} = typeguard {}, {}", d, v, ty)),
         IrOp::ToBool(d, v) => output.push_str(&format!("{} = to.bool {}", d, v)),
         IrOp::ToNum(d, v) => output.push_str(&format!("{} = to.num {}", d, v)),
+        IrOp::ToStr(d, v) => output.push_str(&format!("{} = to.str {}", d, v)),
         IrOp::Phi(d, entries) => {
             let entries_str: Vec<String> = entries
                 .iter()

@@ -207,7 +207,7 @@ impl<'a> TypeChecker<'a> {
             }
 
             // Property access returns Any
-            IrOp::GetProp(dst, _, _) => {
+            IrOp::GetProp(dst, _, _) | IrOp::GetPrivate(dst, _, _) => {
                 self.set_type(*dst, IrType::Any);
             }
 
@@ -265,6 +265,9 @@ impl<'a> TypeChecker<'a> {
             IrOp::ToNum(dst, _) => {
                 self.set_type(*dst, IrType::Number);
             }
+            IrOp::ToStr(dst, _) => {
+                self.set_type(*dst, IrType::String);
+            }
 
             // Phi: meet of all incoming types
             IrOp::Phi(dst, entries) => {
@@ -296,6 +299,7 @@ impl<'a> TypeChecker<'a> {
             IrOp::StoreLocal(_, _)
             | IrOp::StoreGlobal(_, _)
             | IrOp::SetProp(_, _, _)
+            | IrOp::SetPrivate(_, _, _)
             | IrOp::SetElement(_, _, _)
             | IrOp::ArrayPush(_, _)
             | IrOp::DerefStore(_, _)

@@ -73,6 +73,7 @@ impl JitRuntime {
         let f: crate::runtime::heap::NativeFn = unsafe { std::mem::transmute(ptr) };
         let argv: Vec<u64> = args.iter().map(|a| a.to_bits()).collect();
         let undefined = OtValue::undefined().to_bits();
+        crate::runtime::stubs::ot_stack_init();
         let result = f(undefined, argv.as_ptr(), argv.len(), undefined);
         if result == crate::runtime::abi::EXCEPTION_BITS {
             // An exception no `catch` handled: report it and exit 1.

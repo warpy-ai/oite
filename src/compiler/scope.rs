@@ -53,6 +53,29 @@ pub fn this_ident(span: Span) -> Ident {
     Ident::new(THIS_LOCAL.into(), span, Default::default())
 }
 
+/// A constructor parameter as a pattern; a TypeScript parameter property
+/// (`constructor(private x = 1)`) is the parameter it declares.
+pub fn ctor_param_pat(p: &ParamOrTsParamProp) -> Pat {
+    match p {
+        ParamOrTsParamProp::Param(p) => p.pat.clone(),
+        ParamOrTsParamProp::TsParamProp(tp) => match &tp.param {
+            TsParamPropParam::Ident(id) => Pat::Ident(id.clone()),
+            TsParamPropParam::Assign(a) => Pat::Assign(a.clone()),
+        },
+    }
+}
+
+/// The parameter a TypeScript parameter property assigns to `this`.
+pub fn param_prop_ident(p: &ParamOrTsParamProp) -> Option<Ident> {
+    let ParamOrTsParamProp::TsParamProp(tp) = p else {
+        return None;
+    };
+    match &tp.param {
+        TsParamPropParam::Ident(id) => Some(id.id.clone()),
+        TsParamPropParam::Assign(a) => a.left.as_ident().map(|b| b.id.clone()),
+    }
+}
+
 /// `%super` as an identifier at `span`, for the scope tables.
 pub fn super_ident(span: Span) -> Ident {
     Ident::new(SUPER_LOCAL.into(), span, Default::default())
@@ -548,9 +571,7 @@ impl Visit for Resolver {
         self.enter_this_scope(ctor_span);
         if let Some(k) = ctor {
             for p in &k.params {
-                if let ParamOrTsParamProp::Param(p) = p {
-                    self.declaration(&p.pat, false);
-                }
+                self.declaration(&ctor_param_pat(p), false);
             }
         } else if c.super_class.is_some() {
             // The implicit constructor calls `super(...args)`.

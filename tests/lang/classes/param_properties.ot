@@ -1,0 +1,17 @@
+// backends: vm jit aot
+// TypeScript parameter properties assign `this.x = x` before the body.
+class Point {
+  label = "p";
+  constructor(public x: number, private y: number = 5, readonly z = 0) {}
+  sum() { return this.x + this.y + this.z; }
+}
+class Tagged extends Point {
+  constructor(public tag: string, x: number) { super(x); }
+}
+let p = new Point(1);
+let t = new Tagged("t", 2);
+console.log(p.x, p.sum(), p.label, t.tag, t.x, t.sum());
+let fns: Array<() => number> = [];
+class Cap { constructor(public v: number) { fns.push(() => v * 2); } }
+new Cap(21);
+console.log(fns[0]());

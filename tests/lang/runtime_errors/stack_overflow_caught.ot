@@ -1,5 +1,5 @@
-// Deep recursion is a catchable RangeError. (VM only: native code has no
-// stack depth check yet.)
+// backends: vm jit aot
+// Deep recursion is a catchable RangeError.
 try {
   (function down(n) { return down(n + 1); })(0);
 } catch (err) {

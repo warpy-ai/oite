@@ -62,6 +62,34 @@ thread_local! {
     static ERROR_PROTOS: RefCell<HashMap<&'static str, u64>> = RefCell::new(HashMap::new());
 }
 
+/// The lowest stack address compiled code may reach: every compiled
+/// function compares its stack pointer with it on entry and throws a
+/// RangeError below it. 0 (no limit) until `ot_stack_init`.
+#[unsafe(no_mangle)]
+pub static OT_STACK_LIMIT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Stack that recursion in compiled code may use, below where the program
+/// starts. Main threads get 8MB by default; the rest is left for the
+/// runtime and its callers.
+const STACK_BUDGET: usize = 4 << 20;
+
+/// Set `OT_STACK_LIMIT` from the current stack position.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_stack_init() {
+    let marker = 0u8;
+    let here = std::hint::black_box(&marker) as *const u8 as usize;
+    OT_STACK_LIMIT.store(
+        here.saturating_sub(STACK_BUDGET),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// A compiled function found the stack exhausted.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_stack_overflow() -> u64 {
+    throw_error("RangeError", "Maximum call stack size exceeded")
+}
+
 /// `throw value`: returns `EXCEPTION_BITS`, which the caller propagates.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_throw(value: u64) -> u64 {
@@ -446,6 +474,48 @@ pub extern "C" fn ot_get_super_prop(this: u64, base: u64, key: *const u8, key_le
         }
         _ => lookup(ptr, key).unwrap_or_else(undefined),
     }
+}
+
+/// `#x` from a private member's key (`#x@<class>`), for messages.
+fn private_name(key: &str) -> &str {
+    key.split('@').next().unwrap_or(key)
+}
+
+/// `obj.#x`: a TypeError if the object lacks the private member.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_get_private(obj: u64, key: *const u8, key_len: usize) -> u64 {
+    let key = unsafe { name(key, key_len) };
+    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(obj))
+        && let Some(v) = lookup(ptr, key)
+    {
+        return v;
+    }
+    throw_error(
+        "TypeError",
+        &format!(
+            "Cannot read private member {} from an object whose class did not declare it",
+            private_name(key)
+        ),
+    )
+}
+
+/// `obj.#x = value`: a TypeError if the object lacks the private field.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_set_private(obj: u64, key: *const u8, key_len: usize, value: u64) -> u64 {
+    let key = unsafe { name(key, key_len) };
+    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(obj))
+        && let Some(entry) = props(ptr).iter_mut().find(|(k, _)| k == key)
+    {
+        entry.1 = value;
+        return undefined();
+    }
+    throw_error(
+        "TypeError",
+        &format!(
+            "Cannot write private member {} to an object whose class did not declare it",
+            private_name(key)
+        ),
+    )
 }
 
 /// `value instanceof ctor`: whether `ctor.prototype` is on `value`'s
@@ -997,10 +1067,18 @@ fn outcome(result: Result<builtins::Outcome<u64>, builtins::Error>, recv: u64) -
 /// `a + b`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_add_any(a: u64, b: u64) -> u64 {
-    let va = OtValue::from_bits(a);
-    let vb = OtValue::from_bits(b);
+    let mut va = OtValue::from_bits(a);
+    let mut vb = OtValue::from_bits(b);
     if va.is_number() && vb.is_number() {
         return number(va.as_number_unchecked() + vb.as_number_unchecked());
+    }
+    // An object with its own `valueOf` / `toString` converts through it.
+    for v in [&mut va, &mut vb] {
+        match to_primitive(*v, false) {
+            Ok(Some(p)) => *v = p,
+            Ok(None) => {}
+            Err(e) => return e,
+        }
     }
     let a_str =
         as_str(va).is_some() || matches!(object(va), Some((_, k)) if k != ObjectKind::String);
@@ -1398,10 +1476,64 @@ pub extern "C" fn ot_builtin_math(_this: u64, argv: *const u64, argc: usize, env
 
 /// `String(value)`
 pub extern "C" fn ot_builtin_string(_this: u64, argv: *const u64, argc: usize, _env: u64) -> u64 {
-    match unsafe { args(argv, argc) }.first() {
-        Some(v) => new_string(&value_to_string(OtValue::from_bits(*v))),
-        None => new_string(""),
+    let Some(v) = unsafe { args(argv, argc) }.first() else {
+        return new_string("");
+    };
+    let v = match to_primitive(OtValue::from_bits(*v), true) {
+        Ok(Some(p)) => p,
+        Ok(None) => OtValue::from_bits(*v),
+        Err(e) => return e,
+    };
+    new_string(&value_to_string(v))
+}
+
+/// `String(v)`, as in a template literal.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_to_str(v: u64) -> u64 {
+    let value = OtValue::from_bits(v);
+    if as_str(value).is_some() {
+        return v;
     }
+    let value = match to_primitive(value, true) {
+        Ok(Some(p)) => p,
+        Ok(None) => value,
+        Err(e) => return e,
+    };
+    new_string(&value_to_string(value))
+}
+
+/// JavaScript `ToPrimitive` for an object with a compiled `valueOf` or
+/// `toString` (`prefer_string`: `toString` first). `Ok(None)`: no such
+/// method; `Err`: it threw (`EXCEPTION_BITS`).
+fn to_primitive(v: OtValue, prefer_string: bool) -> Result<Option<OtValue>, u64> {
+    let Some((ptr, ObjectKind::Object)) = object(v) else {
+        return Ok(None);
+    };
+    let order = if prefer_string {
+        ["toString", "valueOf"]
+    } else {
+        ["valueOf", "toString"]
+    };
+    for name in order {
+        let Some(method) = lookup(ptr, name) else {
+            continue;
+        };
+        if !matches!(
+            object(OtValue::from_bits(method)),
+            Some((_, ObjectKind::Function))
+        ) {
+            continue;
+        }
+        let result = ot_call(method, v.to_bits(), std::ptr::null(), 0);
+        if result == EXCEPTION_BITS {
+            return Err(result);
+        }
+        let r = OtValue::from_bits(result);
+        if !matches!(object(r), Some((_, kind)) if kind != ObjectKind::String) {
+            return Ok(Some(r));
+        }
+    }
+    Ok(None)
 }
 
 /// `Date.now()`

@@ -501,6 +501,10 @@ pub enum IrOp {
     InstanceOf(ValueId, ValueId, ValueId),
     /// `super.name`: (dst, this, base, name); a getter runs with `this`.
     GetSuperProp(ValueId, ValueId, ValueId, String),
+    /// `obj.#x`: throws if the object lacks the private member.
+    GetPrivate(ValueId, ValueId, String),
+    /// `obj.#x = value`: throws if the object lacks the private field.
+    SetPrivate(ValueId, String, ValueId),
     /// Store global by name: globals[name] = src
     StoreGlobal(String, ValueId),
 
@@ -541,6 +545,8 @@ pub enum IrOp {
     ToBool(ValueId, ValueId),
     /// Convert to number: dst = ToNumber(val)
     ToNum(ValueId, ValueId),
+    /// `String(v)`: an object's own `toString` converts it (may throw).
+    ToStr(ValueId, ValueId),
     /// TypeOf operator: dst = typeof(val) as string
     TypeOf(ValueId, ValueId),
     /// Delete property: dst = delete obj.prop (returns bool)
@@ -600,6 +606,8 @@ impl IrOp {
         matches!(
             self,
             IrOp::LoadGlobal(_, _)
+                | IrOp::AddAny(_, _, _)
+                | IrOp::ToStr(_, _)
                 | IrOp::GetProp(_, _, _)
                 | IrOp::SetProp(_, _, _)
                 | IrOp::GetElement(_, _, _)
@@ -616,6 +624,8 @@ impl IrOp {
                 | IrOp::CallWithThis(_, _, _, _)
                 | IrOp::InstanceOf(_, _, _)
                 | IrOp::GetSuperProp(_, _, _, _)
+                | IrOp::GetPrivate(_, _, _)
+                | IrOp::SetPrivate(_, _, _)
         )
     }
 
@@ -658,6 +668,7 @@ impl IrOp {
             | IrOp::TypeOfGlobal(d, _)
             | IrOp::NewObject(d)
             | IrOp::GetProp(d, _, _)
+            | IrOp::GetPrivate(d, _, _)
             | IrOp::GetElement(d, _, _)
             | IrOp::NewArray(d)
             | IrOp::ArrayLen(d, _)
@@ -674,6 +685,7 @@ impl IrOp {
             | IrOp::TypeGuard(d, _, _)
             | IrOp::ToBool(d, _)
             | IrOp::ToNum(d, _)
+            | IrOp::ToStr(d, _)
             | IrOp::Phi(d, _)
             | IrOp::Copy(d, _)
             | IrOp::LoadThis(d)
@@ -699,6 +711,7 @@ impl IrOp {
             IrOp::StoreLocal(_, _)
             | IrOp::StoreGlobal(_, _)
             | IrOp::SetProp(_, _, _)
+            | IrOp::SetPrivate(_, _, _)
             | IrOp::SetElement(_, _, _)
             | IrOp::ArrayPush(_, _)
             // Borrow operations without dest
@@ -751,6 +764,7 @@ impl IrOp {
             | IrOp::Not(_, a)
             | IrOp::ToBool(_, a)
             | IrOp::ToNum(_, a)
+            | IrOp::ToStr(_, a)
             | IrOp::Copy(_, a)
             | IrOp::ArrayLen(_, a)
             | IrOp::TypeCheck(_, a, _)
@@ -777,8 +791,8 @@ impl IrOp {
             // Struct new
             IrOp::StructNew(_, _) => vec![],
 
-            IrOp::GetProp(_, obj, _) => vec![*obj],
-            IrOp::SetProp(obj, _, val) => vec![*obj, *val],
+            IrOp::GetProp(_, obj, _) | IrOp::GetPrivate(_, obj, _) => vec![*obj],
+            IrOp::SetProp(obj, _, val) | IrOp::SetPrivate(obj, _, val) => vec![*obj, *val],
             IrOp::TypeOf(_, val) => vec![*val],
             IrOp::DeleteProp(_, obj, _) => vec![*obj],
             IrOp::GetElement(_, obj, key) => vec![*obj, *key],
@@ -1298,6 +1312,10 @@ impl fmt::Display for IrOp {
             IrOp::NewObject(d) => write!(f, "{} = new.object", d),
             IrOp::GetProp(d, obj, name) => write!(f, "{} = get.prop {}, .{}", d, obj, name),
             IrOp::SetProp(obj, name, val) => write!(f, "set.prop {}, .{}, {}", obj, name, val),
+            IrOp::GetPrivate(d, obj, name) => write!(f, "{} = get.private {}, .{}", d, obj, name),
+            IrOp::SetPrivate(obj, name, val) => {
+                write!(f, "set.private {}, .{}, {}", obj, name, val)
+            }
             IrOp::GetElement(d, obj, key) => write!(f, "{} = get.elem {}, [{}]", d, obj, key),
             IrOp::SetElement(obj, key, val) => write!(f, "set.elem {}, [{}], {}", obj, key, val),
             IrOp::NewArray(d) => write!(f, "{} = new.array", d),
@@ -1349,6 +1367,7 @@ impl fmt::Display for IrOp {
             IrOp::TypeGuard(d, v, ty) => write!(f, "{} = typeguard {}, {}", d, v, ty),
             IrOp::ToBool(d, v) => write!(f, "{} = to.bool {}", d, v),
             IrOp::ToNum(d, v) => write!(f, "{} = to.num {}", d, v),
+            IrOp::ToStr(d, v) => write!(f, "{} = to.str {}", d, v),
             IrOp::Phi(d, entries) => {
                 let entries_str: Vec<_> = entries
                     .iter()

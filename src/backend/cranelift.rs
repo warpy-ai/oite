@@ -88,6 +88,11 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_call_super,
         ot_get_super_prop,
         ot_instanceof,
+        ot_get_private,
+        ot_set_private,
+        ot_to_str,
+        ot_stack_init,
+        ot_stack_overflow,
     )
 }
 
@@ -451,6 +456,20 @@ impl Fx<'_> {
             }
         }
 
+        // Stack overflow: below `OT_STACK_LIMIT`, throw a RangeError.
+        let limit_addr = Self::c(b, &crate::runtime::stubs::OT_STACK_LIMIT as *const _ as u64);
+        let limit = b.ins().load(types::I64, MemFlags::trusted(), limit_addr, 0);
+        let sp = b.ins().get_stack_pointer(types::I64);
+        let exhausted = b.ins().icmp(IntCC::UnsignedLessThan, sp, limit);
+        let overflow = b.create_block();
+        b.set_cold_block(overflow);
+        let body = b.create_block();
+        b.ins().brif(exhausted, overflow, &[], body, &[]);
+        b.switch_to_block(overflow);
+        let e = self.rt_v(b, "ot_stack_overflow", &[]);
+        b.ins().return_(&[e]);
+        b.switch_to_block(body);
+
         match func.blocks.first() {
             Some(first) => {
                 b.ins().jump(self.blocks[&first.id], &[]);
@@ -665,6 +684,7 @@ impl Fx<'_> {
             }
             IrOp::ToBool(d, x) => self.rt_unop(b, *d, "ot_to_boolean", *x)?,
             IrOp::ToNum(d, x) => self.rt_unop(b, *d, "ot_to_number", *x)?,
+            IrOp::ToStr(d, x) => self.rt_unop(b, *d, "ot_to_str", *x)?,
             IrOp::TypeOf(d, x) => self.rt_unop(b, *d, "ot_typeof", *x)?,
 
             IrOp::LoadLocal(d, slot) => {
@@ -733,6 +753,18 @@ impl Fx<'_> {
                 let v = self.get(*v)?;
                 let (p, n) = self.name(b, name);
                 self.rt(b, "ot_set_prop", &[o, p, n, v]);
+            }
+            IrOp::GetPrivate(d, obj, name) => {
+                let o = self.get(*obj)?;
+                let (p, n) = self.name(b, name);
+                let r = self.rt_v(b, "ot_get_private", &[o, p, n]);
+                self.values.insert(*d, r);
+            }
+            IrOp::SetPrivate(obj, name, v) => {
+                let o = self.get(*obj)?;
+                let v = self.get(*v)?;
+                let (p, n) = self.name(b, name);
+                self.rt(b, "ot_set_private", &[o, p, n, v]);
             }
             IrOp::DeleteProp(d, obj, name) => {
                 let o = self.get(*obj)?;

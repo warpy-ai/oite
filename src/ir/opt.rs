@@ -462,6 +462,7 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
         | IrOp::Not(_, a)
         | IrOp::ToBool(_, a)
         | IrOp::ToNum(_, a)
+        | IrOp::ToStr(_, a)
         | IrOp::Copy(_, a)
         | IrOp::ArrayLen(_, a)
         | IrOp::TypeCheck(_, a, _)
@@ -487,11 +488,11 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
             resolve(v);
         }
 
-        IrOp::GetProp(_, obj, _) => {
+        IrOp::GetProp(_, obj, _) | IrOp::GetPrivate(_, obj, _) => {
             resolve(obj);
         }
 
-        IrOp::SetProp(obj, _, val) => {
+        IrOp::SetProp(obj, _, val) | IrOp::SetPrivate(obj, _, val) => {
             resolve(obj);
             resolve(val);
         }
