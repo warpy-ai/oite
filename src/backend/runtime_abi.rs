@@ -65,5 +65,9 @@ pub const RUNTIME: &[(&str, bool, &[Ty])] = {
         ("ot_take_exception", true, &[]),
         ("ot_rethrow", true, &[Val, Val]),
         ("ot_report_uncaught", false, &[]),
+        ("ot_construct", true, &[Val, Ptr, Len]),
+        ("ot_call_super", true, &[Val, Val, Ptr, Len]),
+        ("ot_get_super_prop", true, &[Val, Val, Ptr, Len]),
+        ("ot_instanceof", true, &[Val, Val]),
     ]
 };

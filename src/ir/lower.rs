@@ -309,6 +309,16 @@ impl Lowerer {
         self.stack.pop().ok_or(LowerError::StackUnderflow)
     }
 
+    /// Pop `n` values, returned in push order (call arguments).
+    fn pop_n(&mut self, n: usize) -> Result<Vec<ValueId>, LowerError> {
+        let mut values = Vec::with_capacity(n);
+        for _ in 0..n {
+            values.push(self.pop()?);
+        }
+        values.reverse();
+        Ok(values)
+    }
+
     /// Peek at the top of the stack without popping.
     fn peek(&self) -> Result<ValueId, LowerError> {
         self.stack.last().copied().ok_or(LowerError::StackUnderflow)
@@ -650,10 +660,6 @@ impl Lowerer {
                 self.push(a);
             }
 
-            OpCode::GetPrivateProp(_) | OpCode::SetPrivateProp(_) => {
-                return Err(native_unsupported("private class fields (`#x`)"));
-            }
-
             // Arithmetic operations (binary)
             OpCode::Add => {
                 let b = self.pop()?;
@@ -778,7 +784,12 @@ impl Lowerer {
             }
 
             OpCode::InstanceOf => {
-                return Err(native_unsupported("`instanceof`"));
+                // [value, ctor]
+                let ctor = self.pop()?;
+                let value = self.pop()?;
+                let dst = self.alloc_value(IrType::Boolean);
+                self.emit(IrOp::InstanceOf(dst, value, ctor));
+                self.push(dst);
             }
             OpCode::NewTarget => {
                 return Err(native_unsupported("`new.target`"));
@@ -1018,8 +1029,53 @@ impl Lowerer {
                 self.push(dst);
             }
 
-            OpCode::Construct(_) => {
-                return Err(native_unsupported("`new`"));
+            OpCode::Construct(argc) => {
+                // [args..., ctor]
+                let ctor = self.pop()?;
+                let args = self.pop_n(*argc)?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::Construct(dst, ctor, args));
+                self.push(dst);
+            }
+            OpCode::CallSuper(argc) => {
+                // [args..., parent]
+                let parent = self.pop()?;
+                let args = self.pop_n(*argc)?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::CallSuper(dst, parent, args));
+                self.push(dst);
+            }
+            OpCode::ForwardArgs => {
+                // The VM's caller pushes the arguments and their count here;
+                // native code reads its own. This stands for the count.
+                let placeholder = self.alloc_value(IrType::Any);
+                self.emit(IrOp::Const(placeholder, Literal::Undefined));
+                self.push(placeholder);
+            }
+            OpCode::SuperForward => {
+                // [count placeholder, parent]
+                let parent = self.pop()?;
+                self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::SuperForward(dst, parent));
+                self.push(dst);
+            }
+            OpCode::CallWithThis(argc) => {
+                // [args..., f, this]
+                let this = self.pop()?;
+                let func = self.pop()?;
+                let args = self.pop_n(*argc)?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::CallWithThis(dst, func, this, args));
+                self.push(dst);
+            }
+            OpCode::GetSuperProp(name) => {
+                // [this, base]
+                let base = self.pop()?;
+                let this = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::GetSuperProp(dst, this, base, name.clone()));
+                self.push(dst);
             }
 
             OpCode::Require => {
@@ -1066,12 +1122,8 @@ impl Lowerer {
             // to no-ops or `undefined`, so native code silently computed
             // wrong answers. Refusing is the only behaviour that cannot
             // produce a wrong result.
-            OpCode::SetProto
-            | OpCode::LoadSuper
-            | OpCode::CallSuper(_)
-            | OpCode::SuperForward
-            | OpCode::GetSuperProp(_) => {
-                return Err(native_unsupported("class inheritance (`extends`, `super`)"));
+            OpCode::SetProto => {
+                return Err(native_unsupported("`SetProto`"));
             }
             OpCode::ImportAsync(_)
             | OpCode::GetExport { .. }
@@ -1190,16 +1242,7 @@ pub struct ExtractedFunction {
 /// Constructs the native backends refuse, whichever function they are in.
 fn native_refusal(op: &OpCode) -> Option<&'static str> {
     Some(match op {
-        OpCode::NewObjectWithProto
-        | OpCode::SetProto
-        | OpCode::LoadSuper
-        | OpCode::CallSuper(_)
-        | OpCode::SuperForward
-        | OpCode::GetSuperProp(_)
-        | OpCode::GetPrivateProp(_)
-        | OpCode::SetPrivateProp(_) => "classes",
-        OpCode::Construct(_) => "`new`",
-        OpCode::InstanceOf => "`instanceof`",
+        OpCode::NewObjectWithProto | OpCode::SetProto => "`SetProto`",
         OpCode::NewTarget => "`new.target`",
         OpCode::ApplyDecorator => "decorators",
         OpCode::ImportAsync(_)

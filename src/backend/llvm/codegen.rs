@@ -238,6 +238,7 @@ impl LlvmCodegen {
                 function: f,
                 last_call: None,
                 exception_return: None,
+                args: (LLVMGetParam(f, 1), LLVMGetParam(f, 2)),
             };
             fx.prologue_setup(func, f)?;
 
@@ -310,6 +311,8 @@ struct Fx<'a> {
     /// Block returning `EXCEPTION_BITS`, for exceptions no `catch` in this
     /// function handles.
     exception_return: Option<LLVMBasicBlockRef>,
+    /// This function's own `argv` and `argc`.
+    args: (LLVMValueRef, LLVMValueRef),
 }
 
 impl Fx<'_> {
@@ -900,6 +903,57 @@ impl Fx<'_> {
                 IrOp::Throw(v) => {
                     let v = self.get(*v)?;
                     self.rt("ot_throw", &[v]);
+                }
+                IrOp::Construct(d, ctor, args) => {
+                    let c = self.get(*ctor)?;
+                    let vals: Vec<LLVMValueRef> = args
+                        .iter()
+                        .map(|a| self.get(*a))
+                        .collect::<Result<_, _>>()?;
+                    let (argv, argc) = self.arg_array(&vals);
+                    let r = self.rt("ot_construct", &[c, argv, argc]);
+                    self.set(*d, r);
+                }
+                IrOp::CallSuper(d, parent, args) => {
+                    let p = self.get(*parent)?;
+                    let vals: Vec<LLVMValueRef> = args
+                        .iter()
+                        .map(|a| self.get(*a))
+                        .collect::<Result<_, _>>()?;
+                    let (argv, argc) = self.arg_array(&vals);
+                    let this = self.this;
+                    let r = self.rt("ot_call_super", &[p, this, argv, argc]);
+                    self.set(*d, r);
+                }
+                IrOp::SuperForward(d, parent) => {
+                    let p = self.get(*parent)?;
+                    let (argv, argc) = self.args;
+                    let this = self.this;
+                    let r = self.rt("ot_call_super", &[p, this, argv, argc]);
+                    self.set(*d, r);
+                }
+                IrOp::CallWithThis(d, func, this, args) => {
+                    let f = self.get(*func)?;
+                    let t = self.get(*this)?;
+                    let vals: Vec<LLVMValueRef> = args
+                        .iter()
+                        .map(|a| self.get(*a))
+                        .collect::<Result<_, _>>()?;
+                    let (argv, argc) = self.arg_array(&vals);
+                    let r = self.rt("ot_call", &[f, t, argv, argc]);
+                    self.set(*d, r);
+                }
+                IrOp::InstanceOf(d, v, c) => {
+                    let args = [self.get(*v)?, self.get(*c)?];
+                    let r = self.rt("ot_instanceof", &args);
+                    self.set(*d, r);
+                }
+                IrOp::GetSuperProp(d, this, base, name) => {
+                    let t = self.get(*this)?;
+                    let o = self.get(*base)?;
+                    let (p, n) = self.string(name);
+                    let r = self.rt("ot_get_super_prop", &[t, o, p, n]);
+                    self.set(*d, r);
                 }
                 IrOp::TakeException(d) => {
                     let r = self.rt("ot_take_exception", &[]);

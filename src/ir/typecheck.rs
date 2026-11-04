@@ -226,8 +226,16 @@ impl<'a> TypeChecker<'a> {
             }
 
             // Function call returns Any (without more analysis)
-            IrOp::Call(dst, _, _) => {
+            IrOp::Call(dst, _, _)
+            | IrOp::Construct(dst, _, _)
+            | IrOp::CallSuper(dst, _, _)
+            | IrOp::SuperForward(dst, _)
+            | IrOp::CallWithThis(dst, _, _, _)
+            | IrOp::GetSuperProp(dst, _, _, _) => {
                 self.set_type(*dst, IrType::Any);
+            }
+            IrOp::InstanceOf(dst, _, _) => {
+                self.set_type(*dst, IrType::Boolean);
             }
 
             IrOp::CallMethod(dst, _, _, _) => {

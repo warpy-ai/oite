@@ -27,6 +27,36 @@ use swc_ecma_visit::{Visit, VisitWith};
 pub const SCOPE_LOCAL: &str = "%scope";
 /// Property linking an environment object to the enclosing one.
 pub const PARENT_PROP: &str = "%parent";
+/// The binding `super` refers to: the parent class, declared in the scope
+/// of a class that `extends` one. Methods and the constructor reach it as a
+/// captured variable.
+pub const SUPER_LOCAL: &str = "%super";
+
+/// The span standing for a class's implicit constructor (a class without
+/// `constructor`): empty, at the start of the class.
+pub fn implicit_ctor_span(class_span: Span) -> Span {
+    Span::new(class_span.lo, class_span.lo)
+}
+
+/// The binding an arrow function's `this` refers to: the `this` of the
+/// nearest enclosing non-arrow function, declared in its scope.
+pub const THIS_LOCAL: &str = "%this";
+
+/// The span standing for a function's own `%this` declaration: empty, at
+/// the end of the function.
+pub fn this_decl_span(fn_span: Span) -> Span {
+    Span::new(fn_span.hi, fn_span.hi)
+}
+
+/// `%this` as an identifier at `span`.
+pub fn this_ident(span: Span) -> Ident {
+    Ident::new(THIS_LOCAL.into(), span, Default::default())
+}
+
+/// `%super` as an identifier at `span`, for the scope tables.
+pub fn super_ident(span: Span) -> Ident {
+    Ident::new(SUPER_LOCAL.into(), span, Default::default())
+}
 
 /// A source span as a map key.
 pub type SpanKey = (u32, u32);
@@ -137,6 +167,8 @@ struct Resolver {
     functions: Vec<SpanKey>,
     /// Function index -> enclosing function index.
     function_parent: Vec<Option<usize>>,
+    /// Whether each enclosing function is an arrow, innermost last.
+    arrows: Vec<bool>,
 }
 
 impl Resolver {
@@ -154,7 +186,15 @@ impl Resolver {
             current: 0,
             functions: Vec::new(),
             function_parent: Vec::new(),
+            arrows: Vec::new(),
         }
+    }
+
+    /// Enter a non-arrow function: it declares `%this` for the arrows in it.
+    fn enter_this_scope(&mut self, fn_span: Span) {
+        self.declare_in(self.current, THIS_LOCAL);
+        self.occurrence(&this_ident(this_decl_span(fn_span)));
+        self.arrows.push(false);
     }
 
     fn push_scope(&mut self, kind: Kind, span: Span) -> usize {
@@ -396,6 +436,7 @@ impl Resolver {
     fn function_like(&mut self, span: Span, params: &[&Pat], body: Option<&BlockStmt>) {
         let saved = self.current;
         self.push_scope(Kind::Function, span);
+        self.enter_this_scope(span);
         for p in params {
             self.declaration(p, false);
         }
@@ -406,6 +447,7 @@ impl Resolver {
                 s.visit_with(self);
             }
         }
+        self.arrows.pop();
         self.pop_scope(saved);
     }
 }
@@ -441,6 +483,7 @@ impl Visit for Resolver {
     fn visit_arrow_expr(&mut self, a: &ArrowExpr) {
         let saved = self.current;
         self.push_scope(Kind::Function, a.span);
+        self.arrows.push(true);
         for p in &a.params {
             self.declaration(p, false);
         }
@@ -453,7 +496,14 @@ impl Visit for Resolver {
             }
             BlockStmtOrExpr::Expr(e) => e.visit_with(self),
         }
+        self.arrows.pop();
         self.pop_scope(saved);
+    }
+
+    fn visit_this_expr(&mut self, t: &ThisExpr) {
+        if self.arrows.last() == Some(&true) {
+            self.occurrence(&this_ident(t.span));
+        }
     }
 
     fn visit_constructor(&mut self, c: &Constructor) {
@@ -472,6 +522,77 @@ impl Visit for Resolver {
         self.declare_in(self.current, c.ident.sym.as_ref());
         self.occurrence(&c.ident);
         c.class.visit_with(self);
+    }
+
+    /// A class: `%super` (if it extends one) in a scope of its own; the
+    /// constructor's function scope also holds the instance field
+    /// initializers, which run in it.
+    fn visit_class(&mut self, c: &Class) {
+        c.decorators.visit_with(self);
+        let saved = self.current;
+        if let Some(parent) = &c.super_class {
+            parent.visit_with(self);
+            self.push_scope(Kind::Block, c.span);
+            self.declare_in(self.current, SUPER_LOCAL);
+            // At the class's span: the parent expression's own span is
+            // taken by its identifiers.
+            self.occurrence(&super_ident(c.span));
+        }
+        let ctor = c.body.iter().find_map(|m| match m {
+            ClassMember::Constructor(k) => Some(k),
+            _ => None,
+        });
+        let class_scope = self.current;
+        let ctor_span = ctor.map_or(implicit_ctor_span(c.span), |k| k.span);
+        self.push_scope(Kind::Function, ctor_span);
+        self.enter_this_scope(ctor_span);
+        if let Some(k) = ctor {
+            for p in &k.params {
+                if let ParamOrTsParamProp::Param(p) = p {
+                    self.declaration(&p.pat, false);
+                }
+            }
+        } else if c.super_class.is_some() {
+            // The implicit constructor calls `super(...args)`.
+            self.occurrence(&super_ident(ctor_span));
+        }
+        for m in &c.body {
+            match m {
+                ClassMember::ClassProp(p) if !p.is_static => p.value.visit_with(self),
+                ClassMember::PrivateProp(p) if !p.is_static => p.value.visit_with(self),
+                _ => {}
+            }
+        }
+        if let Some(body) = ctor.and_then(|k| k.body.as_ref()) {
+            self.hoist_stmts(&body.stmts);
+            for s in &body.stmts {
+                s.visit_with(self);
+            }
+        }
+        self.arrows.pop();
+        self.current = class_scope;
+        for m in &c.body {
+            match m {
+                ClassMember::Method(m) => {
+                    m.key.visit_with(self);
+                    m.function.visit_with(self);
+                }
+                ClassMember::PrivateMethod(m) => m.function.visit_with(self),
+                ClassMember::ClassProp(p) => {
+                    p.key.visit_with(self);
+                    if p.is_static {
+                        p.value.visit_with(self);
+                    }
+                }
+                ClassMember::PrivateProp(p) if p.is_static => p.value.visit_with(self),
+                _ => {}
+            }
+        }
+        self.pop_scope(saved);
+    }
+
+    fn visit_super(&mut self, s: &Super) {
+        self.occurrence(&super_ident(s.span));
     }
 
     fn visit_block_stmt(&mut self, b: &BlockStmt) {

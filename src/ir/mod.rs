@@ -484,6 +484,23 @@ pub enum IrOp {
     /// End of a `finally`: `rethrow(thrown, value)` throws `value` again if
     /// `thrown` is true (the `finally` was entered by an exception).
     Rethrow(ValueId, ValueId),
+
+    // ========================================================================
+    // Classes
+    // ========================================================================
+    /// `new ctor(args)`
+    Construct(ValueId, ValueId, Vec<ValueId>),
+    /// `super(args)`: the parent class's constructor on this `this`.
+    CallSuper(ValueId, ValueId, Vec<ValueId>),
+    /// An implicit constructor's `super(...args)`: the parent's constructor
+    /// with this function's own arguments.
+    SuperForward(ValueId, ValueId),
+    /// `f(args)` with an explicit `this`: (dst, f, this, args).
+    CallWithThis(ValueId, ValueId, ValueId, Vec<ValueId>),
+    /// `value instanceof ctor`
+    InstanceOf(ValueId, ValueId, ValueId),
+    /// `super.name`: (dst, this, base, name); a getter runs with `this`.
+    GetSuperProp(ValueId, ValueId, ValueId, String),
     /// Store global by name: globals[name] = src
     StoreGlobal(String, ValueId),
 
@@ -593,6 +610,12 @@ impl IrOp {
                 | IrOp::CallMethod(_, _, _, _)
                 | IrOp::Throw(_)
                 | IrOp::Rethrow(_, _)
+                | IrOp::Construct(_, _, _)
+                | IrOp::CallSuper(_, _, _)
+                | IrOp::SuperForward(_, _)
+                | IrOp::CallWithThis(_, _, _, _)
+                | IrOp::InstanceOf(_, _, _)
+                | IrOp::GetSuperProp(_, _, _, _)
         )
     }
 
@@ -639,6 +662,12 @@ impl IrOp {
             | IrOp::NewArray(d)
             | IrOp::ArrayLen(d, _)
             | IrOp::Call(d, _, _)
+            | IrOp::Construct(d, _, _)
+            | IrOp::CallSuper(d, _, _)
+            | IrOp::SuperForward(d, _)
+            | IrOp::CallWithThis(d, _, _, _)
+            | IrOp::InstanceOf(d, _, _)
+            | IrOp::GetSuperProp(d, _, _, _)
             | IrOp::CallMethod(d, _, _, _)
             | IrOp::MakeClosure(d, _, _)
             | IrOp::TypeCheck(d, _, _)
@@ -762,11 +791,21 @@ impl IrOp {
             IrOp::StructSetField(dst, _, val) => vec![*dst, *val],
             IrOp::StructSetFieldNamed(dst, _, val) => vec![*dst, *val],
 
-            IrOp::Call(_, func, args) => {
+            IrOp::Call(_, func, args)
+            | IrOp::Construct(_, func, args)
+            | IrOp::CallSuper(_, func, args) => {
                 let mut uses = vec![*func];
                 uses.extend(args.iter().copied());
                 uses
             }
+            IrOp::CallWithThis(_, func, this, args) => {
+                let mut uses = vec![*func, *this];
+                uses.extend(args.iter().copied());
+                uses
+            }
+            IrOp::SuperForward(_, parent) => vec![*parent],
+            IrOp::InstanceOf(_, v, c) => vec![*v, *c],
+            IrOp::GetSuperProp(_, this, base, _) => vec![*this, *base],
             IrOp::CallMethod(_, obj, _, args) => {
                 let mut uses = vec![*obj];
                 uses.extend(args.iter().copied());
@@ -1267,6 +1306,30 @@ impl fmt::Display for IrOp {
             IrOp::Call(d, func, args) => {
                 let args_str: Vec<_> = args.iter().map(|a| format!("{}", a)).collect();
                 write!(f, "{} = call {}({})", d, func, args_str.join(", "))
+            }
+            IrOp::Construct(d, func, args) => {
+                let args_str: Vec<_> = args.iter().map(|a| format!("{}", a)).collect();
+                write!(f, "{} = new {}({})", d, func, args_str.join(", "))
+            }
+            IrOp::CallSuper(d, parent, args) => {
+                let args_str: Vec<_> = args.iter().map(|a| format!("{}", a)).collect();
+                write!(f, "{} = call.super {}({})", d, parent, args_str.join(", "))
+            }
+            IrOp::SuperForward(d, parent) => write!(f, "{} = call.super {}(...)", d, parent),
+            IrOp::CallWithThis(d, func, this, args) => {
+                let args_str: Vec<_> = args.iter().map(|a| format!("{}", a)).collect();
+                write!(
+                    f,
+                    "{} = call {}[this={}]({})",
+                    d,
+                    func,
+                    this,
+                    args_str.join(", ")
+                )
+            }
+            IrOp::InstanceOf(d, v, c) => write!(f, "{} = instanceof {}, {}", d, v, c),
+            IrOp::GetSuperProp(d, this, base, name) => {
+                write!(f, "{} = get.super {}.{} [this={}]", d, base, name, this)
             }
             IrOp::CallMethod(d, obj, method, args) => {
                 let args_str: Vec<_> = args.iter().map(|a| format!("{}", a)).collect();
