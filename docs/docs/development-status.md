@@ -64,15 +64,19 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Sequence expressions `a, b`                | Covered                              | Covered                           |
 | Classes, `new`, `instanceof`, fields, static members | Covered                    | Covered                           |
 | `extends`, `super(...)`, `super.method()`  | Covered                              | Covered                           |
-| Getters and setters, private fields and methods (`#x`, per class, checked) | Covered | Covered                  |
+| Getters and setters, private fields, methods and accessors (`#x`, per class, checked) | Covered | Covered       |
+| `in` operator, including `#x in obj`      | Covered                              | Covered                           |
 | TypeScript parameter properties (`constructor(private x)`) | Covered | Covered                              |
-| Class decorators (`@dec class C {}`)      | Covered                              | Covered                           |
+| Decorators on classes, methods, accessors and fields (TC39 semantics) | Covered  | Covered                           |
 | Arrow functions use the enclosing `this`   | Covered                              | Covered                           |
 | Error classes (`Error`, `TypeError`, `ReferenceError`, `RangeError`, `SyntaxError`), subclassing | Covered (`std/core/error.ot`) | Covered (same classes, compiled in) |
 | `try` / `catch` / `finally`, `throw`       | Covered                              | Covered                           |
-| `async` / `await`                          | Partial: `await` polls synchronously; `.then` callbacks never run; `new Promise` aborts ([#122](https://github.com/warpy-ai/oite/issues/122)) | Refused |
+| `async` / `await` (suspends; resumes as a microtask) | Covered                    | Covered (resumable functions, heap frames) |
+| Promises (`new Promise`, `then` / `catch` / `finally`, `Promise.resolve` / `reject` / `all` / `race`) | Covered | Covered |
+| Microtask ordering, `setTimeout` / `clearTimeout`, unhandled rejections (exit 1) | Covered | Covered               |
+| Top-level `await`                          | Not supported: evaluates to its operand without waiting | Same          |
 | ES modules (`import` / `export`)           | Works, not yet covered               | Refused                           |
-| Decorators on methods, fields, parameters  | Compile error                        | Compile error                     |
+| Parameter decorators                       | Compile error                        | Compile error                     |
 | Implicit conversion through a user `valueOf` / `toString` (`"" + obj`, `${obj}`, `String(obj)`) | Covered | Covered       |
 | Template literals                          | Covered                              | Covered                           |
 | `Math`, `Date.now()`, number `toString` / `toFixed` | Covered                      | Covered (shared implementation)   |
@@ -142,8 +146,8 @@ Oite Core is like "C without libc" — minimal and self-contained. These feature
 
 Correctness comes before new surface area (see [#136](https://github.com/warpy-ai/oite/issues/136)):
 
-1. **Language correctness**: async ([#139](https://github.com/warpy-ai/oite/issues/139)), the string model ([#133](https://github.com/warpy-ai/oite/issues/133)), callback methods (`map`, `filter`, ...)
-2. **Native backends**: async and modules
+1. **Language correctness**: the string model ([#133](https://github.com/warpy-ai/oite/issues/133)), callback methods (`map`, `filter`, ...), top-level `await`
+2. **Native backends**: modules
 3. **Compiler infrastructure**: source positions everywhere ([#125](https://github.com/warpy-ai/oite/issues/125)), type checking ([#124](https://github.com/warpy-ai/oite/issues/124))
 4. **Foundations**: language specification ([#135](https://github.com/warpy-ai/oite/issues/135)), memory reclamation ([#123](https://github.com/warpy-ai/oite/issues/123)), FFI ([#132](https://github.com/warpy-ai/oite/issues/132))
 5. **Rolls, Unroll, tooling**: after the above

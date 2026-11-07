@@ -1,0 +1,6 @@
+start
+sync end
+fast
+slow
+[ 1, 2 ]
+done

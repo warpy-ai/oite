@@ -377,10 +377,14 @@ impl BorrowChecker {
                     }
                 }
             }
-            Expr::Arrow(arrow) => {
+            // An async closure takes ownership of the objects it captures
+            // (like Rust's `async move`). A plain closure does not: this
+            // used to apply to every closure, so `let f = () => a.push(1);
+            // console.log(a)` was rejected at top level.
+            Expr::Arrow(arrow) if arrow.is_async => {
                 self.analyze_closure(&arrow.params, &arrow.body)?;
             }
-            Expr::Fn(fn_expr) => {
+            Expr::Fn(fn_expr) if fn_expr.function.is_async => {
                 self.analyze_fn_closure(fn_expr)?;
             }
             Expr::Cond(cond) => {

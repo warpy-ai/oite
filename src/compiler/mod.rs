@@ -236,9 +236,15 @@ struct ControlState {
     pending_labels: Vec<String>,
 }
 
-/// An instance field: its property name (`#x` for a private one) and its
-/// initializer.
-type ClassField = (String, Option<Box<Expr>>);
+/// An instance field: its property key, its initializer, and its
+/// decorators (each may have returned an initializer the value goes
+/// through).
+#[derive(Clone)]
+struct ClassField {
+    key: String,
+    value: Option<Box<Expr>>,
+    decorators: Vec<Span>,
+}
 
 /// What a function body belongs to; it decides the implicit result and
 /// what runs before the body.
@@ -254,6 +260,9 @@ enum FnKind {
         implicit: bool,
     },
 }
+
+/// Local holding an async function's promise (`vm::promise::PROMISE_LOCAL`).
+const ASYNC_PROMISE: &str = "%promise";
 
 pub struct Codegen {
     pub instructions: Vec<OpCode>,
@@ -322,12 +331,12 @@ impl Codegen {
         }
     }
 
-    /// `[value] -> [Promise.resolve(value)]`, used to wrap the result of an
-    /// async function. Method calls take `[args..., receiver]`.
-    fn emit_promise_resolve(&mut self) {
-        self.instructions.push(OpCode::Load("Promise".to_string()));
+    /// `[value] -> [promise]`: an async function's result resolves its
+    /// promise, which is what the function returns.
+    fn emit_async_return(&mut self) {
         self.instructions
-            .push(OpCode::CallMethod("resolve".to_string(), 1));
+            .push(OpCode::Load(ASYNC_PROMISE.to_string()));
+        self.instructions.push(OpCode::AsyncResolve);
     }
 
     /// `x op= v`, `o.p op= v`, `o[k] op= v`: read, combine, write back,
@@ -1408,6 +1417,27 @@ impl Codegen {
             _ => {}
         }
 
+        // An async function: its promise, and an implicit `try` around the
+        // body whose `catch` rejects the promise.
+        let async_try = if is_async {
+            self.instructions.push(OpCode::AsyncStart);
+            self.instructions
+                .push(OpCode::Let(ASYNC_PROMISE.to_string()));
+            let setup = self.instructions.len();
+            self.instructions.push(OpCode::SetupTry {
+                catch_addr: 0,
+                finally_addr: 0,
+            });
+            self.try_stack.push(TryRegion {
+                part: TryPart::Try,
+                env: None,
+                finalizer: None,
+            });
+            Some(setup)
+        } else {
+            None
+        };
+
         let param_names: Vec<String> = pats.iter().flat_map(|p| scope::pattern_names(p)).collect();
         self.hoist_body(stmts, &param_names);
         let mut last_instr_was_return = false;
@@ -1426,11 +1456,26 @@ impl Codegen {
                 self.instructions.push(OpCode::LoadThis);
             } else {
                 self.instructions.push(OpCode::Push(JsValue::Undefined));
-                if is_async {
-                    self.emit_promise_resolve();
-                }
+            }
+            if is_async {
+                self.unwind_tries(0);
+                self.emit_async_return();
             }
             self.instructions.push(OpCode::Return);
+        }
+
+        if let Some(setup) = async_try {
+            self.try_stack.pop();
+            // catch: [reason] -> the promise rejects with it.
+            let catch_addr = self.instructions.len();
+            self.instructions
+                .push(OpCode::Load(ASYNC_PROMISE.to_string()));
+            self.instructions.push(OpCode::AsyncReject);
+            self.instructions.push(OpCode::Return);
+            self.instructions[setup] = OpCode::SetupTry {
+                catch_addr,
+                finally_addr: 0,
+            };
         }
 
         self.env_active = prev_env;
@@ -1443,13 +1488,106 @@ impl Codegen {
 
     /// `this.name = initializer` for each instance field.
     fn emit_field_inits(&mut self, fields: &[ClassField]) {
-        for (name, value) in fields {
+        for field in fields {
             self.instructions.push(OpCode::LoadThis);
-            match value {
+            match &field.value {
                 Some(v) => self.gen_expr(v),
                 None => self.instructions.push(OpCode::Push(JsValue::Undefined)),
             }
-            self.instructions.push(OpCode::SetProp(name.clone()));
+            // Initializers from field decorators, in source order (as
+            // TypeScript runs them): `value = init.call(this, value)`.
+            for span in &field.decorators {
+                self.load_var(&scope::field_init_use(*span));
+                self.instructions.push(OpCode::LoadThis);
+                self.emit_call_initializer();
+            }
+            self.instructions.push(OpCode::SetProp(field.key.clone()));
+        }
+    }
+
+    /// `[value, init, this] -> [init.call(this, value)]`, or `[value]` if
+    /// `init` is undefined (the decorator returned nothing).
+    fn emit_call_initializer(&mut self) {
+        // [v, f, this] -> [v, this, f] to test f
+        self.instructions.push(OpCode::Swap);
+        self.instructions.push(OpCode::Dup);
+        self.instructions.push(OpCode::Push(JsValue::Undefined));
+        self.instructions.push(OpCode::Eq);
+        let call = self.emit_jump_if_false();
+        self.instructions.push(OpCode::Pop);
+        self.instructions.push(OpCode::Pop);
+        let end = self.emit_jump();
+        self.patch_jump_here(call);
+        // [v, this, f] -> [v, f, this]
+        self.instructions.push(OpCode::Swap);
+        self.instructions.push(OpCode::CallWithThis(1));
+        self.patch_jump_here(end);
+    }
+
+    /// `{ kind, name, static, private }`, the context a decorator receives.
+    fn emit_decorator_context(
+        &mut self,
+        kind: &str,
+        name: Option<&str>,
+        is_static: bool,
+        is_private: bool,
+    ) {
+        self.instructions.push(OpCode::NewObject);
+        let set = |cg: &mut Self, key: &str, v: JsValue| {
+            cg.instructions.push(OpCode::Dup);
+            cg.instructions.push(OpCode::Push(v));
+            cg.instructions.push(OpCode::SetProp(key.to_string()));
+        };
+        set(self, "kind", JsValue::String(kind.to_string()));
+        let name = match name {
+            Some(n) => JsValue::String(n.to_string()),
+            None => JsValue::Undefined,
+        };
+        set(self, "name", name);
+        if kind != "class" {
+            set(self, "static", JsValue::Boolean(is_static));
+            set(self, "private", JsValue::Boolean(is_private));
+        }
+    }
+
+    /// Decorators on the value at the top of the stack: their expressions
+    /// are evaluated in source order, then applied last to first, each
+    /// `value = decorator(value, context) ?? value`. [value] -> [value]
+    #[allow(clippy::too_many_arguments)]
+    fn emit_decorators(
+        &mut self,
+        decorators: &[Decorator],
+        kind: &str,
+        name: Option<&str>,
+        is_static: bool,
+        is_private: bool,
+    ) {
+        let temps: Vec<String> = decorators
+            .iter()
+            .map(|d| {
+                self.gen_expr(&d.expr);
+                let temp = format!("%decorator{}", d.span.lo.0);
+                self.instructions.push(OpCode::Let(temp.clone()));
+                temp
+            })
+            .collect();
+        for temp in temps.iter().rev() {
+            // [v] -> [v, v, context, decorator] -> Call -> [v, result]
+            self.instructions.push(OpCode::Dup);
+            self.emit_decorator_context(kind, name, is_static, is_private);
+            self.instructions.push(OpCode::Load(temp.clone()));
+            self.instructions.push(OpCode::Call(2));
+            // [v, result] -> [result], or [v] if it is undefined
+            self.instructions.push(OpCode::Dup);
+            self.instructions.push(OpCode::Push(JsValue::Undefined));
+            self.instructions.push(OpCode::Eq);
+            let keep_result = self.emit_jump_if_false();
+            self.instructions.push(OpCode::Pop);
+            let end = self.emit_jump();
+            self.patch_jump_here(keep_result);
+            self.instructions.push(OpCode::Swap);
+            self.instructions.push(OpCode::Pop);
+            self.patch_jump_here(end);
         }
     }
 
@@ -1683,9 +1821,8 @@ impl Codegen {
                 // Leaving every `try` in this function: pop the handlers and
                 // run the `finally` blocks, with the return value on the stack.
                 self.unwind_tries(0);
-                // For async functions, wrap the return value in Promise.resolve()
                 if self.in_async_function {
-                    self.emit_promise_resolve();
+                    self.emit_async_return();
                 }
                 self.instructions.push(OpCode::Return);
             }
@@ -2370,57 +2507,32 @@ impl Codegen {
                 }
             }
             Expr::Arrow(arrow) => {
-                // `(a, b) => expr` or `(a, b) => { ... }`
+                // `(a, b) => expr` or `(a, b) => { ... }`; an expression body
+                // is `{ return expr; }`.
                 let value_idx = self.emit_function_value(arrow.span, 0);
                 let jump_idx = self.emit_jump();
                 let body_start = self.instructions.len();
                 self.patch_function_value(value_idx, body_start);
-
-                let prev_in_function = self.in_function;
-                let prev_async = self.in_async_function;
-                self.in_function = true;
-                self.in_async_function = arrow.is_async;
-                let prev_control = self.enter_function_control();
-
                 let pats: Vec<&Pat> = arrow.params.iter().collect();
-                let params = self.bind_params(&pats);
-                let prev_env = self.function_prologue(arrow.span, &params);
-                self.apply_param_defaults(&pats);
-
-                match &*arrow.body {
+                let owned;
+                let stmts: &[Stmt] = match &*arrow.body {
+                    BlockStmtOrExpr::BlockStmt(block) => &block.stmts,
                     BlockStmtOrExpr::Expr(e) => {
-                        // Expression-bodied arrows implicitly return the expression.
-                        self.gen_expr(e);
-                        if arrow.is_async {
-                            self.emit_promise_resolve();
-                        }
-                        self.instructions.push(OpCode::Return);
+                        owned = [Stmt::Return(ReturnStmt {
+                            span: e.span(),
+                            arg: Some(e.clone()),
+                        })];
+                        &owned
                     }
-                    BlockStmtOrExpr::BlockStmt(block) => {
-                        let param_names: Vec<String> =
-                            pats.iter().flat_map(|p| scope::pattern_names(p)).collect();
-                        self.hoist_body(&block.stmts, &param_names);
-                        let mut last_instr_was_return = false;
-                        for s in &block.stmts {
-                            let before = self.instructions.len();
-                            self.gen_stmt(s);
-                            last_instr_was_return = self.instructions.len() > before
-                                && matches!(self.instructions.last(), Some(OpCode::Return));
-                        }
-                        if !last_instr_was_return {
-                            self.instructions.push(OpCode::Push(JsValue::Undefined));
-                            if arrow.is_async {
-                                self.emit_promise_resolve();
-                            }
-                            self.instructions.push(OpCode::Return);
-                        }
-                    }
-                }
-
-                self.env_active = prev_env;
-                self.in_function = prev_in_function;
-                self.in_async_function = prev_async;
-                self.leave_function_control(prev_control);
+                };
+                self.gen_function_body(
+                    arrow.span,
+                    &pats,
+                    stmts,
+                    arrow.is_async,
+                    FnKind::Plain,
+                    &[],
+                );
                 self.patch_jump_here(jump_idx);
             }
             Expr::Lit(Lit::Num(num)) => {
@@ -2452,6 +2564,18 @@ impl Codegen {
             }
             Expr::OptChain(chain) => {
                 self.gen_opt_chain_expr(chain);
+            }
+            Expr::Bin(bin) if bin.op == BinaryOp::In => {
+                // `key in obj`; `#x in obj` asks for the private member.
+                match bin.left.as_ref() {
+                    Expr::PrivateName(pn) => {
+                        let key = self.private_key(&pn.name);
+                        self.instructions.push(OpCode::Push(JsValue::String(key)));
+                    }
+                    left => self.gen_expr(left),
+                }
+                self.gen_expr(&bin.right);
+                self.instructions.push(OpCode::In);
             }
             Expr::Bin(bin) => {
                 self.gen_expr(&bin.left);
@@ -3086,12 +3210,11 @@ impl Codegen {
                     false
                 }
                 ClassMember::Method(m) => {
-                    !m.function.decorators.is_empty()
-                        || m.function.params.iter().any(|p| !p.decorators.is_empty())
+                    m.function.params.iter().any(|p| !p.decorators.is_empty())
                 }
-                ClassMember::PrivateMethod(m) => !m.function.decorators.is_empty(),
-                ClassMember::ClassProp(p) => !p.decorators.is_empty(),
-                ClassMember::PrivateProp(p) => !p.decorators.is_empty(),
+                ClassMember::PrivateMethod(m) => {
+                    m.function.params.iter().any(|p| !p.decorators.is_empty())
+                }
                 ClassMember::Constructor(k) => k.params.iter().any(|p| match p {
                     ParamOrTsParamProp::Param(p) => !p.decorators.is_empty(),
                     ParamOrTsParamProp::TsParamProp(tp) => !tp.decorators.is_empty(),
@@ -3099,7 +3222,7 @@ impl Codegen {
                 _ => false,
             };
             if member_decorated {
-                self.unsupported("decorators on class members (only class decorators are)");
+                self.unsupported("parameter decorators");
             }
         }
         let id = self.instructions.len();
@@ -3117,12 +3240,14 @@ impl Codegen {
             .collect();
         self.private_names.push(private);
 
-        let super_env = class.super_class.as_ref().map(|parent| {
+        // The class scope: `%super`, and what field decorators return.
+        if let Some(parent) = &class.super_class {
             self.gen_expr(parent);
-            let env = self.enter_scope_env(class.span);
+        }
+        let class_env = self.enter_scope_env(class.span);
+        if class.super_class.is_some() {
             self.store_var(&scope::super_ident(class.span), true);
-            env
-        });
+        }
         let parent_span = class.super_class.as_ref().map(|_| class.span);
 
         // The prototype, inheriting from the parent's.
@@ -3172,11 +3297,17 @@ impl Codegen {
             .iter()
             .filter_map(|m| match m {
                 ClassMember::ClassProp(p) if !p.is_static => {
-                    self.class_key(&p.key).map(|k| (k, p.value.clone()))
+                    self.class_key(&p.key).map(|key| ClassField {
+                        key,
+                        value: p.value.clone(),
+                        decorators: p.decorators.iter().map(|d| d.span).collect(),
+                    })
                 }
-                ClassMember::PrivateProp(p) if !p.is_static => {
-                    Some((self.private_key(&p.key.name), p.value.clone()))
-                }
+                ClassMember::PrivateProp(p) if !p.is_static => Some(ClassField {
+                    key: self.private_key(&p.key.name),
+                    value: p.value.clone(),
+                    decorators: p.decorators.iter().map(|d| d.span).collect(),
+                }),
                 _ => None,
             })
             .collect();
@@ -3196,7 +3327,11 @@ impl Codegen {
                     .params
                     .iter()
                     .filter_map(scope::param_prop_ident)
-                    .map(|id| (id.sym.to_string(), Some(Box::new(Expr::Ident(id)))))
+                    .map(|id| ClassField {
+                        key: id.sym.to_string(),
+                        value: Some(Box::new(Expr::Ident(id))),
+                        decorators: Vec::new(),
+                    })
                     .collect();
                 ctor_fields.extend(fields.iter().cloned());
                 let stmts: &[Stmt] = k.body.as_ref().map_or(&[], |b| b.stmts.as_slice());
@@ -3218,56 +3353,95 @@ impl Codegen {
         self.instructions
             .push(OpCode::SetProp("constructor".to_string()));
 
-        // Methods (on the prototype, or the class for static ones), then
-        // static fields.
-        for member in &class.body {
-            let (key, function, is_static) = match member {
-                ClassMember::Method(m) => {
-                    let Some(name) = self.class_key(&m.key) else {
-                        continue;
-                    };
-                    let key = match m.kind {
-                        MethodKind::Getter => format!("getter:{}", name),
-                        MethodKind::Setter => format!("setter:{}", name),
-                        MethodKind::Method => name,
-                    };
-                    (key, &m.function, m.is_static)
-                }
-                ClassMember::PrivateMethod(m) => {
-                    if m.kind != MethodKind::Method {
-                        self.unsupported("private getters and setters");
-                        continue;
+        // Methods (on the class for static ones, which are decorated first,
+        // as TypeScript does; then on the prototype), then fields.
+        for static_pass in [true, false] {
+            for member in &class.body {
+                let (key, function, is_static, kind, shown, private) = match member {
+                    ClassMember::Method(m) => {
+                        let Some(name) = self.class_key(&m.key) else {
+                            continue;
+                        };
+                        let key = match m.kind {
+                            MethodKind::Getter => format!("getter:{}", name),
+                            MethodKind::Setter => format!("setter:{}", name),
+                            MethodKind::Method => name.clone(),
+                        };
+                        (key, &m.function, m.is_static, m.kind, name, false)
                     }
-                    (self.private_key(&m.key.name), &m.function, m.is_static)
+                    ClassMember::PrivateMethod(m) => {
+                        let name = self.private_key(&m.key.name);
+                        let key = match m.kind {
+                            MethodKind::Getter => format!("getter:{}", name),
+                            MethodKind::Setter => format!("setter:{}", name),
+                            MethodKind::Method => name,
+                        };
+                        let shown = format!("#{}", m.key.name);
+                        (key, &m.function, m.is_static, m.kind, shown, true)
+                    }
+                    _ => continue,
+                };
+                if is_static != static_pass {
+                    continue;
+                }
+                if function.is_generator {
+                    self.unsupported("generator methods");
+                }
+                let target = if is_static { &wrapper } else { &proto };
+                self.instructions.push(OpCode::Load(target.clone()));
+                let pats: Vec<&Pat> = function.params.iter().map(|p| &p.pat).collect();
+                let stmts: &[Stmt] = function.body.as_ref().map_or(&[], |b| b.stmts.as_slice());
+                self.gen_member_function(
+                    function.span,
+                    &pats,
+                    stmts,
+                    function.is_async,
+                    FnKind::Method { is_static },
+                    &[],
+                );
+                let kind = match kind {
+                    MethodKind::Getter => "getter",
+                    MethodKind::Setter => "setter",
+                    MethodKind::Method => "method",
+                };
+                self.emit_decorators(&function.decorators, kind, Some(&shown), is_static, private);
+                self.instructions.push(OpCode::SetProp(key));
+            }
+        }
+        // What each field decorator returns: an initializer for every
+        // instance's value, kept in the class scope for the constructor.
+        for member in &class.body {
+            let (decorators, name, private) = match member {
+                ClassMember::ClassProp(p) if !p.is_static => {
+                    (&p.decorators, self.class_key(&p.key), false)
+                }
+                ClassMember::PrivateProp(p) if !p.is_static => {
+                    (&p.decorators, Some(format!("#{}", p.key.name)), true)
                 }
                 _ => continue,
             };
-            if function.is_generator {
-                self.unsupported("generator methods");
+            for d in decorators {
+                self.instructions.push(OpCode::Push(JsValue::Undefined));
+                self.emit_decorator_context("field", name.as_deref(), false, private);
+                self.gen_expr(&d.expr);
+                self.instructions.push(OpCode::Call(2));
+                self.store_var(&scope::field_init_ident(d.span), true);
             }
-            let target = if is_static { &wrapper } else { &proto };
-            self.instructions.push(OpCode::Load(target.clone()));
-            let pats: Vec<&Pat> = function.params.iter().map(|p| &p.pat).collect();
-            let stmts: &[Stmt] = function.body.as_ref().map_or(&[], |b| b.stmts.as_slice());
-            self.gen_member_function(
-                function.span,
-                &pats,
-                stmts,
-                function.is_async,
-                FnKind::Method { is_static },
-                &[],
-            );
-            self.instructions.push(OpCode::SetProp(key));
         }
+
         for member in &class.body {
-            let (key, value) = match member {
+            let (key, value, decorators, shown, private) = match member {
                 ClassMember::ClassProp(p) if p.is_static => match self.class_key(&p.key) {
-                    Some(k) => (k, &p.value),
+                    Some(k) => (k.clone(), &p.value, &p.decorators, k, false),
                     None => continue,
                 },
-                ClassMember::PrivateProp(p) if p.is_static => {
-                    (self.private_key(&p.key.name), &p.value)
-                }
+                ClassMember::PrivateProp(p) if p.is_static => (
+                    self.private_key(&p.key.name),
+                    &p.value,
+                    &p.decorators,
+                    format!("#{}", p.key.name),
+                    true,
+                ),
                 _ => continue,
             };
             self.instructions.push(OpCode::Load(wrapper.clone()));
@@ -3275,34 +3449,24 @@ impl Codegen {
                 Some(v) => self.gen_expr(v),
                 None => self.instructions.push(OpCode::Push(JsValue::Undefined)),
             }
+            // [C, v] -> each decorator's initializer, called with `this = C`
+            for d in decorators.iter() {
+                self.instructions.push(OpCode::Push(JsValue::Undefined));
+                self.emit_decorator_context("field", Some(&shown), true, private);
+                self.gen_expr(&d.expr);
+                self.instructions.push(OpCode::Call(2));
+                self.instructions.push(OpCode::Load(wrapper.clone()));
+                self.emit_call_initializer();
+            }
             self.instructions.push(OpCode::SetProp(key));
         }
 
         self.instructions.push(OpCode::Load(wrapper));
-        if let Some(env) = super_env {
-            self.exit_scope_env(env);
-        }
+        self.exit_scope_env(class_env);
         self.private_names.pop();
 
-        // Class decorators apply innermost (last) first:
-        // `C = decorator(C)`, unless the decorator returns undefined.
-        for decorator in class.decorators.iter().rev() {
-            // [C] -> [C, C, decorator] -> Call -> [C, result]
-            self.instructions.push(OpCode::Dup);
-            self.gen_expr(&decorator.expr);
-            self.instructions.push(OpCode::Call(1));
-            // [C, result] -> [result], or [C] if it is undefined
-            self.instructions.push(OpCode::Dup);
-            self.instructions.push(OpCode::Push(JsValue::Undefined));
-            self.instructions.push(OpCode::Eq);
-            let keep_result = self.emit_jump_if_false();
-            self.instructions.push(OpCode::Pop);
-            let end = self.emit_jump();
-            self.patch_jump_here(keep_result);
-            self.instructions.push(OpCode::Swap);
-            self.instructions.push(OpCode::Pop);
-            self.patch_jump_here(end);
-        }
+        // Class decorators: `C = decorator(C, context) ?? C`.
+        self.emit_decorators(&class.decorators, "class", name, false, false);
     }
 
     /// The name of a class member's key; computed keys are unsupported.

@@ -1,0 +1,10 @@
+function true
+resolved 42
+executor threw TypeError
+adopted inner value
+rejected nope
+chained 43
+race fast
+caught boom
+finally
+after finally recovered

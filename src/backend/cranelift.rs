@@ -91,8 +91,17 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_get_private,
         ot_set_private,
         ot_to_str,
+        ot_in,
         ot_stack_init,
         ot_stack_overflow,
+        ot_async_start,
+        ot_async_resolve,
+        ot_async_reject,
+        ot_async_enter,
+        ot_await,
+        ot_await_result,
+        ot_run_microtasks,
+        ot_run_event_loop,
     )
 }
 
@@ -210,6 +219,8 @@ impl CraneliftCodegen {
                     last_call: None,
                     exception_return: None,
                     args: None,
+                    frame: None,
+                    own_name: &func.name,
                 };
                 fx.function(&mut builder, func)?;
                 builder.seal_all_blocks();
@@ -270,7 +281,7 @@ struct Fx<'a> {
     stubs: HashMap<String, FuncRef>,
     values: HashMap<ValueId, Value>,
     blocks: HashMap<BlockId, Block>,
-    locals: Vec<StackSlot>,
+    locals: Vec<Local>,
     types: &'a HashMap<ValueId, IrType>,
     /// Values known to be a specific compiled function, with the closure
     /// environment they carry, if any.
@@ -286,6 +297,18 @@ struct Fx<'a> {
     exception_return: Option<Block>,
     /// This function's own `argv` and `argc`.
     args: Option<(Value, Value)>,
+    /// An async function's heap frame (see `ot_async_enter`).
+    frame: Option<Value>,
+    /// This function's IR name (an `await` resumes it).
+    own_name: &'a str,
+}
+
+/// Where a local lives: a stack slot, or a word of an async function's
+/// heap frame (byte offset).
+#[derive(Clone, Copy)]
+enum Local {
+    Slot(StackSlot),
+    Frame(i32),
 }
 
 /// Names passed to the runtime live for the whole process.
@@ -421,12 +444,26 @@ impl Fx<'_> {
         self.env = Some(params[3]);
         self.args = Some((argv, argc));
 
-        for _ in &func.locals {
-            let slot =
-                b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-            let u = Self::c(b, UNDEFINED);
-            b.ins().stack_store(u, slot, 0);
-            self.locals.push(slot);
+        if func.is_async {
+            // Locals live in a heap frame that survives an `await`.
+            let slots = Self::c(b, func.locals.len().max(func.params.len()) as u64);
+            let frame = self.rt_v(b, "ot_async_enter", &[argv, argc, slots]);
+            self.frame = Some(frame);
+            for i in 0..func.locals.len() {
+                let offset = 8 * (crate::runtime::stubs::ASYNC_FRAME_HEADER + i) as i32;
+                self.locals.push(Local::Frame(offset));
+            }
+        } else {
+            for _ in &func.locals {
+                let slot = b.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    8,
+                    3,
+                ));
+                let u = Self::c(b, UNDEFINED);
+                b.ins().stack_store(u, slot, 0);
+                self.locals.push(Local::Slot(slot));
+            }
         }
         let undef_slot =
             b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
@@ -691,7 +728,13 @@ impl Fx<'_> {
                 let s = *self.locals.get(*slot as usize).ok_or_else(|| {
                     BackendError::Cranelift(format!("internal error: bad local slot {}", slot))
                 })?;
-                let v = b.ins().stack_load(types::I64, s, 0);
+                let v = match s {
+                    Local::Slot(s) => b.ins().stack_load(types::I64, s, 0),
+                    Local::Frame(o) => {
+                        b.ins()
+                            .load(types::I64, MemFlags::trusted(), self.frame.unwrap(), o)
+                    }
+                };
                 self.values.insert(*d, v);
             }
             IrOp::StoreLocal(slot, v) => {
@@ -699,7 +742,15 @@ impl Fx<'_> {
                     BackendError::Cranelift(format!("internal error: bad local slot {}", slot))
                 })?;
                 let v = self.get(*v)?;
-                b.ins().stack_store(v, s, 0);
+                match s {
+                    Local::Slot(s) => {
+                        b.ins().stack_store(v, s, 0);
+                    }
+                    Local::Frame(o) => {
+                        b.ins()
+                            .store(MemFlags::trusted(), v, self.frame.unwrap(), o);
+                    }
+                }
             }
             IrOp::LoadGlobal(d, name) => {
                 let (p, n) = self.name(b, name);
@@ -869,6 +920,7 @@ impl Fx<'_> {
                 self.values.insert(*d, r);
             }
             IrOp::InstanceOf(d, v, c) => self.rt_binop(b, *d, "ot_instanceof", *v, *c)?,
+            IrOp::In(d, k, o) => self.rt_binop(b, *d, "ot_in", *k, *o)?,
             IrOp::GetSuperProp(d, this, base, name) => {
                 let t = self.get(*this)?;
                 let o = self.get(*base)?;
@@ -883,6 +935,44 @@ impl Fx<'_> {
             IrOp::Rethrow(thrown, v) => {
                 let args = [self.get(*thrown)?, self.get(*v)?];
                 self.rt(b, "ot_rethrow", &args);
+            }
+            IrOp::AsyncStart(d) => {
+                let r = self.rt_v(b, "ot_async_start", &[]);
+                self.values.insert(*d, r);
+            }
+            IrOp::AsyncResolve(d, p, v) => self.rt_binop(b, *d, "ot_async_resolve", *p, *v)?,
+            IrOp::AsyncReject(d, p, v) => self.rt_binop(b, *d, "ot_async_reject", *p, *v)?,
+            IrOp::IsResume(d) => {
+                let (_, argc) = self.args.unwrap();
+                let resumed = b.ins().icmp_imm(
+                    IntCC::Equal,
+                    argc,
+                    crate::runtime::stubs::ASYNC_RESUME_ARGC as i64,
+                );
+                let r = Self::box_bool(b, resumed);
+                self.values.insert(*d, r);
+            }
+            IrOp::ResumePoint(d) => {
+                let frame = self.frame.unwrap();
+                let r = b.ins().load(types::I64, MemFlags::trusted(), frame, 0);
+                self.values.insert(*d, r);
+            }
+            IrOp::Await(v, k) => {
+                let frame = self.frame.unwrap();
+                let point = Self::c(b, (*k as f64).to_bits());
+                b.ins().store(MemFlags::trusted(), point, frame, 0);
+                let fref = self
+                    .module
+                    .declare_func_in_func(self.func_ids[self.own_name], b.func);
+                let code = b.ins().func_addr(types::I64, fref);
+                let v = self.get(*v)?;
+                let (this, env) = (self.this.unwrap(), self.env.unwrap());
+                self.rt(b, "ot_await", &[v, frame, code, this, env]);
+            }
+            IrOp::AwaitResult(d) => {
+                let frame = self.frame.unwrap();
+                let r = self.rt_v(b, "ot_await_result", &[frame]);
+                self.values.insert(*d, r);
             }
             IrOp::CallMethod(d, recv, name, args) => {
                 let r = self.get(*recv)?;

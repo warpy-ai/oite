@@ -1,0 +1,7 @@
+// backends: vm jit aot
+// A rejection nothing handles is reported, and the exit status is 1.
+async function fail() {
+  throw new Error("nobody catches this");
+}
+fail();
+console.log("still runs");

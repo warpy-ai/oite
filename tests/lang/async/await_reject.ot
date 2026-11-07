@@ -1,3 +1,4 @@
+// backends: vm jit aot
 // #122: await on a rejected promise throws; the stack stays intact.
 async function f() { throw "boom"; }
 async function main() {

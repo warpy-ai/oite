@@ -240,6 +240,14 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         | IrOp::SuperForward(_, _)
         | IrOp::CallWithThis(_, _, _, _)
         | IrOp::InstanceOf(_, _, _)
+        | IrOp::In(_, _, _)
+        | IrOp::AsyncStart(_)
+        | IrOp::AsyncResolve(_, _, _)
+        | IrOp::AsyncReject(_, _, _)
+        | IrOp::Await(_, _)
+        | IrOp::AwaitResult(_)
+        | IrOp::IsResume(_)
+        | IrOp::ResumePoint(_)
         | IrOp::GetSuperProp(_, _, _, _) => CompileStrategy::StubCall(stubs::CALL),
         IrOp::CallMethod(_, _, _, _) => CompileStrategy::StubCall(stubs::CALL),
         IrOp::MakeClosure(_, _, _) => CompileStrategy::StubCall(stubs::ALLOC_OBJECT),

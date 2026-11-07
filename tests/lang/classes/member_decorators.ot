@@ -1,0 +1,66 @@
+// backends: vm jit aot
+// Member decorators (TC39 semantics): methods, accessors and fields.
+let log = [];
+
+// A method decorator returns a replacement.
+function logged(fn, ctx) {
+  log.push("decorate " + ctx.kind + " " + ctx.name + (ctx.static ? " static" : ""));
+  return function (x) {
+    log.push("call " + ctx.name);
+    return fn.call(this, x);
+  };
+}
+
+// Returning undefined keeps the original.
+function note(fn, ctx) {
+  log.push("note " + ctx.name + " private=" + ctx.private);
+}
+
+// A field decorator returns an initializer for each instance's value.
+function double(_, ctx) {
+  log.push("field " + ctx.name);
+  return function (v) {
+    return v * 2;
+  };
+}
+function plus(n) {
+  return function (_, ctx) {
+    return function (v) {
+      return v + n;
+    };
+  };
+}
+
+class Counter {
+  @double @plus(1) count = 5;
+  @double #hidden = 10;
+  @note @logged
+  inc(by) {
+    this.count += by;
+    return this.count;
+  }
+  @logged
+  get hidden() {
+    return this.#hidden;
+  }
+  @logged
+  static make() {
+    return new Counter();
+  }
+  @note
+  #secret() {
+    return 1;
+  }
+}
+
+let c = Counter.make();
+console.log(c.count, c.inc(3), c.hidden);
+console.log(log.join("; "));
+
+// Class decorators receive a context too.
+function named(cls, ctx) {
+  cls.label = ctx.kind + ":" + ctx.name;
+}
+@named
+class Widget {}
+console.log(Widget.label);

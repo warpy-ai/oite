@@ -1,0 +1,10 @@
+a start
+b start
+sync done
+then 1
+a step 0
+b step 0
+b end
+a step 1
+a end
+all A,B,3

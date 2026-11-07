@@ -1,0 +1,10 @@
+main started
+sum 6
+guarded finally
+caught RangeError: too big
+store 1 2 [ 'a', 'b' ]
+arrow 42
+is promise true function
+later 10
+main caught too big
+main done

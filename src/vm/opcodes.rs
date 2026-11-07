@@ -46,6 +46,12 @@ pub enum OpCode {
     /// `typeof name` for a plain variable: like `Load(name)` then `TypeOf`,
     /// except that an unbound name gives "undefined" instead of throwing.
     TypeOfName(String),
+    /// Start of an async function: [] -> [its promise] (kept in a local).
+    AsyncStart,
+    /// Resolve the async function's promise: [value, promise] -> [promise]
+    AsyncResolve,
+    /// Reject it (an exception left the body): [reason, promise] -> [promise]
+    AsyncReject,
     /// `String(v)`, as in a template literal: an object's own `toString`
     /// (or `valueOf`) converts it. [v] -> [string]
     ToStr,
@@ -134,6 +140,9 @@ pub enum OpCode {
     /// `obj.#x = value`: the object must have the private field.
     /// [obj, value] -> []
     SetPrivate(String),
+    /// `key in obj`: whether the object or its prototype chain has the
+    /// property (a getter or setter counts). [key, obj] -> [bool]
+    In,
     /// `super.name`: `name` looked up from `base` (the parent's prototype,
     /// or the parent in a static method); a getter runs with `this`.
     /// [this, base] -> [value]

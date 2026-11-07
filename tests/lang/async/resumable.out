@@ -1,0 +1,10 @@
+start
+sync end
+loops 103
+expressions 7 abc 111 1,2,3 v 3
+errors caught first; finally; inner finally x; outer caught inner
+method 13 13
+closures abc3
+fib 55
+all 5,p,7
+done

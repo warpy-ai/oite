@@ -1,0 +1,27 @@
+// backends: vm jit aot
+// Private getters and setters, and `#x in obj` brand checks.
+class Temperature {
+  #celsius = 0;
+  get #fahrenheit() {
+    return this.#celsius * 9 / 5 + 32;
+  }
+  set #fahrenheit(f) {
+    this.#celsius = (f - 32) * 5 / 9;
+  }
+  setF(f) {
+    this.#fahrenheit = f;
+    return this;
+  }
+  read() {
+    return this.#celsius + "C = " + this.#fahrenheit + "F";
+  }
+  static isTemperature(obj) {
+    return #celsius in obj;
+  }
+  static hasAccessor(obj) {
+    return #fahrenheit in obj;
+  }
+}
+let t = new Temperature().setF(212);
+console.log(t.read());
+console.log(Temperature.isTemperature(t), Temperature.isTemperature({}), Temperature.hasAccessor(t));

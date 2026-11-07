@@ -1,0 +1,21 @@
+// backends: vm jit aot
+// `await` waits for a promise a timer settles later.
+function sleep(ms, value) {
+  return new Promise(function (resolve) {
+    setTimeout(function () {
+      resolve(value);
+    }, ms);
+  });
+}
+async function main() {
+  console.log("start");
+  let slow = sleep(30, "slow");
+  let fast = sleep(5, "fast");
+  console.log(await fast);
+  console.log(await slow);
+  console.log(await Promise.all([sleep(5, 1), sleep(1, 2)]));
+}
+main().then(function () {
+  console.log("done");
+});
+console.log("sync end");

@@ -83,7 +83,18 @@ fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) 
         JsValue::Null => "null".to_string(),
         JsValue::Undefined => "undefined".to_string(),
         JsValue::Function { .. } | JsValue::NativeFunction(_) => "[Function]".to_string(),
-        JsValue::Promise(_) => "Promise".to_string(),
+        JsValue::Promise(p) => match p.get_state() {
+            crate::vm::value::PromiseState::Pending => "Promise { <pending> }".to_string(),
+            state => {
+                let v = p.get_value().unwrap_or(JsValue::Undefined);
+                let shown = inspect_inner(vm, &v, depth + 1, seen);
+                if state == crate::vm::value::PromiseState::Rejected {
+                    format!("Promise {{ <rejected> {} }}", shown)
+                } else {
+                    format!("Promise {{ {} }}", shown)
+                }
+            }
+        },
         JsValue::Accessor(_, _) => "[Getter/Setter]".to_string(),
         JsValue::Object(ptr) => {
             let Some(HeapObject { data }) = vm.heap.get(*ptr) else {
