@@ -191,6 +191,63 @@ impl DebugInfo {
     }
 }
 
+/// One loaded program (a file): its instructions are at `offset`.
+pub struct SourceSegment {
+    pub offset: usize,
+    pub len: usize,
+    pub file: String,
+    pub source: std::rc::Rc<str>,
+    pub info: DebugInfo,
+}
+
+/// The source positions of every program in a combined instruction
+/// stream (the VM's, or the one a native build lowers).
+#[derive(Default)]
+pub struct SourceTable {
+    segments: Vec<SourceSegment>,
+}
+
+impl SourceTable {
+    /// `info` describes the instructions loaded at `offset` from `file`.
+    pub fn add(&mut self, offset: usize, file: &str, source: &str, info: DebugInfo) {
+        let len = info.positions.len();
+        self.segments.push(SourceSegment {
+            offset,
+            len,
+            file: file.to_string(),
+            source: std::rc::Rc::from(source),
+            info,
+        });
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.segments.is_empty()
+    }
+
+    /// Instruction `ip` as a stack frame (`name (file:line:col)`), if its
+    /// position is known.
+    pub fn describe(&self, ip: usize) -> Option<String> {
+        let seg = self
+            .segments
+            .iter()
+            .rev()
+            .find(|s| s.offset <= ip && ip < s.offset + s.len)?;
+        let local = ip - seg.offset;
+        let pos = Position::of_offset(&seg.source, seg.info.position(local)? as usize);
+        let name = seg.info.function_at(local).and_then(|f| f.name.as_deref());
+        Some(format_frame(name, &seg.file, pos))
+    }
+}
+
+/// A frame as stack traces print it: `name (file:line:col)`, or
+/// `file:line:col` for top-level code and anonymous functions.
+pub fn format_frame(name: Option<&str>, file: &str, pos: Position) -> String {
+    match name {
+        Some(name) => format!("{} ({}:{}:{})", name, file, pos.line, pos.col),
+        None => format!("{}:{}:{}", file, pos.line, pos.col),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

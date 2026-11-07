@@ -7,7 +7,9 @@ pub mod scope;
 use crate::compiler::borrow_ck::BorrowChecker;
 use crate::compiler::scope::{PARENT_PROP, SCOPE_LOCAL, ScopeInfo, VarRef};
 use crate::vm::value::JsValue;
-pub use diagnostic::{CompileError, DebugInfo, Diagnostic, FunctionRange, NO_POSITION, Position};
+pub use diagnostic::{
+    CompileError, DebugInfo, Diagnostic, FunctionRange, NO_POSITION, Position, SourceTable,
+};
 use swc_common::{FileName, SourceMap, Span, Spanned, sync::Lrc};
 use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 

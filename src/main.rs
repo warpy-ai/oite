@@ -168,11 +168,15 @@ fn load_core(vm: &mut VM, compiler: &mut Compiler) {
 }
 
 /// A program for native code: the core library (the error classes) runs
-/// first, as on the VM, then `bytecode`.
+/// first, as on the VM, then `bytecode` (just compiled from `source`).
+/// Also the stack frame of each instruction, for exception traces.
 fn with_core(
     compiler: &mut Compiler,
     bytecode: Vec<vm::opcodes::OpCode>,
-) -> Vec<vm::opcodes::OpCode> {
+    file: &str,
+    source: &str,
+) -> (Vec<vm::opcodes::OpCode>, ir::lower::Sites) {
+    let main_debug = std::mem::take(&mut compiler.debug_info);
     let mut program = match compiler.compile(vm::errors::CORE_ERRORS) {
         Ok(b) => b,
         Err(e) => {
@@ -185,8 +189,17 @@ fn with_core(
         program.pop();
     }
     let offset = program.len();
+    let mut table = compiler::SourceTable::default();
+    let core_debug = std::mem::take(&mut compiler.debug_info);
+    table.add(
+        0,
+        vm::errors::CORE_ERRORS_PATH,
+        vm::errors::CORE_ERRORS,
+        core_debug,
+    );
+    table.add(offset, file, source, main_debug);
     program.extend(vm::rebase_program(bytecode, offset));
-    program
+    (program, ir::lower::Sites::new(table))
 }
 
 /// Load and run a pre-compiled bytecode file
@@ -565,8 +578,8 @@ fn run_jit(filename: &str) {
     }
 
     // Lower to SSA IR (using lower_module to extract all functions)
-    let bytecode = with_core(&mut compiler, bytecode);
-    match ir::lower::lower_module(&bytecode) {
+    let (bytecode, sites) = with_core(&mut compiler, bytecode, filename, &source);
+    match ir::lower::lower_module_with_sites(&bytecode, Some(sites)) {
         Ok(mut module) => {
             // Show extracted functions
             if module.functions.len() > 1 {
@@ -942,8 +955,8 @@ fn build_file(args: &[String]) {
         };
 
         // Lower to SSA IR
-        let bytecode = with_core(&mut compiler, bytecode);
-        let mut module = match ir::lower::lower_module(&bytecode) {
+        let (bytecode, sites) = with_core(&mut compiler, bytecode, filename, &source);
+        let mut module = match ir::lower::lower_module_with_sites(&bytecode, Some(sites)) {
             Ok(m) => m,
             Err(e) => {
                 eprintln!("IR lowering failed for {}: {}", filename, e);

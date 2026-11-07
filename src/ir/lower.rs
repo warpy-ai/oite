@@ -91,6 +91,59 @@ pub struct Lowerer {
     await_resumes: HashSet<usize>,
     /// Resume blocks by resume point.
     resume_points: Vec<BlockId>,
+    /// Stack frames by instruction, for exception traces (`IrOp::Loc`).
+    sites: Option<std::rc::Rc<Sites>>,
+    /// Address of this function's first instruction in the program.
+    base: usize,
+    /// Address of the instruction being lowered.
+    cur_ip: usize,
+    /// The last `Loc` in each block.
+    last_loc: HashMap<BlockId, u32>,
+}
+
+/// The stack frame (`f (file:2:14)`) of each instruction of a program,
+/// numbered as `IrModule::sites`.
+pub struct Sites {
+    table: crate::compiler::SourceTable,
+    ids: std::cell::RefCell<(HashMap<usize, u32>, HashMap<String, u32>, Vec<String>)>,
+}
+
+/// `IrOp::Loc` of code whose position is unknown.
+pub const NO_SITE: u32 = u32::MAX;
+
+impl Sites {
+    pub fn new(table: crate::compiler::SourceTable) -> Self {
+        Self {
+            table,
+            ids: Default::default(),
+        }
+    }
+
+    /// The site of instruction `ip`.
+    fn site(&self, ip: usize) -> u32 {
+        let mut ids = self.ids.borrow_mut();
+        if let Some(&id) = ids.0.get(&ip) {
+            return id;
+        }
+        let id = match self.table.describe(ip) {
+            Some(frame) => match ids.1.get(&frame) {
+                Some(&id) => id,
+                None => {
+                    let id = ids.2.len() as u32;
+                    ids.2.push(frame.clone());
+                    ids.1.insert(frame, id);
+                    id
+                }
+            },
+            None => NO_SITE,
+        };
+        ids.0.insert(ip, id);
+        id
+    }
+
+    fn take(&self) -> Vec<String> {
+        std::mem::take(&mut self.ids.borrow_mut().2)
+    }
 }
 
 /// Where a bytecode variable name lives in native code.
@@ -158,12 +211,24 @@ impl Lowerer {
             finally_owner: HashMap::new(),
             await_resumes: HashSet::new(),
             resume_points: Vec::new(),
+            sites: None,
+            base: 0,
+            cur_ip: 0,
+            last_loc: HashMap::new(),
         }
     }
 
     /// Use this resolver for variable names.
     pub fn with_names(mut self, names: NameResolver) -> Self {
         self.names = names;
+        self
+    }
+
+    /// Mark the ops that can throw with their stack frame; the function
+    /// starts at instruction `base` of the program.
+    fn with_sites(mut self, sites: Option<std::rc::Rc<Sites>>, base: usize) -> Self {
+        self.sites = sites;
+        self.base = base;
         self
     }
 
@@ -412,6 +477,16 @@ impl Lowerer {
 
     /// Emit an operation to the current block.
     fn emit(&mut self, op: IrOp) {
+        if op.can_throw()
+            && let Some(sites) = &self.sites
+        {
+            let site = sites.site(self.cur_ip);
+            if self.last_loc.insert(self.current_block, site) != Some(site) {
+                self.func
+                    .block_mut(self.current_block)
+                    .push(IrOp::Loc(site));
+            }
+        }
         self.func.block_mut(self.current_block).push(op);
     }
 
@@ -473,6 +548,7 @@ impl Lowerer {
         let reachable_blocks = self.compute_reachable_blocks(instructions);
 
         for (i, op) in instructions.iter().enumerate() {
+            self.cur_ip = self.base + i;
             // Check if we need to start a new block
             if i > 0 && self.block_starts.contains(&i) {
                 let new_block = self.instr_to_block[&i];
@@ -1414,6 +1490,16 @@ fn native_refusal(op: &OpCode) -> Option<&'static str> {
 }
 
 pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
+    lower_module_with_sites(instructions, None)
+}
+
+/// `lower_module`, with each op that can throw marked with its stack
+/// frame (`IrOp::Loc`) from `sites`.
+pub fn lower_module_with_sites(
+    instructions: &[OpCode],
+    sites: Option<Sites>,
+) -> Result<IrModule, LowerError> {
+    let sites = sites.map(std::rc::Rc::new);
     let mut module = IrModule::new();
 
     // Refuse unsupported constructs up front, so the message names the
@@ -1440,6 +1526,7 @@ pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
             &func_info.param_names,
             func_info.address,
             scopes.resolver_for(Some(func_info.address)),
+            sites.clone(),
         )
         .map_err(|e| {
             let name = func_info
@@ -1452,9 +1539,14 @@ pub fn lower_module(instructions: &[OpCode]) -> Result<IrModule, LowerError> {
     }
 
     // Step 3: Lower the main code (treating skipped function bodies as jumps)
-    let lowerer = Lowerer::new("main".to_string()).with_names(scopes.resolver_for(None));
+    let lowerer = Lowerer::new("main".to_string())
+        .with_names(scopes.resolver_for(None))
+        .with_sites(sites.clone(), 0);
     let main_func = lowerer.lower(instructions)?;
     module.add_function(main_func);
+    if let Some(sites) = &sites {
+        module.sites = sites.take();
+    }
 
     // Store function address mappings in the module
     for (i, func_info) in extracted_funcs.iter().enumerate() {
@@ -1558,10 +1650,13 @@ fn lower_extracted_function(
     param_names: &[String],
     base_addr: usize,
     names: NameResolver,
+    sites: Option<std::rc::Rc<Sites>>,
 ) -> Result<IrFunction, LowerError> {
     // Rebase jump targets to be relative to the function start
     let rebased = rebase_jump_targets(instructions, base_addr);
-    let mut lowerer = Lowerer::new_with_params(name.to_string(), param_names).with_names(names);
+    let mut lowerer = Lowerer::new_with_params(name.to_string(), param_names)
+        .with_names(names)
+        .with_sites(sites, base_addr);
 
     for param_name in param_names {
         lowerer.get_or_create_local(param_name);

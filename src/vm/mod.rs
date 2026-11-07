@@ -256,7 +256,7 @@ pub struct VM {
     /// of panicking (embedded VMs, tests).
     pub exit_on_uncaught: bool,
     /// Source positions of the loaded programs (see `trace.rs`).
-    pub debug_segments: Vec<trace::DebugSegment>,
+    pub sources: crate::compiler::SourceTable,
     /// Where the last exception thrown has been: instruction pointers.
     exception_trace: Vec<usize>,
     traced_exception: Option<JsValue>,
@@ -319,7 +319,7 @@ impl VM {
             barrier_exception: None,
             native_throw: None,
             exit_on_uncaught: false,
-            debug_segments: Vec::new(),
+            sources: Default::default(),
             exception_trace: Vec::new(),
             traced_exception: None,
             current_module_path: None,

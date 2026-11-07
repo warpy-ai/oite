@@ -15,60 +15,25 @@
 
 use super::VM;
 use super::value::JsValue;
-use crate::compiler::{DebugInfo, Position};
-use std::rc::Rc;
-
-/// Positions of one loaded program (a file), at `offset` in the VM's
-/// instructions.
-pub struct DebugSegment {
-    pub offset: usize,
-    pub len: usize,
-    pub file: String,
-    pub source: Rc<str>,
-    pub info: DebugInfo,
-}
-
-/// A frame as stack traces print it: `name (file:line:col)`, or
-/// `file:line:col` for top-level code and anonymous functions.
-pub fn format_frame(name: Option<&str>, file: &str, pos: Position) -> String {
-    match name {
-        Some(name) => format!("{} ({}:{}:{})", name, file, pos.line, pos.col),
-        None => format!("{}:{}:{}", file, pos.line, pos.col),
-    }
-}
+use crate::compiler::DebugInfo;
 
 impl VM {
-    /// Record the positions of `info`, a program of `len` instructions
-    /// loaded at `offset` from `file`.
+    /// Record the positions of `info`, a program loaded at `offset` from
+    /// `file`.
     pub fn add_debug_info(&mut self, offset: usize, file: &str, source: &str, info: DebugInfo) {
-        let len = info.positions.len();
-        self.debug_segments.push(DebugSegment {
-            offset,
-            len,
-            file: file.to_string(),
-            source: Rc::from(source),
-            info,
-        });
+        self.sources.add(offset, file, source, info);
     }
 
     /// Instruction `ip` as a stack frame, if its position is known.
     pub fn describe_ip(&self, ip: usize) -> Option<String> {
-        let seg = self
-            .debug_segments
-            .iter()
-            .rev()
-            .find(|s| s.offset <= ip && ip < s.offset + s.len)?;
-        let local = ip - seg.offset;
-        let pos = Position::of_offset(&seg.source, seg.info.position(local)? as usize);
-        let name = seg.info.function_at(local).and_then(|f| f.name.as_deref());
-        Some(format_frame(name, &seg.file, pos))
+        self.sources.describe(ip)
     }
 
     /// `exception` leaves the frames above `catch_depth` (the call stack
     /// length once it is caught): record where it is in each, and in the
     /// function that catches it.
     pub(super) fn record_trace(&mut self, exception: &JsValue, catch_depth: usize) {
-        if self.debug_segments.is_empty() {
+        if self.sources.is_empty() {
             return;
         }
         let rethrow = self

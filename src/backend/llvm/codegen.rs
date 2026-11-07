@@ -49,6 +49,8 @@ pub struct LlvmCodegen {
     strings: HashMap<String, LLVMValueRef>,
     /// The native function type `i64 (i64 this, ptr argv, i64 argc, i64 env)`.
     fn_ty: LLVMTypeRef,
+    /// `TraceSite` constants of `IrModule::sites` (exception traces).
+    sites: Vec<LLVMValueRef>,
 }
 
 impl LlvmCodegen {
@@ -85,6 +87,7 @@ impl LlvmCodegen {
                 fn_objects: BTreeMap::new(),
                 strings: HashMap::new(),
                 fn_ty,
+                sites: Vec::new(),
             })
         }
     }
@@ -114,6 +117,30 @@ impl LlvmCodegen {
                     LLVMSetLinkage(g, LLVMLinkage::LLVMInternalLinkage);
                     self.fn_objects.insert(addr, g);
                 }
+            }
+
+            // Stack frames for exception traces: `{ ptr, len }` constants.
+            let ptr_ty = LLVMPointerTypeInContext(self.context, 0);
+            for frame in &ir_module.sites {
+                let text = LLVMConstStringInContext(
+                    self.context,
+                    frame.as_ptr() as *const c_char,
+                    frame.len() as u32,
+                    1,
+                );
+                let tg = LLVMAddGlobal(self.module, LLVMTypeOf(text), b"site_text\0".as_ptr() as _);
+                LLVMSetInitializer(tg, text);
+                LLVMSetGlobalConstant(tg, 1);
+                LLVMSetLinkage(tg, LLVMLinkage::LLVMPrivateLinkage);
+                let mut fields = [tg, LLVMConstInt(i64_ty, frame.len() as u64, 0)];
+                let site = LLVMConstStructInContext(self.context, fields.as_mut_ptr(), 2, 0);
+                let mut field_tys = [ptr_ty, i64_ty];
+                let site_ty = LLVMStructTypeInContext(self.context, field_tys.as_mut_ptr(), 2, 0);
+                let g = LLVMAddGlobal(self.module, site_ty, b"site\0".as_ptr() as _);
+                LLVMSetInitializer(g, site);
+                LLVMSetGlobalConstant(g, 1);
+                LLVMSetLinkage(g, LLVMLinkage::LLVMPrivateLinkage);
+                self.sites.push(g);
             }
 
             for func in &ir_module.functions {
@@ -265,11 +292,14 @@ impl LlvmCodegen {
                 exception_return: None,
                 args: (LLVMGetParam(f, 1), LLVMGetParam(f, 2)),
                 frame: None,
+                site: None,
+                trace_blocks: HashMap::new(),
             };
             fx.prologue_setup(func, f)?;
 
             for block in &func.blocks {
                 LLVMPositionBuilderAtEnd(fx.builder, fx.blocks[&block.id]);
+                fx.site = None;
                 for op in &block.ops {
                     fx.last_call = None;
                     fx.op(op)?;
@@ -358,6 +388,10 @@ struct Fx<'a> {
     /// An async function's heap frame (see `ot_async_enter`): as a value
     /// and as a pointer.
     frame: Option<(LLVMValueRef, LLVMValueRef)>,
+    /// The site of the ops being compiled (`IrOp::Loc`).
+    site: Option<u32>,
+    /// Cold blocks that record a site (`ot_trace`), then go to a target.
+    trace_blocks: HashMap<(Option<u32>, LLVMBasicBlockRef), LLVMBasicBlockRef>,
 }
 
 impl Fx<'_> {
@@ -462,9 +496,40 @@ impl Fx<'_> {
                     }
                 },
             };
+            let target = if self.cg.sites.is_empty() {
+                target
+            } else {
+                self.trace_block(target)
+            };
             let next = LLVMAppendBasicBlockInContext(ctx, self.function, b"ok\0".as_ptr() as _);
             LLVMBuildCondBr(self.builder, thrown, target, next);
             LLVMPositionBuilderAtEnd(self.builder, next);
+        }
+    }
+
+    /// A block that records the current site (`ot_trace`), then branches
+    /// to `target`.
+    unsafe fn trace_block(&mut self, target: LLVMBasicBlockRef) -> LLVMBasicBlockRef {
+        unsafe {
+            let key = (self.site, target);
+            if let Some(&blk) = self.trace_blocks.get(&key) {
+                return blk;
+            }
+            let ctx = self.cg.context;
+            let blk = LLVMAppendBasicBlockInContext(ctx, self.function, b"trace\0".as_ptr() as _);
+            let b = LLVMCreateBuilderInContext(ctx);
+            LLVMPositionBuilderAtEnd(b, blk);
+            let site = match self.site {
+                Some(s) => self.cg.sites[s as usize],
+                None => LLVMConstNull(self.ptr_ty()),
+            };
+            let (trace, trace_ty) = self.cg.runtime["ot_trace"];
+            let mut args = [site];
+            LLVMBuildCall2(b, trace_ty, trace, args.as_mut_ptr(), 1, NONAME);
+            LLVMBuildBr(b, target);
+            LLVMDisposeBuilder(b);
+            self.trace_blocks.insert(key, blk);
+            blk
         }
     }
 
@@ -1043,6 +1108,9 @@ impl Fx<'_> {
                 IrOp::Rethrow(thrown, v) => {
                     let args = [self.get(*thrown)?, self.get(*v)?];
                     self.rt("ot_rethrow", &args);
+                }
+                IrOp::Loc(n) => {
+                    self.site = (*n != crate::ir::lower::NO_SITE).then_some(*n);
                 }
                 IrOp::AsyncStart(d) => {
                     let r = self.rt("ot_async_start", &[]);

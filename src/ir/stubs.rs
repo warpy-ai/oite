@@ -249,6 +249,7 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         | IrOp::IsResume(_)
         | IrOp::ResumePoint(_)
         | IrOp::GetSuperProp(_, _, _, _) => CompileStrategy::StubCall(stubs::CALL),
+        IrOp::Loc(_) => CompileStrategy::NoOp,
         IrOp::CallMethod(_, _, _, _) => CompileStrategy::StubCall(stubs::CALL),
         IrOp::MakeClosure(_, _, _) => CompileStrategy::StubCall(stubs::ALLOC_OBJECT),
 

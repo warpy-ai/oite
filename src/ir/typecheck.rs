@@ -241,7 +241,7 @@ impl<'a> TypeChecker<'a> {
             | IrOp::ResumePoint(dst) => {
                 self.set_type(*dst, IrType::Any);
             }
-            IrOp::Await(_, _) => {}
+            IrOp::Await(_, _) | IrOp::Loc(_) => {}
             IrOp::InstanceOf(dst, _, _) | IrOp::In(dst, _, _) | IrOp::IsResume(dst) => {
                 self.set_type(*dst, IrType::Boolean);
             }

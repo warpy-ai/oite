@@ -1,10 +1,10 @@
 Uncaught TypeError: Cannot read properties of undefined (reading 'y')
 at inner (
-stack_trace.ot:4:14)
+stack_trace.ot:5:14)
 at Box.get (
-stack_trace.ot:8:18)
+stack_trace.ot:9:18)
 at outer (
-stack_trace.ot:10:33)
+stack_trace.ot:11:33)
 at rethrow (
-stack_trace.ot:13:5)
-stack_trace.ot:19:1
+stack_trace.ot:14:5)
+stack_trace.ot:20:1
