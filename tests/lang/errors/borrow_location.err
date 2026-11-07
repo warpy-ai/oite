@@ -1,0 +1,6 @@
+borrow_location.ot:4:13: borrow error: Cannot borrow moved variable 'a'
+4 | console.log(a.v);
+  |             ^
+borrow_location.ot:3:9: note: value moved here
+3 | let b = a;
+  |         ^

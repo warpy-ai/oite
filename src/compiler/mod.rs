@@ -2,10 +2,12 @@ use crate::vm::opcodes::OpCode;
 use std::collections::HashMap;
 use swc_ecma_ast::*;
 pub mod borrow_ck;
+pub mod diagnostic;
 pub mod scope;
 use crate::compiler::borrow_ck::BorrowChecker;
 use crate::compiler::scope::{PARENT_PROP, SCOPE_LOCAL, ScopeInfo, VarRef};
 use crate::vm::value::JsValue;
+pub use diagnostic::{CompileError, Diagnostic, Position};
 use swc_common::{FileName, SourceMap, Span, Spanned, sync::Lrc};
 use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 
@@ -26,7 +28,7 @@ impl Compiler {
         }
     }
 
-    pub fn compile(&mut self, source: &str) -> Result<Vec<OpCode>, String> {
+    pub fn compile(&mut self, source: &str) -> Result<Vec<OpCode>, CompileError> {
         self.compile_with_syntax(source, None)
     }
 
@@ -34,7 +36,7 @@ impl Compiler {
         &mut self,
         source: &str,
         syntax_override: Option<Syntax>,
-    ) -> Result<Vec<OpCode>, String> {
+    ) -> Result<Vec<OpCode>, CompileError> {
         let cm: Lrc<SourceMap> = Default::default();
         let fm = cm.new_source_file(
             FileName::Custom("main.ot".into()).into(),
@@ -49,19 +51,24 @@ impl Compiler {
 
         let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
         let mut parser = Parser::new_from(lexer);
-        let format_parse_error = |e: swc_ecma_parser::error::Error| {
-            let loc = cm.lookup_char_pos(e.span().lo);
-            format!(
-                "{}:{}: syntax error: {}",
-                loc.line,
-                loc.col_display + 1,
-                e.into_kind().msg()
-            )
+        let position = |span: Span| {
+            (!span.is_dummy()).then(|| {
+                let loc = cm.lookup_char_pos(span.lo);
+                Position {
+                    line: loc.line,
+                    col: loc.col_display + 1,
+                }
+            })
         };
-        let program = parser.parse_program().map_err(format_parse_error)?;
+        let format_parse_error = |e: swc_ecma_parser::error::Error| {
+            Diagnostic::new("syntax error", e.kind().msg(), position(e.span()))
+        };
+        let program = parser
+            .parse_program()
+            .map_err(|e| CompileError::single(format_parse_error(e)))?;
         // The parser recovers from some errors and keeps going; those must
         // still fail compilation instead of producing a partial program.
-        let recovered: Vec<String> = parser
+        let recovered: Vec<Diagnostic> = parser
             .take_errors()
             .into_iter()
             // Oite allows a top-level `return`: it sets the program's result
@@ -75,9 +82,13 @@ impl Compiler {
             .map(format_parse_error)
             .collect();
         if !recovered.is_empty() {
-            return Err(recovered.join("\n"));
+            return Err(CompileError {
+                diagnostics: recovered,
+            });
         }
 
+        self.borrow_checker.error_span = None;
+        self.borrow_checker.error_note = None;
         self.borrow_checker.enter_scope(); // Script vars at depth 1, globals at 0
 
         let result = match &program {
@@ -106,7 +117,20 @@ impl Compiler {
         };
 
         self.borrow_checker.exit_scope();
-        result?;
+        if let Err(message) = result {
+            let (kind, message) = diagnostic::split_borrow_message(&message);
+            let mut d = Diagnostic::new(
+                kind,
+                message,
+                self.borrow_checker.error_span.and_then(position),
+            );
+            d.note = self
+                .borrow_checker
+                .error_note
+                .take()
+                .and_then(|(note, span)| Some((note, position(span)?)));
+            return Err(CompileError::single(d));
+        }
 
         let mut codegen = Codegen::new();
         match &program {
@@ -121,19 +145,12 @@ impl Compiler {
         }
 
         if !codegen.errors.is_empty() {
-            let messages: Vec<String> = codegen
+            let diagnostics = codegen
                 .errors
                 .iter()
-                .map(|(span, msg)| {
-                    if span.is_dummy() {
-                        msg.clone()
-                    } else {
-                        let loc = cm.lookup_char_pos(span.lo);
-                        format!("{}:{}: {}", loc.line, loc.col_display + 1, msg)
-                    }
-                })
+                .map(|(span, msg)| Diagnostic::new("error", msg.clone(), position(*span)))
                 .collect();
-            return Err(messages.join("\n"));
+            return Err(CompileError { diagnostics });
         }
 
         Ok(codegen.instructions)

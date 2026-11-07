@@ -118,7 +118,7 @@ fn load_and_run_script(
 
     let bytecode = compiler
         .compile_with_syntax(&source, syntax)
-        .map_err(|e| format!("Failed to compile {}: {}", path, e))?;
+        .map_err(|e| e.render(path, &source))?;
     let bytecode_len = bytecode.len();
 
     if append {
@@ -134,6 +134,13 @@ fn load_and_run_script(
 
     vm.run_until_halt();
     Ok(())
+}
+
+/// Print a compile error (`file:line:col: kind: message` with the source
+/// line) and exit 1.
+fn exit_on_compile_error(file: &str, source: &str, e: &compiler::CompileError) -> ! {
+    eprintln!("{}", e.render(file, source));
+    std::process::exit(1);
 }
 
 /// Run the core library written in Oite (the error classes) on a fresh
@@ -395,10 +402,7 @@ fn main() {
 
             vm.run_event_loop();
         }
-        Err(e) => {
-            eprintln!("Compilation failed: {}", e);
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_compile_error(filename, &main_source, &e),
     }
 }
 
@@ -434,10 +438,7 @@ fn dump_ir(filename: &str) {
     let mut compiler = Compiler::new();
     let bytecode = match compiler.compile_with_syntax(&source, syntax) {
         Ok(bc) => bc,
-        Err(e) => {
-            eprintln!("Compilation failed: {}", e);
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_compile_error(filename, &source, &e),
     };
 
     println!("=== Bytecode ({} instructions) ===", bytecode.len());
@@ -504,33 +505,7 @@ fn check_file(filename: &str) {
             // Success - no errors
             std::process::exit(0);
         }
-        Err(e) => {
-            // Parse error message to extract line/column if possible
-            // Format: "Parsing error: ..." or "BORROW ERROR: ..." or "LIFETIME ERROR: ..."
-
-            // Try to find the line number from the error
-            let mut line_num = 1;
-            let col_num = 1;
-
-            // Check if error contains line information from SWC
-            if e.contains("error at") || e.contains("line") {
-                // Try to extract line number from error message
-                // This is a simple heuristic - SWC errors might have different formats
-                let lines: Vec<&str> = source.lines().collect();
-                for (i, _line) in lines.iter().enumerate() {
-                    if e.contains(&format!("line {}", i + 1))
-                        || e.contains(&format!("{}:{}", filename, i + 1))
-                    {
-                        line_num = i + 1;
-                        break;
-                    }
-                }
-            }
-
-            // Output in format: filename:line:col: message
-            eprintln!("{}:{}:{}: {}", filename, line_num, col_num, e);
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_compile_error(filename, &source, &e),
     }
 }
 
@@ -569,10 +544,7 @@ fn run_jit(filename: &str) {
     let mut compiler = Compiler::new();
     let bytecode = match compiler.compile_with_syntax(&source, syntax) {
         Ok(bc) => bc,
-        Err(e) => {
-            eprintln!("Compilation failed: {}", e);
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_compile_error(filename, &source, &e),
     };
 
     eprintln!("=== Bytecode ({} instructions) ===", bytecode.len());
@@ -686,10 +658,7 @@ fn run_benchmark(filename: &str) {
     let mut compiler = Compiler::new();
     let bytecode = match compiler.compile_with_syntax(&source, syntax) {
         Ok(bc) => bc,
-        Err(e) => {
-            eprintln!("Compilation failed: {}", e);
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_compile_error(filename, &source, &e),
     };
 
     println!("=== Benchmark: {} ===\n", filename);
@@ -957,10 +926,7 @@ fn build_file(args: &[String]) {
         // Compile to bytecode
         let bytecode = match compiler.compile_with_syntax(&source, syntax) {
             Ok(bc) => bc,
-            Err(e) => {
-                eprintln!("Compilation failed for {}: {}", filename, e);
-                std::process::exit(1);
-            }
+            Err(e) => exit_on_compile_error(filename, &source, &e),
         };
 
         // Lower to SSA IR
