@@ -1,0 +1,3 @@
+syntax_location.ot:3:9: syntax error: Expression expected
+3 | let x = ;
+  |         ^

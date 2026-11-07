@@ -2,15 +2,22 @@ use crate::vm::opcodes::OpCode;
 use std::collections::HashMap;
 use swc_ecma_ast::*;
 pub mod borrow_ck;
+pub mod diagnostic;
 pub mod scope;
 use crate::compiler::borrow_ck::BorrowChecker;
 use crate::compiler::scope::{PARENT_PROP, SCOPE_LOCAL, ScopeInfo, VarRef};
 use crate::vm::value::JsValue;
+pub use diagnostic::{
+    CompileError, DebugInfo, Diagnostic, FunctionRange, NO_POSITION, Position, SourceTable,
+    format_frame,
+};
 use swc_common::{FileName, SourceMap, Span, Spanned, sync::Lrc};
 use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
 
 pub struct Compiler {
     pub borrow_checker: BorrowChecker,
+    /// Source positions of the last program compiled.
+    pub debug_info: DebugInfo,
 }
 
 impl Default for Compiler {
@@ -23,10 +30,11 @@ impl Compiler {
     pub fn new() -> Self {
         Self {
             borrow_checker: BorrowChecker::new(),
+            debug_info: DebugInfo::default(),
         }
     }
 
-    pub fn compile(&mut self, source: &str) -> Result<Vec<OpCode>, String> {
+    pub fn compile(&mut self, source: &str) -> Result<Vec<OpCode>, CompileError> {
         self.compile_with_syntax(source, None)
     }
 
@@ -34,7 +42,7 @@ impl Compiler {
         &mut self,
         source: &str,
         syntax_override: Option<Syntax>,
-    ) -> Result<Vec<OpCode>, String> {
+    ) -> Result<Vec<OpCode>, CompileError> {
         let cm: Lrc<SourceMap> = Default::default();
         let fm = cm.new_source_file(
             FileName::Custom("main.ot".into()).into(),
@@ -49,19 +57,24 @@ impl Compiler {
 
         let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
         let mut parser = Parser::new_from(lexer);
-        let format_parse_error = |e: swc_ecma_parser::error::Error| {
-            let loc = cm.lookup_char_pos(e.span().lo);
-            format!(
-                "{}:{}: syntax error: {}",
-                loc.line,
-                loc.col_display + 1,
-                e.into_kind().msg()
-            )
+        let position = |span: Span| {
+            (!span.is_dummy()).then(|| {
+                let loc = cm.lookup_char_pos(span.lo);
+                Position {
+                    line: loc.line,
+                    col: loc.col_display + 1,
+                }
+            })
         };
-        let program = parser.parse_program().map_err(format_parse_error)?;
+        let format_parse_error = |e: swc_ecma_parser::error::Error| {
+            Diagnostic::new("syntax error", e.kind().msg(), position(e.span()))
+        };
+        let program = parser
+            .parse_program()
+            .map_err(|e| CompileError::single(format_parse_error(e)))?;
         // The parser recovers from some errors and keeps going; those must
         // still fail compilation instead of producing a partial program.
-        let recovered: Vec<String> = parser
+        let recovered: Vec<Diagnostic> = parser
             .take_errors()
             .into_iter()
             // Oite allows a top-level `return`: it sets the program's result
@@ -75,9 +88,13 @@ impl Compiler {
             .map(format_parse_error)
             .collect();
         if !recovered.is_empty() {
-            return Err(recovered.join("\n"));
+            return Err(CompileError {
+                diagnostics: recovered,
+            });
         }
 
+        self.borrow_checker.error_span = None;
+        self.borrow_checker.error_note = None;
         self.borrow_checker.enter_scope(); // Script vars at depth 1, globals at 0
 
         let result = match &program {
@@ -106,7 +123,20 @@ impl Compiler {
         };
 
         self.borrow_checker.exit_scope();
-        result?;
+        if let Err(message) = result {
+            let (kind, message) = diagnostic::split_borrow_message(&message);
+            let mut d = Diagnostic::new(
+                kind,
+                message,
+                self.borrow_checker.error_span.and_then(position),
+            );
+            d.note = self
+                .borrow_checker
+                .error_note
+                .take()
+                .and_then(|(note, span)| Some((note, position(span)?)));
+            return Err(CompileError::single(d));
+        }
 
         let mut codegen = Codegen::new();
         match &program {
@@ -121,20 +151,37 @@ impl Compiler {
         }
 
         if !codegen.errors.is_empty() {
-            let messages: Vec<String> = codegen
+            let diagnostics = codegen
                 .errors
                 .iter()
-                .map(|(span, msg)| {
-                    if span.is_dummy() {
-                        msg.clone()
-                    } else {
-                        let loc = cm.lookup_char_pos(span.lo);
-                        format!("{}:{}: {}", loc.line, loc.col_display + 1, msg)
-                    }
-                })
+                .map(|(span, msg)| Diagnostic::new("error", msg.clone(), position(*span)))
                 .collect();
-            return Err(messages.join("\n"));
+            return Err(CompileError { diagnostics });
         }
+
+        // Each instruction's position: the last mark at or before it.
+        let start = fm.start_pos.0;
+        let mut positions = vec![NO_POSITION; codegen.instructions.len()];
+        let mut marks = codegen.marks.iter().peekable();
+        let mut current = NO_POSITION;
+        for (i, slot) in positions.iter_mut().enumerate() {
+            while let Some(&&(at, pos)) = marks.peek() {
+                if at > i {
+                    break;
+                }
+                current = if pos >= start {
+                    pos - start
+                } else {
+                    NO_POSITION
+                };
+                marks.next();
+            }
+            *slot = current;
+        }
+        self.debug_info = DebugInfo {
+            positions,
+            functions: std::mem::take(&mut codegen.functions),
+        };
 
         Ok(codegen.instructions)
     }
@@ -296,6 +343,19 @@ pub struct Codegen {
     /// Span of the innermost statement or expression being compiled, used
     /// to locate errors.
     current_span: Span,
+    /// Source positions: from instruction `.0` on, code comes from byte
+    /// `.1` (a `BytePos`), until the next mark.
+    pub marks: Vec<(usize, u32)>,
+    /// The position of the code being generated (what `marks` returns to
+    /// after a nested expression).
+    mark_span: Span,
+    /// Function bodies and their names, for stack traces.
+    pub functions: Vec<FunctionRange>,
+    /// The name of the next function body (`function f`, `let f = () =>`,
+    /// `C.method`).
+    next_fn_name: Option<String>,
+    /// The class whose members are being compiled.
+    class_name: Option<String>,
     /// Where every variable lives (see `scope.rs`).
     pub scopes: ScopeInfo,
     /// Whether the code being generated keeps its innermost environment in
@@ -326,6 +386,11 @@ impl Codegen {
             warnings: Vec::new(),
             errors: Vec::new(),
             current_span: Span::default(),
+            marks: Vec::new(),
+            mark_span: Span::default(),
+            functions: Vec::new(),
+            next_fn_name: None,
+            class_name: None,
             scopes: ScopeInfo::default(),
             env_active: false,
         }
@@ -1345,6 +1410,9 @@ impl Codegen {
     /// A function declaration (`name` given) or an anonymous function value
     /// (left on the stack).
     fn gen_fn_decl(&mut self, name: Option<&Ident>, fn_decl: &Function) {
+        if let Some(ident) = name {
+            self.next_fn_name = Some(ident.sym.to_string());
+        }
         let is_async = fn_decl.is_async;
         if fn_decl.is_generator {
             self.unsupported("generator functions (`function*`)");
@@ -1378,6 +1446,8 @@ impl Codegen {
         kind: FnKind,
         fields: &[ClassField],
     ) {
+        let fn_start = self.instructions.len();
+        let fn_name = self.next_fn_name.take();
         let prev_in_function = self.in_function;
         let prev_async = self.in_async_function;
         let prev_fields = self.class_fields.take();
@@ -1484,6 +1554,11 @@ impl Codegen {
         self.class_fields = prev_fields;
         self.in_static_method = prev_static;
         self.leave_function_control(prev_control);
+        self.functions.push(FunctionRange {
+            start: fn_start,
+            end: self.instructions.len(),
+            name: fn_name,
+        });
     }
 
     /// `this.name = initializer` for each instance field.
@@ -1670,6 +1745,12 @@ impl Codegen {
     fn gen_var_decl(&mut self, var_decl: &VarDecl) {
         for decl in &var_decl.decls {
             if let Some(init) = &decl.init {
+                // `let f = () => ...`: the function is named `f`.
+                if let (Pat::Ident(id), Expr::Arrow(_) | Expr::Fn(FnExpr { ident: None, .. })) =
+                    (&decl.name, init.as_ref())
+                {
+                    self.next_fn_name = Some(id.id.sym.to_string());
+                }
                 self.gen_expr(init);
                 self.gen_pattern_binding(&decl.name);
             } else if var_decl.kind != VarDeclKind::Var {
@@ -1806,8 +1887,22 @@ impl Codegen {
 
     fn gen_stmt(&mut self, stmt: &Stmt) {
         let saved = std::mem::replace(&mut self.current_span, stmt.span());
+        let saved_mark = std::mem::replace(&mut self.mark_span, stmt.span());
+        self.mark(stmt.span());
         self.gen_stmt_inner(stmt);
         self.current_span = saved;
+        self.mark_span = saved_mark;
+        self.mark(saved_mark);
+    }
+
+    /// Code from here on comes from `span` (until the next mark); a dummy
+    /// span is no position (byte 0 precedes every file).
+    fn mark(&mut self, span: Span) {
+        let at = self.instructions.len();
+        match self.marks.last_mut() {
+            Some(last) if last.0 == at => last.1 = span.lo.0,
+            _ => self.marks.push((at, span.lo.0)),
+        }
     }
 
     fn gen_stmt_inner(&mut self, stmt: &Stmt) {
@@ -2369,6 +2464,11 @@ impl Codegen {
             Stmt::Throw(throw_stmt) => {
                 // Throw statement: push exception value and emit Throw opcode
                 self.gen_expr(&throw_stmt.arg);
+                // `throw new Error(...)` is located where the error is
+                // made, as JavaScript stack traces are.
+                if let Expr::New(new) = throw_stmt.arg.as_ref() {
+                    self.mark(new.span);
+                }
                 self.instructions.push(OpCode::Throw);
             }
             Stmt::Switch(switch) => self.gen_switch(switch),
@@ -2485,8 +2585,25 @@ impl Codegen {
 
     fn gen_expr(&mut self, expr: &Expr) {
         let saved = std::mem::replace(&mut self.current_span, expr.span());
+        // A property access is located at the property (`o.x.y`: `y`), a
+        // call at its callee's property, as in V8's stack traces.
+        let at = match expr {
+            Expr::Member(m) => m.prop.span(),
+            Expr::Call(CallExpr {
+                callee: Callee::Expr(callee),
+                ..
+            }) => match callee.as_ref() {
+                Expr::Member(m) => m.prop.span(),
+                _ => expr.span(),
+            },
+            _ => expr.span(),
+        };
+        let saved_mark = std::mem::replace(&mut self.mark_span, at);
+        self.mark(at);
         self.gen_expr_inner(expr);
         self.current_span = saved;
+        self.mark_span = saved_mark;
+        self.mark(saved_mark);
     }
 
     fn gen_expr_inner(&mut self, expr: &Expr) {
@@ -2495,6 +2612,9 @@ impl Codegen {
                 // `function (a, b) { ... }`: a function value. A name is
                 // bound for the function's own body; references to it are
                 // always from inside, so it lives in an environment.
+                if let Some(ident) = &fn_expr.ident {
+                    self.next_fn_name = Some(ident.sym.to_string());
+                }
                 match &fn_expr.ident {
                     Some(ident) if self.scopes.env_scope(ident.span).is_some() => {
                         let env = self.enter_scope_env(ident.span);
@@ -2872,6 +2992,7 @@ impl Codegen {
                                         }
                                     };
                                     self.instructions.push(OpCode::Dup);
+                                    self.next_fn_name = Some(key.clone());
                                     self.gen_fn_decl(None, &method.function);
                                     self.instructions.push(OpCode::SetProp(key));
                                 }
@@ -3199,6 +3320,12 @@ impl Codegen {
     /// constructor and methods reach as a captured variable.
     /// Stack: [] -> [class]
     fn gen_class(&mut self, class: &Class, name: Option<&str>) {
+        let prev_class_name = std::mem::replace(&mut self.class_name, name.map(str::to_string));
+        self.gen_class_inner(class, name);
+        self.class_name = prev_class_name;
+    }
+
+    fn gen_class_inner(&mut self, class: &Class, name: Option<&str>) {
         for member in &class.body {
             let member_decorated = match member {
                 ClassMember::StaticBlock(_) => {
@@ -3339,6 +3466,7 @@ impl Codegen {
                     derived,
                     implicit: false,
                 };
+                self.next_fn_name = Some(format!("new {}", self.class_display_name()));
                 self.gen_member_function(k.span, &pats, stmts, false, kind, &ctor_fields);
             }
             None => {
@@ -3347,6 +3475,7 @@ impl Codegen {
                     implicit: true,
                 };
                 let span = scope::implicit_ctor_span(class.span);
+                self.next_fn_name = Some(format!("new {}", self.class_display_name()));
                 self.gen_member_function(span, &[], &[], false, kind, &fields);
             }
         }
@@ -3391,6 +3520,7 @@ impl Codegen {
                 self.instructions.push(OpCode::Load(target.clone()));
                 let pats: Vec<&Pat> = function.params.iter().map(|p| &p.pat).collect();
                 let stmts: &[Stmt] = function.body.as_ref().map_or(&[], |b| b.stmts.as_slice());
+                self.next_fn_name = Some(format!("{}.{}", self.class_display_name(), shown));
                 self.gen_member_function(
                     function.span,
                     &pats,
@@ -3467,6 +3597,13 @@ impl Codegen {
 
         // Class decorators: `C = decorator(C, context) ?? C`.
         self.emit_decorators(&class.decorators, "class", name, false, false);
+    }
+
+    /// The class being compiled, as stack traces show it.
+    fn class_display_name(&self) -> String {
+        self.class_name
+            .clone()
+            .unwrap_or_else(|| "<anonymous>".to_string())
     }
 
     /// The name of a class member's key; computed keys are unsupported.

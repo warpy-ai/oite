@@ -7,7 +7,10 @@ use oite::compiler::Compiler;
 const APHORIO_INDEX: &str = include_str!("fixtures/aphorio_index.ts");
 
 fn compile(src: &str) -> Result<(), String> {
-    Compiler::new().compile(src).map(|_| ())
+    Compiler::new()
+        .compile(src)
+        .map(|_| ())
+        .map_err(String::from)
 }
 
 #[test]
@@ -18,7 +21,8 @@ fn issue_39_process_path_is_not_moved() {
     // is now a reported error instead of silently dropped code. This test is
     // about the borrow checker, so the only errors allowed are those.
     if let Err(e) = &result {
-        assert!(!e.contains("BORROW ERROR"), "borrow checker regressed: {e}");
+        let e = e.to_string();
+        assert!(!e.contains("borrow error"), "borrow checker regressed: {e}");
         for line in e.lines() {
             assert!(
                 line.ends_with("unsupported: regular expression literals"),

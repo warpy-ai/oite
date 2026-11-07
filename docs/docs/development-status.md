@@ -27,10 +27,22 @@ Tracking issue for the full gap list: [#136](https://github.com/warpy-ai/oite/is
 | Static type checking                      | Not implemented: annotations are parsed and erased ([#124](https://github.com/warpy-ai/oite/issues/124))                                |
 | Memory reclamation                        | Not implemented: nothing is ever freed ([#123](https://github.com/warpy-ai/oite/issues/123))                                            |
 | Self-hosting compiler                     | Partial: cannot compile its own source yet ([#131](https://github.com/warpy-ai/oite/issues/131))                                        |
-| Source positions in diagnostics           | Compile errors and syntax errors only; runtime and borrow errors still report `1:1` ([#125](https://github.com/warpy-ai/oite/issues/125)) |
+| Source positions in diagnostics           | Syntax, compile and borrow errors: `file:line:col`, the source line and a caret; a use after a move also shows where the value was moved |
+| Stack traces                              | Uncaught errors and unhandled rejections print `at f (file:line:col)` frames, the same on every backend (up to 10, as in V8) |
+| Native debug info                         | `oitec build --debug` emits DWARF (a line table and a subprogram per function): gdb and lldb stop on Oite lines and show Oite function names |
 | Rolls ecosystem (HTTP, TLS, fs, crypto)   | Planned; needs an FFI first ([#132](https://github.com/warpy-ai/oite/issues/132))                                                       |
 | Tooling (fmt, lint, LSP)                  | Planned                                                                                  |
 | Unroll package manager                    | Planned                                                                                  |
+
+A stack trace lists where the exception was thrown and each call it
+unwound through, located as V8 locates them. The frames match Node's,
+with three differences:
+
+- Frames are recorded as the exception propagates, not when the error
+  object is created. An error made in one function and thrown from
+  another shows the `throw`.
+- Object literal methods are named `load`, not `Object.load`.
+- There are no `async` caller frames.
 
 ## Language Features
 
@@ -84,7 +96,7 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Generators, regex, tagged templates        | Compile error                        | Compile error                     |
 | Runtime errors (`null.x`, unbound names, calling a non-function, ...) | Thrown as `TypeError` / `ReferenceError` / `RangeError`, catchable | Same                       |
 | Stack overflow                             | `RangeError`                         | `RangeError` (stack-pointer check) |
-| Uncaught exceptions                        | `Uncaught TypeError: ...` on stderr, exit 1 | Same                       |
+| Uncaught exceptions                        | `Uncaught TypeError: ...` and its stack trace on stderr, exit 1 | Same   |
 | String `length` / indexing                 | Counts UTF-8 bytes ([#133](https://github.com/warpy-ai/oite/issues/133))            | -                                 |
 | Type annotations                           | Parsed, not checked ([#124](https://github.com/warpy-ai/oite/issues/124))           | -                                 |
 | Ownership / borrow checking                | Compile-time checks run; moves are enforced | -                          |
@@ -148,7 +160,7 @@ Correctness comes before new surface area (see [#136](https://github.com/warpy-a
 
 1. **Language correctness**: the string model ([#133](https://github.com/warpy-ai/oite/issues/133)), callback methods (`map`, `filter`, ...), top-level `await`
 2. **Native backends**: modules
-3. **Compiler infrastructure**: source positions everywhere ([#125](https://github.com/warpy-ai/oite/issues/125)), type checking ([#124](https://github.com/warpy-ai/oite/issues/124))
+3. **Compiler infrastructure**: type checking ([#124](https://github.com/warpy-ai/oite/issues/124))
 4. **Foundations**: language specification ([#135](https://github.com/warpy-ai/oite/issues/135)), memory reclamation ([#123](https://github.com/warpy-ai/oite/issues/123)), FFI ([#132](https://github.com/warpy-ai/oite/issues/132))
 5. **Rolls, Unroll, tooling**: after the above
 

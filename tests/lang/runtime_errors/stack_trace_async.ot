@@ -1,0 +1,20 @@
+// backends: vm jit aot
+// A rejection nothing handles prints where the error was made.
+function check(n) {
+  if (n > 1) {
+    throw new Error("too big: " + n);
+  }
+  return n;
+}
+async function load(n) {
+  await null;
+  return check(n);
+}
+async function main() {
+  let total = 0;
+  for (let i = 0; i < 3; i++) {
+    total += await load(i);
+    console.log("total", total);
+  }
+}
+main();

@@ -102,6 +102,7 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_await_result,
         ot_run_microtasks,
         ot_run_event_loop,
+        ot_trace,
     )
 }
 
@@ -198,6 +199,21 @@ impl CraneliftCodegen {
             }
         }
 
+        // Stack frames for exception traces, alive as long as the code.
+        let sites: Vec<u64> = ir_module
+            .sites
+            .iter()
+            .map(|site| {
+                let text: &'static str = Box::leak(site.frame.clone().into_boxed_str());
+                let site = Box::leak(Box::new(crate::runtime::stubs::TraceSite {
+                    ptr: text.as_ptr(),
+                    len: text.len(),
+                }));
+                site as *const _ as u64
+            })
+            .collect();
+        let tracing = !sites.is_empty();
+
         for func in &ir_module.functions {
             self.ctx.clear();
             self.ctx.func.signature = sig.clone();
@@ -221,6 +237,10 @@ impl CraneliftCodegen {
                     args: None,
                     frame: None,
                     own_name: &func.name,
+                    sites: &sites,
+                    tracing,
+                    site: None,
+                    trace_blocks: HashMap::new(),
                 };
                 fx.function(&mut builder, func)?;
                 builder.seal_all_blocks();
@@ -301,6 +321,14 @@ struct Fx<'a> {
     frame: Option<Value>,
     /// This function's IR name (an `await` resumes it).
     own_name: &'a str,
+    /// `TraceSite` addresses of `IrModule::sites`.
+    sites: &'a [u64],
+    /// Whether exceptions record stack frames (the module has sites).
+    tracing: bool,
+    /// The site of the ops being compiled (`IrOp::Loc`).
+    site: Option<u32>,
+    /// Cold blocks that record a site, then go to a target.
+    trace_blocks: HashMap<(Option<u32>, Block), Block>,
 }
 
 /// Where a local lives: a stack slot, or a word of an async function's
@@ -374,9 +402,34 @@ impl Fx<'_> {
                 }
             },
         };
+        let target = if self.tracing {
+            self.trace_block(b, target)
+        } else {
+            target
+        };
         let next = b.create_block();
         b.ins().brif(thrown, target, &[], next, &[]);
         b.switch_to_block(next);
+    }
+
+    /// A cold block that records the current site (`ot_trace`), then jumps
+    /// to `target`.
+    fn trace_block(&mut self, b: &mut FunctionBuilder, target: Block) -> Block {
+        let key = (self.site, target);
+        if let Some(&blk) = self.trace_blocks.get(&key) {
+            return blk;
+        }
+        let current = b.current_block().expect("in a block");
+        let blk = b.create_block();
+        b.set_cold_block(blk);
+        b.switch_to_block(blk);
+        let site = self.site.map_or(0, |s| self.sites[s as usize]);
+        let site = Self::c(b, site);
+        self.rt(b, "ot_trace", &[site]);
+        b.ins().jump(target, &[]);
+        b.switch_to_block(current);
+        self.trace_blocks.insert(key, blk);
+        blk
     }
 
     fn rt_v(&mut self, b: &mut FunctionBuilder, name: &str, args: &[Value]) -> Value {
@@ -519,6 +572,7 @@ impl Fx<'_> {
 
         for block in &func.blocks {
             b.switch_to_block(self.blocks[&block.id]);
+            self.site = None;
             for op in &block.ops {
                 self.last_call = None;
                 self.op(b, op)?;
@@ -935,6 +989,9 @@ impl Fx<'_> {
             IrOp::Rethrow(thrown, v) => {
                 let args = [self.get(*thrown)?, self.get(*v)?];
                 self.rt(b, "ot_rethrow", &args);
+            }
+            IrOp::Loc(n) => {
+                self.site = (*n != crate::ir::lower::NO_SITE).then_some(*n);
             }
             IrOp::AsyncStart(d) => {
                 let r = self.rt_v(b, "ot_async_start", &[]);

@@ -1,0 +1,20 @@
+// backends: vm jit aot
+// An uncaught error prints where it was thrown and the calls that led
+// there, as JavaScript stack traces do (checked against Node).
+function inner(o) {
+  return o.x.y;
+}
+class Box {
+  constructor(v) { this.v = v; }
+  get() { return inner(this.v); }
+}
+const outer = () => new Box({}).get();
+function rethrow() {
+  try {
+    outer();
+  } catch (e) {
+    throw e;
+  }
+}
+console.log("before");
+rethrow();

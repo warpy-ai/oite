@@ -519,6 +519,10 @@ pub enum IrOp {
     IsResume(ValueId),
     /// Which resume point (a number).
     ResumePoint(ValueId),
+    /// The ops after this one, up to the next `Loc`, are at stack frame
+    /// `IrModule::sites[n]` (`NO_SITE`: unknown). Emits no code: an
+    /// exception that passes an op records the site (`ot_trace`).
+    Loc(u32),
     /// `super.name`: (dst, this, base, name); a getter runs with `this`.
     GetSuperProp(ValueId, ValueId, ValueId, String),
     /// `obj.#x`: throws if the object lacks the private member.
@@ -751,7 +755,8 @@ impl IrOp {
             | IrOp::StructSetFieldNamed(_, _, _)
             | IrOp::Throw(_)
             | IrOp::Rethrow(_, _)
-            | IrOp::Await(_, _) => None,
+            | IrOp::Await(_, _)
+            | IrOp::Loc(_) => None,
         }
     }
 
@@ -852,6 +857,7 @@ impl IrOp {
             IrOp::AsyncResolve(_, p, v) | IrOp::AsyncReject(_, p, v) => vec![*p, *v],
             IrOp::Await(v, _) => vec![*v],
             IrOp::AsyncStart(_)
+            | IrOp::Loc(_)
             | IrOp::AwaitResult(_)
             | IrOp::IsResume(_)
             | IrOp::ResumePoint(_) => vec![],
@@ -1220,6 +1226,9 @@ impl fmt::Display for IrStructDef {
 pub struct IrModule {
     /// Functions in this module.
     pub functions: Vec<IrFunction>,
+    /// Source positions of ops (`IrOp::Loc`), for exception traces and
+    /// debug info.
+    pub sites: Vec<Site>,
     /// Global variable names.
     pub globals: Vec<String>,
     /// Struct definitions.
@@ -1236,10 +1245,23 @@ pub struct IrModule {
     pub user_main_addr: Option<usize>,
 }
 
+/// Where ops are in the source.
+#[derive(Debug, Clone)]
+pub struct Site {
+    /// As stack traces show it: `f (file.ot:2:14)`.
+    pub frame: String,
+    /// The function, if it has a name.
+    pub name: Option<String>,
+    pub file: String,
+    pub line: u32,
+    pub col: u32,
+}
+
 impl IrModule {
     pub fn new() -> Self {
         Self {
             functions: Vec::new(),
+            sites: Vec::new(),
             globals: Vec::new(),
             structs: HashMap::new(),
             next_struct_id: 0,
@@ -1394,6 +1416,7 @@ impl fmt::Display for IrOp {
             IrOp::AwaitResult(d) => write!(f, "{} = await.result", d),
             IrOp::IsResume(d) => write!(f, "{} = is.resume", d),
             IrOp::ResumePoint(d) => write!(f, "{} = resume.point", d),
+            IrOp::Loc(n) => write!(f, "loc #{}", n),
             IrOp::GetSuperProp(d, this, base, name) => {
                 write!(f, "{} = get.super {}.{} [this={}]", d, base, name, this)
             }

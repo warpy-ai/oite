@@ -118,22 +118,32 @@ fn load_and_run_script(
 
     let bytecode = compiler
         .compile_with_syntax(&source, syntax)
-        .map_err(|e| format!("Failed to compile {}: {}", path, e))?;
+        .map_err(|e| e.render(path, &source))?;
     let bytecode_len = bytecode.len();
+    let debug = std::mem::take(&mut compiler.debug_info);
 
     if append {
         let offset = vm.append_program(bytecode);
+        vm.add_debug_info(offset, path, &source, debug);
         eprintln!("  {} ({} ops at offset {})", path, bytecode_len, offset);
     } else {
         // After the core library (`load_core`), with this file as the
         // current module.
-        vm.append_program(bytecode);
+        let offset = vm.append_program(bytecode);
+        vm.add_debug_info(offset, path, &source, debug);
         vm.set_current_module_path(PathBuf::from(path));
         eprintln!("  {} ({} ops)", path, bytecode_len);
     }
 
     vm.run_until_halt();
     Ok(())
+}
+
+/// Print a compile error (`file:line:col: kind: message` with the source
+/// line) and exit 1.
+fn exit_on_compile_error(file: &str, source: &str, e: &compiler::CompileError) -> ! {
+    eprintln!("{}", e.render(file, source));
+    std::process::exit(1);
 }
 
 /// Run the core library written in Oite (the error classes) on a fresh
@@ -147,15 +157,26 @@ fn load_core(vm: &mut VM, compiler: &mut Compiler) {
         }
     };
     vm.load_program(bytecode);
+    let debug = std::mem::take(&mut compiler.debug_info);
+    vm.add_debug_info(
+        0,
+        vm::errors::CORE_ERRORS_PATH,
+        vm::errors::CORE_ERRORS,
+        debug,
+    );
     vm.run_until_halt();
 }
 
 /// A program for native code: the core library (the error classes) runs
-/// first, as on the VM, then `bytecode`.
+/// first, as on the VM, then `bytecode` (just compiled from `source`).
+/// Also the stack frame of each instruction, for exception traces.
 fn with_core(
     compiler: &mut Compiler,
     bytecode: Vec<vm::opcodes::OpCode>,
-) -> Vec<vm::opcodes::OpCode> {
+    file: &str,
+    source: &str,
+) -> (Vec<vm::opcodes::OpCode>, ir::lower::Sites) {
+    let main_debug = std::mem::take(&mut compiler.debug_info);
     let mut program = match compiler.compile(vm::errors::CORE_ERRORS) {
         Ok(b) => b,
         Err(e) => {
@@ -168,8 +189,17 @@ fn with_core(
         program.pop();
     }
     let offset = program.len();
+    let mut table = compiler::SourceTable::default();
+    let core_debug = std::mem::take(&mut compiler.debug_info);
+    table.add(
+        0,
+        vm::errors::CORE_ERRORS_PATH,
+        vm::errors::CORE_ERRORS,
+        core_debug,
+    );
+    table.add(offset, file, source, main_debug);
     program.extend(vm::rebase_program(bytecode, offset));
-    program
+    (program, ir::lower::Sites::new(table))
 }
 
 /// Load and run a pre-compiled bytecode file
@@ -385,6 +415,8 @@ fn main() {
     match compiler.compile_with_syntax(&main_source, syntax) {
         Ok(main_bytecode) => {
             let offset = vm.append_program(main_bytecode);
+            let debug = std::mem::take(&mut compiler.debug_info);
+            vm.add_debug_info(offset, filename, &main_source, debug);
             // Update the current module path to the main script for relative imports
             vm.set_current_module_path(PathBuf::from(filename));
 
@@ -395,10 +427,7 @@ fn main() {
 
             vm.run_event_loop();
         }
-        Err(e) => {
-            eprintln!("Compilation failed: {}", e);
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_compile_error(filename, &main_source, &e),
     }
 }
 
@@ -434,10 +463,7 @@ fn dump_ir(filename: &str) {
     let mut compiler = Compiler::new();
     let bytecode = match compiler.compile_with_syntax(&source, syntax) {
         Ok(bc) => bc,
-        Err(e) => {
-            eprintln!("Compilation failed: {}", e);
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_compile_error(filename, &source, &e),
     };
 
     println!("=== Bytecode ({} instructions) ===", bytecode.len());
@@ -504,33 +530,7 @@ fn check_file(filename: &str) {
             // Success - no errors
             std::process::exit(0);
         }
-        Err(e) => {
-            // Parse error message to extract line/column if possible
-            // Format: "Parsing error: ..." or "BORROW ERROR: ..." or "LIFETIME ERROR: ..."
-
-            // Try to find the line number from the error
-            let mut line_num = 1;
-            let col_num = 1;
-
-            // Check if error contains line information from SWC
-            if e.contains("error at") || e.contains("line") {
-                // Try to extract line number from error message
-                // This is a simple heuristic - SWC errors might have different formats
-                let lines: Vec<&str> = source.lines().collect();
-                for (i, _line) in lines.iter().enumerate() {
-                    if e.contains(&format!("line {}", i + 1))
-                        || e.contains(&format!("{}:{}", filename, i + 1))
-                    {
-                        line_num = i + 1;
-                        break;
-                    }
-                }
-            }
-
-            // Output in format: filename:line:col: message
-            eprintln!("{}:{}:{}: {}", filename, line_num, col_num, e);
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_compile_error(filename, &source, &e),
     }
 }
 
@@ -569,10 +569,7 @@ fn run_jit(filename: &str) {
     let mut compiler = Compiler::new();
     let bytecode = match compiler.compile_with_syntax(&source, syntax) {
         Ok(bc) => bc,
-        Err(e) => {
-            eprintln!("Compilation failed: {}", e);
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_compile_error(filename, &source, &e),
     };
 
     eprintln!("=== Bytecode ({} instructions) ===", bytecode.len());
@@ -581,8 +578,8 @@ fn run_jit(filename: &str) {
     }
 
     // Lower to SSA IR (using lower_module to extract all functions)
-    let bytecode = with_core(&mut compiler, bytecode);
-    match ir::lower::lower_module(&bytecode) {
+    let (bytecode, sites) = with_core(&mut compiler, bytecode, filename, &source);
+    match ir::lower::lower_module_with_sites(&bytecode, Some(sites)) {
         Ok(mut module) => {
             // Show extracted functions
             if module.functions.len() > 1 {
@@ -686,10 +683,7 @@ fn run_benchmark(filename: &str) {
     let mut compiler = Compiler::new();
     let bytecode = match compiler.compile_with_syntax(&source, syntax) {
         Ok(bc) => bc,
-        Err(e) => {
-            eprintln!("Compilation failed: {}", e);
-            std::process::exit(1);
-        }
+        Err(e) => exit_on_compile_error(filename, &source, &e),
     };
 
     println!("=== Benchmark: {} ===\n", filename);
@@ -957,15 +951,18 @@ fn build_file(args: &[String]) {
         // Compile to bytecode
         let bytecode = match compiler.compile_with_syntax(&source, syntax) {
             Ok(bc) => bc,
-            Err(e) => {
-                eprintln!("Compilation failed for {}: {}", filename, e);
-                std::process::exit(1);
-            }
+            Err(e) => exit_on_compile_error(filename, &source, &e),
         };
 
         // Lower to SSA IR
-        let bytecode = with_core(&mut compiler, bytecode);
-        let mut module = match ir::lower::lower_module(&bytecode) {
+        let (bytecode, sites) = with_core(&mut compiler, bytecode, filename, &source);
+        // A debug build locates every op, for the debug info's line table.
+        let sites = if opt_level == OptLevel::None {
+            sites.every_op()
+        } else {
+            sites
+        };
+        let mut module = match ir::lower::lower_module_with_sites(&bytecode, Some(sites)) {
             Ok(m) => m,
             Err(e) => {
                 eprintln!("IR lowering failed for {}: {}", filename, e);
