@@ -9,6 +9,7 @@ use crate::compiler::scope::{PARENT_PROP, SCOPE_LOCAL, ScopeInfo, VarRef};
 use crate::vm::value::JsValue;
 pub use diagnostic::{
     CompileError, DebugInfo, Diagnostic, FunctionRange, NO_POSITION, Position, SourceTable,
+    format_frame,
 };
 use swc_common::{FileName, SourceMap, Span, Spanned, sync::Lrc};
 use swc_ecma_parser::{Parser, StringInput, Syntax, lexer::Lexer};
@@ -1894,11 +1895,9 @@ impl Codegen {
         self.mark(saved_mark);
     }
 
-    /// Code from here on comes from `span` (until the next mark).
+    /// Code from here on comes from `span` (until the next mark); a dummy
+    /// span is no position (byte 0 precedes every file).
     fn mark(&mut self, span: Span) {
-        if span.is_dummy() {
-            return;
-        }
         let at = self.instructions.len();
         match self.marks.last_mut() {
             Some(last) if last.0 == at => last.1 = span.lo.0,

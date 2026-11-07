@@ -13,6 +13,7 @@ pub mod abi;
 pub mod bitcode;
 pub mod cache;
 pub mod codegen;
+pub mod debug;
 pub mod linker;
 pub mod lto;
 pub mod object;
@@ -39,6 +40,7 @@ pub fn compile_to_object_file(
 
     // Create codegen
     let mut codegen = LlvmCodegen::new(target_triple.clone())?;
+    codegen.debug_info = config.debug_info;
 
     // Compile module
     codegen.compile_module(module)?;
@@ -72,6 +74,7 @@ pub fn compile_to_bitcode_file(
 
     // Create codegen
     let mut codegen = LlvmCodegen::new(target_triple.clone())?;
+    codegen.debug_info = config.debug_info;
 
     // Compile module
     codegen.compile_module(module)?;
@@ -118,6 +121,7 @@ pub fn compile_to_llvm_ir_file(
 
     // Create codegen
     let mut codegen = LlvmCodegen::new(target_triple.clone())?;
+    codegen.debug_info = config.debug_info;
 
     // Compile module
     codegen.compile_module(module)?;

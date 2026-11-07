@@ -105,7 +105,16 @@ pub struct Lowerer {
 /// numbered as `IrModule::sites`.
 pub struct Sites {
     table: crate::compiler::SourceTable,
-    ids: std::cell::RefCell<(HashMap<usize, u32>, HashMap<String, u32>, Vec<String>)>,
+    ids: std::cell::RefCell<SiteIds>,
+    /// Mark every op, not only those that can throw (debug info).
+    every_op: bool,
+}
+
+#[derive(Default)]
+struct SiteIds {
+    by_ip: HashMap<usize, u32>,
+    by_frame: HashMap<String, u32>,
+    sites: Vec<crate::ir::Site>,
 }
 
 /// `IrOp::Loc` of code whose position is unknown.
@@ -116,33 +125,49 @@ impl Sites {
         Self {
             table,
             ids: Default::default(),
+            every_op: false,
         }
+    }
+
+    /// Mark every op with its position, for debug info.
+    pub fn every_op(mut self) -> Self {
+        self.every_op = true;
+        self
     }
 
     /// The site of instruction `ip`.
     fn site(&self, ip: usize) -> u32 {
         let mut ids = self.ids.borrow_mut();
-        if let Some(&id) = ids.0.get(&ip) {
+        if let Some(&id) = ids.by_ip.get(&ip) {
             return id;
         }
-        let id = match self.table.describe(ip) {
-            Some(frame) => match ids.1.get(&frame) {
-                Some(&id) => id,
-                None => {
-                    let id = ids.2.len() as u32;
-                    ids.2.push(frame.clone());
-                    ids.1.insert(frame, id);
-                    id
+        let id = match self.table.locate(ip) {
+            Some((name, file, pos)) => {
+                let frame = crate::compiler::format_frame(name, file, pos);
+                match ids.by_frame.get(&frame) {
+                    Some(&id) => id,
+                    None => {
+                        let id = ids.sites.len() as u32;
+                        ids.sites.push(crate::ir::Site {
+                            frame: frame.clone(),
+                            name: name.map(str::to_string),
+                            file: file.to_string(),
+                            line: pos.line as u32,
+                            col: pos.col as u32,
+                        });
+                        ids.by_frame.insert(frame, id);
+                        id
+                    }
                 }
-            },
+            }
             None => NO_SITE,
         };
-        ids.0.insert(ip, id);
+        ids.by_ip.insert(ip, id);
         id
     }
 
-    fn take(&self) -> Vec<String> {
-        std::mem::take(&mut self.ids.borrow_mut().2)
+    fn take(&self) -> Vec<crate::ir::Site> {
+        std::mem::take(&mut self.ids.borrow_mut().sites)
     }
 }
 
@@ -477,8 +502,8 @@ impl Lowerer {
 
     /// Emit an operation to the current block.
     fn emit(&mut self, op: IrOp) {
-        if op.can_throw()
-            && let Some(sites) = &self.sites
+        if let Some(sites) = &self.sites
+            && (sites.every_op || op.can_throw())
         {
             let site = sites.site(self.cur_ip);
             if self.last_loc.insert(self.current_block, site) != Some(site) {

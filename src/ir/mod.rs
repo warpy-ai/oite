@@ -1226,9 +1226,9 @@ impl fmt::Display for IrStructDef {
 pub struct IrModule {
     /// Functions in this module.
     pub functions: Vec<IrFunction>,
-    /// Stack frames for exception traces (`IrOp::Loc`), e.g.
-    /// `f (file.ot:2:14)`.
-    pub sites: Vec<String>,
+    /// Source positions of ops (`IrOp::Loc`), for exception traces and
+    /// debug info.
+    pub sites: Vec<Site>,
     /// Global variable names.
     pub globals: Vec<String>,
     /// Struct definitions.
@@ -1243,6 +1243,18 @@ pub struct IrModule {
     pub function_addrs: HashMap<usize, usize>,
     /// Bytecode address of user-defined main() function, if any.
     pub user_main_addr: Option<usize>,
+}
+
+/// Where ops are in the source.
+#[derive(Debug, Clone)]
+pub struct Site {
+    /// As stack traces show it: `f (file.ot:2:14)`.
+    pub frame: String,
+    /// The function, if it has a name.
+    pub name: Option<String>,
+    pub file: String,
+    pub line: u32,
+    pub col: u32,
 }
 
 impl IrModule {

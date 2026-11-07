@@ -227,6 +227,13 @@ impl SourceTable {
     /// Instruction `ip` as a stack frame (`name (file:line:col)`), if its
     /// position is known.
     pub fn describe(&self, ip: usize) -> Option<String> {
+        let (name, file, pos) = self.locate(ip)?;
+        Some(format_frame(name, file, pos))
+    }
+
+    /// Where instruction `ip` is: its function's name, its file and
+    /// position.
+    pub fn locate(&self, ip: usize) -> Option<(Option<&str>, &str, Position)> {
         let seg = self
             .segments
             .iter()
@@ -235,7 +242,7 @@ impl SourceTable {
         let local = ip - seg.offset;
         let pos = Position::of_offset(&seg.source, seg.info.position(local)? as usize);
         let name = seg.info.function_at(local).and_then(|f| f.name.as_deref());
-        Some(format_frame(name, &seg.file, pos))
+        Some((name, &seg.file, pos))
     }
 }
 

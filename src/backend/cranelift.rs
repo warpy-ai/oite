@@ -203,8 +203,8 @@ impl CraneliftCodegen {
         let sites: Vec<u64> = ir_module
             .sites
             .iter()
-            .map(|frame| {
-                let text: &'static str = Box::leak(frame.clone().into_boxed_str());
+            .map(|site| {
+                let text: &'static str = Box::leak(site.frame.clone().into_boxed_str());
                 let site = Box::leak(Box::new(crate::runtime::stubs::TraceSite {
                     ptr: text.as_ptr(),
                     len: text.len(),

@@ -51,6 +51,11 @@ pub struct LlvmCodegen {
     fn_ty: LLVMTypeRef,
     /// `TraceSite` constants of `IrModule::sites` (exception traces).
     sites: Vec<LLVMValueRef>,
+    /// Emit DWARF debug info (`--debug`).
+    pub debug_info: bool,
+    di: Option<super::debug::DebugBuilder>,
+    /// `IrModule::sites`, for debug locations.
+    site_info: Vec<crate::ir::Site>,
 }
 
 impl LlvmCodegen {
@@ -88,6 +93,9 @@ impl LlvmCodegen {
                 strings: HashMap::new(),
                 fn_ty,
                 sites: Vec::new(),
+                debug_info: false,
+                di: None,
+                site_info: Vec::new(),
             })
         }
     }
@@ -119,9 +127,25 @@ impl LlvmCodegen {
                 }
             }
 
+            if self.debug_info && !ir_module.sites.is_empty() {
+                let main_file = ir_module
+                    .sites
+                    .iter()
+                    .map(|s| s.file.as_str())
+                    .find(|f| *f != crate::vm::errors::CORE_ERRORS_PATH)
+                    .unwrap_or("main.ot");
+                self.di = Some(super::debug::DebugBuilder::new(
+                    self.module,
+                    self.context,
+                    main_file,
+                ));
+                self.site_info = ir_module.sites.clone();
+            }
+
             // Stack frames for exception traces: `{ ptr, len }` constants.
             let ptr_ty = LLVMPointerTypeInContext(self.context, 0);
-            for frame in &ir_module.sites {
+            for site in &ir_module.sites {
+                let frame = &site.frame;
                 let text = LLVMConstStringInContext(
                     self.context,
                     frame.as_ptr() as *const c_char,
@@ -148,6 +172,9 @@ impl LlvmCodegen {
             }
 
             self.build_c_main()?;
+            if let Some(di) = self.di.take() {
+                di.finalize();
+            }
             self.verify()
         }
     }
@@ -294,7 +321,22 @@ impl LlvmCodegen {
                 frame: None,
                 site: None,
                 trace_blocks: HashMap::new(),
+                di_scope: None,
             };
+            // Debug info: the function, and where its code starts.
+            let linkage = if func.name == "main" {
+                "ot_main".to_string()
+            } else {
+                func.name.clone()
+            };
+            if let Some(di) = fx.cg.di.as_mut()
+                && let Some(scope) = di.function(func, f, &linkage, &fx.cg.site_info)
+            {
+                let loc = di.location(&scope, None);
+                LLVMSetCurrentDebugLocation2(fx.builder, loc);
+                LLVMSetCurrentDebugLocation2(fx.prologue, loc);
+                fx.di_scope = Some(scope);
+            }
             fx.prologue_setup(func, f)?;
 
             for block in &func.blocks {
@@ -392,6 +434,8 @@ struct Fx<'a> {
     site: Option<u32>,
     /// Cold blocks that record a site (`ot_trace`), then go to a target.
     trace_blocks: HashMap<(Option<u32>, LLVMBasicBlockRef), LLVMBasicBlockRef>,
+    /// This function's debug info, with `--debug`.
+    di_scope: Option<super::debug::FunctionScope>,
 }
 
 impl Fx<'_> {
@@ -519,6 +563,9 @@ impl Fx<'_> {
             let blk = LLVMAppendBasicBlockInContext(ctx, self.function, b"trace\0".as_ptr() as _);
             let b = LLVMCreateBuilderInContext(ctx);
             LLVMPositionBuilderAtEnd(b, blk);
+            if self.di_scope.is_some() {
+                LLVMSetCurrentDebugLocation2(b, LLVMGetCurrentDebugLocation2(self.builder));
+            }
             let site = match self.site {
                 Some(s) => self.cg.sites[s as usize],
                 None => LLVMConstNull(self.ptr_ty()),
@@ -1111,6 +1158,11 @@ impl Fx<'_> {
                 }
                 IrOp::Loc(n) => {
                     self.site = (*n != crate::ir::lower::NO_SITE).then_some(*n);
+                    if let (Some(scope), Some(di)) = (&self.di_scope, self.cg.di.as_mut()) {
+                        let site = self.site.and_then(|s| self.cg.site_info.get(s as usize));
+                        let loc = di.location(scope, site);
+                        LLVMSetCurrentDebugLocation2(self.builder, loc);
+                    }
                 }
                 IrOp::AsyncStart(d) => {
                     let r = self.rt("ot_async_start", &[]);

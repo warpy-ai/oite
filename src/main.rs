@@ -956,6 +956,12 @@ fn build_file(args: &[String]) {
 
         // Lower to SSA IR
         let (bytecode, sites) = with_core(&mut compiler, bytecode, filename, &source);
+        // A debug build locates every op, for the debug info's line table.
+        let sites = if opt_level == OptLevel::None {
+            sites.every_op()
+        } else {
+            sites
+        };
         let mut module = match ir::lower::lower_module_with_sites(&bytecode, Some(sites)) {
             Ok(m) => m,
             Err(e) => {
