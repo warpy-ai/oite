@@ -1,0 +1,6 @@
+Uncaught RangeError: bad id -1
+at load (
+stack_trace_new_error.ot:6:13)
+at run (
+stack_trace_new_error.ot:14:18)
+stack_trace_new_error.ot:19:1

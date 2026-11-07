@@ -7,6 +7,7 @@ pub mod opcodes;
 pub mod promise;
 pub mod property;
 pub mod stdlib_setup;
+pub mod trace;
 pub mod value;
 
 pub use crate::compiler::Compiler;
@@ -254,6 +255,11 @@ pub struct VM {
     /// Report an uncaught exception and exit (the `oitec` binary) instead
     /// of panicking (embedded VMs, tests).
     pub exit_on_uncaught: bool,
+    /// Source positions of the loaded programs (see `trace.rs`).
+    pub debug_segments: Vec<trace::DebugSegment>,
+    /// Where the last exception thrown has been: instruction pointers.
+    exception_trace: Vec<usize>,
+    traced_exception: Option<JsValue>,
     pub current_module_path: Option<PathBuf>,
     pub async_runtime: Option<Runtime>,
     pub async_task_tx: Option<mpsc::Sender<JsValue>>,
@@ -313,6 +319,9 @@ impl VM {
             barrier_exception: None,
             native_throw: None,
             exit_on_uncaught: false,
+            debug_segments: Vec::new(),
+            exception_trace: Vec::new(),
+            traced_exception: None,
             current_module_path: None,
             async_runtime: None,
             async_task_tx: Some(tx),
@@ -447,7 +456,7 @@ impl VM {
         let bytecode = self
             .compiler
             .compile_with_syntax(source, syntax)
-            .map_err(|e| format!("Failed to compile module {}: {}", path.display(), e))?;
+            .map_err(|e| e.render(&path.display().to_string(), source))?;
 
         // Save IP BEFORE appending program, because append_program modifies IP
         let saved_ip = self.ip;
@@ -457,6 +466,9 @@ impl VM {
 
         let start_offset = self.append_program(bytecode);
         let end_offset = self.program.len();
+        let debug = std::mem::take(&mut self.compiler.debug_info);
+        let file = path.display().to_string();
+        self.add_debug_info(start_offset, &file, source, debug);
 
         self.current_module_path = Some(path.to_path_buf());
         self.ip = start_offset;
@@ -760,6 +772,11 @@ impl VM {
     /// handled path sets `self.ip` and returns `ContinueNoIpInc`, so callers
     /// in `exec_one` must return the result as-is.
     fn throw_exception(&mut self, exception: JsValue) -> ExecResult {
+        let catch_depth = self
+            .exception_handlers
+            .last()
+            .map_or(1, |h| h.call_stack_depth);
+        self.record_trace(&exception, catch_depth);
         if let Some(handler) = self.exception_handlers.pop() {
             // Unwind the stack to the handler's saved state
             self.stack.truncate(handler.stack_depth);

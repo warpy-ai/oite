@@ -393,6 +393,9 @@ impl VM {
             use std::io::Write;
             let _ = std::io::stdout().flush();
             eprintln!("Uncaught (in promise) {text}");
+            for line in self.trace_lines(&reason) {
+                eprintln!("{line}");
+            }
             std::process::exit(1);
         }
         true

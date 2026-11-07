@@ -120,14 +120,17 @@ fn load_and_run_script(
         .compile_with_syntax(&source, syntax)
         .map_err(|e| e.render(path, &source))?;
     let bytecode_len = bytecode.len();
+    let debug = std::mem::take(&mut compiler.debug_info);
 
     if append {
         let offset = vm.append_program(bytecode);
+        vm.add_debug_info(offset, path, &source, debug);
         eprintln!("  {} ({} ops at offset {})", path, bytecode_len, offset);
     } else {
         // After the core library (`load_core`), with this file as the
         // current module.
-        vm.append_program(bytecode);
+        let offset = vm.append_program(bytecode);
+        vm.add_debug_info(offset, path, &source, debug);
         vm.set_current_module_path(PathBuf::from(path));
         eprintln!("  {} ({} ops)", path, bytecode_len);
     }
@@ -154,6 +157,13 @@ fn load_core(vm: &mut VM, compiler: &mut Compiler) {
         }
     };
     vm.load_program(bytecode);
+    let debug = std::mem::take(&mut compiler.debug_info);
+    vm.add_debug_info(
+        0,
+        vm::errors::CORE_ERRORS_PATH,
+        vm::errors::CORE_ERRORS,
+        debug,
+    );
     vm.run_until_halt();
 }
 
@@ -392,6 +402,8 @@ fn main() {
     match compiler.compile_with_syntax(&main_source, syntax) {
         Ok(main_bytecode) => {
             let offset = vm.append_program(main_bytecode);
+            let debug = std::mem::take(&mut compiler.debug_info);
+            vm.add_debug_info(offset, filename, &main_source, debug);
             // Update the current module path to the main script for relative imports
             vm.set_current_module_path(PathBuf::from(filename));
 

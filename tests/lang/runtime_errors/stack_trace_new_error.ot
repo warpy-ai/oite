@@ -1,0 +1,19 @@
+// `throw new Error(...)` is located at the `new`; a method on an object
+// literal is named after its key.
+const api = {
+  load(id) {
+    if (id < 0) {
+      throw new RangeError("bad id " + id);
+    }
+    return id;
+  },
+};
+function run(ids) {
+  let total = 0;
+  for (let i = 0; i < ids.length; i++) {
+    total += api.load(ids[i]);
+  }
+  return total;
+}
+console.log(run([1, 2]));
+run([3, -1]);

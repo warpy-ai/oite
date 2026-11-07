@@ -153,6 +153,44 @@ pub fn split_borrow_message(message: &str) -> (&'static str, String) {
     }
 }
 
+/// Instructions with no known source position.
+pub const NO_POSITION: u32 = u32::MAX;
+
+/// Where a compiled program's instructions come from, for stack traces.
+#[derive(Clone, Debug, Default)]
+pub struct DebugInfo {
+    /// Per instruction: the byte offset of its source, or `NO_POSITION`.
+    pub positions: Vec<u32>,
+    /// The instructions of each function body, with its name.
+    pub functions: Vec<FunctionRange>,
+}
+
+#[derive(Clone, Debug)]
+pub struct FunctionRange {
+    pub start: usize,
+    pub end: usize,
+    pub name: Option<String>,
+}
+
+impl DebugInfo {
+    /// The source offset of instruction `ip`.
+    pub fn position(&self, ip: usize) -> Option<u32> {
+        self.positions
+            .get(ip)
+            .copied()
+            .filter(|p| *p != NO_POSITION)
+    }
+
+    /// The innermost function whose body holds instruction `ip`, if any
+    /// (none: top-level code).
+    pub fn function_at(&self, ip: usize) -> Option<&FunctionRange> {
+        self.functions
+            .iter()
+            .filter(|f| f.start <= ip && ip < f.end)
+            .max_by_key(|f| f.start)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
