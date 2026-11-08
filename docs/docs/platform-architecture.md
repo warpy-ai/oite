@@ -90,6 +90,22 @@ The core rolls are `@rolls/std`, what it depends on (`array`, `string`,
   `@rolls/async` explicitly, and a binary that does not import it does not
   contain it.
 
+### How a release is assembled
+
+- **Rolls** are published to the registry by `warpy-ai/rolls` CI: merging
+  a version bump to its `main` publishes that version.
+- **`oite` releases** (`.github/workflows/release.yml`, on a `v*` tag) ship
+  what `scripts/release-pins.env` pins:
+  - `UNROLL_REF`: the unroll commit, as `unroll-src.tar.gz`;
+  - `ROLLS_REF` and `CORE_ROLLS`: the rolls commit and which rolls are core,
+    as `core-rolls.tar.gz`.
+- **The core rolls must match the registry.** `scripts/bundle-core-rolls.sh`
+  refuses to bundle a roll unless the registry has that exact version, and
+  unless every roll it depends on is also core. So what ships with `oitec`
+  is exactly what the registry serves.
+- **`install.sh`** unpacks the bundle into `$OITE_HOME/rolls`. The bundle
+  includes a `MANIFEST` that lists each roll's version.
+
 ## The prelude
 
 `@rolls/std` is imported into every program unless the program opts out:

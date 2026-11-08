@@ -225,14 +225,39 @@ jobs:
       - name: List artifacts
         run: ls -laR artifacts/
 
-      - name: Bundle unroll source
+      # What the release ships with is pinned in scripts/release-pins.env.
+      - name: Read release pins
+        id: pins
         run: |
-          git clone --depth 1 https://github.com/warpy-ai/unroll.git unroll-src-repo
+          . scripts/release-pins.env
+          echo "unroll=$UNROLL_REF" >> "$GITHUB_OUTPUT"
+          echo "rolls=$ROLLS_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Bundle unroll source
+        env:
+          UNROLL_REF: ${{ steps.pins.outputs.unroll }}
+        run: |
+          git init -q unroll-src-repo
+          git -C unroll-src-repo fetch -q --depth 1 https://github.com/warpy-ai/unroll.git "$UNROLL_REF"
+          git -C unroll-src-repo checkout -q FETCH_HEAD
           mkdir -p unroll-src
           cp -r unroll-src-repo/src unroll-src/
           cp unroll-src-repo/unroll.toml unroll-src/ 2>/dev/null || true
           tar -czf unroll-src.tar.gz -C unroll-src .
           rm -rf unroll-src-repo unroll-src
+
+      # warpy-ai/rolls is private: ROLLS_READ_TOKEN is a token that can read it.
+      - name: Check out the core rolls
+        uses: actions/checkout@v6 # v4.2.2
+        with:
+          repository: warpy-ai/rolls
+          ref: ${{ steps.pins.outputs.rolls }}
+          token: ${{ secrets.ROLLS_READ_TOKEN }}
+          path: rolls-src
+          persist-credentials: false
+
+      - name: Bundle the core rolls
+        run: scripts/bundle-core-rolls.sh rolls-src core-rolls.tar.gz
 
       - name: Generate checksums
         run: |
@@ -246,6 +271,7 @@ jobs:
           done
           cd ..
           sha256sum unroll-src.tar.gz >> artifacts/checksums.txt
+          sha256sum core-rolls.tar.gz >> artifacts/checksums.txt
           sha256sum scripts/install.sh >> artifacts/checksums.txt
           cat artifacts/checksums.txt
           mv artifacts/checksums.txt .
@@ -264,6 +290,7 @@ jobs:
           files: |
             artifacts/**/*.tar.gz
             unroll-src.tar.gz
+            core-rolls.tar.gz
             scripts/install.sh
             checksums.txt
         env:
