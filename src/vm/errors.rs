@@ -20,8 +20,20 @@ pub const CORE_ERRORS: &str = include_str!("../../std/core/error.ot");
 /// Where `CORE_ERRORS` comes from, for stack traces.
 pub const CORE_ERRORS_PATH: &str = "std/core/error.ot";
 
+/// The core library written in Oite, run in this order before the
+/// prelude and the program on every backend: (path, source).
+pub const CORE_LIBRARY: &[(&str, &str)] = &[
+    (CORE_ERRORS_PATH, CORE_ERRORS),
+    ("std/core/array.ot", include_str!("../../std/core/array.ot")),
+];
+
+/// Whether `path` is a file of the core library.
+pub fn is_core_path(path: &str) -> bool {
+    CORE_LIBRARY.iter().any(|(p, _)| *p == path)
+}
+
 impl VM {
-    fn global(&self, name: &str) -> Option<&JsValue> {
+    pub(super) fn global(&self, name: &str) -> Option<&JsValue> {
         self.call_stack.first()?.locals.get(name)
     }
 

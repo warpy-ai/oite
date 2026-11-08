@@ -103,6 +103,7 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_run_microtasks,
         ot_run_event_loop,
         ot_trace,
+        ot_rest_args,
     )
 }
 
@@ -992,6 +993,12 @@ impl Fx<'_> {
             }
             IrOp::Loc(n) => {
                 self.site = (*n != crate::ir::lower::NO_SITE).then_some(*n);
+            }
+            IrOp::RestArgs(d, n) => {
+                let (argv, argc) = self.args.unwrap();
+                let n = Self::c(b, *n as u64);
+                let r = self.rt_v(b, "ot_rest_args", &[argv, argc, n]);
+                self.values.insert(*d, r);
             }
             IrOp::AsyncStart(d) => {
                 let r = self.rt_v(b, "ot_async_start", &[]);

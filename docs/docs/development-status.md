@@ -61,12 +61,13 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Closures (shared captured variables, per-iteration loop bindings) | Covered      | Covered                           |
 | Lexical scope (functions cannot see a caller's locals) | Covered                 | Covered                           |
 | Default parameter values                   | Covered                              | Covered                           |
+| Rest parameters (`function f(a, ...rest)`) | Covered                              | Covered                           |
 | Compound assignment (`+=`, `*=`, `<<=`, ...) | Covered                            | Covered                           |
 | Objects, arrays, `obj[k]`, `.length`, `push`/`pop` | Covered                      | Covered                           |
 | Methods on object literals (`this`)        | Covered                              | Covered                           |
 | String methods (`slice`, `split`, `trim`, `indexOf`, `padStart`, ...) | Covered   | Covered (shared implementation)   |
 | Array methods (`splice`, `join`, `indexOf`, `concat`, `shift`, ...)   | Covered   | Covered (shared implementation)   |
-| Callback methods (`map`, `filter`, `forEach`, `reduce`) | Not implemented     | Not implemented                   |
+| Callback methods (`map`, `filter`, `forEach`, `reduce`, `find`, `some`, `every`, `flat`, `flatMap`, `sort`, ...), `Array.isArray` / `from` / `of` | Covered (`std/core/array.ot`) | Covered (same code, compiled in) |
 | `if`, `while`, `for`, `do..while`, `?:`    | Covered                              | Covered                           |
 | `break` / `continue`, with or without labels | Covered                            | Covered                           |
 | `switch`, labeled blocks                   | Covered                              | Covered                           |

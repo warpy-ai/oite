@@ -132,7 +132,7 @@ impl LlvmCodegen {
                     .sites
                     .iter()
                     .map(|s| s.file.as_str())
-                    .find(|f| *f != crate::vm::errors::CORE_ERRORS_PATH)
+                    .find(|f| !crate::vm::errors::is_core_path(f))
                     .unwrap_or("main.ot");
                 self.di = Some(super::debug::DebugBuilder::new(
                     self.module,
@@ -1163,6 +1163,11 @@ impl Fx<'_> {
                         let loc = di.location(scope, site);
                         LLVMSetCurrentDebugLocation2(self.builder, loc);
                     }
+                }
+                IrOp::RestArgs(d, n) => {
+                    let (argv, argc) = self.args;
+                    let r = self.rt("ot_rest_args", &[argv, argc, self.c(*n as u64)]);
+                    self.set(*d, r);
                 }
                 IrOp::AsyncStart(d) => {
                     let r = self.rt("ot_async_start", &[]);

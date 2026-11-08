@@ -1,0 +1,298 @@
+// The array methods that take callbacks, written in Oite. Every program
+// includes them (like `error.ot`), so native code compiles them with the
+// program and a callback costs one call.
+//
+// They follow ECMA-262 for arrays without holes: each reads the length
+// once and visits indices in order, and a callback that is not a function
+// is a TypeError. The runtime looks a method up here when an array has no
+// built-in one by that name, so a program can add its own to
+// `Array.prototype` too.
+
+Array.prototype.forEach = function forEach(callback, thisArg) {
+  if (typeof callback !== "function") {
+    throw new TypeError(String(callback) + " is not a function");
+  }
+  const len = this.length;
+  for (let i = 0; i < len; i++) {
+    if (thisArg === undefined) {
+      callback(this[i], i, this);
+    } else {
+      callback.call(thisArg, this[i], i, this);
+    }
+  }
+};
+
+Array.prototype.map = function map(callback, thisArg) {
+  if (typeof callback !== "function") {
+    throw new TypeError(String(callback) + " is not a function");
+  }
+  const len = this.length;
+  const out = [];
+  for (let i = 0; i < len; i++) {
+    if (thisArg === undefined) {
+      out.push(callback(this[i], i, this));
+    } else {
+      out.push(callback.call(thisArg, this[i], i, this));
+    }
+  }
+  return out;
+};
+
+Array.prototype.filter = function filter(callback, thisArg) {
+  if (typeof callback !== "function") {
+    throw new TypeError(String(callback) + " is not a function");
+  }
+  const len = this.length;
+  const out = [];
+  for (let i = 0; i < len; i++) {
+    const value = this[i];
+    const keep =
+      thisArg === undefined
+        ? callback(value, i, this)
+        : callback.call(thisArg, value, i, this);
+    if (keep) {
+      out.push(value);
+    }
+  }
+  return out;
+};
+
+Array.prototype.reduce = function reduce(callback, ...initial) {
+  if (typeof callback !== "function") {
+    throw new TypeError(String(callback) + " is not a function");
+  }
+  const len = this.length;
+  let i = 0;
+  let acc;
+  if (initial.length > 0) {
+    acc = initial[0];
+  } else {
+    if (len === 0) {
+      throw new TypeError("Reduce of empty array with no initial value");
+    }
+    acc = this[0];
+    i = 1;
+  }
+  for (; i < len; i++) {
+    acc = callback(acc, this[i], i, this);
+  }
+  return acc;
+};
+
+Array.prototype.reduceRight = function reduceRight(callback, ...initial) {
+  if (typeof callback !== "function") {
+    throw new TypeError(String(callback) + " is not a function");
+  }
+  let i = this.length - 1;
+  let acc;
+  if (initial.length > 0) {
+    acc = initial[0];
+  } else {
+    if (i < 0) {
+      throw new TypeError("Reduce of empty array with no initial value");
+    }
+    acc = this[i];
+    i = i - 1;
+  }
+  for (; i >= 0; i--) {
+    acc = callback(acc, this[i], i, this);
+  }
+  return acc;
+};
+
+Array.prototype.find = function find(callback, thisArg) {
+  const i = this.findIndex(callback, thisArg);
+  return i < 0 ? undefined : this[i];
+};
+
+Array.prototype.findIndex = function findIndex(callback, thisArg) {
+  if (typeof callback !== "function") {
+    throw new TypeError(String(callback) + " is not a function");
+  }
+  const len = this.length;
+  for (let i = 0; i < len; i++) {
+    const hit =
+      thisArg === undefined
+        ? callback(this[i], i, this)
+        : callback.call(thisArg, this[i], i, this);
+    if (hit) {
+      return i;
+    }
+  }
+  return -1;
+};
+
+Array.prototype.findLast = function findLast(callback, thisArg) {
+  const i = this.findLastIndex(callback, thisArg);
+  return i < 0 ? undefined : this[i];
+};
+
+Array.prototype.findLastIndex = function findLastIndex(callback, thisArg) {
+  if (typeof callback !== "function") {
+    throw new TypeError(String(callback) + " is not a function");
+  }
+  for (let i = this.length - 1; i >= 0; i--) {
+    const hit =
+      thisArg === undefined
+        ? callback(this[i], i, this)
+        : callback.call(thisArg, this[i], i, this);
+    if (hit) {
+      return i;
+    }
+  }
+  return -1;
+};
+
+Array.prototype.some = function some(callback, thisArg) {
+  return this.findIndex(callback, thisArg) >= 0;
+};
+
+Array.prototype.every = function every(callback, thisArg) {
+  if (typeof callback !== "function") {
+    throw new TypeError(String(callback) + " is not a function");
+  }
+  const len = this.length;
+  for (let i = 0; i < len; i++) {
+    const ok =
+      thisArg === undefined
+        ? callback(this[i], i, this)
+        : callback.call(thisArg, this[i], i, this);
+    if (!ok) {
+      return false;
+    }
+  }
+  return true;
+};
+
+Array.prototype.flat = function flat(depth) {
+  const levels = depth === undefined ? 1 : depth;
+  const out = [];
+  const len = this.length;
+  for (let i = 0; i < len; i++) {
+    const value = this[i];
+    if (levels >= 1 && Array.isArray(value)) {
+      const inner = value.flat(levels - 1);
+      for (let j = 0; j < inner.length; j++) {
+        out.push(inner[j]);
+      }
+    } else {
+      out.push(value);
+    }
+  }
+  return out;
+};
+
+Array.prototype.flatMap = function flatMap(callback, thisArg) {
+  const mapped = this.map(callback, thisArg);
+  const out = [];
+  for (let i = 0; i < mapped.length; i++) {
+    const value = mapped[i];
+    if (Array.isArray(value)) {
+      for (let j = 0; j < value.length; j++) {
+        out.push(value[j]);
+      }
+    } else {
+      out.push(value);
+    }
+  }
+  return out;
+};
+
+// Sorting is stable (a merge sort), as ECMA-262 requires. Without a
+// comparator, values compare as strings and `undefined` goes last.
+Array.prototype.sort = function sort(compare) {
+  if (compare !== undefined && typeof compare !== "function") {
+    throw new TypeError(
+      "The comparison function must be either a function or undefined"
+    );
+  }
+  const values = [];
+  let undefinedCount = 0;
+  const len = this.length;
+  for (let i = 0; i < len; i++) {
+    if (this[i] === undefined) {
+      undefinedCount++;
+    } else {
+      values.push(this[i]);
+    }
+  }
+  const before = (a, b) => {
+    if (compare === undefined) {
+      const x = String(a);
+      const y = String(b);
+      return x > y;
+    }
+    // A NaN result keeps the order, like 0.
+    return compare(a, b) > 0;
+  };
+  // Bottom-up merge sort: runs of `width` doubled until one remains.
+  let src = values;
+  let n = src.length;
+  for (let width = 1; width < n; width = width * 2) {
+    const dst = [];
+    for (let lo = 0; lo < n; lo = lo + 2 * width) {
+      const mid = Math.min(lo + width, n);
+      const hi = Math.min(lo + 2 * width, n);
+      let a = lo;
+      let b = mid;
+      while (a < mid && b < hi) {
+        if (before(src[a], src[b])) {
+          dst.push(src[b]);
+          b++;
+        } else {
+          dst.push(src[a]);
+          a++;
+        }
+      }
+      while (a < mid) {
+        dst.push(src[a]);
+        a++;
+      }
+      while (b < hi) {
+        dst.push(src[b]);
+        b++;
+      }
+    }
+    src = dst;
+  }
+  for (let i = 0; i < n; i++) {
+    this[i] = src[i];
+  }
+  for (let i = 0; i < undefinedCount; i++) {
+    this[n + i] = undefined;
+  }
+  return this;
+};
+
+Array.prototype.toSorted = function toSorted(compare) {
+  return this.slice().sort(compare);
+};
+
+Array.prototype.toReversed = function toReversed() {
+  return this.slice().reverse();
+};
+
+// `Array.from(arrayLike, mapFn)`: an array, a string or anything with a
+// `length`; `Array.of(...items)`.
+Array.from = function from(items, mapFn, thisArg) {
+  if (mapFn !== undefined && typeof mapFn !== "function") {
+    throw new TypeError(String(mapFn) + " is not a function");
+  }
+  const out = [];
+  const len = items === null || items === undefined ? 0 : items.length;
+  for (let i = 0; i < len; i++) {
+    const value = items[i];
+    if (mapFn === undefined) {
+      out.push(value);
+    } else if (thisArg === undefined) {
+      out.push(mapFn(value, i));
+    } else {
+      out.push(mapFn.call(thisArg, value, i));
+    }
+  }
+  return out;
+};
+
+Array.of = function of(...items) {
+  return items;
+};

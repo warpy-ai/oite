@@ -1,0 +1,111 @@
+// backends: vm jit aot
+// The array methods that take callbacks (std/core/array.ot), checked
+// against Node.
+const nums = [5, 1, 4, 2, 3];
+
+console.log(nums.map((x) => x * 10));
+console.log(nums.map((x, i, arr) => i + ":" + arr.length));
+console.log(nums.filter((x) => x % 2 === 1));
+let seen = [];
+const r = nums.forEach((x, i) => {
+  seen.push(i * x);
+});
+console.log(seen, r);
+
+console.log(nums.reduce((acc, x) => acc + x, 0));
+console.log(nums.reduce((acc, x) => acc + x));
+console.log(nums.reduce((acc, x) => acc + "," + x, ""));
+console.log([].reduce((a, b) => a + b, "empty"));
+console.log([7].reduce((a, b) => a + b));
+console.log(nums.reduceRight((acc, x) => acc + x, ""));
+console.log(["a", "b"].reduce((acc, x) => acc + x, undefined));
+
+console.log(nums.find((x) => x > 3), nums.find((x) => x > 9));
+console.log(nums.findIndex((x) => x > 3), nums.findIndex((x) => x > 9));
+console.log(nums.findLast((x) => x > 3), nums.findLastIndex((x) => x < 3));
+console.log(nums.some((x) => x > 4), nums.some((x) => x > 5));
+console.log(nums.every((x) => x > 0), nums.every((x) => x > 1));
+console.log([].every((x) => false), [].some((x) => true));
+
+console.log([1, [2, [3, [4]]], 5].flat());
+console.log([1, [2, [3, [4]]], 5].flat(2));
+console.log([1, 2, 3].flatMap((x) => [x, x * 2]));
+console.log(["a b", "c"].flatMap((s) => s.split(" ")));
+
+// thisArg
+const scale = { factor: 3 };
+console.log(
+  nums.map(function (x) {
+    return x * this.factor;
+  }, scale)
+);
+
+// Chaining
+const total = nums
+  .filter((x) => x > 1)
+  .map((x) => x * x)
+  .reduce((a, b) => a + b, 0);
+console.log(total);
+
+// Sorting: in place, stable, strings by default, undefined last
+const words = ["pear", "apple", "fig", "banana"];
+console.log(words.sort(), words);
+console.log([10, 9, 1, 100, 25].sort());
+console.log([10, 9, 1, 100, 25].sort((a, b) => a - b));
+console.log([3, undefined, 1, undefined, 2].sort());
+const people = [
+  { name: "ann", age: 30 },
+  { name: "bob", age: 25 },
+  { name: "cid", age: 30 },
+  { name: "dan", age: 25 },
+];
+console.log(people.sort((a, b) => a.age - b.age).map((p) => p.name).join(" "));
+const orig = [3, 1, 2];
+console.log(orig.toSorted(), orig.toReversed(), orig);
+
+// Array statics
+console.log(Array.isArray([]), Array.isArray({}), Array.isArray("x"));
+console.log(Array.from([1, 2, 3], (x) => x + 1), Array.from("abc"));
+console.log(Array.from({ length: 3 }, (_, i) => i * i), Array.of(7, 8));
+
+// Methods are values, and a program can add its own
+console.log(typeof nums.map, typeof nums.nope);
+Array.prototype.sum = function () {
+  return this.reduce((a, b) => a + b, 0);
+};
+console.log([1, 2, 3].sum());
+
+// Callbacks that close over state, and nested calls
+const matrix = [
+  [1, 2],
+  [3, 4],
+];
+let calls = 0;
+console.log(
+  matrix.map((row) =>
+    row.map((x) => {
+      calls++;
+      return x * 2;
+    })
+  ),
+  calls
+);
+
+// Errors
+try {
+  nums.map(undefined);
+} catch (e) {
+  console.log(e instanceof TypeError, e.message);
+}
+try {
+  [].reduce((a, b) => a + b);
+} catch (e) {
+  console.log(e instanceof TypeError, e.message);
+}
+try {
+  nums.forEach((x) => {
+    if (x === 4) throw new Error("stop at " + x);
+  });
+} catch (e) {
+  console.log(e.message);
+}

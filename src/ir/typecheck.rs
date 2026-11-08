@@ -242,6 +242,7 @@ impl<'a> TypeChecker<'a> {
                 self.set_type(*dst, IrType::Any);
             }
             IrOp::Await(_, _) | IrOp::Loc(_) => {}
+            IrOp::RestArgs(dst, _) => self.set_type(*dst, IrType::Any),
             IrOp::InstanceOf(dst, _, _) | IrOp::In(dst, _, _) | IrOp::IsResume(dst) => {
                 self.set_type(*dst, IrType::Boolean);
             }

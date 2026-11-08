@@ -198,6 +198,7 @@ fn serialize_op(output: &mut String, op: &IrOp) {
         | IrOp::IsResume(_)
         | IrOp::ResumePoint(_)
         | IrOp::Loc(_)
+        | IrOp::RestArgs(_, _)
         | IrOp::GetSuperProp(_, _, _, _) => output.push_str(&op.to_string()),
         IrOp::CallMethod(d, obj, method, args) => {
             let args_str: Vec<String> = args.iter().map(|a| a.to_string()).collect();

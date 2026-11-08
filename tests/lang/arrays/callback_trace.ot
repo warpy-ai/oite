@@ -1,0 +1,10 @@
+// backends: vm jit aot
+// An error thrown in a callback is traced through the array method.
+function check(x) {
+  if (x > 2) {
+    throw new RangeError("too big: " + x);
+  }
+  return x;
+}
+const out = [1, 2, 3].map((x) => check(x));
+console.log(out);

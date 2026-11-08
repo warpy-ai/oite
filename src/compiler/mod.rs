@@ -618,11 +618,19 @@ impl Codegen {
     /// function must start with exactly these `Let`s: the VM and IR lowering
     /// count them as its parameters. Returns the parameter identifiers.
     fn bind_params<'p>(&mut self, params: &[&'p Pat]) -> Vec<&'p Ident> {
+        // `...rest` (last): the caller passes an array of the extra arguments.
+        if let Some((Pat::Rest(_), before)) = params.split_last() {
+            self.instructions.push(OpCode::RestArgs(before.len()));
+        }
         let mut idents = Vec::new();
-        for pat in params.iter().rev() {
+        for (i, pat) in params.iter().enumerate().rev() {
             let ident = match pat {
                 Pat::Ident(id) => Some(&id.id),
                 Pat::Assign(a) => match a.left.as_ref() {
+                    Pat::Ident(id) => Some(&id.id),
+                    _ => None,
+                },
+                Pat::Rest(r) if i + 1 == params.len() => match r.arg.as_ref() {
                     Pat::Ident(id) => Some(&id.id),
                     _ => None,
                 },
@@ -633,7 +641,10 @@ impl Codegen {
                     self.instructions.push(OpCode::Let(id.sym.to_string()));
                     idents.push(id);
                 }
-                None => self.unsupported("destructuring function parameters"),
+                None => {
+                    self.current_span = pat.span();
+                    self.unsupported("destructuring function parameters")
+                }
             }
         }
         idents

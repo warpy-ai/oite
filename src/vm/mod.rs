@@ -864,6 +864,42 @@ impl VM {
         ExecResult::Continue
     }
 
+    /// `Array.prototype[name]`, if it is a function.
+    fn array_proto_method(&self, name: &str) -> Option<JsValue> {
+        let JsValue::Object(class) = self.global("Array")? else {
+            return None;
+        };
+        let HeapData::Object(props) = &self.heap.get(*class)?.data else {
+            return None;
+        };
+        let Some(JsValue::Object(proto)) = props.get("prototype") else {
+            return None;
+        };
+        let method = self.get_prop_with_proto_chain(*proto, name);
+        matches!(method, JsValue::Function { .. }).then_some(method)
+    }
+
+    /// Call the compiled function `method` with `this` and `args`, as the
+    /// current instruction (it continues after the call).
+    fn call_as_method(&mut self, method: JsValue, this: JsValue, args: Vec<JsValue>) -> ExecResult {
+        let JsValue::Function { address, env } = method else {
+            unreachable!("not a compiled function");
+        };
+        self.push_call_args(&args, address);
+        self.call_stack.push(Frame {
+            return_address: self.ip + 1,
+            locals: HashMap::new(),
+            indexed_locals: Vec::new(),
+            this_context: this,
+            new_target: None,
+            super_called: false,
+            resume_ip: None,
+            env,
+        });
+        self.ip = address;
+        ExecResult::ContinueNoIpInc
+    }
+
     /// `super(...args)`: run the parent constructor on the current `this`.
     /// Its frame's `new_target` is the parent class, so a `super(...)` inside
     /// it reaches the grandparent.
@@ -930,10 +966,26 @@ impl VM {
     /// arguments as given shifted every parameter whenever the counts
     /// differed (`f(1)` against `function f(a, b)` bound `b = 1`).
     fn push_call_args(&mut self, args: &[JsValue], address: usize) {
-        if matches!(self.program.get(address), Some(OpCode::ForwardArgs)) {
-            self.stack.extend(args.iter().cloned());
-            self.stack.push(JsValue::Number(args.len() as f64));
-            return;
+        match self.program.get(address) {
+            Some(OpCode::ForwardArgs) => {
+                self.stack.extend(args.iter().cloned());
+                self.stack.push(JsValue::Number(args.len() as f64));
+                return;
+            }
+            Some(&OpCode::RestArgs(n)) => {
+                for i in 0..n {
+                    self.stack
+                        .push(args.get(i).cloned().unwrap_or(JsValue::Undefined));
+                }
+                let rest = args.get(n..).unwrap_or(&[]).to_vec();
+                let ptr = self.heap.len();
+                self.heap.push(HeapObject {
+                    data: HeapData::Array(rest),
+                });
+                self.stack.push(JsValue::Object(ptr));
+                return;
+            }
+            _ => {}
         }
         let n = if address == 0 {
             args.len()
@@ -1118,21 +1170,13 @@ impl VM {
                                             | "reverse"
                                             | "fill"
                                             | "at"
-                                            | "map"
-                                            | "filter"
-                                            | "forEach"
-                                            | "reduce"
-                                            | "find"
-                                            | "findIndex"
-                                            | "some"
-                                            | "every"
-                                            | "flat"
-                                            | "flatMap"
-                                            | "sort"
                                     ) {
                                         self.stack.push(JsValue::NativeFunction(0));
                                     } else {
-                                        self.stack.push(JsValue::Undefined);
+                                        let v = self
+                                            .array_proto_method(&key_name)
+                                            .unwrap_or(JsValue::Undefined);
+                                        self.stack.push(v);
                                     }
                                 }
                                 _ => {
@@ -1229,23 +1273,15 @@ impl VM {
                                             | "reverse"
                                             | "fill"
                                             | "at"
-                                            | "map"
-                                            | "filter"
-                                            | "forEach"
-                                            | "reduce"
-                                            | "find"
-                                            | "findIndex"
-                                            | "some"
-                                            | "every"
-                                            | "flat"
-                                            | "flatMap"
-                                            | "sort"
                                     ) {
                                         // Array methods are handled by CallMethod;
                                         // return a function-typed value so typeof reports "function"
                                         self.stack.push(JsValue::NativeFunction(0));
                                     } else {
-                                        self.stack.push(JsValue::Undefined);
+                                        let v = self
+                                            .array_proto_method(&name)
+                                            .unwrap_or(JsValue::Undefined);
+                                        self.stack.push(v);
                                     }
                                 }
                                 HeapData::ByteStream(bytes) => {
@@ -2408,6 +2444,11 @@ impl VM {
                             );
                             if result.is_some() {
                                 self.heap[ptr].data = HeapData::Array(elems);
+                            } else if let Some(method) = self.array_proto_method(&name) {
+                                // The methods written in Oite
+                                // (`std/core/array.ot`), and any a program
+                                // adds to `Array.prototype`.
+                                return self.call_as_method(method, JsValue::Object(ptr), args);
                             }
                             return self.finish_builtin(result, JsValue::Object(ptr), &name);
                         }
@@ -2874,7 +2915,7 @@ impl VM {
                 return self.call_super(super_ctor, args);
             }
 
-            OpCode::ForwardArgs => {}
+            OpCode::ForwardArgs | OpCode::RestArgs(_) => {}
 
             OpCode::SuperForward => {
                 // Stack: [args..., count, parent]

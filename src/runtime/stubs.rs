@@ -720,7 +720,8 @@ fn get_property(v: OtValue, key: &str) -> u64 {
             }
             match key.parse::<usize>() {
                 Ok(i) if i < arr.len as usize => unsafe { *arr.elements.add(i) },
-                _ => undefined(),
+                Ok(_) => undefined(),
+                Err(_) => array_proto_method(key).unwrap_or_else(undefined),
             }
         }
         ObjectKind::String => {
@@ -943,6 +944,35 @@ thread_local! {
     static GLOBALS: RefCell<HashMap<String, u64>> = RefCell::new(initial_globals());
 }
 
+/// `Array.prototype[key]`, if it is a function.
+fn array_proto_method(key: &str) -> Option<u64> {
+    let class = GLOBALS.with(|g| g.borrow().get("Array").copied())?;
+    let (ptr, ObjectKind::Object) = object(OtValue::from_bits(class))? else {
+        return None;
+    };
+    let proto = lookup(ptr, "prototype")?;
+    let (proto, ObjectKind::Object) = object(OtValue::from_bits(proto))? else {
+        return None;
+    };
+    let method = lookup(proto, key)?;
+    is_function(method).then_some(method)
+}
+
+/// `Array.isArray(value)`.
+extern "C" fn ot_builtin_array_is_array(
+    _this: u64,
+    argv: *const u64,
+    argc: usize,
+    _env: u64,
+) -> u64 {
+    let a = unsafe { args(argv, argc) };
+    let is_array = a
+        .first()
+        .and_then(|v| object(OtValue::from_bits(*v)))
+        .is_some_and(|(_, kind)| matches!(kind, ObjectKind::Array));
+    boolean(is_array)
+}
+
 fn builtin(code: NativeFn) -> u64 {
     ot_make_function(code as *const u8)
 }
@@ -961,6 +991,13 @@ fn initial_globals() -> HashMap<String, u64> {
         builtin(ot_builtin_object_keys),
     );
     g.insert("Object".to_string(), object);
+    // `Array`: `isArray` here, the methods that take callbacks in
+    // `std/core/array.ot`, on `Array.prototype`.
+    let array_class = ot_alloc_object();
+    let ac = OtValue::from_bits(array_class);
+    set_property(ac, "isArray", builtin(ot_builtin_array_is_array));
+    set_property(ac, "prototype", ot_alloc_object());
+    g.insert("Array".to_string(), array_class);
     // `Math`: one built-in serves every function member; its environment
     // is the member's index in `MATH_FUNCTIONS`.
     let math = ot_alloc_object();
@@ -1094,6 +1131,11 @@ pub extern "C" fn ot_call_method(
             }
             arr.len = elems.len() as u32;
             return outcome(result, recv);
+        }
+        // The methods written in Oite (`std/core/array.ot`), and any a
+        // program adds to `Array.prototype`.
+        if let Some(method) = array_proto_method(key) {
+            return ot_call(method, recv, argv, argc);
         }
     }
 
@@ -2303,6 +2345,21 @@ pub extern "C" fn ot_run_event_loop() {
         print_trace(bits);
         std::process::exit(1);
     }
+}
+
+/// `...rest`: the arguments from the `n`th on, as a new array.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_rest_args(argv: *const u64, argc: usize, n: usize) -> u64 {
+    let a = unsafe { args(argv, argc) };
+    let rest = a.get(n..).unwrap_or(&[]);
+    let arr = ot_alloc_array(rest.len());
+    if let Some((ptr, _)) = object(OtValue::from_bits(arr)) {
+        let arr_ref = array(ptr);
+        for &v in rest {
+            array_push(arr_ref, v);
+        }
+    }
+    arr
 }
 
 /// The promise of a new async function call.
