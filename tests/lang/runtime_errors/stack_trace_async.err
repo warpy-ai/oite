@@ -1,0 +1,5 @@
+Uncaught (in promise) Error: too big: 2
+at check (
+stack_trace_async.ot:5:11)
+at load (
+stack_trace_async.ot:11:10)

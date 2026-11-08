@@ -17,6 +17,9 @@ use super::{ExecResult, VM};
 /// Source of the built-in error classes.
 pub const CORE_ERRORS: &str = include_str!("../../std/core/error.ot");
 
+/// Where `CORE_ERRORS` comes from, for stack traces.
+pub const CORE_ERRORS_PATH: &str = "std/core/error.ot";
+
 impl VM {
     fn global(&self, name: &str) -> Option<&JsValue> {
         self.call_stack.first()?.locals.get(name)
@@ -203,8 +206,7 @@ impl VM {
             JsValue::String(s) => s.clone(),
             other => crate::stdlib::inspect(self, other),
         };
-        // Until bytecode carries source positions (#125), the instructions
-        // before the throw are the best pointer to where it happened.
+        // The instructions before the throw, for debugging the VM itself.
         if std::env::var("OITE_DEBUG_THROW").is_ok() {
             let start = self.ip.saturating_sub(25);
             for i in start..(self.ip + 2).min(self.program.len()) {
@@ -220,6 +222,9 @@ impl VM {
             use std::io::Write;
             let _ = std::io::stdout().flush();
             eprintln!("Uncaught {text}");
+            for line in self.trace_lines(exception) {
+                eprintln!("{line}");
+            }
             std::process::exit(1);
         }
         panic!("Uncaught exception: {text}");

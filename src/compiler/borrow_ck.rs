@@ -39,6 +39,8 @@ pub struct VarInfo {
     pub mut_borrow: bool,
     pub def_span: Span,
     pub moved_span: Option<Span>,
+    /// Where the value was moved out, in the source.
+    pub moved_at: Option<swc_common::Span>,
     pub scope_depth: usize,
 }
 
@@ -53,6 +55,7 @@ impl VarInfo {
             mut_borrow: false,
             def_span: span,
             moved_span: None,
+            moved_at: None,
             scope_depth,
         }
     }
@@ -97,6 +100,12 @@ pub struct BorrowChecker {
     /// Reads like `foo(x)` and `x.y` borrow only for the duration of the
     /// statement, so these are released once the statement finishes.
     stmt_borrows: Vec<(String, bool)>,
+    /// The source span being checked (the identifier, or the closure).
+    cur_span: swc_common::Span,
+    /// Where the last error was found, and a related place (where the
+    /// variable was moved), for the diagnostic.
+    pub error_span: Option<swc_common::Span>,
+    pub error_note: Option<(String, swc_common::Span)>,
 }
 
 impl Default for BorrowChecker {
@@ -114,6 +123,9 @@ impl BorrowChecker {
             scope_depth: 0,
             scope_stack: vec![HashSet::new()],
             stmt_borrows: Vec::new(),
+            cur_span: swc_common::DUMMY_SP,
+            error_span: None,
+            error_note: None,
         }
     }
 
@@ -125,7 +137,38 @@ impl BorrowChecker {
             scope_depth: 0,
             scope_stack: vec![HashSet::new()],
             stmt_borrows: Vec::new(),
+            cur_span: swc_common::DUMMY_SP,
+            error_span: None,
+            error_note: None,
         }
+    }
+
+    /// Check the next use at `span`.
+    fn at(&mut self, span: swc_common::Span) -> &mut Self {
+        self.cur_span = span;
+        self
+    }
+
+    /// An error at the current span.
+    fn fail(&mut self, message: String) -> Result<(), String> {
+        if self.error_span.is_none() {
+            self.error_span = Some(self.cur_span);
+        }
+        Err(message)
+    }
+
+    /// A use of a moved variable: the error, and where it was moved.
+    fn fail_moved(
+        &mut self,
+        message: String,
+        moved_at: Option<swc_common::Span>,
+    ) -> Result<(), String> {
+        if self.error_note.is_none()
+            && let Some(span) = moved_at
+        {
+            self.error_note = Some(("value moved here".to_string(), span));
+        }
+        self.fail(message)
     }
 
     pub fn enter_scope(&mut self) {
@@ -263,7 +306,7 @@ impl BorrowChecker {
         if let Some(init) = &decl.init {
             // Bare identifier = ownership transfer; member access = borrow
             if let Expr::Ident(id) = init.as_ref() {
-                self.process_move(id.sym.as_ref())?;
+                self.at(id.span).process_move(id.sym.as_ref())?;
             } else {
                 self.analyze_expr(init)?;
             }
@@ -313,12 +356,12 @@ impl BorrowChecker {
     fn analyze_expr(&mut self, expr: &Expr) -> Result<(), String> {
         match expr {
             Expr::Ident(id) => {
-                self.process_use(id.sym.as_ref())?;
+                self.at(id.span).process_use(id.sym.as_ref())?;
             }
             Expr::Member(member) => {
                 // Member access is an implicit borrow
                 if let Expr::Ident(id) = member.obj.as_ref() {
-                    self.process_borrow(id.sym.as_ref(), false)?;
+                    self.at(id.span).process_borrow(id.sym.as_ref(), false)?;
                 } else {
                     self.analyze_expr(&member.obj)?;
                 }
@@ -328,18 +371,19 @@ impl BorrowChecker {
             }
             Expr::Assign(assign) => {
                 if let AssignTarget::Simple(SimpleAssignTarget::Ident(id)) = &assign.left {
+                    self.cur_span = id.id.span;
                     let name = id.id.sym.to_string();
                     if let Some(info) = self.symbols.get(&name)
                         && info.immut_borrows > 0
                     {
-                        return Err(format!(
+                        return self.fail(format!(
                             "BORROW ERROR: Cannot assign to '{}' while it is borrowed",
                             name
                         ));
                     }
                 }
                 if let Expr::Ident(id) = assign.right.as_ref() {
-                    self.process_move(id.sym.as_ref())?;
+                    self.at(id.span).process_move(id.sym.as_ref())?;
                 } else {
                     self.analyze_expr(&assign.right)?;
                 }
@@ -354,7 +398,7 @@ impl BorrowChecker {
             Expr::Call(call) => {
                 for arg in &call.args {
                     if let Expr::Ident(id) = arg.expr.as_ref() {
-                        self.process_borrow(id.sym.as_ref(), false)?;
+                        self.at(id.span).process_borrow(id.sym.as_ref(), false)?;
                     } else {
                         self.analyze_expr(&arg.expr)?;
                     }
@@ -382,9 +426,11 @@ impl BorrowChecker {
             // used to apply to every closure, so `let f = () => a.push(1);
             // console.log(a)` was rejected at top level.
             Expr::Arrow(arrow) if arrow.is_async => {
+                self.cur_span = arrow.span;
                 self.analyze_closure(&arrow.params, &arrow.body)?;
             }
             Expr::Fn(fn_expr) if fn_expr.function.is_async => {
+                self.cur_span = fn_expr.function.span;
                 self.analyze_fn_closure(fn_expr)?;
             }
             Expr::Cond(cond) => {
@@ -407,16 +453,20 @@ impl BorrowChecker {
         if let Some(info) = self.symbols.get_mut(name) {
             if info.state == VarState::Moved {
                 let moved_at = info.moved_span.unwrap_or_default();
+                let moved_src = info.moved_at;
                 self.errors.push(TypeError::UseAfterMove {
                     var: name.to_string(),
                     moved_at,
                     used_at: Span::default(),
                 });
-                return Err(format!("BORROW ERROR: Use of moved variable '{}'", name));
+                return self.fail_moved(
+                    format!("BORROW ERROR: Use of moved variable '{}'", name),
+                    moved_src,
+                );
             }
 
             if info.state == VarState::CapturedByAsync {
-                return Err(format!(
+                return self.fail(format!(
                     "BORROW ERROR: '{}' was moved into an async closure! Cannot use after capture.",
                     name
                 ));
@@ -430,16 +480,20 @@ impl BorrowChecker {
         if let Some(info) = self.symbols.get_mut(name) {
             if info.state == VarState::Moved {
                 let moved_at = info.moved_span.unwrap_or_default();
+                let moved_src = info.moved_at;
                 self.errors.push(TypeError::UseAfterMove {
                     var: name.to_string(),
                     moved_at,
                     used_at: Span::default(),
                 });
-                return Err(format!("BORROW ERROR: Use of moved variable '{}'", name));
+                return self.fail_moved(
+                    format!("BORROW ERROR: Use of moved variable '{}'", name),
+                    moved_src,
+                );
             }
 
             if info.state == VarState::CapturedByAsync {
-                return Err(format!(
+                return self.fail(format!(
                     "BORROW ERROR: '{}' was moved into an async closure! Cannot use after capture.",
                     name
                 ));
@@ -448,6 +502,7 @@ impl BorrowChecker {
             if info.is_move() && info.immut_borrows == 0 && !info.mut_borrow && !info.is_global() {
                 info.state = VarState::Moved;
                 info.moved_span = Some(Span::default());
+                info.moved_at = Some(self.cur_span);
             }
         }
         Ok(())
@@ -456,14 +511,15 @@ impl BorrowChecker {
     fn process_borrow(&mut self, name: &str, mutable: bool) -> Result<(), String> {
         if let Some(info) = self.symbols.get_mut(name) {
             if info.state == VarState::Moved {
-                return Err(format!(
-                    "BORROW ERROR: Cannot borrow moved variable '{}'",
-                    name
-                ));
+                let moved_src = info.moved_at;
+                return self.fail_moved(
+                    format!("BORROW ERROR: Cannot borrow moved variable '{}'", name),
+                    moved_src,
+                );
             }
 
             if info.state == VarState::CapturedByAsync {
-                return Err(format!(
+                return self.fail(format!(
                     "BORROW ERROR: Cannot borrow '{}' - it was captured by an async closure!",
                     name
                 ));
@@ -477,7 +533,7 @@ impl BorrowChecker {
                         new: BorrowKind::Mutable,
                         span: Span::default(),
                     });
-                    return Err(format!(
+                    return self.fail(format!(
                         "BORROW ERROR: Cannot borrow '{}' as mutable while it is already borrowed",
                         name
                     ));
@@ -489,7 +545,7 @@ impl BorrowChecker {
                         new: BorrowKind::Mutable,
                         span: Span::default(),
                     });
-                    return Err(format!(
+                    return self.fail(format!(
                         "BORROW ERROR: Cannot borrow '{}' as mutable more than once",
                         name
                     ));
@@ -504,7 +560,7 @@ impl BorrowChecker {
                         new: BorrowKind::Immutable,
                         span: Span::default(),
                     });
-                    return Err(format!(
+                    return self.fail(format!(
                         "BORROW ERROR: Cannot borrow '{}' as immutable while it is mutably borrowed",
                         name
                     ));
@@ -592,14 +648,14 @@ impl BorrowChecker {
             }
 
             if info.state == VarState::Moved || info.state == VarState::CapturedByAsync {
-                return Err(format!(
+                return self.fail(format!(
                     "BORROW ERROR: Variable '{}' was already moved or captured",
                     name
                 ));
             }
 
             if info.immut_borrows > 0 || info.mut_borrow {
-                return Err(format!(
+                return self.fail(format!(
                     "LIFETIME ERROR: Cannot capture '{}' while it has active borrow(s)",
                     name
                 ));

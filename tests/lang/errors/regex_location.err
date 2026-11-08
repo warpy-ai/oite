@@ -1,1 +1,3 @@
-3:9: unsupported: regular expression literals
+regex_location.ot:3:9: error: unsupported: regular expression literals
+3 | let r = /ab+c/;
+  |         ^

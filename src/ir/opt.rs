@@ -72,6 +72,7 @@ fn has_side_effects(op: &IrOp) -> bool {
                 | IrOp::Call(_, _, _)
                 | IrOp::CallMethod(_, _, _, _)
                 | IrOp::TakeException(_)
+                | IrOp::Loc(_)
                 | IrOp::AsyncStart(_)
                 | IrOp::AsyncResolve(_, _, _)
                 | IrOp::AsyncReject(_, _, _)
@@ -538,7 +539,11 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
             resolve(v);
         }
         IrOp::Await(v, _) => resolve(v),
-        IrOp::AsyncStart(_) | IrOp::AwaitResult(_) | IrOp::IsResume(_) | IrOp::ResumePoint(_) => {}
+        IrOp::AsyncStart(_)
+        | IrOp::AwaitResult(_)
+        | IrOp::IsResume(_)
+        | IrOp::ResumePoint(_)
+        | IrOp::Loc(_) => {}
         IrOp::InstanceOf(_, v, c) | IrOp::In(_, v, c) => {
             resolve(v);
             resolve(c);

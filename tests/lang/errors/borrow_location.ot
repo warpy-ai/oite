@@ -1,0 +1,4 @@
+// A borrow error points at the use, and at where the value was moved.
+let a = { v: 1 };
+let b = a;
+console.log(a.v);
