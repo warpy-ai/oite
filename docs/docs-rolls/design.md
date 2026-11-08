@@ -7,6 +7,12 @@ keywords: [rolls, system libraries, stdlib, design]
 
 # Rolls Design
 
+> **Superseded.** [Platform Architecture](/platform-architecture) is the
+> current design for core, Rolls and Unroll, checked against
+> [`warpy-ai/rolls`](https://github.com/warpy-ai/rolls). This page lists rolls
+> that do not exist (`@rolls/promise`) and a layout that does not match the
+> repository; it is kept for reference only.
+
 > **Status**: Future Implementation - Design Document
 >
 > This document describes the planned architecture for Rolls, the official

@@ -19,6 +19,7 @@ const sidebars: SidebarsConfig = {
     "lifetimes",
     "javascript-interop",
     "ecmascript-conformance",
+    "platform-architecture",
     "development-status",
     "contributing",
   ],
