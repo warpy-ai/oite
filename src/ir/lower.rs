@@ -1263,6 +1263,13 @@ impl Lowerer {
                 self.emit(IrOp::CallSuper(dst, parent, args));
                 self.push(dst);
             }
+            OpCode::RestArgs(n) => {
+                // The arguments from the `n`th on, as an array; the first
+                // `Let` binds it.
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::RestArgs(dst, *n as u32));
+                self.push(dst);
+            }
             OpCode::ForwardArgs => {
                 // The VM's caller pushes the arguments and their count here;
                 // native code reads its own. This stands for the count.
@@ -1818,6 +1825,11 @@ fn detect_self_reference(
 /// Returns (count, names).
 fn detect_function_params(start: usize, instructions: &[OpCode]) -> (usize, Vec<String>) {
     let mut params = Vec::new();
+    // `...rest` is not an argument: `RestArgs` makes it from the rest.
+    let (start, rest) = match instructions.get(start) {
+        Some(OpCode::RestArgs(_)) => (start + 1, true),
+        _ => (start, false),
+    };
 
     for i in start..instructions.len() {
         match &instructions[i] {
@@ -1828,6 +1840,12 @@ fn detect_function_params(start: usize, instructions: &[OpCode]) -> (usize, Vec<
         }
     }
 
+    if rest {
+        // The first `Let` binds the rest parameter.
+        if !params.is_empty() {
+            params.remove(0);
+        }
+    }
     (params.len(), params)
 }
 

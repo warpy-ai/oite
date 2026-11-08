@@ -519,6 +519,9 @@ pub enum IrOp {
     IsResume(ValueId),
     /// Which resume point (a number).
     ResumePoint(ValueId),
+    /// The function's arguments from the `n`th on, as a new array
+    /// (`...rest`).
+    RestArgs(ValueId, u32),
     /// The ops after this one, up to the next `Loc`, are at stack frame
     /// `IrModule::sites[n]` (`NO_SITE`: unknown). Emits no code: an
     /// exception that passes an op records the site (`ot_trace`).
@@ -711,6 +714,7 @@ impl IrOp {
             | IrOp::AwaitResult(d)
             | IrOp::IsResume(d)
             | IrOp::ResumePoint(d)
+            | IrOp::RestArgs(d, _)
             | IrOp::GetSuperProp(d, _, _, _)
             | IrOp::CallMethod(d, _, _, _)
             | IrOp::MakeClosure(d, _, _)
@@ -858,6 +862,7 @@ impl IrOp {
             IrOp::Await(v, _) => vec![*v],
             IrOp::AsyncStart(_)
             | IrOp::Loc(_)
+            | IrOp::RestArgs(_, _)
             | IrOp::AwaitResult(_)
             | IrOp::IsResume(_)
             | IrOp::ResumePoint(_) => vec![],
@@ -1417,6 +1422,7 @@ impl fmt::Display for IrOp {
             IrOp::IsResume(d) => write!(f, "{} = is.resume", d),
             IrOp::ResumePoint(d) => write!(f, "{} = resume.point", d),
             IrOp::Loc(n) => write!(f, "loc #{}", n),
+            IrOp::RestArgs(d, n) => write!(f, "{} = rest.args {}", d, n),
             IrOp::GetSuperProp(d, this, base, name) => {
                 write!(f, "{} = get.super {}.{} [this={}]", d, base, name, this)
             }

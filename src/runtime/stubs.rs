@@ -2305,6 +2305,21 @@ pub extern "C" fn ot_run_event_loop() {
     }
 }
 
+/// `...rest`: the arguments from the `n`th on, as a new array.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_rest_args(argv: *const u64, argc: usize, n: usize) -> u64 {
+    let a = unsafe { args(argv, argc) };
+    let rest = a.get(n..).unwrap_or(&[]);
+    let arr = ot_alloc_array(rest.len());
+    if let Some((ptr, _)) = object(OtValue::from_bits(arr)) {
+        let arr_ref = array(ptr);
+        for &v in rest {
+            array_push(arr_ref, v);
+        }
+    }
+    arr
+}
+
 /// The promise of a new async function call.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_async_start() -> u64 {
