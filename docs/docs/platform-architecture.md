@@ -7,8 +7,9 @@ keywords: [architecture, rolls, unroll, ffi, intrinsics, prelude, distribution]
 
 # Platform Architecture: Core, Rolls and Unroll
 
-> **Status:** design, agreed in outline. Sections marked **Open** need a
-> decision. Everything under "Today" was checked against `oite`,
+> **Status:** agreed design. The decisions are recorded where they apply
+> and summarised under "Decisions". Everything under "Today" was checked
+> against `oite`,
 > [`warpy-ai/rolls`](https://github.com/warpy-ai/rolls) and
 > [`warpy-ai/unroll`](https://github.com/warpy-ai/unroll) at the time of
 > writing.
@@ -68,7 +69,8 @@ $OITE_HOME/                      (default ~/.oite)
 │   ├── array/
 │   ├── string/
 │   ├── math/
-│   └── json/
+│   ├── json/
+│   └── async/    roll.toml, src/mod.ot, native library
 └── cache/rolls/<name>/<version>/   other rolls, fetched by unroll
 ```
 
@@ -76,10 +78,17 @@ $OITE_HOME/                      (default ~/.oite)
 intrinsics they call always match the compiler. Every other roll comes from
 the registry (`registry.oite.org`) through `unroll`.
 
-**Open: which rolls are core.** The proposal is `@rolls/std` plus what it
-depends on: `array`, `string`, `math`, `json`. Should `@rolls/async` also
-be bundled? It provides `setTimeout`, and most programs that use `await`
-want it.
+The core rolls are `@rolls/std`, what it depends on (`array`, `string`,
+`math`, `json`), and `@rolls/async`:
+
+- `@rolls/async` is bundled because its native part works inside the
+  runtime: it drains core's microtask queue and calls Oite callbacks, so it
+  must match the runtime exactly. fs, http, tls and websocket depend on it,
+  so nearly every real application needs it.
+- **Bundled is not the prelude.** A bundled roll is in the install and needs
+  no download. Only `@rolls/std` is imported implicitly. A program imports
+  `@rolls/async` explicitly, and a binary that does not import it does not
+  contain it.
 
 ## The prelude
 
@@ -93,11 +102,30 @@ The prelude re-exports a curated set as **free functions**:
 `map(numbers, n => n * 2)`, `trim(name)`, `sin(PI / 4)`, `jsonParse(text)`,
 plus `Result`, `Option`, `println`, `assert`, and so on.
 
-**Open: method calls.** Core today also has built-in methods on primitives
-(`s.trim()`, `arr.slice()`, `n.toFixed(2)`), inherited from the VM. If free
-functions are the intended style, those methods leave core with the rest of
-the library code. If both styles are wanted, the methods should be thin
-wrappers over the same roll functions, not a second implementation in core.
+### Method calls
+
+Both styles work, with one implementation, in the rolls:
+
+```javascript
+trim(name)            // the @rolls/string function
+name.trim()           // the same function, as a method
+map(numbers, f)       // the @rolls/array function
+numbers.map(f)        // the same function, as a method
+```
+
+Existing Oite code is method-style: the self-hosted compiler, the bootstrap
+compiler and Unroll have about 920 method calls between them, and
+JavaScript and TypeScript familiarity is part of the language. So:
+
+- The rolls keep their free functions.
+- The prelude also attaches them as methods of strings and arrays:
+  `s.trim()` calls `@rolls/string`'s `trim(s)`.
+- Core keeps only the hook: a method call on a string or an array that has
+  no own property by that name looks the method up in a table the prelude
+  fills (as `Array.prototype` and `String.prototype`).
+- Core's built-in string, array and number methods move into the rolls.
+- With `--no-std` there are no such methods, as there are no such
+  functions.
 
 ## Contract 1: intrinsics (core ↔ rolls)
 
@@ -129,25 +157,42 @@ The intrinsics the core rolls use today (28):
 | Values | `is_array` |
 | Host | `platform` `cwd` |
 
-This list is the contract, so it is versioned with the release. Adding an
-intrinsic is a minor change; changing or removing one is a breaking change.
+That list is what the rolls use now. The contract is 29 intrinsics: those
+28, minus `cwd`, plus `from_char_code` and `object_keys` (see below). It is
+versioned with the release: adding an intrinsic is a minor change; changing
+or removing one is a breaking change.
 
-**Open: host intrinsics.** `platform` and `cwd` (used by `@rolls/path`) ask
-the operating system. They could be `__ffi_*` functions of a roll instead,
-keeping core free of OS access beyond what `console.log` needs.
+### What an intrinsic may be
 
-**Open: what else rolls may use from core.** Besides intrinsics, the rolls
-currently use a few JavaScript built-ins directly:
+An intrinsic is a **pure computation**: it never asks the operating system.
+That keeps core portable and deterministic, and leaves every access to the
+system to a roll's native part.
 
-- `.length` and `.push` on arrays;
-- `String.fromCharCode`, `Object.keys`, `Array.isArray`;
-- `parseInt`, `parseFloat`, `isNaN`;
-- in `@rolls/json`, the string methods `.substring`, `.split` and `.join`.
+- `platform` stays an intrinsic: the compiler knows the target, so it is a
+  constant.
+- `cwd` reads process state, so it becomes `__ffi_cwd` in `@rolls/path`'s
+  native part.
 
-`.length`, indexing and `.push` are language-level and stay in core. The
-others should become intrinsics, or calls into sibling rolls
-(`@rolls/json` using `@rolls/string`), so the set core must provide stays
-exactly the intrinsics list.
+### What a roll may use
+
+A roll uses only:
+
+1. the language: operators, literals, objects, functions, classes, and on
+   arrays `.length`, indexing, `.push` and `.pop` (native code compiles
+   these inline);
+2. intrinsics;
+3. its own `__ffi_*` functions;
+4. other rolls, through `import`.
+
+No other JavaScript built-in. The ones the rolls use today change as
+follows:
+
+| Today | Instead |
+| ----- | ------- |
+| `Array.isArray`, `parseInt`, `parseFloat` | The `is_array`, `parse_int`, `parse_float` intrinsics |
+| `String.fromCharCode`, `Object.keys` | New intrinsics `from_char_code` and `object_keys`: they need the runtime's representation |
+| `isNaN(x)` | Oite: `x !== x` |
+| `.substring`, `.split`, `.join` in `@rolls/json` | Imports from `@rolls/string` and `@rolls/array` |
 
 ## Contract 2: FFI (rolls ↔ their native code)
 
@@ -243,7 +288,8 @@ oitec build src/main.ot -o target/release/myapp --release \
 | `Math`, `Date.now` | Globals in both runtimes | Removed; `@rolls/math`, `@rolls/date` |
 | `setTimeout` / `clearTimeout` | Globals in both runtimes, with their own timer loop | Removed; `@rolls/async` (`__ffi_set_timeout`) |
 | Number methods (`toFixed`, `toString(radix)`) | Built in | Become the `to_*` intrinsics; API in `@rolls/math` |
-| String and array methods (`trim`, `slice`, `join`, ...) | Built in, shared by VM and native code | Depends on **Open: method calls** |
+| String and array methods (`trim`, `slice`, `join`, ...) | Built in, shared by VM and native code | Move into `@rolls/string` and `@rolls/array`; core keeps the method lookup hook ("Method calls") |
+| `__intrinsic_cwd` | Used by `@rolls/path` | `__ffi_cwd` in `@rolls/path`'s native part |
 | VM `fs`, `fetch`, `process`, `JSON` globals | Built into the VM only | Removed; `@rolls/fs`, `@rolls/http`, `@rolls/json`, ... |
 | Error classes (`std/core/error.ot`) | Core | Stay: the runtime throws `TypeError` and the others itself |
 | `docs/docs-rolls/design.md` | Lists rolls that do not exist (`@rolls/promise`) and a layout that does not match `warpy-ai/rolls` | Replaced by this page |
@@ -252,8 +298,11 @@ oitec build src/main.ot -o target/release/myapp --release \
 
 - **Native parts:** no roll has its Rust code yet. Every `__ffi_*`
   function is declared, and none is implemented.
-- **Remove direct use of JavaScript built-ins:** `String.fromCharCode`,
-  `Object.keys`, `parseInt`, and so on, as listed above.
+- **Remove direct use of JavaScript built-ins**, as listed under "What a
+  roll may use".
+- **Methods:** `@rolls/std` attaches the string and array functions as
+  methods.
+- **`@rolls/path`:** `cwd` through its own `__ffi_cwd`.
 - **Shared tests:** each roll gets golden tests, run by CI against `oitec`
   on the VM, JIT and AOT.
 
@@ -267,6 +316,15 @@ oitec build src/main.ot -o target/release/myapp --release \
   instead.
 - Finding `oitec`: `$OITE_HOME/bin/oitec` first, rather than a list of
   developer paths.
+
+## Decisions
+
+| Question | Decision |
+| -------- | -------- |
+| Which rolls are bundled | `std`, `array`, `string`, `math`, `json` and `async`; only `std` is the implicit prelude |
+| Method calls or free functions | Both, with one implementation in the rolls; the prelude attaches the functions as methods |
+| What an intrinsic may be | A pure computation; no operating system access (`platform` is a compile-time constant, `cwd` becomes FFI) |
+| What a roll may use | The language, intrinsics, its own FFI, and other rolls; no other JavaScript built-in |
 
 ## Order of work
 
