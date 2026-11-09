@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# install.sh - Install Oite (oitec + unroll + rolls registry config)
+# install.sh - Install Oite (oitec + unroll + the core rolls + registry config)
 # Usage: curl -fsSL https://oite.org/install | sh
 #    or: sh install.sh [--prefix DIR] [--no-modify-path]
 set -eu
@@ -174,6 +174,35 @@ WRAPPER
     info "Installed unroll to ${lib_dir}"
 }
 
+install_core_rolls() {
+    local version="$1"
+    local tmpdir
+
+    tmpdir=$(mktemp -d)
+    trap "rm -rf '$tmpdir'" EXIT
+
+    # The core rolls (@rolls/std and what it needs, @rolls/async), pinned for
+    # this release. Releases before they were bundled have none.
+    local url="https://github.com/${GITHUB_REPO}/releases/download/${version}/core-rolls.tar.gz"
+
+    info "Downloading the core rolls..."
+    if curl -fSL --progress-bar -o "${tmpdir}/core-rolls.tar.gz" "$url" 2>/dev/null \
+        && [ -s "${tmpdir}/core-rolls.tar.gz" ]; then
+        # The release owns ${PREFIX}/rolls; rolls fetched by unroll live
+        # elsewhere, so replacing it loses nothing.
+        rm -rf "${PREFIX}/rolls"
+        mkdir -p "$PREFIX"
+        tar -xzf "${tmpdir}/core-rolls.tar.gz" -C "$PREFIX"
+        info "Installed the core rolls to ${PREFIX}/rolls:"
+        sed 's/^/      /' "${PREFIX}/rolls/MANIFEST"
+    else
+        warn "This release has no bundled core rolls; unroll fetches them from the registry"
+    fi
+
+    rm -rf "$tmpdir"
+    trap - EXIT
+}
+
 configure_registry() {
     local unroll_dir="$HOME/.unroll"
     local config_file="${unroll_dir}/config.toml"
@@ -319,6 +348,7 @@ main() {
 
     download_oitec "$target" "$version"
     install_unroll "$version"
+    install_core_rolls "$version"
     configure_registry
     setup_path
 
