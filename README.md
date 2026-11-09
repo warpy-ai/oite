@@ -492,7 +492,7 @@ Oite/
 │   │   ├── mod.rs                # Runtime module
 │   │   ├── abi.rs                # NaN-boxed values
 │   │   ├── heap.rs               # Memory allocation
-│   │   ├── stubs.rs              # FFI bridge
+│   │   ├── stubs/                # The native runtime
 │   │   └── async/
 │   │       ├── mod.rs            # Core async traits
 │   │       ├── task.rs           # Task abstraction

@@ -1,4 +1,4 @@
-//! Signatures of the native runtime's functions (`src/runtime/stubs.rs`).
+//! Signatures of the native runtime's functions (`src/runtime/stubs/`).
 //!
 //! Both native backends declare the runtime from this one table, so a
 //! signature cannot drift between them. Each entry must match the Rust

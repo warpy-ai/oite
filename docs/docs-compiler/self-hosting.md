@@ -368,7 +368,7 @@ script/
 │   ├── runtime/             # Keep: ABI, heap, stubs
 │   │   ├── abi.rs
 │   │   ├── heap.rs
-│   │   └── stubs.rs
+│   │   └── stubs/
 │   └── vm/                  # Keep: for debugging/testing
 └── tests/
 ```

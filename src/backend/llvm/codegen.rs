@@ -6,7 +6,7 @@
 //! one that was not passed reads as `undefined`.
 //!
 //! Number arithmetic on values the type checker proved are numbers is
-//! inlined. Everything else calls the runtime (`src/runtime/stubs.rs`), which
+//! inlined. Everything else calls the runtime (`src/runtime/stubs/`), which
 //! is where the language's semantics live, so that both native backends agree.
 
 #![allow(clippy::manual_c_str_literals)]

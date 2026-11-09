@@ -461,6 +461,32 @@ pub fn heap() -> &'static NativeHeap {
 mod tests {
     use super::*;
 
+    /// The layouts native code and the runtime agree on. A change here is
+    /// an ABI change: update this test with it.
+    #[test]
+    fn object_layouts() {
+        use std::mem::{offset_of, size_of};
+        assert_eq!(size_of::<ObjectHeader>(), 12);
+        assert_eq!(offset_of!(ObjectHeader, kind), 0);
+        assert_eq!(offset_of!(ObjectHeader, flags), 2);
+        assert_eq!(offset_of!(ObjectHeader, size), 8);
+
+        assert_eq!(size_of::<NativeString>(), 16);
+        assert_eq!(offset_of!(NativeString, len), 12);
+
+        assert_eq!(size_of::<NativeArray>(), 32);
+        assert_eq!(offset_of!(NativeArray, len), 12);
+        assert_eq!(offset_of!(NativeArray, capacity), 16);
+        assert_eq!(offset_of!(NativeArray, elements), 24);
+
+        assert_eq!(size_of::<NativeFunction>(), 32);
+        assert_eq!(offset_of!(NativeFunction, code), 16);
+        assert_eq!(offset_of!(NativeFunction, env), 24);
+
+        assert_eq!(size_of::<NativeObject>(), 24);
+        assert_eq!(offset_of!(NativeObject, properties), 16);
+    }
+
     #[test]
     fn test_alloc_object() {
         let heap = NativeHeap::new();

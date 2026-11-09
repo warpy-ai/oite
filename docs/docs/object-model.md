@@ -211,19 +211,18 @@ scope, which variables are captured and in which order (`scope.rs`):
 ## Code organisation
 
 New code goes in small modules, and the files phase 2 touches are split
-first. Today `src/runtime/stubs.rs` has about 2,700 lines and holds the
-whole native runtime.
+first. `src/runtime/stubs.rs` had about 2,700 lines and held the whole
+native runtime.
 
-- **Step 0 splits it without changing behaviour** into modules such as
-  `values`, `globals`, `objects`, `calls`, `operators`, `strings`,
-  `errors`, `inspect`, `promises` and `builtins_setup`. The tests show
-  nothing changed.
+- **Done: it is split, without changing behaviour,** into
+  `src/runtime/stubs/`: `values`, `exceptions`, `objects`, `classes`,
+  `globals`, `calls`, `operators`, `inspect`, `builtin_fns`, `fs`,
+  `promises` and `async_fns`, each under 500 lines.
 - **The new object model** lives in `src/runtime/object/`: `atom.rs`,
   `shape.rs`, `object.rs`, `dictionary.rs`, `ic.rs`, `env.rs`, each a few
   hundred lines.
 - **Layout tests** check the real structures: sizes and the field offsets
-  that generated code relies on. Today's layout tests check constants
-  against themselves.
+  that generated code relies on (`heap.rs`, `object_layouts`).
 
 The other large files (`src/compiler/mod.rs`, `src/vm/mod.rs`,
 `src/ir/lower.rs`, the two backends) are split the same way in their own
@@ -234,8 +233,8 @@ pull requests, each with no behaviour change.
 Each step is one pull request, with tests on vm, jit and aot and the
 benchmark table:
 
-1. **Split `stubs.rs`** into modules (no behaviour change), and add real
-   layout tests.
+1. **Done: split `stubs.rs`** into modules (no behaviour change), and add
+   real layout tests.
 2. **Atoms, shapes and the new object layout**, behind the same runtime
    functions: the backends do not change yet. Accessors and internal state
    move out of the property list; dictionary mode.
