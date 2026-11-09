@@ -543,7 +543,8 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
         | IrOp::AwaitResult(_)
         | IrOp::IsResume(_)
         | IrOp::ResumePoint(_)
-        | IrOp::Loc(_) => {}
+        | IrOp::Loc(_)
+        | IrOp::RestArgs(_, _) => {}
         IrOp::InstanceOf(_, v, c) | IrOp::In(_, v, c) => {
             resolve(v);
             resolve(c);

@@ -84,5 +84,6 @@ pub const RUNTIME: &[(&str, bool, &[Ty])] = {
         ("ot_run_microtasks", false, &[]),
         ("ot_run_event_loop", false, &[]),
         ("ot_trace", false, &[Ptr]),
+        ("ot_rest_args", true, &[Ptr, Len, Len]),
     ]
 };

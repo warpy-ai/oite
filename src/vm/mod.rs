@@ -930,10 +930,26 @@ impl VM {
     /// arguments as given shifted every parameter whenever the counts
     /// differed (`f(1)` against `function f(a, b)` bound `b = 1`).
     fn push_call_args(&mut self, args: &[JsValue], address: usize) {
-        if matches!(self.program.get(address), Some(OpCode::ForwardArgs)) {
-            self.stack.extend(args.iter().cloned());
-            self.stack.push(JsValue::Number(args.len() as f64));
-            return;
+        match self.program.get(address) {
+            Some(OpCode::ForwardArgs) => {
+                self.stack.extend(args.iter().cloned());
+                self.stack.push(JsValue::Number(args.len() as f64));
+                return;
+            }
+            Some(&OpCode::RestArgs(n)) => {
+                for i in 0..n {
+                    self.stack
+                        .push(args.get(i).cloned().unwrap_or(JsValue::Undefined));
+                }
+                let rest = args.get(n..).unwrap_or(&[]).to_vec();
+                let ptr = self.heap.len();
+                self.heap.push(HeapObject {
+                    data: HeapData::Array(rest),
+                });
+                self.stack.push(JsValue::Object(ptr));
+                return;
+            }
+            _ => {}
         }
         let n = if address == 0 {
             args.len()
@@ -2874,7 +2890,7 @@ impl VM {
                 return self.call_super(super_ctor, args);
             }
 
-            OpCode::ForwardArgs => {}
+            OpCode::ForwardArgs | OpCode::RestArgs(_) => {}
 
             OpCode::SuperForward => {
                 // Stack: [args..., count, parent]

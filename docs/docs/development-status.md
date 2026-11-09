@@ -61,6 +61,7 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Closures (shared captured variables, per-iteration loop bindings) | Covered      | Covered                           |
 | Lexical scope (functions cannot see a caller's locals) | Covered                 | Covered                           |
 | Default parameter values                   | Covered                              | Covered                           |
+| Rest parameters (`function f(a, ...rest)`) | Covered                              | Covered                           |
 | Compound assignment (`+=`, `*=`, `<<=`, ...) | Covered                            | Covered                           |
 | Objects, arrays, `obj[k]`, `.length`, `push`/`pop` | Covered                      | Covered                           |
 | Methods on object literals (`this`)        | Covered                              | Covered                           |

@@ -128,6 +128,10 @@ pub enum OpCode {
     /// First instruction of a derived class's implicit constructor: its
     /// caller passes every argument, then their count. A no-op itself.
     ForwardArgs,
+    /// First instruction of a function with a rest parameter after `n`
+    /// others (`function f(a, ...rest)`: `RestArgs(1)`): its caller passes
+    /// `n` arguments, then an array of the rest. A no-op itself.
+    RestArgs(usize),
     /// The implicit constructor's `super(...args)`.
     /// [args..., count, parent] -> [this]
     SuperForward,

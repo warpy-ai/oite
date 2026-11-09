@@ -1164,6 +1164,11 @@ impl Fx<'_> {
                         LLVMSetCurrentDebugLocation2(self.builder, loc);
                     }
                 }
+                IrOp::RestArgs(d, n) => {
+                    let (argv, argc) = self.args;
+                    let r = self.rt("ot_rest_args", &[argv, argc, self.c(*n as u64)]);
+                    self.set(*d, r);
+                }
                 IrOp::AsyncStart(d) => {
                     let r = self.rt("ot_async_start", &[]);
                     self.set(*d, r);

@@ -1,0 +1,23 @@
+// backends: vm jit aot
+// Rest parameters: the arguments after the named ones, as an array.
+function tail(first, ...rest) {
+  return first + " then " + rest.length + ": " + rest.join(",");
+}
+console.log(tail(1));
+console.log(tail(1, undefined));
+console.log(tail(1, 2, 3));
+const count = (...all) => all.length;
+console.log(count(), count("a", "b", "c"));
+class Logger {
+  constructor(prefix) {
+    this.prefix = prefix;
+  }
+  log(level, ...parts) {
+    return "[" + this.prefix + ":" + level + "] " + parts.join(" ");
+  }
+}
+console.log(new Logger("app").log("info", "started", "in", 3, "ms"));
+function withDefault(a = 10, ...more) {
+  return a + more.length;
+}
+console.log(withDefault(), withDefault(1, 2, 3));
