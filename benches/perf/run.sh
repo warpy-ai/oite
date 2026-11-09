@@ -6,6 +6,9 @@
 # Each --oitec adds a column (e.g. master and a branch). Bun and Node run the
 # same source as TypeScript.
 set -euo pipefail
+# Bun as it runs by default: BUN_OPTIONS (e.g. --smol, which trades speed for
+# memory) would skew the comparison.
+unset BUN_OPTIONS
 here="$(cd "$(dirname "$0")" && pwd)"
 runs=3
 oitecs=()
