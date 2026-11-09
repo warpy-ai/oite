@@ -1,0 +1,16 @@
+// backends: vm jit aot
+// A call can change a global: a read after it sees the new value. Native
+// code used to reuse the read from before the call.
+let count = 0;
+function inc() {
+  count = count + 1;
+}
+const box = { n: 0 };
+function bump(b) {
+  b.n = b.n + 10;
+}
+console.log(count, box.n);
+inc();
+bump(box);
+inc();
+console.log(count, box.n);

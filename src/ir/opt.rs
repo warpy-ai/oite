@@ -321,29 +321,35 @@ pub fn common_subexpression_elimination(func: &mut IrFunction) {
         let mut new_ops = Vec::with_capacity(ops.len());
 
         for op in ops {
-            if let Some((key, dst)) = extract_expr_key(&op) {
-                if let Some(&existing) = available.get(&key) {
-                    // Replace with copy
-                    new_ops.push(IrOp::Copy(dst, existing));
-                    continue;
-                }
+            let key = extract_expr_key(&op);
+            if let Some((key, dst)) = &key
+                && let Some(&existing) = available.get(key)
+            {
+                // Replace with copy
+                new_ops.push(IrOp::Copy(*dst, existing));
+                continue;
+            }
+
+            // An op that can run code (a call, a getter, a conversion that
+            // calls `valueOf`) or writes memory may change any global or
+            // property: earlier reads of them are stale. Arithmetic on
+            // values, and this function's own locals, are not affected (no
+            // callee can store to them).
+            if has_side_effects(&op) && !matches!(op, IrOp::LoadGlobal(_, _)) {
+                available.retain(|k, _| {
+                    matches!(
+                        k,
+                        ExprKey::Binary(..) | ExprKey::Unary(..) | ExprKey::LoadLocal(_)
+                    )
+                });
+            }
+            if let IrOp::StoreLocal(slot, _) = op {
+                available.remove(&ExprKey::LoadLocal(slot));
+            }
+
+            if let Some((key, dst)) = key {
                 available.insert(key, dst);
             }
-
-            // Invalidate expressions that may be affected by side effects
-            if has_side_effects(&op) {
-                // Conservative: clear all for stores
-                if matches!(
-                    op,
-                    IrOp::StoreLocal(_, _)
-                        | IrOp::StoreGlobal(_, _)
-                        | IrOp::SetProp(_, _, _)
-                        | IrOp::SetElement(_, _, _)
-                ) {
-                    available.clear();
-                }
-            }
-
             new_ops.push(op);
         }
 
