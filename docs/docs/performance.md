@@ -44,28 +44,28 @@ means beating a mature optimising JIT, and doing it ahead of time.
 
 ## Where Oite stands
 
-Best of 3 runs, in milliseconds. *master* is `oitec` today. *Fast path* is
-the first change below (inline arithmetic on numbers), on branch
-`claude/byte-primitives`.
+Best of 3 runs, in milliseconds. *Before* is `oitec` before phase 1;
+*now* is `master` with the first phase-1 changes (#156): number fast
+paths, integer `%` and constant-time string indexing.
 
-| Benchmark | What it stresses | master | Fast path | Bun | Node | Fast path vs Bun |
-| --------- | ---------------- | -----: | --------: | --: | ---: | ---------------: |
-| `startup` | starting a process | 5 | 5 | 10 | 68 | **0.5×** |
-| `loop_local` | numbers and `%` in a function | 3,013 | 2,941 | 2,218 | 782 | 1.3× |
-| `fib` | recursion | 78 | 40 | 26 | 99 | 1.5× |
-| `strings` | concatenation, `.length` | 75 | 87 | 50 | 120 | 1.7× |
-| `string_build` | `join`, `split` | 160 | 154 | 79 | 150 | 1.9× |
-| `calls` | function calls | 148 | 67 | 26 | 121 | 2.6× |
-| `sort` | quicksort with a comparator | 238 | 208 | 71 | 140 | 2.9× |
-| `closures` | callbacks and captures | 306 | 260 | 54 | 193 | 4.8× |
-| `loop_global` | the same loop at the top level | 11,323 | 10,937 | 2,239 | 807 | 4.9× |
-| `array` | array reads and writes | 583 | 431 | 69 | 151 | 6.2× |
-| `props` | object properties | 458 | 476 | 28 | 101 | 17× |
-| `binary_trees` | allocation, recursion | 5,053 | 6,453 | 328 | 350 | 20× |
-| `methods` | method calls on a class | 452 | 345 | 17 | 92 | 20× |
-| `nbody` | floating point on objects | 5,722 | 3,904 | 128 | 208 | 30× |
-| `alloc` | small short-lived objects | 1,458 | 1,350 | 25 | 84 | 54× |
-| `bytes` | `charCodeAt` over a string | 73,200 | 74,000 | 23 | 131 | 3,200× |
+| Benchmark | What it stresses | Before | Now | Bun | Node | Now vs Bun |
+| --------- | ---------------- | -----: | --: | --: | ---: | ---------: |
+| `loop_local` | numbers and `%` in a function | 2,827 | 610 | 2,190 | 747 | **0.28×** |
+| `startup` | starting a process | 4 | 5 | 8 | 61 | **0.6×** |
+| `fib` | recursion | 69 | 31 | 25 | 83 | 1.2× |
+| `strings` | concatenation, `.length` | 73 | 65 | 37 | 95 | 1.8× |
+| `calls` | function calls | 150 | 66 | 24 | 74 | 2.8× |
+| `sort` | quicksort with a comparator | 237 | 192 | 69 | 130 | 2.8× |
+| `string_build` | `join`, `split` | 155 | 156 | 56 | 134 | 2.8× |
+| `closures` | callbacks and captures | 269 | 152 | 53 | 162 | 2.9× |
+| `loop_global` | the same loop at the top level | 10,775 | 8,005 | 2,193 | 756 | 3.7× |
+| `array` | array reads and writes | 567 | 392 | 68 | 143 | 5.8× |
+| `bytes` | `charCodeAt` over a string | 73,200 | 172 | 22 | 103 | 7.8× |
+| `props` | object properties | 454 | 421 | 28 | 97 | 15× |
+| `binary_trees` | allocation, recursion | 4,184 | 4,594 | 306 | 390 | 15× |
+| `methods` | method calls on a class | 412 | 353 | 17 | 81 | 21× |
+| `nbody` | floating point on objects | 5,190 | 4,131 | 118 | 151 | 35× |
+| `alloc` | small short-lived objects | 1,201 | 1,187 | 22 | 77 | 54× |
 
 Bun 1.4.4 with its default options (`run.sh` clears `BUN_OPTIONS`); Node
 22.23 with `--experimental-strip-types`. `binary_trees` varies by about 20%
@@ -84,16 +84,13 @@ Peak memory (MB):
 
 What this says:
 
-- **Oite wins only at start-up**, where ahead-of-time compilation is
-  supposed to win: half Bun's time.
-- **Plain computation is close:** recursion, calls and numeric loops are
-  1.3 to 2.6 times Bun's time with the fast path (and already ahead of
-  Node on recursion and calls).
-- **Everything that touches objects, methods or memory is 17 to 54 times
+- **Oite beats Bun on numeric loops and start-up.** With integer `%`,
+  `loop_local` runs in a quarter of Bun's time, and a process starts in
+  half Bun's time.
+- **Plain computation is close:** recursion, calls, closures and simple
+  strings are 1.2 to 2.9 times Bun's time.
+- **Everything that touches objects, methods or memory is 15 to 54 times
   slower**, and allocation-heavy programs never give memory back.
-- **Indexing a string is quadratic:** `s.charCodeAt(i)` costs time
-  proportional to the length of `s`, so scanning a string is 3,200 times
-  slower than Bun.
 
 ## Why: the causes, by cost
 
@@ -105,7 +102,7 @@ benchmark that isolates it.
    calls into the runtime (`ot_add_any`, ...). The runtime is shipped as
    precompiled machine code, so neither `--release` nor `--dist` (LTO) can
    inline those calls.
-   *Fixed in part by the fast path, which tests both operands inline.*
+   *Fixed in part by #156, which tests both operands inline.*
 2. **Objects are lists of named properties.** A native object is a header
    plus a separate `Vec<(String, value)>`: every property name is its own
    heap string, and every `o.x` is a linear search comparing strings. A
@@ -122,16 +119,17 @@ benchmark that isolates it.
    function object with an argument array, and a method call looks the
    method up by name on every call, even when the callee is a known
    function.
-6. **No integer arithmetic.** Numbers are always doubles, so `%` is a call
-   to `fmod`: the `loop_local` benchmark spends about 90% of its time
-   there.
+6. **No integer arithmetic.** Numbers are always doubles, so `%` was a
+   call to `fmod`: the `loop_local` benchmark spent about 90% of its time
+   there. *`%` is fixed by #156; the bitwise operators remain.*
 7. **Built-ins are reached through objects.** `Math.sqrt(x)` loads the
    global `Math`, looks up `sqrt` by name, and calls it, instead of
    emitting one `sqrtsd` instruction.
 8. **String indexing copies the string.** The shared string methods turn
    the receiver into a vector of characters on every call, so
    `s.charCodeAt(i)`, `s.charAt(i)` and `s[i]` cost time proportional to
-   `s.length`, and a loop over a string is quadratic.
+   `s.length`, and a loop over a string is quadratic. *Fixed by #156:
+   ASCII strings are flagged when created and indexed directly.*
 
 ## How an ahead-of-time compiler beats a JIT
 
@@ -169,9 +167,9 @@ separate pull request that adds or updates benchmarks.
 
 | Change | Closes | Expected effect |
 | ------ | ------ | --------------- |
-| **Inline number fast paths** for arithmetic and comparisons on untyped values, in both native backends (LLVM done in the prototype, Cranelift to do). | Cause 1 | Measured: `fib` and `calls` about 2 times faster, `nbody` and `array` about 30% faster. |
-| **Constant-time string indexing:** `charCodeAt`, `charAt` and `s[i]` read the string in place (directly for ASCII strings, which can be marked when they are created). | Cause 8 | `bytes` from 74 s to tens of milliseconds. |
-| **Integer fast path for `%`, `|`, `&`, `<<`, `>>`** when both operands are integers; `fmod` only otherwise. | Cause 6 | `loop_local` about 10 times faster. |
+| **Done (#156): inline number fast paths** for arithmetic and comparisons on untyped values, in both native backends. | Cause 1 | Measured: `fib` and `calls` 2.2 times faster, `closures` 1.8, `array` and `nbody` 1.3. |
+| **Done (#156): constant-time string indexing:** `charCodeAt`, `charAt` and `at` read an ASCII string's byte directly. | Cause 8 | Measured: `bytes` from 73 s to 172 ms. |
+| **Integer fast path for `%`** (done, #156) and for `|`, `&`, `<<`, `>>` (to do) when both operands are integers. | Cause 6 | Measured for `%`: `loop_local` 4.6 times faster, ahead of Bun. |
 | **Math as intrinsics in the generated code:** `Math.sqrt` becomes `llvm.sqrt`, `floor` becomes `llvm.floor`, and so on, when `Math` is not redefined. | Cause 7 | Part of `nbody`. |
 | **Top-level variables as fixed slots** in a module's data, not hash entries. | Cause 4 | `loop_global` close to `loop_local`. |
 | **Runtime helpers that can be inlined:** compile the hot runtime helpers (tag tests, array element access, string length) to LLVM bitcode linked before optimisation, or emit them inline. | Cause 1 | Every remaining runtime call on a hot path gets cheaper. |
@@ -242,8 +240,10 @@ These need a decision before the phase that depends on them:
 
 ## Order of work
 
-1. Phase 1, starting with the number fast paths in both backends and the
-   integer `%`, with `benches/perf` in CI.
+1. The rest of phase 1: top-level variables as slots, `Math` as
+   instructions, inlinable runtime helpers and the integer bitwise
+   operators, with `benches/perf` in CI. (The number fast paths, integer
+   `%` and string indexing are done, in #156.)
 2. Phase 2's shapes and inline caches, then arrays.
 3. The designs for phases 3 and 4, reviewed before either is built.
 4. Phase 5 alongside the prelude work in
