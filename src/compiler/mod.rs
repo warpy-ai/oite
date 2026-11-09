@@ -8,6 +8,7 @@ pub mod scope;
 use crate::compiler::borrow_ck::BorrowChecker;
 use crate::compiler::modules::ModuleLink;
 use crate::compiler::scope::{PARENT_PROP, SCOPE_LOCAL, ScopeInfo, VarRef};
+use crate::runtime::intrinsics;
 use crate::vm::value::JsValue;
 pub use diagnostic::{
     CompileError, DebugInfo, Diagnostic, FunctionRange, NO_POSITION, Position, SourceTable,
@@ -551,6 +552,10 @@ impl Codegen {
     }
 
     fn load_var(&mut self, ident: &Ident) {
+        if ident.sym.starts_with(intrinsics::PREFIX) {
+            let message = format!("'{}' is an intrinsic: it can only be called", ident.sym);
+            self.errors.push((ident.span, message));
+        }
         let name = self.var_name(ident);
         match self.scopes.var(ident.span) {
             VarRef::Plain => self.instructions.push(OpCode::Load(name)),
@@ -3025,6 +3030,27 @@ impl Codegen {
                     if let Some(fields) = self.class_fields.clone() {
                         self.emit_field_inits(&fields);
                     }
+                    return;
+                }
+                // `__intrinsic_<name>(args)`: an operation core provides.
+                if let Callee::Expr(expr) = &call_expr.callee
+                    && let Expr::Ident(id) = expr.as_ref()
+                    && let Some(name) = id.sym.strip_prefix(intrinsics::PREFIX)
+                {
+                    let Some(intrinsic) = intrinsics::id(name) else {
+                        let message = format!("unknown intrinsic '{}'", id.sym);
+                        self.errors.push((id.span, message));
+                        return;
+                    };
+                    for arg in &call_expr.args {
+                        if arg.spread.is_some() {
+                            let message = format!("'{}' takes no spread arguments", id.sym);
+                            self.errors.push((arg.expr.span(), message));
+                        }
+                        self.gen_expr(&arg.expr);
+                    }
+                    self.instructions
+                        .push(OpCode::Intrinsic(intrinsic, call_expr.args.len()));
                     return;
                 }
                 // detect if this is a 'require' call

@@ -1,0 +1,15 @@
+// backends: vm jit aot
+// @rolls/array, written in Oite on the intrinsics.
+import * as a from "@rolls/array";
+let xs = [3, 1, 4, 1, 5, 9, 2, 6];
+console.log(a.map(xs, (x) => x * 2), a.filter(xs, (x) => x % 2 === 0));
+console.log(a.reduce(xs, (acc, x) => acc + x, 0), a.every(xs, (x) => x > 0), a.some(xs, (x) => x > 8));
+console.log(a.find(xs, (x) => x > 3), a.findIndex(xs, (x) => x > 3), a.findLast(xs, (x) => x < 3));
+console.log(a.indexOf(xs, 1), a.lastIndexOf(xs, 1), a.includes(xs, 9), a.at(xs, -1));
+console.log(a.slice(xs, 2, 5), a.concat([1], [2, 3]), a.flat([1, [2, [3]]]), a.join(xs, "-"));
+console.log(a.toSorted(xs, (p, q) => p - q), a.toReversed([1, 2, 3]), xs);
+console.log(a.unique(xs), a.chunk(xs, 3), a.zip([1, 2], ["a", "b"]));
+console.log(a.range(0, 5), a.sum(xs), a.average([1, 2, 3]), a.minValue(xs), a.maxValue(xs));
+console.log(a.first(xs), a.last(xs), a.isEmpty([]), a.isArray(xs), a.isArray("xs"));
+console.log(a.intersection([1, 2, 3], [2, 3, 4]), a.difference([1, 2, 3], [2]), a.union([1, 2], [2, 3]));
+console.log(a.partition(xs, (x) => x > 3), a.sortBy([{ n: 2 }, { n: 1 }], (o) => o.n));

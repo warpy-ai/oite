@@ -110,6 +110,75 @@ jobs:
           chmod +x scripts/bootstrap_verify.sh
           scripts/bootstrap_verify.sh
 
+  core-rolls:
+    name: Core rolls (vm, jit, aot)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # warpy-ai/rolls is private: ROLLS_READ_TOKEN can read it. Pull requests
+      # from forks get no secrets, so there the job reports a warning instead.
+      HAS_ROLLS_TOKEN: ${{ secrets.ROLLS_READ_TOKEN != '' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6 # v6
+        with:
+          persist-credentials: false
+
+      # The rolls a release bundles: ROLLS_REF in scripts/release-pins.env.
+      - name: Read release pins
+        id: pins
+        run: |
+          . scripts/release-pins.env
+          echo "rolls=$ROLLS_REF" >> "$GITHUB_OUTPUT"
+
+      - name: No token for warpy-ai/rolls
+        if: env.HAS_ROLLS_TOKEN != 'true'
+        run: echo "::warning::ROLLS_READ_TOKEN is not available; the core rolls were not tested"
+
+      - name: Check out the core rolls
+        if: env.HAS_ROLLS_TOKEN == 'true'
+        uses: actions/checkout@v6 # v6
+        with:
+          repository: warpy-ai/rolls
+          ref: ${{ steps.pins.outputs.rolls }}
+          token: ${{ secrets.ROLLS_READ_TOKEN }}
+          path: rolls-src
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        if: env.HAS_ROLLS_TOKEN == 'true'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Install LLVM 18
+        if: env.HAS_ROLLS_TOKEN == 'true'
+        run: |
+          # Use the distro's native LLVM 18 (see the test job for why we avoid llvm.sh).
+          sudo apt-get update
+          sudo apt-get install -y llvm-18-dev libpolly-18-dev libzstd-dev
+          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
+
+      - name: Cache cargo registry
+        if: env.HAS_ROLLS_TOKEN == 'true'
+        uses: actions/cache@v4 # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ubuntu-latest-x86_64-unknown-linux-gnu-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ubuntu-latest-x86_64-unknown-linux-gnu-cargo-
+
+      # tests/core_rolls/: programs that import the core rolls, each run on
+      # the VM, the JIT and as a native binary (tests/golden.rs).
+      - name: Run the core rolls on every backend
+        if: env.HAS_ROLLS_TOKEN == 'true'
+        env:
+          OITE_CORE_ROLLS: ${{ github.workspace }}/rolls-src
+        run: cargo test --release --test golden core_rolls
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

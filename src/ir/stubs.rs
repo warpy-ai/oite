@@ -251,7 +251,10 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         | IrOp::GetSuperProp(_, _, _, _) => CompileStrategy::StubCall(stubs::CALL),
         IrOp::Loc(_) => CompileStrategy::NoOp,
         IrOp::RestArgs(_, _) => CompileStrategy::StubCall(stubs::ALLOC_OBJECT),
-        IrOp::CallMethod(_, _, _, _) => CompileStrategy::StubCall(stubs::CALL),
+        IrOp::CallMethod(_, _, _, _)
+        | IrOp::Intrinsic(_, _, _)
+        | IrOp::ArraySpread(_, _, _)
+        | IrOp::ObjectSpread(_, _, _) => CompileStrategy::StubCall(stubs::CALL),
         IrOp::MakeClosure(_, _, _) => CompileStrategy::StubCall(stubs::ALLOC_OBJECT),
 
         // Type operations

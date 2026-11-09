@@ -1156,6 +1156,72 @@ pub extern "C" fn ot_call_method(
     )
 }
 
+/// `__intrinsic_<name>(args)`: intrinsic `id`, as on every backend
+/// (`runtime::intrinsics`).
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_intrinsic(id: usize, argv: *const u64, argc: usize) -> u64 {
+    let a = unsafe { args(argv, argc) };
+    outcome(super::intrinsics::call(&NativeHost, id as u32, a), 0)
+}
+
+/// `[..., ...source]`: append `source`'s elements (an array's, or a
+/// string's characters) to the array `target`; `target`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_array_spread(target: u64, source: u64) -> u64 {
+    use builtins::Host;
+    let Some((tptr, ObjectKind::Array)) = object(OtValue::from_bits(target)) else {
+        return target;
+    };
+    let src = OtValue::from_bits(source);
+    let items: Vec<u64> = if let Some(s) = as_str(src) {
+        s.chars().map(|c| new_string(&c.to_string())).collect()
+    } else if let Some(elems) = NativeHost.array_elements(&source) {
+        elems
+    } else {
+        return throw_error("TypeError", &format!("{} is not iterable", inspect(src)));
+    };
+    for v in items {
+        array_push(array(tptr), v);
+    }
+    target
+}
+
+/// `{..., ...source}`: copy `source`'s own properties onto the object
+/// `target` (a getter's value, not the getter); `target`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_object_spread(target: u64, source: u64) -> u64 {
+    use builtins::Host;
+    let src = OtValue::from_bits(source);
+    let entries: Vec<(String, u64)> = if let Some(s) = as_str(src) {
+        s.chars()
+            .enumerate()
+            .map(|(i, c)| (i.to_string(), new_string(&c.to_string())))
+            .collect()
+    } else if let Some(elems) = NativeHost.array_elements(&source) {
+        elems
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| (i.to_string(), v))
+            .collect()
+    } else {
+        let mut entries = Vec::new();
+        for k in NativeHost.own_keys(&source) {
+            let v = get_property(src, &k);
+            if v == EXCEPTION_BITS {
+                return v;
+            }
+            entries.push((k, v));
+        }
+        entries
+    };
+    for (k, v) in entries {
+        if set_property(OtValue::from_bits(target), &k, v) == EXCEPTION_BITS {
+            return EXCEPTION_BITS;
+        }
+    }
+    target
+}
+
 /// The native value representation, for the shared built-in methods.
 struct NativeHost;
 
@@ -1189,6 +1255,28 @@ impl builtins::Host for NativeHost {
                 )
             }
             _ => None,
+        }
+    }
+
+    fn is_array(&self, v: &u64) -> bool {
+        matches!(object(OtValue::from_bits(*v)), Some((_, ObjectKind::Array)))
+    }
+
+    fn own_keys(&self, v: &u64) -> Vec<String> {
+        match object(OtValue::from_bits(*v)) {
+            Some((ptr, ObjectKind::Object)) => {
+                let mut names: Vec<String> = Vec::new();
+                for (k, _) in props(ptr).iter() {
+                    if let Some(name) = builtins::own_key_name(k)
+                        && !names.iter().any(|n| n == name)
+                    {
+                        names.push(name.to_string());
+                    }
+                }
+                names
+            }
+            Some((ptr, ObjectKind::Array)) => (0..array(ptr).len).map(|i| i.to_string()).collect(),
+            _ => Vec::new(),
         }
     }
 
@@ -1724,35 +1812,15 @@ pub extern "C" fn ot_builtin_object_keys(
     argc: usize,
     _env: u64,
 ) -> u64 {
+    use builtins::Host;
     let a = unsafe { args(argv, argc) };
-    let out = ot_alloc_array(0);
-    let Some((out_ptr, _)) = object(OtValue::from_bits(out)) else {
-        return out;
-    };
-    let target = a.first().map(|v| OtValue::from_bits(*v));
-    match target.and_then(object) {
-        Some((ptr, ObjectKind::Object)) => {
-            let mut names: Vec<String> = Vec::new();
-            for (k, _) in props(ptr).iter() {
-                if let Some(name) = builtins::own_key_name(k)
-                    && !names.iter().any(|n| n == name)
-                {
-                    names.push(name.to_string());
-                }
-            }
-            for k in names {
-                array_push(array(out_ptr), new_string(&k));
-            }
-        }
-        Some((ptr, ObjectKind::Array)) => {
-            let len = array(ptr).len;
-            for i in 0..len {
-                array_push(array(out_ptr), new_string(&i.to_string()));
-            }
-        }
-        _ => {}
-    }
-    out
+    let keys = NativeHost.own_keys(&a.first().copied().unwrap_or_else(undefined));
+    outcome(
+        Ok(builtins::Outcome::NewArray(
+            keys.into_iter().map(|k| new_string(&k)).collect(),
+        )),
+        0,
+    )
 }
 
 /// Print one value, as `console.log(value)` does.

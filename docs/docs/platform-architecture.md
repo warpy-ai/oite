@@ -159,24 +159,31 @@ export function sqrt(x: number): number {
 }
 ```
 
-The compiler recognises `__intrinsic_*` names and emits the operation
-inline (a native instruction where there is one, otherwise a runtime call),
-on every backend. An unknown `__intrinsic_` name is a compile error.
+The compiler turns a call to an `__intrinsic_*` name into one `Intrinsic`
+instruction, and every backend runs the same Rust function for it
+(`src/runtime/intrinsics.rs`, written once over the value representation),
+so an intrinsic gives the same result on the VM, the JIT and native binaries.
+Native code calls it through the runtime today; emitting a machine
+instruction for the math ones is a later optimisation. An unknown
+`__intrinsic_` name is a compile error, and so is using an intrinsic as a
+value rather than calling it.
 
-The intrinsics the core rolls use today (28):
+The contract is 29 intrinsics:
 
 | Group | Intrinsics |
 | ----- | ---------- |
 | Math | `floor` `ceil` `round` `sqrt` `pow` `exp` `log` `sin` `cos` `tan` `asin` `acos` `atan` `atan2` `fround` `imul` `random` |
 | Numbers | `parse_int` `parse_float` `to_fixed` `to_precision` `to_exponential` |
-| Strings | `string_length` `char_at` `char_code_at` |
-| Values | `is_array` |
-| Host | `platform` `cwd` |
+| Strings | `string_length` `char_at` `char_code_at` `from_char_code` |
+| Values | `is_array` `object_keys` |
+| Target | `platform` |
 
-That list is what the rolls use now. The contract is 29 intrinsics: those
-28, minus `cwd`, plus `from_char_code` and `object_keys` (see below). It is
-versioned with the release: adding an intrinsic is a minor change; changing
-or removing one is a breaking change.
+Each behaves as the JavaScript built-in it stands for (`Math.floor`,
+`parseInt`, `Number.prototype.toPrecision`, `String.fromCharCode`,
+`Object.keys`, ...), and `tests/lang/intrinsics/` holds them to Node's
+output. Strings count characters (Unicode scalar values), as the string
+methods do (#133). The list is versioned with the release: adding an
+intrinsic is a minor change; changing or removing one is a breaking change.
 
 ### What an intrinsic may be
 
@@ -184,8 +191,8 @@ An intrinsic is a **pure computation**: it never asks the operating system.
 That keeps core portable and deterministic, and leaves every access to the
 system to a roll's native part.
 
-- `platform` stays an intrinsic: the compiler knows the target, so it is a
-  constant.
+- `platform` stays an intrinsic: it is a constant of the target the
+  program was built for (`"linux"`, `"macos"`, `"windows"`).
 - `cwd` reads process state, so it becomes `__ffi_cwd` in `@rolls/path`'s
   native part.
 
@@ -297,15 +304,15 @@ oitec build src/main.ot -o target/release/myapp --release \
 
 | Item | Today | Change |
 | ---- | ----- | ------ |
-| `declare function` | Ambient: no code and no binding, so an `__intrinsic_*` or `__ffi_*` oitec does not have yet is "not defined" when called | Bind `__intrinsic_*` and `__ffi_*` as above |
+| `declare function` | Ambient: no code and no binding. A call to an `__intrinsic_*` compiles to the intrinsic; an `__ffi_*` nothing provides is "not defined" when called | Bind `__ffi_*` (FFI) |
 | `import` / `export` | Linked at compile time on every backend (`modules.rs`), with `@rolls/*` found through `--roll`, the importing roll's siblings, `OITE_ROLLS_PATH` and `$OITE_HOME/rolls`; circular imports are refused | The implicit `@rolls/std` prelude and `--no-std`, with the intrinsics |
-| Intrinsics | 0 of 28 implemented | Implement all 28, on every backend |
+| Intrinsics | All 29, on every backend (`runtime/intrinsics.rs`) | Machine instructions for the math ones |
+| Spread (`[...a]`, `{...o}`) | On every backend | — |
 | FFI | Only `__ffi_fetch` (and `__ffi_getenv`, which no roll uses), as VM globals | Calling convention, `oite-runtime` crate, symbol binding on every backend |
 | `Math`, `Date.now` | Globals in both runtimes | Removed; `@rolls/math`, `@rolls/date` |
 | `setTimeout` / `clearTimeout` | Globals in both runtimes, with their own timer loop | Removed; `@rolls/async` (`__ffi_set_timeout`) |
 | Number methods (`toFixed`, `toString(radix)`) | Built in | Become the `to_*` intrinsics; API in `@rolls/math` |
 | String and array methods (`trim`, `slice`, `join`, ...) | Built in, shared by VM and native code | Move into `@rolls/string` and `@rolls/array`; core keeps the method lookup hook ("Method calls") |
-| `__intrinsic_cwd` | Used by `@rolls/path` | `__ffi_cwd` in `@rolls/path`'s native part |
 | VM `fs`, `fetch`, `process`, `JSON` globals | Built into the VM only | Removed; `@rolls/fs`, `@rolls/http`, `@rolls/json`, ... |
 | Error classes (`std/core/error.ot`) | Core | Stay: the runtime throws `TypeError` and the others itself |
 | `docs/docs-rolls/design.md` | Lists rolls that do not exist (`@rolls/promise`) and a layout that does not match `warpy-ai/rolls` | Replaced by this page |
@@ -315,10 +322,14 @@ oitec build src/main.ot -o target/release/myapp --release \
 - **Native parts:** no roll has its Rust code yet. Every `__ffi_*`
   function is declared, and none is implemented.
 - **Remove direct use of JavaScript built-ins**, as listed under "What a
-  roll may use".
+  roll may use". The globals (`Array.isArray`, `Object.keys`,
+  `String.fromCharCode`, `parseInt`, `parseFloat`, `isNaN`) are replaced by
+  intrinsics; method calls such as `.substring` and `n.toString(16)` remain
+  until the prelude provides them.
 - **Methods:** `@rolls/std` attaches the string and array functions as
   methods.
-- **`@rolls/path`:** `cwd` through its own `__ffi_cwd`.
+- **`@rolls/path`:** `cwd` through its own `__ffi_cwd` (declared; its
+  native part comes with FFI).
 - **Shared tests:** each roll gets golden tests, run by CI against `oitec`
   on the VM, JIT and AOT.
 
@@ -339,17 +350,17 @@ oitec build src/main.ot -o target/release/myapp --release \
 | -------- | -------- |
 | Which rolls are bundled | `std`, `array`, `string`, `math`, `json` and `async`; only `std` is the implicit prelude |
 | Method calls or free functions | Both, with one implementation in the rolls; the prelude attaches the functions as methods |
-| What an intrinsic may be | A pure computation; no operating system access (`platform` is a compile-time constant, `cwd` becomes FFI) |
+| What an intrinsic may be | A pure computation; no operating system access (`platform` is a constant of the target, `cwd` becomes FFI) |
 | What a roll may use | The language, intrinsics, its own FFI, and other rolls; no other JavaScript built-in |
 
 ## Order of work
 
 1. **Modules in core** (done): `import`/`export` linked at compile time on
    every backend, and `@rolls/*` resolution.
-2. **Intrinsics:** the 28 above, the implicit `@rolls/std` prelude and
-   `--no-std`, then move `Math`, `Date.now` and the number methods out of
-   core. CI runs the core rolls from `warpy-ai/rolls` (at `ROLLS_REF`) on
-   all three backends.
+2. **Intrinsics:** the 29 above (done, with spread on every backend), the
+   implicit `@rolls/std` prelude and `--no-std`, then move `Math`,
+   `Date.now` and the number methods out of core. CI runs the core rolls
+   from `warpy-ai/rolls` (at `ROLLS_REF`) on all three backends.
 3. **FFI:** the calling convention, `oite-runtime`, and symbol binding;
    `@rolls/async` first, with timers moving out of core.
 4. **The remaining native rolls:** date, fs, crypto, tls, http, websocket.

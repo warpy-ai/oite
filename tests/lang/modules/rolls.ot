@@ -2,7 +2,7 @@
 // `@rolls/<name>` imports: the fixture rolls in _rolls/ (OITE_ROLLS_PATH).
 import { greet, useMissing } from "@rolls/greet";
 console.log(greet("oite"));
-// `declare function` binds nothing: an intrinsic oitec does not have is
+// `declare function` binds nothing: an FFI function nothing provides is
 // not defined, not a function that returns undefined.
 try {
   useMissing();

@@ -1173,11 +1173,15 @@ impl Fx<'_> {
                     let r = self.rt("ot_async_start", &[]);
                     self.set(*d, r);
                 }
-                IrOp::AsyncResolve(d, p, v) | IrOp::AsyncReject(d, p, v) => {
-                    let name = if matches!(op, IrOp::AsyncResolve(..)) {
-                        "ot_async_resolve"
-                    } else {
-                        "ot_async_reject"
+                IrOp::AsyncResolve(d, p, v)
+                | IrOp::AsyncReject(d, p, v)
+                | IrOp::ArraySpread(d, p, v)
+                | IrOp::ObjectSpread(d, p, v) => {
+                    let name = match op {
+                        IrOp::AsyncResolve(..) => "ot_async_resolve",
+                        IrOp::AsyncReject(..) => "ot_async_reject",
+                        IrOp::ArraySpread(..) => "ot_array_spread",
+                        _ => "ot_object_spread",
                     };
                     let args = [self.get(*p)?, self.get(*v)?];
                     let r = self.rt(name, &args);
@@ -1211,6 +1215,15 @@ impl Fx<'_> {
                     let (frame, _) = self.frame.unwrap();
                     let r = self.rt("ot_await_result", &[frame]);
                     self.set(*d, r);
+                }
+                IrOp::Intrinsic(d, id, args) => {
+                    let vals: Vec<LLVMValueRef> = args
+                        .iter()
+                        .map(|a| self.get(*a))
+                        .collect::<Result<_, _>>()?;
+                    let (argv, argc) = self.arg_array(&vals);
+                    let v = self.rt("ot_intrinsic", &[self.c(*id as u64), argv, argc]);
+                    self.set(*d, v);
                 }
                 IrOp::CallMethod(d, recv, name, args) => {
                     let r = self.get(*recv)?;

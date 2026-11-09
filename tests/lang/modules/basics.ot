@@ -17,3 +17,5 @@ console.log(bump(), answer);
 console.log(shapes(), stateOfCounter());
 console.log(typeof counter.increment, counter.count, Object.keys(counter).length);
 console.log(typeof count, typeof describe);
+// A method call through the namespace: its members are getters.
+console.log(counter.increment(), count);

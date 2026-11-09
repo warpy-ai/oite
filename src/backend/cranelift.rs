@@ -55,6 +55,9 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_set_global,
         ot_call,
         ot_call_method,
+        ot_intrinsic,
+        ot_array_spread,
+        ot_object_spread,
         ot_add_any,
         ot_sub_any,
         ot_mul_any,
@@ -1005,6 +1008,8 @@ impl Fx<'_> {
                 self.values.insert(*d, r);
             }
             IrOp::AsyncResolve(d, p, v) => self.rt_binop(b, *d, "ot_async_resolve", *p, *v)?,
+            IrOp::ArraySpread(d, t, s) => self.rt_binop(b, *d, "ot_array_spread", *t, *s)?,
+            IrOp::ObjectSpread(d, t, s) => self.rt_binop(b, *d, "ot_object_spread", *t, *s)?,
             IrOp::AsyncReject(d, p, v) => self.rt_binop(b, *d, "ot_async_reject", *p, *v)?,
             IrOp::IsResume(d) => {
                 let (_, argc) = self.args.unwrap();
@@ -1037,6 +1042,16 @@ impl Fx<'_> {
                 let frame = self.frame.unwrap();
                 let r = self.rt_v(b, "ot_await_result", &[frame]);
                 self.values.insert(*d, r);
+            }
+            IrOp::Intrinsic(d, id, args) => {
+                let vals: Vec<Value> = args
+                    .iter()
+                    .map(|a| self.get(*a))
+                    .collect::<Result<_, _>>()?;
+                let (argv, argc) = self.arg_array(b, &vals);
+                let id = Self::c(b, *id as u64);
+                let v = self.rt_v(b, "ot_intrinsic", &[id, argv, argc]);
+                self.values.insert(*d, v);
             }
             IrOp::CallMethod(d, recv, name, args) => {
                 let r = self.get(*recv)?;

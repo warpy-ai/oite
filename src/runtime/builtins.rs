@@ -21,6 +21,11 @@ pub trait Host {
     fn strict_equal(&self, a: &Self::Value, b: &Self::Value) -> bool;
     /// The elements, if `v` is an array.
     fn array_elements(&self, v: &Self::Value) -> Option<Vec<Self::Value>>;
+    /// Whether `v` is an array.
+    fn is_array(&self, v: &Self::Value) -> bool;
+    /// `Object.keys(v)`: an object's own property names, an array's indices,
+    /// nothing for any other value.
+    fn own_keys(&self, v: &Self::Value) -> Vec<String>;
 
     fn make_number(&self, n: f64) -> Self::Value;
     fn make_string(&self, s: String) -> Self::Value;

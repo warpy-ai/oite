@@ -1,0 +1,14 @@
+// backends: vm jit aot
+// @rolls/json, written in Oite on the intrinsics. Each object has one key:
+// the VM keeps an object's properties unordered.
+import { parse, stringify } from "@rolls/json";
+let v = parse('{"a": [1, -2.5e2, "x\\u0041\\n", true, null, {"b": {}}]}');
+console.log(v);
+console.log(stringify(v));
+console.log(stringify([1, "two", [3], { k: "v" }]), stringify("q\"uote"), stringify(1.5));
+console.log(stringify([1, [2, { z: [] }]], null, 2));
+try {
+  parse("[1, 2");
+} catch (e) {
+  console.log("error:", e.message);
+}

@@ -1,0 +1,6 @@
+array object null string number
+true true true true false
+true false
+{ a: [ 1, 2 ] } { a: [ 1, 2, 3 ] }
+[ 0, 1, 2, 3 ] x [ 2, 3 ] 2
+[ 1 ] [1,"a"]

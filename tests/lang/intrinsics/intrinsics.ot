@@ -1,0 +1,81 @@
+// backends: vm jit aot
+// Every intrinsic, called as a roll calls it. The expected output is what
+// the JavaScript built-in each one stands for gives (checked with Node).
+declare function __intrinsic_floor(x: number): number;
+declare function __intrinsic_ceil(x: number): number;
+declare function __intrinsic_round(x: number): number;
+declare function __intrinsic_sqrt(x: number): number;
+declare function __intrinsic_pow(x: number, y: number): number;
+declare function __intrinsic_exp(x: number): number;
+declare function __intrinsic_log(x: number): number;
+declare function __intrinsic_sin(x: number): number;
+declare function __intrinsic_cos(x: number): number;
+declare function __intrinsic_tan(x: number): number;
+declare function __intrinsic_asin(x: number): number;
+declare function __intrinsic_acos(x: number): number;
+declare function __intrinsic_atan(x: number): number;
+declare function __intrinsic_atan2(y: number, x: number): number;
+declare function __intrinsic_fround(x: number): number;
+declare function __intrinsic_imul(a: number, b: number): number;
+declare function __intrinsic_random(): number;
+declare function __intrinsic_parse_int(s: string, radix: number): number;
+declare function __intrinsic_parse_float(s: string): number;
+declare function __intrinsic_to_fixed(x: number, digits: number): string;
+declare function __intrinsic_to_precision(x: number, p: number | undefined): string;
+declare function __intrinsic_to_exponential(x: number, f: number | undefined): string;
+declare function __intrinsic_string_length(s: string): number;
+declare function __intrinsic_char_at(s: string, i: number): string;
+declare function __intrinsic_char_code_at(s: string, i: number): number;
+declare function __intrinsic_from_char_code(code: number): string;
+declare function __intrinsic_is_array(v: any): boolean;
+declare function __intrinsic_object_keys(v: any): string[];
+declare function __intrinsic_platform(): string;
+
+console.log("math");
+console.log(__intrinsic_floor(-1.5), __intrinsic_ceil(-1.5), __intrinsic_ceil(1.2));
+console.log(__intrinsic_round(2.5), __intrinsic_round(-2.5), __intrinsic_round(-2.6));
+console.log(__intrinsic_sqrt(2), __intrinsic_sqrt(-1), __intrinsic_pow(2, 0.5), __intrinsic_pow(-8, 1 / 3));
+console.log(__intrinsic_exp(1), __intrinsic_log(10), __intrinsic_log(0));
+console.log(__intrinsic_sin(0), __intrinsic_cos(0), __intrinsic_tan(0));
+console.log(__intrinsic_asin(1), __intrinsic_acos(1), __intrinsic_atan(1), __intrinsic_atan2(1, -1));
+console.log(__intrinsic_fround(5.05), __intrinsic_fround(2 ** 130));
+console.log(__intrinsic_imul(3, 4), __intrinsic_imul(0xffffffff, 5), __intrinsic_imul(0x7fffffff, 3));
+let r = __intrinsic_random();
+console.log(r >= 0 && r < 1);
+
+console.log("numbers");
+console.log(__intrinsic_parse_int("  42px", undefined), __intrinsic_parse_int("-0x1F", undefined));
+console.log(__intrinsic_parse_int("ff", 16), __intrinsic_parse_int("101", 2), __intrinsic_parse_int("0x10", 10));
+console.log(__intrinsic_parse_int("z", 10), __intrinsic_parse_int("7", 37));
+console.log(__intrinsic_parse_float(" 3.14abc"), __intrinsic_parse_float("1e3x"), __intrinsic_parse_float("1e"));
+console.log(__intrinsic_parse_float(".5"), __intrinsic_parse_float("-Infinityx"), __intrinsic_parse_float("x"));
+console.log(__intrinsic_to_fixed(1.005, 2), __intrinsic_to_fixed(2.5, 0), __intrinsic_to_fixed(-0.5, 0), __intrinsic_to_fixed(1e21, 2));
+console.log(__intrinsic_to_precision(123.456, 4), __intrinsic_to_precision(0.000123, 2), __intrinsic_to_precision(123456, 2));
+console.log(__intrinsic_to_precision(2.5, 1), __intrinsic_to_precision(99.99, 3), __intrinsic_to_precision(0, 3));
+console.log(__intrinsic_to_precision(1e-7, 1), __intrinsic_to_precision(1.5, undefined), __intrinsic_to_precision(-1.25, 2));
+console.log(__intrinsic_to_exponential(123456, 2), __intrinsic_to_exponential(0.00015, undefined), __intrinsic_to_exponential(-5, 0));
+console.log(__intrinsic_to_exponential(0, 2), __intrinsic_to_exponential(9.99, 1), __intrinsic_to_exponential(1 / 0, 2));
+try {
+  __intrinsic_to_fixed(1, 101);
+} catch (e) {
+  console.log(e instanceof RangeError, e.message);
+}
+try {
+  __intrinsic_to_precision(1, 0);
+} catch (e) {
+  console.log(e instanceof RangeError, e.message);
+}
+
+console.log("strings");
+console.log(__intrinsic_string_length("hello"), __intrinsic_string_length(""));
+console.log(__intrinsic_char_at("hello", 1), "[" + __intrinsic_char_at("hello", 9) + "]");
+console.log(__intrinsic_char_code_at("A", 0), __intrinsic_char_code_at("A", 1));
+console.log(__intrinsic_from_char_code(72) + __intrinsic_from_char_code(105), __intrinsic_from_char_code(65 + 65536));
+
+console.log("values");
+console.log(__intrinsic_is_array([]), __intrinsic_is_array({}), __intrinsic_is_array("ab"), __intrinsic_is_array(null));
+// One key each: the VM keeps an object's properties unordered.
+console.log(__intrinsic_object_keys({ a: { c: 2 } }), __intrinsic_object_keys({ a: 1, b: 2 }).length);
+console.log(__intrinsic_object_keys(["x", "y"]), __intrinsic_object_keys(7));
+let platform = __intrinsic_platform();
+console.log(typeof platform, platform.length > 0);

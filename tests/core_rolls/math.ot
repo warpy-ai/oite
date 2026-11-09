@@ -1,0 +1,15 @@
+// backends: vm jit aot
+// @rolls/math, written in Oite on the intrinsics.
+import * as m from "@rolls/math";
+console.log(m.PI, m.abs(-3), m.sign(-2), m.floor(-1.5), m.ceil(1.2), m.round(2.5), m.trunc(-1.7));
+console.log(m.min(3, 1, 2), m.max(3, 1, 2), m.clamp(15, 0, 10), m.pow(2, 10), m.sqrt(81), m.cbrt(27));
+console.log(m.hypot(3, 4), m.exp(0), m.log(1), m.sin(0), m.cos(0), m.atan2(1, 1));
+console.log(m.isNaN(0 / 0), m.isFinite(1 / 0), m.isInteger(5), m.isSafeInteger(2 ** 53));
+console.log(m.lerp(0, 10, 0.25), m.inverseLerp(0, 10, 5), m.remap(5, 0, 10, 0, 100));
+console.log(m.gcd(12, 18), m.lcm(4, 6), m.factorial(10), m.combinations(5, 2), m.permutations(5, 2));
+console.log(m.imul(0x7fffffff, 3), m.fround(5.05), m.clz32(1));
+console.log(m.toFixed(1.005, 2), m.toPrecision(123.456, 4), m.toExponential(123456, 2));
+console.log(m.parseInt("ff", 16), m.parseInt("42px"), m.parseFloat("3.5e2x"));
+let r = m.random();
+let i = m.randomInt(1, 6);
+console.log(r >= 0 && r < 1, i >= 1 && i <= 6, m.isInteger(i));
