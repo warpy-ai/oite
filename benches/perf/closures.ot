@@ -1,0 +1,17 @@
+// Higher-order functions written out: callbacks and captured variables.
+function mapArr(a, f) { let out = []; for (let i = 0; i < a.length; i++) out.push(f(a[i])); return out; }
+function filterArr(a, f) { let out = []; for (let i = 0; i < a.length; i++) if (f(a[i])) out.push(a[i]); return out; }
+function reduceArr(a, f, init) { let acc = init; for (let i = 0; i < a.length; i++) acc = f(acc, a[i]); return acc; }
+function run() {
+  let xs = [];
+  for (let i = 0; i < 100000; i++) xs.push(i);
+  let total = 0;
+  for (let r = 0; r < 30; r++) {
+    let k = r;
+    let ys = mapArr(xs, (x) => x * 2 + k);
+    let zs = filterArr(ys, (y) => y % 3 === 0);
+    total = total + reduceArr(zs, (a, b) => a + b, 0);
+  }
+  return total;
+}
+console.log(run());

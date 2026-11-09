@@ -1,0 +1,23 @@
+// Quicksort on numbers, with a comparison function.
+function quicksort(a, lo, hi, cmp) {
+  while (lo < hi) {
+    let p = a[(lo + hi) >> 1];
+    let i = lo; let j = hi;
+    while (i <= j) {
+      while (cmp(a[i], p) < 0) i++;
+      while (cmp(a[j], p) > 0) j--;
+      if (i <= j) { let t = a[i]; a[i] = a[j]; a[j] = t; i++; j--; }
+    }
+    if (j - lo < hi - i) { quicksort(a, lo, j, cmp); lo = i; } else { quicksort(a, i, hi, cmp); hi = j; }
+  }
+}
+function run() {
+  let seed = 42;
+  let a = [];
+  for (let i = 0; i < 300000; i++) { seed = (seed * 1103515245 + 12345) % 2147483648; a.push(seed); }
+  quicksort(a, 0, a.length - 1, (x, y) => x - y);
+  let ok = true;
+  for (let i = 1; i < a.length; i++) if (a[i - 1] > a[i]) ok = false;
+  return ok + " " + a[0] + " " + a[a.length - 1];
+}
+console.log(run());
