@@ -1161,6 +1161,150 @@ impl Fx<'_> {
         }
     }
 
+    /// A new inline cache (`runtime::object::ic::PropCache`) for a site
+    /// that accesses the property `name`.
+    unsafe fn prop_cache(&mut self, name: &str) -> LLVMValueRef {
+        unsafe {
+            let ctx = self.cg.context;
+            let (i64t, ptrt) = (self.i64_ty(), self.ptr_ty());
+            let i32t = LLVMInt32TypeInContext(ctx);
+            let (name_ptr, _) = self.string(name);
+            let int = |t, v: u64| LLVMConstInt(t, v, 0);
+            // The fields of `PropCache`, in order.
+            let mut fields = [
+                int(i64t, crate::runtime::object::ic::NO_SHAPE),
+                int(i32t, 0),
+                int(i32t, 0),
+                name_ptr,
+                int(i64t, name.len() as u64),
+                int(i64t, crate::runtime::object::ic::NO_SHAPE),
+                int(i64t, 0),
+                int(i64t, 0),
+                int(i32t, 0),
+                int(i32t, 0),
+                int(i32t, 0),
+                int(i32t, 0),
+            ];
+            let init = LLVMConstStructInContext(ctx, fields.as_mut_ptr(), fields.len() as u32, 0);
+            let g = LLVMAddGlobal(
+                self.cg.module,
+                LLVMTypeOf(init),
+                b"prop_cache\0".as_ptr() as _,
+            );
+            LLVMSetInitializer(g, init);
+            LLVMSetLinkage(g, LLVMLinkage::LLVMPrivateLinkage);
+            let _ = ptrt;
+            g
+        }
+    }
+
+    /// `o.name` (or `o.name = store`) through an inline cache: when `o` is
+    /// an object whose shape is the cached one, load or store its slot
+    /// here; otherwise call the runtime, which fills the cache.
+    unsafe fn cached_prop(
+        &mut self,
+        o: LLVMValueRef,
+        name: &str,
+        store: Option<LLVMValueRef>,
+    ) -> LLVMValueRef {
+        unsafe {
+            use crate::runtime::heap::NativeObject;
+            use crate::runtime::object::ic;
+            use std::mem::offset_of;
+            let ctx = self.cg.context;
+            let b = self.builder;
+            let (i64t, ptrt) = (self.i64_ty(), self.ptr_ty());
+            let i32t = LLVMInt32TypeInContext(ctx);
+            let i8t = LLVMInt8TypeInContext(ctx);
+            let cache = self.prop_cache(name);
+            let block = |this: &Self, name: &[u8]| {
+                LLVMAppendBasicBlockInContext(ctx, this.function, name.as_ptr() as _)
+            };
+            let is_ptr_bb = block(self, b"ic_ptr\0");
+            let is_obj_bb = block(self, b"ic_obj\0");
+            let hit_bb = block(self, b"ic_hit\0");
+            let miss_bb = block(self, b"ic_miss\0");
+            let join_bb = block(self, b"ic_join\0");
+            let at = |base: LLVMValueRef, offset: usize| {
+                let mut idx = [LLVMConstInt(i64t, offset as u64, 0)];
+                LLVMBuildGEP2(b, i8t, base, idx.as_mut_ptr(), 1, NONAME)
+            };
+
+            // A heap pointer: the pointer tag, and a payload that is not 0.
+            let tag = LLVMBuildAnd(b, o, self.c(0x7FFF_0000_0000_0000), NONAME);
+            let tagged = LLVMBuildICmp(b, LLVMIntPredicate::LLVMIntEQ, tag, self.c(QNAN), NONAME);
+            let addr = LLVMBuildAnd(b, o, self.c(0x0000_FFFF_FFFF_FFFF), NONAME);
+            let nonnull = LLVMBuildICmp(b, LLVMIntPredicate::LLVMIntNE, addr, self.c(0), NONAME);
+            let is_ptr = LLVMBuildAnd(b, tagged, nonnull, NONAME);
+            LLVMBuildCondBr(b, is_ptr, is_ptr_bb, miss_bb);
+
+            // An object (kind 0 in the header's first byte).
+            LLVMPositionBuilderAtEnd(b, is_ptr_bb);
+            let ptr = LLVMBuildIntToPtr(b, addr, ptrt, NONAME);
+            let kind = LLVMBuildLoad2(b, i8t, ptr, NONAME);
+            let is_obj = LLVMBuildICmp(
+                b,
+                LLVMIntPredicate::LLVMIntEQ,
+                kind,
+                LLVMConstInt(i8t, 0, 0),
+                NONAME,
+            );
+            LLVMBuildCondBr(b, is_obj, is_obj_bb, miss_bb);
+
+            // With the cached shape.
+            LLVMPositionBuilderAtEnd(b, is_obj_bb);
+            let shape = LLVMBuildLoad2(b, i64t, at(ptr, offset_of!(NativeObject, shape)), NONAME);
+            let cached = LLVMBuildLoad2(b, i64t, at(cache, ic::SHAPE_OFFSET), NONAME);
+            let same = LLVMBuildICmp(b, LLVMIntPredicate::LLVMIntEQ, shape, cached, NONAME);
+            LLVMBuildCondBr(b, same, hit_bb, miss_bb);
+
+            // The slot: `offset >= 0` bytes into the object, or `!offset`
+            // bytes into its overflow array.
+            LLVMPositionBuilderAtEnd(b, hit_bb);
+            let offset = LLVMBuildLoad2(b, i32t, at(cache, ic::OFFSET_OFFSET), NONAME);
+            let inline = LLVMBuildICmp(
+                b,
+                LLVMIntPredicate::LLVMIntSGE,
+                offset,
+                LLVMConstInt(i32t, 0, 0),
+                NONAME,
+            );
+            let overflow =
+                LLVMBuildLoad2(b, ptrt, at(ptr, offset_of!(NativeObject, overflow)), NONAME);
+            let base = LLVMBuildSelect(b, inline, ptr, overflow, NONAME);
+            let flipped = LLVMBuildNot(b, offset, NONAME);
+            let bytes = LLVMBuildSelect(b, inline, offset, flipped, NONAME);
+            let bytes = LLVMBuildZExt(b, bytes, i64t, NONAME);
+            let mut idx = [bytes];
+            let slot = LLVMBuildGEP2(b, i8t, base, idx.as_mut_ptr(), 1, NONAME);
+            let hit_value = match store {
+                Some(v) => {
+                    LLVMBuildStore(b, v, slot);
+                    self.c(UNDEFINED)
+                }
+                None => LLVMBuildLoad2(b, i64t, slot, NONAME),
+            };
+            LLVMBuildBr(b, join_bb);
+
+            LLVMPositionBuilderAtEnd(b, miss_bb);
+            let miss_value = match store {
+                Some(v) => self.rt("ot_set_prop_ic", &[o, cache, v]),
+                None => self.rt("ot_get_prop_ic", &[o, cache]),
+            };
+            self.check_exception(miss_value, self.unwind);
+            self.last_call = None;
+            let miss_end = LLVMGetInsertBlock(b);
+            LLVMBuildBr(b, join_bb);
+
+            LLVMPositionBuilderAtEnd(b, join_bb);
+            let phi = LLVMBuildPhi(b, i64t, NONAME);
+            let mut values = [hit_value, miss_value];
+            let mut blocks = [hit_bb, miss_end];
+            LLVMAddIncoming(phi, values.as_mut_ptr(), blocks.as_mut_ptr(), 2);
+            phi
+        }
+    }
+
     /// Whether a value (i64) is a number: not one of the boxed tags.
     unsafe fn is_number_bits(&self, v: LLVMValueRef) -> LLVMValueRef {
         unsafe {
@@ -1531,15 +1675,13 @@ impl Fx<'_> {
                 }
                 IrOp::GetProp(d, obj, name) => {
                     let o = self.get(*obj)?;
-                    let (p, n) = self.string(name);
-                    let r = self.rt("ot_get_prop", &[o, p, n]);
+                    let r = self.cached_prop(o, name, None);
                     self.set(*d, r);
                 }
                 IrOp::SetProp(obj, name, v) => {
                     let o = self.get(*obj)?;
                     let v = self.get(*v)?;
-                    let (p, n) = self.string(name);
-                    self.rt("ot_set_prop", &[o, p, n, v]);
+                    self.cached_prop(o, name, Some(v));
                 }
                 IrOp::GetPrivate(d, obj, name) => {
                     let o = self.get(*obj)?;
@@ -1768,8 +1910,8 @@ impl Fx<'_> {
                         .map(|a| self.get(*a))
                         .collect::<Result<_, _>>()?;
                     let (argv, argc) = self.arg_array(&vals);
-                    let (p, n) = self.string(name);
-                    let v = self.rt("ot_call_method", &[r, p, n, argv, argc]);
+                    let cache = self.prop_cache(name);
+                    let v = self.rt("ot_call_method_ic", &[r, cache, argv, argc]);
                     self.set(*d, v);
                 }
 

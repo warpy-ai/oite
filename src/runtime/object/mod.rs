@@ -4,6 +4,7 @@
 
 pub mod atom;
 pub mod dictionary;
+pub mod ic;
 #[allow(clippy::module_inception)]
 pub mod object;
 pub mod shape;

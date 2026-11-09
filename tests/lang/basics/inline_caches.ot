@@ -1,0 +1,147 @@
+// backends: vm jit aot
+// Property access sites remember the last object layout they saw. Each
+// case below changes something after a site has been used, and the site
+// must see the change.
+function getX(o) {
+  return o.x;
+}
+function setX(o, v) {
+  o.x = v;
+}
+function callM(o) {
+  return o.m();
+}
+// (Assigning a variable to a property moves it; an argument is not moved.)
+function setProto(o, p) {
+  o.__proto__ = p;
+}
+let out = [];
+
+// One site, several layouts, back and forth.
+let a = { x: 1 };
+let b = { y: 0, x: 2 };
+let c = { p: 0, q: 0, r: 0, s: 0, t: 0, x: 3 }; // x in an overflow slot
+for (let i = 0; i < 3; i++) out.push(getX(a), getX(b), getX(c));
+setX(a, 10);
+setX(b, 20);
+setX(c, 30);
+out.push(getX(a), getX(b), getX(c), getX(null === null ? { z: 1 } : a));
+console.log(out.join(" "));
+
+// Same fields, different classes: same layout, different prototypes.
+class A {
+  constructor() {
+    this.n = 1;
+  }
+  m() {
+    return "A" + this.n;
+  }
+}
+class B {
+  constructor() {
+    this.n = 2;
+  }
+  m() {
+    return "B" + this.n;
+  }
+}
+let objs = [new A(), new B(), new A(), new B()];
+out = [];
+for (let i = 0; i < objs.length; i++) out.push(callM(objs[i]));
+console.log(out.join(" "));
+
+// A method replaced, shadowed and unshadowed after the site cached it.
+class Base {
+  m() {
+    return "base";
+  }
+}
+class Mid extends Base {}
+class Leaf extends Mid {}
+let leaf = new Leaf();
+out = [callM(leaf), callM(leaf)];
+Base.prototype.m = function () {
+  return "base2";
+};
+out.push(callM(leaf));
+Mid.prototype.m = function () {
+  return "mid";
+};
+out.push(callM(leaf));
+leaf.m = function () {
+  return "own";
+};
+out.push(callM(leaf), callM(new Leaf()));
+delete leaf.m;
+out.push(callM(leaf));
+console.log(out.join(" "));
+
+// A prototype swapped on an object, and on a prototype.
+let p1 = { m() { return "p1"; }, x: "x1" };
+let p2 = { m() { return "p2"; }, x: "x2" };
+let o = { own: 1 };
+setProto(o, p1);
+out = [callM(o), getX(o)];
+setProto(o, p2);
+out.push(callM(o), getX(o));
+let child = { c: 1 };
+setProto(child, o);
+out.push(callM(child), getX(child));
+setProto(o, p1);
+out.push(callM(child), getX(child));
+console.log(out.join(" "));
+
+// A read through the prototype, then the property appears on the object.
+let proto = { x: "inherited" };
+let inst = { k: 1 };
+setProto(inst, proto);
+out = [getX(inst), getX(inst)];
+proto.x = "changed";
+out.push(getX(inst));
+setX(inst, "own");
+out.push(getX(inst), proto.x);
+console.log(out.join(" "));
+
+// Writes that add a property: a setter that appears later must be called.
+function addV(target, v) {
+  target.v = v;
+}
+class Plain {}
+let seen = [];
+let first = new Plain();
+addV(first, 1);
+let second = new Plain();
+addV(second, 2);
+class WithSetter {
+  set v(x) {
+    seen.push("set " + x);
+  }
+}
+let third = new WithSetter();
+addV(third, 3);
+setProto(Plain.prototype, WithSetter.prototype);
+let fourth = new Plain();
+addV(fourth, 4);
+console.log(first.v, second.v, third.v, fourth.v, seen.join(","));
+
+// Many objects through one constructor site, then a dictionary object.
+function Point(x, y) {
+  let pt = {};
+  pt.x = x;
+  pt.y = y;
+  return pt;
+}
+let total = 0;
+for (let i = 0; i < 1000; i++) {
+  let pt = Point(i, 2 * i);
+  total = total + getX(pt) + pt.y;
+}
+let dict = {};
+for (let i = 0; i < 100; i++) dict["k" + i] = i;
+dict.x = "in a dictionary";
+console.log(total, getX(dict), getX(7), getX("s"));
+try {
+  getX(undefined);
+} catch (e) {
+  console.log(e instanceof TypeError);
+}

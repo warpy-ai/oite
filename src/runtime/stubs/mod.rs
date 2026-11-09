@@ -20,6 +20,7 @@ use super::heap::{
     ObjectKind, heap,
 };
 use super::object::atom::{self, Atom, Role};
+use super::object::ic::{self, PropCache};
 use super::object::object;
 use super::object::shape::ACCESSOR;
 use std::cell::RefCell;
@@ -37,6 +38,7 @@ mod inspect;
 mod objects;
 mod operators;
 mod promises;
+mod prop_ic;
 mod values;
 
 pub use async_fns::*;
@@ -52,6 +54,7 @@ pub use inspect::*;
 pub use objects::*;
 pub use operators::*;
 pub use promises::*;
+pub use prop_ic::*;
 pub use values::*;
 
 #[cfg(test)]
