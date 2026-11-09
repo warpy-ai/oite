@@ -1,0 +1,11 @@
+counter.ot runs
+shapes.ot runs
+main runs
+count 0 0
+after two increments 2 2 3
+a shape of area 13 true true cm
+count after new Circle 4
+5 42
+shapes state counter state
+function 5 3
+number function

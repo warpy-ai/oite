@@ -1,0 +1,1 @@
+missing_export.ot:2:21: error: './_lib/counter.ot' has no export named 'decrement'

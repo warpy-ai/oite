@@ -1,0 +1,6 @@
+// Re-exports: renamed, everything, and an import passed on.
+export { increment as bump, count as total } from "./counter.ot";
+export * from "./shapes.ot";
+import { counterState } from "./counter.ot";
+export { counterState as stateOfCounter };
+export default 42;

@@ -1,0 +1,1 @@
+bare_specifier.ot:2:16: error: cannot import 'fs': a module is a relative path ('./fs') or a roll ('@rolls/<name>')

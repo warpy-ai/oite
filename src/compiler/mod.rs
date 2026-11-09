@@ -3,8 +3,10 @@ use std::collections::HashMap;
 use swc_ecma_ast::*;
 pub mod borrow_ck;
 pub mod diagnostic;
+pub mod modules;
 pub mod scope;
 use crate::compiler::borrow_ck::BorrowChecker;
+use crate::compiler::modules::ModuleLink;
 use crate::compiler::scope::{PARENT_PROP, SCOPE_LOCAL, ScopeInfo, VarRef};
 use crate::vm::value::JsValue;
 pub use diagnostic::{
@@ -43,61 +45,26 @@ impl Compiler {
         source: &str,
         syntax_override: Option<Syntax>,
     ) -> Result<Vec<OpCode>, CompileError> {
-        let cm: Lrc<SourceMap> = Default::default();
-        let fm = cm.new_source_file(
-            FileName::Custom("main.ot".into()).into(),
-            blank_module_directives(source),
-        );
+        let parsed = parse(source, syntax_override)?;
+        self.compile_parsed(&parsed, None)
+    }
 
-        // Determine syntax based on file extension or override
-        let syntax = syntax_override.unwrap_or_else(|| {
-            // Default to TypeScript syntax to support type annotations
-            Syntax::Typescript(Default::default())
-        });
-
-        let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
-        let mut parser = Parser::new_from(lexer);
-        let position = |span: Span| {
-            (!span.is_dummy()).then(|| {
-                let loc = cm.lookup_char_pos(span.lo);
-                Position {
-                    line: loc.line,
-                    col: loc.col_display + 1,
-                }
-            })
-        };
-        let format_parse_error = |e: swc_ecma_parser::error::Error| {
-            Diagnostic::new("syntax error", e.kind().msg(), position(e.span()))
-        };
-        let program = parser
-            .parse_program()
-            .map_err(|e| CompileError::single(format_parse_error(e)))?;
-        // The parser recovers from some errors and keeps going; those must
-        // still fail compilation instead of producing a partial program.
-        let recovered: Vec<Diagnostic> = parser
-            .take_errors()
-            .into_iter()
-            // Oite allows a top-level `return`: it sets the program's result
-            // (see `oitec jit`).
-            .filter(|e| {
-                !matches!(
-                    e.kind(),
-                    swc_ecma_parser::error::SyntaxError::ReturnNotAllowed
-                )
-            })
-            .map(format_parse_error)
-            .collect();
-        if !recovered.is_empty() {
-            return Err(CompileError {
-                diagnostics: recovered,
-            });
-        }
+    /// Compile a parsed program. With `link`, it is a module of a linked
+    /// program (`modules.rs`): its top-level names get the module's prefix
+    /// and its imports name the bindings they import.
+    pub(crate) fn compile_parsed(
+        &mut self,
+        parsed: &Parsed,
+        link: Option<ModuleLink>,
+    ) -> Result<Vec<OpCode>, CompileError> {
+        let (cm, fm, program) = (&parsed.cm, &parsed.fm, &parsed.program);
+        let position = |span: Span| position(cm, span);
 
         self.borrow_checker.error_span = None;
         self.borrow_checker.error_note = None;
         self.borrow_checker.enter_scope(); // Script vars at depth 1, globals at 0
 
-        let result = match &program {
+        let result = match program {
             Program::Module(module) => {
                 let mut result = Ok(());
                 for item in &module.body {
@@ -139,7 +106,8 @@ impl Compiler {
         }
 
         let mut codegen = Codegen::new();
-        match &program {
+        codegen.link = link;
+        match program {
             Program::Module(module) => {
                 codegen.scopes = ScopeInfo::analyze_module(module);
                 codegen.generate(module);
@@ -156,7 +124,7 @@ impl Compiler {
                 .iter()
                 .map(|(span, msg)| Diagnostic::new("error", msg.clone(), position(*span)))
                 .collect();
-            return Err(CompileError { diagnostics });
+            return Err(CompileError::new(diagnostics));
         }
 
         // Each instruction's position: the last mark at or before it.
@@ -185,6 +153,62 @@ impl Compiler {
 
         Ok(codegen.instructions)
     }
+}
+
+/// A parsed source file.
+pub(crate) struct Parsed {
+    pub cm: Lrc<SourceMap>,
+    pub fm: Lrc<swc_common::SourceFile>,
+    pub program: Program,
+}
+
+/// The line and column of `span`, if it is a real position.
+pub(crate) fn position(cm: &SourceMap, span: Span) -> Option<Position> {
+    (!span.is_dummy()).then(|| {
+        let loc = cm.lookup_char_pos(span.lo);
+        Position {
+            line: loc.line,
+            col: loc.col_display + 1,
+        }
+    })
+}
+
+/// Parse `source` (TypeScript unless `syntax` says otherwise). Syntax errors
+/// the parser recovered from fail too.
+pub(crate) fn parse(source: &str, syntax: Option<Syntax>) -> Result<Parsed, CompileError> {
+    let cm: Lrc<SourceMap> = Default::default();
+    let fm = cm.new_source_file(
+        FileName::Custom("main.ot".into()).into(),
+        blank_module_directives(source),
+    );
+    let syntax = syntax.unwrap_or_else(|| Syntax::Typescript(Default::default()));
+    let lexer = Lexer::new(syntax, Default::default(), StringInput::from(&*fm), None);
+    let mut parser = Parser::new_from(lexer);
+    let format_parse_error = |e: swc_ecma_parser::error::Error| {
+        Diagnostic::new("syntax error", e.kind().msg(), position(&cm, e.span()))
+    };
+    let program = parser
+        .parse_program()
+        .map_err(|e| CompileError::single(format_parse_error(e)))?;
+    // The parser recovers from some errors and keeps going; those must
+    // still fail compilation instead of producing a partial program.
+    let recovered: Vec<Diagnostic> = parser
+        .take_errors()
+        .into_iter()
+        // Oite allows a top-level `return`: it sets the program's result
+        // (see `oitec jit`).
+        .filter(|e| {
+            !matches!(
+                e.kind(),
+                swc_ecma_parser::error::SyntaxError::ReturnNotAllowed
+            )
+        })
+        .map(format_parse_error)
+        .collect();
+    if !recovered.is_empty() {
+        return Err(CompileError::new(recovered));
+    }
+    Ok(Parsed { cm, fm, program })
 }
 
 /// Blank out `require ./path;` lines (the `;` is optional), keeping byte
@@ -361,6 +385,9 @@ pub struct Codegen {
     /// Whether the code being generated keeps its innermost environment in
     /// `%scope` (some variable in reach is captured).
     env_active: bool,
+    /// This program is a module of a linked program (`modules.rs`): how
+    /// its top-level names and imports are named.
+    pub(crate) link: Option<ModuleLink>,
 }
 
 impl Default for Codegen {
@@ -393,6 +420,7 @@ impl Codegen {
             class_name: None,
             scopes: ScopeInfo::default(),
             env_active: false,
+            link: None,
         }
     }
 
@@ -506,8 +534,24 @@ impl Codegen {
     }
 
     /// `[] -> [value of ident]`
-    fn load_var(&mut self, ident: &Ident) {
+    /// The name a variable has in the program: a top-level binding of a
+    /// linked module has the module's prefix, and an import names the
+    /// binding it imports.
+    fn var_name(&self, ident: &Ident) -> String {
         let name = ident.sym.to_string();
+        match &self.link {
+            Some(link) if self.scopes.is_module_level(ident.span) => {
+                match link.imports.get(&name) {
+                    Some(global) => global.clone(),
+                    None => format!("{}{}", link.prefix, name),
+                }
+            }
+            _ => name,
+        }
+    }
+
+    fn load_var(&mut self, ident: &Ident) {
+        let name = self.var_name(ident);
         match self.scopes.var(ident.span) {
             VarRef::Plain => self.instructions.push(OpCode::Load(name)),
             VarRef::Env { hops } => {
@@ -519,7 +563,14 @@ impl Codegen {
 
     /// `[value] -> []`: assign to (or, with `declare`, bind) `ident`.
     fn store_var(&mut self, ident: &Ident, declare: bool) {
-        let name = ident.sym.to_string();
+        if let Some(link) = &self.link
+            && self.scopes.is_module_level(ident.span)
+            && (link.imports.contains_key(&*ident.sym) || link.namespaces.contains_key(&*ident.sym))
+        {
+            let message = format!("cannot assign to '{}': it is an import", ident.sym);
+            self.errors.push((ident.span, message));
+        }
+        let name = self.var_name(ident);
         match self.scopes.var(ident.span) {
             VarRef::Plain if declare => self.instructions.push(OpCode::Let(name)),
             VarRef::Plain => self.instructions.push(OpCode::Store(name)),
@@ -827,6 +878,9 @@ impl Codegen {
     }
 
     fn hoist_fn(&mut self, f: &swc_ecma_ast::FnDecl) {
+        if f.declare {
+            return;
+        }
         self.hoisted_fns.insert(scope::key(f.function.span));
         self.gen_fn_decl(Some(&f.ident), &f.function);
     }
@@ -1076,6 +1130,7 @@ impl Codegen {
 
     pub fn generate(&mut self, module: &Module) -> Vec<OpCode> {
         self.top_level_prologue();
+        self.namespace_imports();
         let top_stmts: Vec<Stmt> = module
             .body
             .iter()
@@ -1115,7 +1170,93 @@ impl Codegen {
         self.instructions.clone()
     }
 
+    /// `import * as ns from "m"` in a linked module: `ns` is an object of
+    /// `m`'s exports, made before the module's code runs (imports are
+    /// hoisted).
+    fn namespace_imports(&mut self) {
+        let Some(link) = &self.link else {
+            return;
+        };
+        let mut namespaces: Vec<(String, Vec<(String, String)>)> = link
+            .namespaces
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        namespaces.sort();
+        let prefix = link.prefix.clone();
+        for (local, members) in namespaces {
+            self.instructions.push(OpCode::NewObject);
+            // Each member is a getter of the binding, so it is live, as
+            // the module's own name for it is.
+            for (name, global) in members {
+                self.instructions.push(OpCode::Dup);
+                let value_idx = self.emit_function_value(Span::default(), 0);
+                let jump_idx = self.emit_jump();
+                let body_start = self.instructions.len();
+                self.patch_function_value(value_idx, body_start);
+                self.instructions.push(OpCode::Load(global));
+                self.instructions.push(OpCode::Return);
+                self.patch_jump_here(jump_idx);
+                self.instructions
+                    .push(OpCode::SetProp(format!("getter:{name}")));
+            }
+            self.instructions
+                .push(OpCode::Let(format!("{prefix}{local}")));
+        }
+    }
+
+    /// An `import` / `export` in a linked module (`modules.rs`). Imports and
+    /// re-exports were resolved when the program was linked: references
+    /// name the bindings themselves, so they compile to nothing. Only a
+    /// declaration, and `export default`'s value, make code.
+    fn gen_linked_module_decl(&mut self, decl: &ModuleDecl) {
+        let prefix = self
+            .link
+            .as_ref()
+            .map(|l| l.prefix.clone())
+            .unwrap_or_default();
+        let default_export = OpCode::Let(format!("{prefix}default"));
+        match decl {
+            ModuleDecl::ExportDecl(export_decl) => self.gen_decl(&export_decl.decl),
+            ModuleDecl::ExportDefaultDecl(export_default) => match &export_default.decl {
+                DefaultDecl::Class(class_expr) => {
+                    self.gen_class(
+                        &class_expr.class,
+                        class_expr.ident.as_ref().map(|id| id.sym.as_str()),
+                    );
+                    if let Some(ident) = &class_expr.ident {
+                        self.instructions.push(OpCode::Dup);
+                        self.store_var(ident, true);
+                    }
+                    self.instructions.push(default_export);
+                }
+                DefaultDecl::Fn(fn_expr) => {
+                    self.gen_fn_decl(fn_expr.ident.as_ref(), &fn_expr.function);
+                    if let Some(ident) = &fn_expr.ident {
+                        self.load_var(ident);
+                    }
+                    self.instructions.push(default_export);
+                }
+                DefaultDecl::TsInterfaceDecl(_) => {}
+            },
+            ModuleDecl::ExportDefaultExpr(export_default) => {
+                self.gen_expr(&export_default.expr);
+                self.instructions.push(default_export);
+            }
+            ModuleDecl::Import(_)
+            | ModuleDecl::ExportNamed(_)
+            | ModuleDecl::ExportAll(_)
+            | ModuleDecl::TsImportEquals(_)
+            | ModuleDecl::TsExportAssignment(_)
+            | ModuleDecl::TsNamespaceExport(_) => {}
+        }
+    }
+
     fn gen_module_decl(&mut self, decl: &ModuleDecl) {
+        if self.link.is_some() {
+            self.gen_linked_module_decl(decl);
+            return;
+        }
         match decl {
             ModuleDecl::ExportDecl(export_decl) => {
                 self.gen_decl(&export_decl.decl);
@@ -1336,6 +1477,10 @@ impl Codegen {
     }
 
     fn gen_decl(&mut self, decl: &Decl) {
+        // `declare ...` describes something defined elsewhere: no code.
+        if scope::is_ambient(decl) {
+            return;
+        }
         match decl {
             Decl::Fn(fn_decl) => {
                 if !self.is_hoisted(fn_decl) {
@@ -1344,13 +1489,13 @@ impl Codegen {
             }
             Decl::Class(class_decl) => {
                 self.gen_class(&class_decl.class, Some(class_decl.ident.sym.as_str()));
+                self.store_var(&class_decl.ident, true);
             }
             Decl::Var(var_decl) => {
                 self.gen_var_decl(var_decl);
             }
             Decl::TsEnum(enum_decl) => {
                 // Generate enum as a runtime object
-                let enum_name = enum_decl.id.sym.to_string();
 
                 // Create new object
                 self.instructions.push(OpCode::NewObject);
@@ -1392,8 +1537,8 @@ impl Codegen {
                     self.instructions.push(OpCode::SetProp(member_name));
                 }
 
-                // Store the enum object in a variable
-                self.instructions.push(OpCode::Store(enum_name.clone()));
+                // Bind the enum object to its name.
+                self.store_var(&enum_decl.id, true);
             }
             Decl::TsModule(_) => {
                 // TypeScript modules are compile-time only, skip
@@ -1897,6 +2042,12 @@ impl Codegen {
     }
 
     fn gen_stmt(&mut self, stmt: &Stmt) {
+        // `declare ...` describes something defined elsewhere: no code.
+        if let Stmt::Decl(d) = stmt
+            && scope::is_ambient(d)
+        {
+            return;
+        }
         let saved = std::mem::replace(&mut self.current_span, stmt.span());
         let saved_mark = std::mem::replace(&mut self.mark_span, stmt.span());
         self.mark(stmt.span());
@@ -2743,8 +2894,8 @@ impl Codegen {
                         if let Expr::Ident(id) = unary.arg.as_ref()
                             && self.scopes.var(id.span) == VarRef::Plain
                         {
-                            self.instructions
-                                .push(OpCode::TypeOfName(id.sym.to_string()));
+                            let name = self.var_name(id);
+                            self.instructions.push(OpCode::TypeOfName(name));
                         } else {
                             self.gen_expr(&unary.arg);
                             self.instructions.push(OpCode::TypeOf);

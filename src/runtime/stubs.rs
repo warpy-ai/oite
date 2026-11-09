@@ -1732,11 +1732,14 @@ pub extern "C" fn ot_builtin_object_keys(
     let target = a.first().map(|v| OtValue::from_bits(*v));
     match target.and_then(object) {
         Some((ptr, ObjectKind::Object)) => {
-            let names: Vec<String> = props(ptr)
-                .iter()
-                .filter(|(k, _)| !is_hidden_key(k))
-                .map(|(k, _)| k.clone())
-                .collect();
+            let mut names: Vec<String> = Vec::new();
+            for (k, _) in props(ptr).iter() {
+                if let Some(name) = builtins::own_key_name(k)
+                    && !names.iter().any(|n| n == name)
+                {
+                    names.push(name.to_string());
+                }
+            }
             for k in names {
                 array_push(array(out_ptr), new_string(&k));
             }

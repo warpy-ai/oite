@@ -652,6 +652,16 @@ pub fn number_to_string(n: f64) -> String {
 /// Property names that `console.log` and `Object.keys` leave out: internal
 /// ones (`__proto__`, `%parent`), private fields (`#x`) and accessors
 /// (`getter:x`, `setter:x`).
+/// The name `Object.keys` shows for a stored property key: an accessor
+/// (`getter:x`, `setter:x`) is the property `x`; internal keys are none.
+pub fn own_key_name(key: &str) -> Option<&str> {
+    let name = key
+        .strip_prefix("getter:")
+        .or_else(|| key.strip_prefix("setter:"))
+        .unwrap_or(key);
+    (!is_hidden_key(name)).then_some(name)
+}
+
 pub fn is_hidden_key(key: &str) -> bool {
     key.starts_with("__")
         || key.starts_with('%')

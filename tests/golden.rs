@@ -24,12 +24,29 @@
 //! VM does, not what is correct.
 //!
 //! Set `OITE_GOLDEN_FILTER=substr` to run only matching files.
+//!
+//! Directories whose name starts with `_` hold modules the tests import
+//! (`modules/_lib/`), not tests. `@rolls/<name>` imports resolve to the
+//! fixture rolls in `modules/_rolls/` (`OITE_ROLLS_PATH`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 const OITEC: &str = env!("CARGO_BIN_EXE_oitec");
+
+/// `oitec`, finding `@rolls/*` in the fixture rolls.
+fn oitec() -> Command {
+    let mut cmd = Command::new(OITEC);
+    let rolls = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lang/modules/_rolls");
+    cmd.env("OITE_ROLLS_PATH", rolls);
+    // Not the user's bundled rolls: tests see only the fixtures.
+    cmd.env(
+        "OITE_HOME",
+        Path::new(env!("CARGO_TARGET_TMPDIR")).join("oite-home"),
+    );
+    cmd
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Backend {
@@ -45,6 +62,13 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
+            // `_lib/`, `_rolls/`: modules the tests import, not tests.
+            if path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with('_'))
+            {
+                continue;
+            }
             collect(&path, out);
         } else if path.extension().is_some_and(|e| e == "ot") {
             out.push(path);
@@ -81,12 +105,12 @@ fn run(backend: Backend, file: &Path, scratch: &Path) -> Result<Output, String> 
     match backend {
         // Run from a scratch directory, the way a user program runs: no
         // std/prelude.ot from the repository root is picked up.
-        Backend::Vm => Command::new(OITEC)
+        Backend::Vm => oitec()
             .arg(file)
             .current_dir(scratch)
             .output()
             .map_err(|e| format!("failed to spawn oitec: {e}")),
-        Backend::Jit => Command::new(OITEC)
+        Backend::Jit => oitec()
             .arg("jit")
             .arg(file)
             .current_dir(scratch)
@@ -94,7 +118,7 @@ fn run(backend: Backend, file: &Path, scratch: &Path) -> Result<Output, String> 
             .map_err(|e| format!("failed to spawn oitec jit: {e}")),
         Backend::Aot => {
             let exe = scratch.join(file.file_stem().unwrap());
-            let build = Command::new(OITEC)
+            let build = oitec()
                 .arg("build")
                 .arg(file)
                 .arg("--release")
