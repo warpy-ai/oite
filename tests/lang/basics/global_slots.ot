@@ -1,0 +1,43 @@
+// backends: vm jit aot
+// Top-level variables: native code keeps each in a fixed slot, and the
+// runtime's lookups by name see the same value.
+function read() {
+  return [flag, nothing, empty, count, text].join(",");
+}
+let flag = false;
+let nothing = null;
+let empty = undefined;
+let count = 0;
+let text = "";
+console.log(read());
+flag = true;
+count = count + 1;
+console.log(read(), typeof flag, typeof count, typeof neverDeclared);
+
+// Read before assignment: not defined.
+function early() {
+  return later;
+}
+try {
+  early();
+} catch (e) {
+  // (Node says "Cannot access 'later' before initialization".)
+  console.log(e instanceof ReferenceError);
+}
+let later = 5;
+console.log(early());
+
+// Assigned from a function, read at the top level.
+let total = 0;
+function add(n) {
+  total = total + n;
+}
+for (let i = 0; i < 1000; i++) add(i % 3);
+console.log(total);
+
+// The runtime finds the error classes (globals of the core library).
+try {
+  null.x;
+} catch (e) {
+  console.log(e instanceof TypeError, e.name);
+}

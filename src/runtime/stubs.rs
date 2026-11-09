@@ -13,7 +13,7 @@
 //!   (see `heap::NativeFn`). Missing arguments read as `undefined`.
 //! - Names (properties, globals) are passed as a UTF-8 pointer and length.
 
-use super::abi::{EXCEPTION_BITS, OtValue};
+use super::abi::{EXCEPTION_BITS, OtValue, UNBOUND_BITS};
 use super::builtins;
 use super::builtins::is_hidden_key;
 use super::heap::{
@@ -204,7 +204,7 @@ pub extern "C" fn ot_report_uncaught() {
 /// that name (std/core/error.ot, compiled into every native program), or
 /// `{ name: kind }` marked as an error without it.
 fn error_proto(kind: &'static str) -> u64 {
-    if let Some(class) = GLOBALS.with(|g| g.borrow().get(kind).copied())
+    if let Some(class) = global(kind)
         && let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(class))
         && let Some(proto) = lookup(ptr, "prototype")
     {
@@ -234,8 +234,7 @@ fn throw_error(kind: &'static str, message: &str) -> u64 {
 /// Whether `ptr` is an error object: `Error.prototype` is on its
 /// prototype chain (or, without the error classes, the chain is marked).
 fn is_error(ptr: HeapPtr) -> bool {
-    let error_proto = GLOBALS
-        .with(|g| g.borrow().get("Error").copied())
+    let error_proto = global("Error")
         .and_then(|c| object(OtValue::from_bits(c)))
         .and_then(|(c, _)| lookup(c, "prototype"));
     if let Some(target) = error_proto {
@@ -653,7 +652,7 @@ pub extern "C" fn ot_in(key: u64, obj: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_instanceof(value: u64, ctor: u64) -> u64 {
     // `x instanceof Object` holds for every object.
-    if GLOBALS.with(|g| g.borrow().get("Object").copied()) == Some(ctor) {
+    if global("Object") == Some(ctor) {
         return boolean(
             matches!(object(OtValue::from_bits(value)), Some((_, kind)) if kind != ObjectKind::String),
         );
@@ -955,6 +954,33 @@ pub extern "C" fn ot_array_push(arr: u64, value: u64) -> u64 {
 
 thread_local! {
     static GLOBALS: RefCell<HashMap<String, u64>> = RefCell::new(initial_globals());
+    /// The slots native code keeps the program's global variables in, by
+    /// name: compiled code reads and writes them directly, and every lookup
+    /// by name here sees the same value.
+    static GLOBAL_SLOTS: RefCell<HashMap<String, *mut u64>> = RefCell::new(HashMap::new());
+}
+
+/// The global `name`: its slot once assigned, else the runtime's own
+/// globals (`console`, `Math`, ...). `None`: not defined.
+fn global(name: &str) -> Option<u64> {
+    let slot = GLOBAL_SLOTS.with(|s| s.borrow().get(name).copied());
+    if let Some(slot) = slot {
+        let v = unsafe { *slot };
+        if v != UNBOUND_BITS {
+            return Some(v);
+        }
+    }
+    GLOBALS.with(|g| g.borrow().get(name).copied())
+}
+
+/// Register the slot that holds the global variable `key` (at program
+/// start, before any code runs). It holds `UNBOUND_BITS` until assigned.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_register_global(key: *const u8, key_len: usize, slot: *mut u64) {
+    let key = unsafe { name(key, key_len) };
+    GLOBAL_SLOTS.with(|s| {
+        s.borrow_mut().insert(key.to_string(), slot);
+    });
 }
 
 fn builtin(code: NativeFn) -> u64 {
@@ -1017,7 +1043,7 @@ fn initial_globals() -> HashMap<String, u64> {
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_get_global(key: *const u8, key_len: usize) -> u64 {
     let key = unsafe { name(key, key_len) };
-    match GLOBALS.with(|g| g.borrow().get(key).copied()) {
+    match global(key) {
         Some(v) => v,
         None => throw_error("ReferenceError", &format!("{key} is not defined")),
     }
@@ -1027,7 +1053,7 @@ pub extern "C" fn ot_get_global(key: *const u8, key_len: usize) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_typeof_global(key: *const u8, key_len: usize) -> u64 {
     let key = unsafe { name(key, key_len) };
-    match GLOBALS.with(|g| g.borrow().get(key).copied()) {
+    match global(key) {
         Some(v) => ot_typeof(v),
         None => new_string("undefined"),
     }
@@ -1037,9 +1063,12 @@ pub extern "C" fn ot_typeof_global(key: *const u8, key_len: usize) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_set_global(key: *const u8, key_len: usize, value: u64) -> u64 {
     let key = unsafe { name(key, key_len) };
-    GLOBALS.with(|g| {
-        g.borrow_mut().insert(key.to_string(), value);
-    });
+    match GLOBAL_SLOTS.with(|s| s.borrow().get(key).copied()) {
+        Some(slot) => unsafe { *slot = value },
+        None => GLOBALS.with(|g| {
+            g.borrow_mut().insert(key.to_string(), value);
+        }),
+    }
     undefined()
 }
 

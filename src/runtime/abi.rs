@@ -41,6 +41,13 @@ const TAG_EXCEPTION: u64 = 0x0004_0000_0000_0000;
 /// compares every result that may throw against it (`backend` codegen).
 pub const EXCEPTION_BITS: u64 = QNAN | TAG_EXCEPTION;
 
+/// Not a value: what a global variable's slot in native code holds until the
+/// variable is assigned (`stubs::ot_register_global`). A pointer to address
+/// 1, where no object can be; it never leaves a slot. (A new tag would not
+/// do: the tag nibble shares bits with `QNAN`, so only tags 0 to 3 are
+/// distinct.)
+pub const UNBOUND_BITS: u64 = QNAN | TAG_POINTER | 1;
+
 /// A NaN-boxed value that can represent any tscl runtime value.
 ///
 /// This is the primary value type used by native-compiled code.
@@ -393,6 +400,20 @@ mod vm_interop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unbound_is_no_value() {
+        for v in [
+            OtValue::boolean(false),
+            OtValue::boolean(true),
+            OtValue::null(),
+            OtValue::undefined(),
+        ] {
+            assert_ne!(v.to_bits(), UNBOUND_BITS);
+        }
+        assert_ne!(UNBOUND_BITS, EXCEPTION_BITS);
+        assert!(!OtValue::from_bits(UNBOUND_BITS).is_number());
+    }
 
     #[test]
     fn test_number_roundtrip() {
