@@ -1,0 +1,13 @@
+declare function __intrinsic_byte_at(s: string, i: number): number;
+declare function __intrinsic_byte_length(s: string): number;
+function count(s, c) {
+  let n = __intrinsic_byte_length(s);
+  let k = 0;
+  for (let i = 0; i < n; i++) { if (__intrinsic_byte_at(s, i) === c) k++; }
+  return k;
+}
+let s = "";
+for (let i = 0; i < 2000; i++) { s = s + "abcde"; }
+let t = 0;
+for (let r = 0; r < 1000; r++) { t = t + count(s, 99); }
+console.log(t);

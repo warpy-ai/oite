@@ -1,0 +1,6 @@
+function run(n) {
+  let sum = 0;
+  for (let i = 0; i < n; i++) { sum = sum + i * i; if (sum > 1000003) { sum = sum - 1000003; } }
+  return sum;
+}
+console.log(run(50000000));

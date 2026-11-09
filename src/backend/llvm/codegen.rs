@@ -322,6 +322,7 @@ impl LlvmCodegen {
                 site: None,
                 trace_blocks: HashMap::new(),
                 di_scope: None,
+                unwind: None,
             };
             // Debug info: the function, and where its code starts.
             let linkage = if func.name == "main" {
@@ -342,6 +343,7 @@ impl LlvmCodegen {
             for block in &func.blocks {
                 LLVMPositionBuilderAtEnd(fx.builder, fx.blocks[&block.id]);
                 fx.site = None;
+                fx.unwind = block.unwind;
                 for op in &block.ops {
                     fx.last_call = None;
                     fx.op(op)?;
@@ -436,6 +438,8 @@ struct Fx<'a> {
     trace_blocks: HashMap<(Option<u32>, LLVMBasicBlockRef), LLVMBasicBlockRef>,
     /// This function's debug info, with `--debug`.
     di_scope: Option<super::debug::FunctionScope>,
+    /// The unwind target of the block being compiled.
+    unwind: Option<BlockId>,
 }
 
 impl Fx<'_> {
@@ -793,6 +797,76 @@ impl Fx<'_> {
         }
     }
 
+    /// Whether a value (i64) is a number: not one of the boxed tags.
+    unsafe fn is_number_bits(&self, v: LLVMValueRef) -> LLVMValueRef {
+        unsafe {
+            const QNAN: u64 = 0x7FFC_0000_0000_0000;
+            let masked = LLVMBuildAnd(self.builder, v, self.c(QNAN), NONAME);
+            LLVMBuildICmp(
+                self.builder,
+                LLVMIntPredicate::LLVMIntNE,
+                masked,
+                self.c(QNAN),
+                NONAME,
+            )
+        }
+    }
+
+    /// `a op b` on values of unknown type: inline floating point when both
+    /// turn out to be numbers, else the runtime (which may throw).
+    unsafe fn any_arith(
+        &mut self,
+        dst: ValueId,
+        a: ValueId,
+        b: ValueId,
+        build: unsafe extern "C" fn(
+            LLVMBuilderRef,
+            LLVMValueRef,
+            LLVMValueRef,
+            *const c_char,
+        ) -> LLVMValueRef,
+        stub: &str,
+    ) -> Result<(), BackendError> {
+        unsafe {
+            if self.is_num(a) && self.is_num(b) {
+                return self.num_binop(dst, a, b, build);
+            }
+            let (x, y) = (self.get(a)?, self.get(b)?);
+            let ctx = self.cg.context;
+            let fast = LLVMAppendBasicBlockInContext(ctx, self.function, b"num\0".as_ptr() as _);
+            let slow = LLVMAppendBasicBlockInContext(ctx, self.function, b"any\0".as_ptr() as _);
+            let join = LLVMAppendBasicBlockInContext(ctx, self.function, b"join\0".as_ptr() as _);
+            let both = LLVMBuildAnd(
+                self.builder,
+                self.is_number_bits(x),
+                self.is_number_bits(y),
+                NONAME,
+            );
+            LLVMBuildCondBr(self.builder, both, fast, slow);
+
+            LLVMPositionBuilderAtEnd(self.builder, fast);
+            let r = build(self.builder, self.to_f64(x), self.to_f64(y), NONAME);
+            let fast_value = self.from_f64(r);
+            let fast_end = LLVMGetInsertBlock(self.builder);
+            LLVMBuildBr(self.builder, join);
+
+            LLVMPositionBuilderAtEnd(self.builder, slow);
+            let slow_value = self.rt(stub, &[x, y]);
+            self.check_exception(slow_value, self.unwind);
+            self.last_call = None;
+            let slow_end = LLVMGetInsertBlock(self.builder);
+            LLVMBuildBr(self.builder, join);
+
+            LLVMPositionBuilderAtEnd(self.builder, join);
+            let phi = LLVMBuildPhi(self.builder, self.i64_ty(), NONAME);
+            let mut values = [fast_value, slow_value];
+            let mut blocks = [fast_end, slow_end];
+            LLVMAddIncoming(phi, values.as_mut_ptr(), blocks.as_mut_ptr(), 2);
+            self.set(dst, phi);
+            Ok(())
+        }
+    }
+
     /// A comparison: inline when both operands are numbers, else the runtime.
     unsafe fn compare(
         &mut self,
@@ -811,7 +885,38 @@ impl Fx<'_> {
                 self.set(dst, r);
                 Ok(())
             } else {
-                self.rt_binop(dst, stub, a, b)
+                // Inline when both turn out to be numbers.
+                let (x, y) = (self.get(a)?, self.get(b)?);
+                let ctx = self.cg.context;
+                let fast =
+                    LLVMAppendBasicBlockInContext(ctx, self.function, b"num\0".as_ptr() as _);
+                let slow =
+                    LLVMAppendBasicBlockInContext(ctx, self.function, b"any\0".as_ptr() as _);
+                let join =
+                    LLVMAppendBasicBlockInContext(ctx, self.function, b"join\0".as_ptr() as _);
+                let both = LLVMBuildAnd(
+                    self.builder,
+                    self.is_number_bits(x),
+                    self.is_number_bits(y),
+                    NONAME,
+                );
+                LLVMBuildCondBr(self.builder, both, fast, slow);
+                LLVMPositionBuilderAtEnd(self.builder, fast);
+                let cmp = LLVMBuildFCmp(self.builder, pred, self.to_f64(x), self.to_f64(y), NONAME);
+                let fast_value = self.box_bool(cmp);
+                let fast_end = LLVMGetInsertBlock(self.builder);
+                LLVMBuildBr(self.builder, join);
+                LLVMPositionBuilderAtEnd(self.builder, slow);
+                let slow_value = self.rt(stub, &[x, y]);
+                let slow_end = LLVMGetInsertBlock(self.builder);
+                LLVMBuildBr(self.builder, join);
+                LLVMPositionBuilderAtEnd(self.builder, join);
+                let phi = LLVMBuildPhi(self.builder, self.i64_ty(), NONAME);
+                let mut values = [fast_value, slow_value];
+                let mut blocks = [fast_end, slow_end];
+                LLVMAddIncoming(phi, values.as_mut_ptr(), blocks.as_mut_ptr(), 2);
+                self.set(dst, phi);
+                Ok(())
             }
         }
     }
@@ -843,11 +948,21 @@ impl Fx<'_> {
                 }
 
                 // Everything else: the runtime.
-                IrOp::AddAny(d, a, b) => self.rt_binop(*d, "ot_add_any", *a, *b)?,
-                IrOp::SubAny(d, a, b) => self.rt_binop(*d, "ot_sub_any", *a, *b)?,
-                IrOp::MulAny(d, a, b) => self.rt_binop(*d, "ot_mul_any", *a, *b)?,
-                IrOp::DivAny(d, a, b) => self.rt_binop(*d, "ot_div_any", *a, *b)?,
-                IrOp::ModAny(d, a, b) => self.rt_binop(*d, "ot_mod_any", *a, *b)?,
+                IrOp::AddAny(d, a, b) => {
+                    self.any_arith(*d, *a, *b, LLVMBuildFAdd, "ot_add_any")?
+                }
+                IrOp::SubAny(d, a, b) => {
+                    self.any_arith(*d, *a, *b, LLVMBuildFSub, "ot_sub_any")?
+                }
+                IrOp::MulAny(d, a, b) => {
+                    self.any_arith(*d, *a, *b, LLVMBuildFMul, "ot_mul_any")?
+                }
+                IrOp::DivAny(d, a, b) => {
+                    self.any_arith(*d, *a, *b, LLVMBuildFDiv, "ot_div_any")?
+                }
+                IrOp::ModAny(d, a, b) => {
+                    self.any_arith(*d, *a, *b, LLVMBuildFRem, "ot_mod_any")?
+                }
                 IrOp::Pow(d, a, b) => self.rt_binop(*d, "ot_pow", *a, *b)?,
                 IrOp::BitAnd(d, a, b) => self.rt_binop(*d, "ot_bit_and", *a, *b)?,
                 IrOp::BitOr(d, a, b) => self.rt_binop(*d, "ot_bit_or", *a, *b)?,
