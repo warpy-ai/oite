@@ -237,6 +237,7 @@ impl CraneliftCodegen {
                     env: None,
                     this: None,
                     last_call: None,
+                    unwind: None,
                     exception_return: None,
                     args: None,
                     frame: None,
@@ -316,6 +317,8 @@ struct Fx<'a> {
     /// Result of the last call emitted: what an op that can throw is
     /// checked against `EXCEPTION_BITS`.
     last_call: Option<Value>,
+    /// The unwind target of the block being compiled.
+    unwind: Option<BlockId>,
     /// Block returning `EXCEPTION_BITS`, for exceptions no `catch` in this
     /// function handles.
     exception_return: Option<Block>,
@@ -577,6 +580,7 @@ impl Fx<'_> {
         for block in &func.blocks {
             b.switch_to_block(self.blocks[&block.id]);
             self.site = None;
+            self.unwind = block.unwind;
             for op in &block.ops {
                 self.last_call = None;
                 self.op(b, op)?;
@@ -662,6 +666,146 @@ impl Fx<'_> {
         Ok(())
     }
 
+    /// Whether both values are numbers: neither has the boxed tag pattern.
+    fn both_numbers(b: &mut FunctionBuilder, x: Value, y: Value) -> Value {
+        const QNAN: i64 = 0x7FFC_0000_0000_0000;
+        let mx = b.ins().band_imm(x, QNAN);
+        let my = b.ins().band_imm(y, QNAN);
+        let nx = b.ins().icmp_imm(IntCC::NotEqual, mx, QNAN);
+        let ny = b.ins().icmp_imm(IntCC::NotEqual, my, QNAN);
+        b.ins().band(nx, ny)
+    }
+
+    /// `x op y` on values of unknown type: `fast` inline when both turn out
+    /// to be numbers, else the runtime function `stub` (checked for an
+    /// exception when `throws`).
+    #[allow(clippy::too_many_arguments)]
+    fn any_binop(
+        &mut self,
+        b: &mut FunctionBuilder,
+        dst: ValueId,
+        x: ValueId,
+        y: ValueId,
+        stub: &str,
+        throws: bool,
+        fast: &dyn Fn(&mut FunctionBuilder, Value, Value) -> Value,
+    ) -> Result<(), BackendError> {
+        let xv = self.get(x)?;
+        let yv = self.get(y)?;
+        let num = b.create_block();
+        let any = b.create_block();
+        let join = b.create_block();
+        b.append_block_param(join, types::I64);
+        let both = Self::both_numbers(b, xv, yv);
+        b.ins().brif(both, num, &[], any, &[]);
+
+        b.switch_to_block(num);
+        b.seal_block(num);
+        let r = fast(b, xv, yv);
+        b.ins().jump(join, &[r]);
+
+        b.switch_to_block(any);
+        b.seal_block(any);
+        let r = self.rt_v(b, stub, &[xv, yv]);
+        if throws {
+            let unwind = self.unwind;
+            self.check_exception(b, r, unwind);
+        }
+        self.last_call = None;
+        b.ins().jump(join, &[r]);
+
+        b.switch_to_block(join);
+        b.seal_block(join);
+        let r = b.block_params(join)[0];
+        self.values.insert(dst, r);
+        Ok(())
+    }
+
+    /// Arithmetic on values of unknown type: floating point inline when both
+    /// are numbers.
+    fn any_arith(
+        &mut self,
+        b: &mut FunctionBuilder,
+        dst: ValueId,
+        x: ValueId,
+        y: ValueId,
+        stub: &str,
+        f: fn(&mut FunctionBuilder, Value, Value) -> Value,
+    ) -> Result<(), BackendError> {
+        if self.is_num(x) && self.is_num(y) {
+            return self.num_binop(b, dst, x, y, f);
+        }
+        self.any_binop(b, dst, x, y, stub, true, &|b, p, q| {
+            let pf = Self::to_f64(b, p);
+            let qf = Self::to_f64(b, q);
+            let r = f(b, pf, qf);
+            Self::from_f64(b, r)
+        })
+    }
+
+    /// JavaScript `x % y`. When both are numbers, both are integers below
+    /// 2^53 and `y` is not 0, an integer remainder with the sign of `x`
+    /// (`fcopysign` also gives `-0`); otherwise the runtime (Cranelift has no
+    /// floating-point remainder).
+    fn js_mod(
+        &mut self,
+        b: &mut FunctionBuilder,
+        dst: ValueId,
+        x: ValueId,
+        y: ValueId,
+    ) -> Result<(), BackendError> {
+        let xv = self.get(x)?;
+        let yv = self.get(y)?;
+        let xf = Self::to_f64(b, xv);
+        let yf = Self::to_f64(b, yv);
+        let exact = |b: &mut FunctionBuilder, f: Value| -> (Value, Value) {
+            const LIMIT: i64 = 1 << 53;
+            let i = b.ins().fcvt_to_sint_sat(types::I64, f);
+            let back = b.ins().fcvt_from_sint(types::F64, i);
+            let same = b.ins().fcmp(FloatCC::Equal, back, f);
+            let lo = b.ins().icmp_imm(IntCC::SignedGreaterThan, i, -LIMIT);
+            let hi = b.ins().icmp_imm(IntCC::SignedLessThan, i, LIMIT);
+            let ok = b.ins().band(same, lo);
+            (i, b.ins().band(ok, hi))
+        };
+        let (xi, xok) = exact(b, xf);
+        let (yi, yok) = exact(b, yf);
+        let nonzero = b.ins().icmp_imm(IntCC::NotEqual, yi, 0);
+        let mut ints = b.ins().band(xok, yok);
+        ints = b.ins().band(ints, nonzero);
+        if !(self.is_num(x) && self.is_num(y)) {
+            let both = Self::both_numbers(b, xv, yv);
+            ints = b.ins().band(ints, both);
+        }
+        let int_blk = b.create_block();
+        let any_blk = b.create_block();
+        let join = b.create_block();
+        b.append_block_param(join, types::I64);
+        b.ins().brif(ints, int_blk, &[], any_blk, &[]);
+
+        b.switch_to_block(int_blk);
+        b.seal_block(int_blk);
+        let r = b.ins().srem(xi, yi);
+        let rf = b.ins().fcvt_from_sint(types::F64, r);
+        let rf = b.ins().fcopysign(rf, xf);
+        let r = Self::from_f64(b, rf);
+        b.ins().jump(join, &[r]);
+
+        b.switch_to_block(any_blk);
+        b.seal_block(any_blk);
+        let r = self.rt_v(b, "ot_mod_any", &[xv, yv]);
+        let unwind = self.unwind;
+        self.check_exception(b, r, unwind);
+        self.last_call = None;
+        b.ins().jump(join, &[r]);
+
+        b.switch_to_block(join);
+        b.seal_block(join);
+        let r = b.block_params(join)[0];
+        self.values.insert(dst, r);
+        Ok(())
+    }
+
     fn compare(
         &mut self,
         b: &mut FunctionBuilder,
@@ -681,7 +825,13 @@ impl Fx<'_> {
             self.values.insert(dst, r);
             Ok(())
         } else {
-            self.rt_binop(b, dst, stub, x, y)
+            // Inline when both turn out to be numbers.
+            self.any_binop(b, dst, x, y, stub, true, &|b, p, q| {
+                let pf = Self::to_f64(b, p);
+                let qf = Self::to_f64(b, q);
+                let cmp = b.ins().fcmp(cc, pf, qf);
+                Self::box_bool(b, cmp)
+            })
         }
     }
 
@@ -696,8 +846,7 @@ impl Fx<'_> {
             IrOp::SubNum(d, x, y) => self.num_binop(b, *d, *x, *y, |b, p, q| b.ins().fsub(p, q))?,
             IrOp::MulNum(d, x, y) => self.num_binop(b, *d, *x, *y, |b, p, q| b.ins().fmul(p, q))?,
             IrOp::DivNum(d, x, y) => self.num_binop(b, *d, *x, *y, |b, p, q| b.ins().fdiv(p, q))?,
-            // Cranelift has no frem; the runtime computes `%` exactly as LLVM's frem.
-            IrOp::ModNum(d, x, y) => self.rt_binop(b, *d, "ot_mod_any", *x, *y)?,
+            IrOp::ModNum(d, x, y) | IrOp::ModAny(d, x, y) => self.js_mod(b, *d, *x, *y)?,
             IrOp::NegNum(d, x) => {
                 let v = self.get(*x)?;
                 let f = Self::to_f64(b, v);
@@ -706,11 +855,18 @@ impl Fx<'_> {
                 self.values.insert(*d, r);
             }
 
-            IrOp::AddAny(d, x, y) => self.rt_binop(b, *d, "ot_add_any", *x, *y)?,
-            IrOp::SubAny(d, x, y) => self.rt_binop(b, *d, "ot_sub_any", *x, *y)?,
-            IrOp::MulAny(d, x, y) => self.rt_binop(b, *d, "ot_mul_any", *x, *y)?,
-            IrOp::DivAny(d, x, y) => self.rt_binop(b, *d, "ot_div_any", *x, *y)?,
-            IrOp::ModAny(d, x, y) => self.rt_binop(b, *d, "ot_mod_any", *x, *y)?,
+            IrOp::AddAny(d, x, y) => {
+                self.any_arith(b, *d, *x, *y, "ot_add_any", |b, p, q| b.ins().fadd(p, q))?
+            }
+            IrOp::SubAny(d, x, y) => {
+                self.any_arith(b, *d, *x, *y, "ot_sub_any", |b, p, q| b.ins().fsub(p, q))?
+            }
+            IrOp::MulAny(d, x, y) => {
+                self.any_arith(b, *d, *x, *y, "ot_mul_any", |b, p, q| b.ins().fmul(p, q))?
+            }
+            IrOp::DivAny(d, x, y) => {
+                self.any_arith(b, *d, *x, *y, "ot_div_any", |b, p, q| b.ins().fdiv(p, q))?
+            }
             IrOp::Pow(d, x, y) => self.rt_binop(b, *d, "ot_pow", *x, *y)?,
             IrOp::BitAnd(d, x, y) => self.rt_binop(b, *d, "ot_bit_and", *x, *y)?,
             IrOp::BitOr(d, x, y) => self.rt_binop(b, *d, "ot_bit_or", *x, *y)?,
