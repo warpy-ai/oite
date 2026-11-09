@@ -1,0 +1,20 @@
+// Binary trees from the Benchmarks Game: allocation and recursion.
+function make(depth) {
+  if (depth === 0) return { left: null, right: null };
+  return { left: make(depth - 1), right: make(depth - 1) };
+}
+function check(t) {
+  if (t.left === null) return 1;
+  return 1 + check(t.left) + check(t.right);
+}
+function run(maxDepth) {
+  let total = check(make(maxDepth + 1));
+  let longLived = make(maxDepth);
+  for (let d = 4; d <= maxDepth; d = d + 2) {
+    let iterations = 1;
+    for (let k = 0; k < maxDepth - d + 4; k++) iterations = iterations * 2;
+    for (let i = 0; i < iterations; i++) total = total + check(make(d));
+  }
+  return total + check(longLived);
+}
+console.log(run(16));

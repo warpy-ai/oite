@@ -1,0 +1,7 @@
+// Many short-lived small objects.
+function run(n) {
+  let sum = 0;
+  for (let i = 0; i < n; i++) { let p = { x: i, y: i + 1 }; sum = sum + p.x + p.y; }
+  return sum;
+}
+console.log(run(5000000));

@@ -20,6 +20,7 @@ const sidebars: SidebarsConfig = {
     "javascript-interop",
     "ecmascript-conformance",
     "platform-architecture",
+    "performance",
     "development-status",
     "contributing",
   ],
