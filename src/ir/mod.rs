@@ -565,6 +565,9 @@ pub enum IrOp {
     /// Spread into an object literal: dst = target after copying src's own
     /// properties
     ObjectSpread(ValueId, ValueId, ValueId),
+    /// `Math.<f>(args...)` when the program never assigns `Math`: `f` an
+    /// index into `runtime::builtins::MATH_FUNCTIONS`
+    MathCall(ValueId, u32, Vec<ValueId>),
     /// Intrinsic: dst = __intrinsic_<name>(args...), `id` an index into
     /// `runtime::intrinsics::INTRINSICS`
     Intrinsic(ValueId, u32, Vec<ValueId>),
@@ -648,6 +651,12 @@ impl IrOp {
                 | IrOp::DivAny(_, _, _)
                 | IrOp::ModAny(_, _, _)
                 | IrOp::Pow(_, _, _)
+                | IrOp::BitAnd(_, _, _)
+                | IrOp::BitOr(_, _, _)
+                | IrOp::Xor(_, _, _)
+                | IrOp::Shl(_, _, _)
+                | IrOp::Shr(_, _, _)
+                | IrOp::ShrU(_, _, _)
                 | IrOp::Lt(_, _, _)
                 | IrOp::LtEq(_, _, _)
                 | IrOp::Gt(_, _, _)
@@ -662,6 +671,7 @@ impl IrOp {
                 | IrOp::Call(_, _, _)
                 | IrOp::CallMethod(_, _, _, _)
                 | IrOp::Intrinsic(_, _, _)
+                | IrOp::MathCall(_, _, _)
                 | IrOp::ArraySpread(_, _, _)
                 | IrOp::ObjectSpread(_, _, _)
                 | IrOp::Throw(_)
@@ -739,6 +749,7 @@ impl IrOp {
             | IrOp::GetSuperProp(d, _, _, _)
             | IrOp::CallMethod(d, _, _, _)
             | IrOp::Intrinsic(d, _, _)
+            | IrOp::MathCall(d, _, _)
             | IrOp::ArraySpread(d, _, _)
             | IrOp::ObjectSpread(d, _, _)
             | IrOp::MakeClosure(d, _, _)
@@ -899,7 +910,9 @@ impl IrOp {
                 uses.extend(args.iter().copied());
                 uses
             }
-            IrOp::CallMono(_, _, args) | IrOp::Intrinsic(_, _, args) => args.clone(),
+            IrOp::CallMono(_, _, args)
+            | IrOp::Intrinsic(_, _, args)
+            | IrOp::MathCall(_, _, args) => args.clone(),
             IrOp::MakeClosure(_, _, env) => vec![*env],
 
             IrOp::Phi(_, entries) => entries.iter().map(|(_, v)| *v).collect(),
@@ -1466,6 +1479,14 @@ impl fmt::Display for IrOp {
             }
             IrOp::ArraySpread(d, t, s) => write!(f, "{} = array.spread {}, {}", d, t, s),
             IrOp::ObjectSpread(d, t, s) => write!(f, "{} = object.spread {}, {}", d, t, s),
+            IrOp::MathCall(d, func, args) => {
+                let args: Vec<_> = args.iter().map(|a| a.to_string()).collect();
+                let name = crate::runtime::builtins::MATH_FUNCTIONS
+                    .get(*func as usize)
+                    .copied()
+                    .unwrap_or("?");
+                write!(f, "{} = math.{}({})", d, name, args.join(", "))
+            }
             IrOp::Intrinsic(d, id, args) => {
                 let args: Vec<_> = args.iter().map(|a| a.to_string()).collect();
                 let name = crate::runtime::intrinsics::INTRINSICS

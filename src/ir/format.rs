@@ -200,6 +200,7 @@ fn serialize_op(output: &mut String, op: &IrOp) {
         | IrOp::Loc(_)
         | IrOp::RestArgs(_, _)
         | IrOp::Intrinsic(_, _, _)
+        | IrOp::MathCall(_, _, _)
         | IrOp::ArraySpread(_, _, _)
         | IrOp::ObjectSpread(_, _, _)
         | IrOp::GetSuperProp(_, _, _, _) => output.push_str(&op.to_string()),

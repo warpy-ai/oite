@@ -34,6 +34,17 @@ const TRUE: u64 = QNAN | TAG_BOOLEAN | 1;
 
 const NONAME: *const c_char = b"\0".as_ptr() as *const c_char;
 
+/// A bitwise operator on 32-bit integers.
+#[derive(Clone, Copy)]
+enum IntOp {
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
+    ShrU,
+}
+
 /// LLVM code generator for AOT compilation
 pub struct LlvmCodegen {
     pub context: LLVMContextRef,
@@ -941,6 +952,215 @@ impl Fx<'_> {
         }
     }
 
+    /// A number's `ToInt32` as an i32, and whether the fast conversion
+    /// holds: the number is below 2^63 in magnitude (so its integer part
+    /// fits an i64; NaN and the infinities do not pass).
+    unsafe fn int32_of(&mut self, f: LLVMValueRef) -> (LLVMValueRef, LLVMValueRef) {
+        unsafe {
+            let i64t = self.i64_ty();
+            let f64t = self.f64_ty();
+            let limit = 9_223_372_036_854_775_808.0_f64;
+            let i = self.call_intrinsic(b"llvm.fptosi.sat", &[i64t, f64t], i64t, &mut [f]);
+            let lo = LLVMBuildFCmp(
+                self.builder,
+                LLVMRealPredicate::LLVMRealOGT,
+                f,
+                LLVMConstReal(f64t, -limit),
+                NONAME,
+            );
+            let hi = LLVMBuildFCmp(
+                self.builder,
+                LLVMRealPredicate::LLVMRealOLT,
+                f,
+                LLVMConstReal(f64t, limit),
+                NONAME,
+            );
+            let ok = LLVMBuildAnd(self.builder, lo, hi, NONAME);
+            let i32t = LLVMInt32TypeInContext(self.cg.context);
+            (LLVMBuildTrunc(self.builder, i, i32t, NONAME), ok)
+        }
+    }
+
+    /// A bitwise operator: inline on 32-bit integers when both operands are
+    /// numbers below 2^63, else the runtime (`valueOf` may throw).
+    unsafe fn int_binop(
+        &mut self,
+        dst: ValueId,
+        a: ValueId,
+        b: ValueId,
+        op: IntOp,
+        stub: &str,
+    ) -> Result<(), BackendError> {
+        unsafe {
+            let (x, y) = (self.get(a)?, self.get(b)?);
+            let (xi, xok) = self.int32_of(self.to_f64(x));
+            let (yi, yok) = self.int32_of(self.to_f64(y));
+            let mut fast_ok = LLVMBuildAnd(self.builder, xok, yok, NONAME);
+            if !(self.is_num(a) && self.is_num(b)) {
+                let both = LLVMBuildAnd(
+                    self.builder,
+                    self.is_number_bits(x),
+                    self.is_number_bits(y),
+                    NONAME,
+                );
+                fast_ok = LLVMBuildAnd(self.builder, fast_ok, both, NONAME);
+            }
+            let ctx = self.cg.context;
+            let fast = LLVMAppendBasicBlockInContext(ctx, self.function, b"int\0".as_ptr() as _);
+            let slow =
+                LLVMAppendBasicBlockInContext(ctx, self.function, b"int_any\0".as_ptr() as _);
+            let join =
+                LLVMAppendBasicBlockInContext(ctx, self.function, b"int_join\0".as_ptr() as _);
+            LLVMBuildCondBr(self.builder, fast_ok, fast, slow);
+
+            LLVMPositionBuilderAtEnd(self.builder, fast);
+            let i32t = LLVMInt32TypeInContext(ctx);
+            let bld = self.builder;
+            let shift = || LLVMBuildAnd(bld, yi, LLVMConstInt(i32t, 31, 0), NONAME);
+            let r = match op {
+                IntOp::And => LLVMBuildAnd(bld, xi, yi, NONAME),
+                IntOp::Or => LLVMBuildOr(bld, xi, yi, NONAME),
+                IntOp::Xor => LLVMBuildXor(bld, xi, yi, NONAME),
+                IntOp::Shl => LLVMBuildShl(bld, xi, shift(), NONAME),
+                IntOp::Shr => LLVMBuildAShr(bld, xi, shift(), NONAME),
+                IntOp::ShrU => LLVMBuildLShr(bld, xi, shift(), NONAME),
+            };
+            let rf = if matches!(op, IntOp::ShrU) {
+                LLVMBuildUIToFP(bld, r, self.f64_ty(), NONAME)
+            } else {
+                LLVMBuildSIToFP(bld, r, self.f64_ty(), NONAME)
+            };
+            let fast_value = self.from_f64(rf);
+            let fast_end = LLVMGetInsertBlock(self.builder);
+            LLVMBuildBr(self.builder, join);
+
+            LLVMPositionBuilderAtEnd(self.builder, slow);
+            let slow_value = self.rt(stub, &[x, y]);
+            self.check_exception(slow_value, self.unwind);
+            self.last_call = None;
+            let slow_end = LLVMGetInsertBlock(self.builder);
+            LLVMBuildBr(self.builder, join);
+
+            LLVMPositionBuilderAtEnd(self.builder, join);
+            let phi = LLVMBuildPhi(self.builder, self.i64_ty(), NONAME);
+            let mut values = [fast_value, slow_value];
+            let mut blocks = [fast_end, slow_end];
+            LLVMAddIncoming(phi, values.as_mut_ptr(), blocks.as_mut_ptr(), 2);
+            self.set(dst, phi);
+            Ok(())
+        }
+    }
+
+    /// `Math.<f>` computed inline on doubles, for the functions with a
+    /// machine instruction: `None` for the others, or a wrong argument count.
+    unsafe fn math_inline(&mut self, name: &str, xs: &[LLVMValueRef]) -> Option<LLVMValueRef> {
+        unsafe {
+            let f64t = self.f64_ty();
+            let unary = |this: &mut Self, intrinsic: &[u8]| {
+                this.call_intrinsic(intrinsic, &[f64t], f64t, &mut [xs[0]])
+            };
+            Some(match (name, xs.len()) {
+                ("sqrt", 1) => unary(self, b"llvm.sqrt"),
+                ("floor", 1) => unary(self, b"llvm.floor"),
+                ("ceil", 1) => unary(self, b"llvm.ceil"),
+                ("trunc", 1) => unary(self, b"llvm.trunc"),
+                ("abs", 1) => unary(self, b"llvm.fabs"),
+                // As the runtime: halves round up, towards +Infinity.
+                ("round", 1) => {
+                    let f = unary(self, b"llvm.floor");
+                    let diff = LLVMBuildFSub(self.builder, xs[0], f, NONAME);
+                    let up = LLVMBuildFCmp(
+                        self.builder,
+                        LLVMRealPredicate::LLVMRealOGE,
+                        diff,
+                        LLVMConstReal(f64t, 0.5),
+                        NONAME,
+                    );
+                    let f1 = LLVMBuildFAdd(self.builder, f, LLVMConstReal(f64t, 1.0), NONAME);
+                    LLVMBuildSelect(self.builder, up, f1, f, NONAME)
+                }
+                // NaN wins and -0 is below +0, as in JavaScript.
+                ("min", 2) => {
+                    self.call_intrinsic(b"llvm.minimum", &[f64t], f64t, &mut [xs[0], xs[1]])
+                }
+                ("max", 2) => {
+                    self.call_intrinsic(b"llvm.maximum", &[f64t], f64t, &mut [xs[0], xs[1]])
+                }
+                _ => return None,
+            })
+        }
+    }
+
+    /// `Math.<f>(args)` (`IrOp::MathCall`): inline when every argument is a
+    /// number and `f` has an instruction, else `ot_math_call`.
+    unsafe fn math_call(
+        &mut self,
+        func: u32,
+        args: &[ValueId],
+    ) -> Result<LLVMValueRef, BackendError> {
+        unsafe {
+            let name = crate::runtime::builtins::MATH_FUNCTIONS
+                .get(func as usize)
+                .copied()
+                .unwrap_or("");
+            let vals: Vec<LLVMValueRef> = args
+                .iter()
+                .map(|a| self.get(*a))
+                .collect::<Result<_, _>>()?;
+            let call_runtime = |this: &mut Self| {
+                let (argv, argc) = this.arg_array(&vals);
+                let r = this.rt("ot_math_call", &[this.c(func as u64), argv, argc]);
+                this.check_exception(r, this.unwind);
+                this.last_call = None;
+                r
+            };
+            let can_inline = matches!(
+                (name, vals.len()),
+                ("sqrt" | "floor" | "ceil" | "trunc" | "abs" | "round", 1) | ("min" | "max", 2)
+            );
+            if !can_inline {
+                return Ok(call_runtime(self));
+            }
+            let all_numbers = args.iter().all(|a| self.is_num(*a));
+            let floats: Vec<LLVMValueRef> = vals.iter().map(|v| self.to_f64(*v)).collect();
+            if all_numbers {
+                let r = self
+                    .math_inline(name, &floats)
+                    .expect("inline Math function");
+                return Ok(self.from_f64(r));
+            }
+            let mut ok = self.is_number_bits(vals[0]);
+            for v in &vals[1..] {
+                let n = self.is_number_bits(*v);
+                ok = LLVMBuildAnd(self.builder, ok, n, NONAME);
+            }
+            let ctx = self.cg.context;
+            let fast = LLVMAppendBasicBlockInContext(ctx, self.function, b"math\0".as_ptr() as _);
+            let slow =
+                LLVMAppendBasicBlockInContext(ctx, self.function, b"math_any\0".as_ptr() as _);
+            let join =
+                LLVMAppendBasicBlockInContext(ctx, self.function, b"math_join\0".as_ptr() as _);
+            LLVMBuildCondBr(self.builder, ok, fast, slow);
+            LLVMPositionBuilderAtEnd(self.builder, fast);
+            let r = self
+                .math_inline(name, &floats)
+                .expect("inline Math function");
+            let fast_value = self.from_f64(r);
+            let fast_end = LLVMGetInsertBlock(self.builder);
+            LLVMBuildBr(self.builder, join);
+            LLVMPositionBuilderAtEnd(self.builder, slow);
+            let slow_value = call_runtime(self);
+            let slow_end = LLVMGetInsertBlock(self.builder);
+            LLVMBuildBr(self.builder, join);
+            LLVMPositionBuilderAtEnd(self.builder, join);
+            let phi = LLVMBuildPhi(self.builder, self.i64_ty(), NONAME);
+            let mut values = [fast_value, slow_value];
+            let mut blocks = [fast_end, slow_end];
+            LLVMAddIncoming(phi, values.as_mut_ptr(), blocks.as_mut_ptr(), 2);
+            Ok(phi)
+        }
+    }
+
     /// Whether a value (i64) is a number: not one of the boxed tags.
     unsafe fn is_number_bits(&self, v: LLVMValueRef) -> LLVMValueRef {
         unsafe {
@@ -1111,12 +1331,12 @@ impl Fx<'_> {
                 IrOp::DivAny(d, a, b) => self.any_arith(*d, *a, *b, LLVMBuildFDiv, "ot_div_any")?,
                 IrOp::ModAny(d, a, b) => self.any_arith(*d, *a, *b, LLVMBuildFRem, "ot_mod_any")?,
                 IrOp::Pow(d, a, b) => self.rt_binop(*d, "ot_pow", *a, *b)?,
-                IrOp::BitAnd(d, a, b) => self.rt_binop(*d, "ot_bit_and", *a, *b)?,
-                IrOp::BitOr(d, a, b) => self.rt_binop(*d, "ot_bit_or", *a, *b)?,
-                IrOp::Xor(d, a, b) => self.rt_binop(*d, "ot_bit_xor", *a, *b)?,
-                IrOp::Shl(d, a, b) => self.rt_binop(*d, "ot_shl", *a, *b)?,
-                IrOp::Shr(d, a, b) => self.rt_binop(*d, "ot_shr", *a, *b)?,
-                IrOp::ShrU(d, a, b) => self.rt_binop(*d, "ot_shr_u", *a, *b)?,
+                IrOp::BitAnd(d, a, b) => self.int_binop(*d, *a, *b, IntOp::And, "ot_bit_and")?,
+                IrOp::BitOr(d, a, b) => self.int_binop(*d, *a, *b, IntOp::Or, "ot_bit_or")?,
+                IrOp::Xor(d, a, b) => self.int_binop(*d, *a, *b, IntOp::Xor, "ot_bit_xor")?,
+                IrOp::Shl(d, a, b) => self.int_binop(*d, *a, *b, IntOp::Shl, "ot_shl")?,
+                IrOp::Shr(d, a, b) => self.int_binop(*d, *a, *b, IntOp::Shr, "ot_shr")?,
+                IrOp::ShrU(d, a, b) => self.int_binop(*d, *a, *b, IntOp::ShrU, "ot_shr_u")?,
                 IrOp::NegAny(d, a) => {
                     let r = self.rt("ot_neg", &[self.get(*a)?]);
                     self.set(*d, r);
@@ -1526,6 +1746,10 @@ impl Fx<'_> {
                 IrOp::AwaitResult(d) => {
                     let (frame, _) = self.frame.unwrap();
                     let r = self.rt("ot_await_result", &[frame]);
+                    self.set(*d, r);
+                }
+                IrOp::MathCall(d, func, args) => {
+                    let r = self.math_call(*func, args)?;
                     self.set(*d, r);
                 }
                 IrOp::Intrinsic(d, id, args) => {

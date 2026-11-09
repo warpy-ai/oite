@@ -38,6 +38,7 @@ pub const RUNTIME: &[(&str, bool, &[Ty])] = {
         ("ot_call_method", true, &[Val, Ptr, Len, Ptr, Len]),
         ("ot_intrinsic", true, &[Len, Ptr, Len]),
         ("ot_register_global", false, &[Ptr, Len, Ptr]),
+        ("ot_math_call", true, &[Len, Ptr, Len]),
         ("ot_array_spread", true, &[Val, Val]),
         ("ot_object_spread", true, &[Val, Val]),
         ("ot_add_any", true, &[Val, Val]),
