@@ -1,0 +1,13 @@
+{ a: [ 1, -250, 'xA\n', true, null, { b: {} } ] }
+{"a":[1,-250,"xA\n",true,null,{"b":{}}]}
+[1,"two",[3],{"k":"v"}] "q\"uote" 1.5
+[
+  1,
+  [
+    2,
+    {
+      "z": []
+    }
+  ]
+]
+error: Unexpected end of input in array at line 1, column 6

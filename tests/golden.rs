@@ -28,6 +28,11 @@
 //! Directories whose name starts with `_` hold modules the tests import
 //! (`modules/_lib/`), not tests. `@rolls/<name>` imports resolve to the
 //! fixture rolls in `modules/_rolls/` (`OITE_ROLLS_PATH`).
+//!
+//! `tests/core_rolls/` holds programs that use the real core rolls. They run
+//! when `OITE_CORE_ROLLS` names a checkout of `warpy-ai/rolls` (CI checks it
+//! out at `ROLLS_REF` in `scripts/release-pins.env`), and are skipped
+//! otherwise.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -35,10 +40,9 @@ use std::process::{Command, Output};
 
 const OITEC: &str = env!("CARGO_BIN_EXE_oitec");
 
-/// `oitec`, finding `@rolls/*` in the fixture rolls.
-fn oitec() -> Command {
+/// `oitec`, finding `@rolls/*` in `rolls`.
+fn oitec(rolls: &Path) -> Command {
     let mut cmd = Command::new(OITEC);
-    let rolls = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lang/modules/_rolls");
     cmd.env("OITE_ROLLS_PATH", rolls);
     // Not the user's bundled rolls: tests see only the fixtures.
     cmd.env(
@@ -101,7 +105,8 @@ fn backends(source: &str) -> Vec<Backend> {
     vec![Backend::Vm]
 }
 
-fn run(backend: Backend, file: &Path, scratch: &Path) -> Result<Output, String> {
+fn run(backend: Backend, file: &Path, scratch: &Path, rolls: &Path) -> Result<Output, String> {
+    let oitec = || oitec(rolls);
     match backend {
         // Run from a scratch directory, the way a user program runs: no
         // std/prelude.ot from the repository root is picked up.
@@ -139,14 +144,15 @@ fn run(backend: Backend, file: &Path, scratch: &Path) -> Result<Output, String> 
     }
 }
 
-fn check(file: &Path, scratch: &Path) -> Result<(), String> {
+fn check(file: &Path, scratch: &Path, rolls: &Path) -> Result<(), String> {
     let source = fs::read_to_string(file).map_err(|e| e.to_string())?;
     let out_path = file.with_extension("out");
     let err_path = file.with_extension("err");
     let bless = std::env::var_os("OITE_BLESS").is_some();
 
     for backend in backends(&source) {
-        let output = run(backend, file, scratch).map_err(|e| format!("[{backend:?}] {e}"))?;
+        let output =
+            run(backend, file, scratch, rolls).map_err(|e| format!("[{backend:?}] {e}"))?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -192,11 +198,10 @@ fn check(file: &Path, scratch: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[test]
-fn golden() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lang");
+/// Run every program under `root`, with `@rolls/*` found in `rolls`.
+fn run_suite(root: &Path, rolls: &Path, scratch_name: &str) {
     let mut files = Vec::new();
-    collect(&root, &mut files);
+    collect(root, &mut files);
     files.sort();
     assert!(
         !files.is_empty(),
@@ -205,18 +210,18 @@ fn golden() {
     );
 
     let filter = std::env::var("OITE_GOLDEN_FILTER").ok();
-    let scratch = Path::new(env!("CARGO_TARGET_TMPDIR")).join("golden");
+    let scratch = Path::new(env!("CARGO_TARGET_TMPDIR")).join(scratch_name);
     fs::create_dir_all(&scratch).unwrap();
 
     let mut failures = Vec::new();
     let mut ran = 0;
     for file in &files {
-        let rel = file.strip_prefix(&root).unwrap().display().to_string();
+        let rel = file.strip_prefix(root).unwrap().display().to_string();
         if filter.as_deref().is_some_and(|f| !rel.contains(f)) {
             continue;
         }
         ran += 1;
-        if let Err(msg) = check(file, &scratch) {
+        if let Err(msg) = check(file, &scratch, rolls) {
             failures.push(format!("=== {rel}\n{msg}"));
         }
     }
@@ -230,4 +235,29 @@ fn golden() {
         );
     }
     eprintln!("{ran} golden tests passed");
+}
+
+#[test]
+fn golden() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    run_suite(
+        &manifest.join("tests/lang"),
+        &manifest.join("tests/lang/modules/_rolls"),
+        "golden",
+    );
+}
+
+/// The real core rolls (`OITE_CORE_ROLLS`), on every backend.
+#[test]
+fn core_rolls() {
+    let Some(rolls) = std::env::var_os("OITE_CORE_ROLLS") else {
+        eprintln!("skipped: set OITE_CORE_ROLLS to a checkout of warpy-ai/rolls");
+        return;
+    };
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    run_suite(
+        &manifest.join("tests/core_rolls"),
+        Path::new(&rolls),
+        "core_rolls",
+    );
 }
