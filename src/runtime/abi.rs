@@ -242,7 +242,7 @@ impl OtValue {
             Self::number(self.as_number_unchecked() + other.as_number_unchecked())
         } else {
             // Fall back to runtime stub for string concat, etc.
-            Self::undefined() // Placeholder - actual impl in stubs.rs
+            Self::undefined() // Placeholder - actual impl in stubs/
         }
     }
 

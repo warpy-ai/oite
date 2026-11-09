@@ -79,7 +79,7 @@ Unified runtime primitives shared across VM/JIT/AOT backends.
 
 - `src/runtime/abi.rs` - NaN-boxed 64-bit `OtValue` ABI
 - `src/runtime/heap.rs` - Bump allocator, object layouts
-- `src/runtime/stubs.rs` - 20+ `extern "C"` stubs for native backends
+- `src/runtime/stubs/` - 20+ `extern "C"` stubs for native backends
 
 **Runtime Stubs:** `ot_alloc_object`, `ot_add_any`, `ot_get_prop`, `ot_set_prop`, `ot_call`, `ot_console_log`, etc.
 
@@ -570,7 +570,7 @@ oite/
 │   ├── runtime/
 │   │   ├── abi.rs                # NaN-boxed values
 │   │   ├── heap.rs               # Memory allocation
-│   │   ├── stubs.rs              # FFI bridge
+│   │   ├── stubs/                # The native runtime
 │   │   └── async/                # Core async primitives
 │   ├── vm/                       # Debug interpreter
 │   └── stdlib/                   # Minimal: console, ByteStream, fs
