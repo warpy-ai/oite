@@ -88,7 +88,8 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Promises (`new Promise`, `then` / `catch` / `finally`, `Promise.resolve` / `reject` / `all` / `race`) | Covered | Covered |
 | Microtask ordering, `setTimeout` / `clearTimeout`, unhandled rejections (exit 1) | Covered | Covered               |
 | Top-level `await`                          | Not supported: evaluates to its operand without waiting | Same          |
-| ES modules (`import` / `export`)           | Works, not yet covered               | Refused                           |
+| ES modules (`import` / `export`, re-exports, `import * as`, `@rolls/*`), linked at compile time | Covered | Covered                 |
+| Circular imports                           | Compile error                        | Compile error                     |
 | Parameter decorators                       | Compile error                        | Compile error                     |
 | Implicit conversion through a user `valueOf` / `toString` (`"" + obj`, `${obj}`, `String(obj)`) | Covered | Covered       |
 | Template literals                          | Covered                              | Covered                           |

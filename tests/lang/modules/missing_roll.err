@@ -1,0 +1,2 @@
+missing_roll.ot:2:19: error: cannot find roll '@rolls/nonexistent'
+pass --roll @rolls/nonexistent=DIR or set OITE_ROLLS_PATH

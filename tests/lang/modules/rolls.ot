@@ -1,0 +1,11 @@
+// backends: vm jit aot
+// `@rolls/<name>` imports: the fixture rolls in _rolls/ (OITE_ROLLS_PATH).
+import { greet, useMissing } from "@rolls/greet";
+console.log(greet("oite"));
+// `declare function` binds nothing: an intrinsic oitec does not have is
+// not defined, not a function that returns undefined.
+try {
+  useMissing();
+} catch (e) {
+  console.log(e instanceof ReferenceError, e.message);
+}

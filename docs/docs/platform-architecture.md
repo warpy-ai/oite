@@ -297,8 +297,8 @@ oitec build src/main.ot -o target/release/myapp --release \
 
 | Item | Today | Change |
 | ---- | ----- | ------ |
-| `declare function` | Compiles to an empty function that returns `undefined`, silently | Bind `__intrinsic_*` and `__ffi_*` as above; any other `declare` of a value with no definition is an error |
-| `import` / `export` | VM only; refused on JIT/AOT; no `@rolls/*` resolution | Whole-program modules on every backend, `--roll`, `$OITE_HOME/rolls`, implicit `@rolls/std`, `--no-std` |
+| `declare function` | Ambient: no code and no binding, so an `__intrinsic_*` or `__ffi_*` oitec does not have yet is "not defined" when called | Bind `__intrinsic_*` and `__ffi_*` as above |
+| `import` / `export` | Linked at compile time on every backend (`modules.rs`), with `@rolls/*` found through `--roll`, the importing roll's siblings, `OITE_ROLLS_PATH` and `$OITE_HOME/rolls`; circular imports are refused | The implicit `@rolls/std` prelude and `--no-std`, with the intrinsics |
 | Intrinsics | 0 of 28 implemented | Implement all 28, on every backend |
 | FFI | Only `__ffi_fetch` (and `__ffi_getenv`, which no roll uses), as VM globals | Calling convention, `oite-runtime` crate, symbol binding on every backend |
 | `Math`, `Date.now` | Globals in both runtimes | Removed; `@rolls/math`, `@rolls/date` |
@@ -344,12 +344,12 @@ oitec build src/main.ot -o target/release/myapp --release \
 
 ## Order of work
 
-1. **Modules in core:** `import`/`export` on JIT and AOT, `@rolls/*`
-   resolution, the implicit prelude, `--no-std`. Bundle the core rolls from
-   `warpy-ai/rolls` into the test suite, so CI runs real roll code on all
-   three backends.
-2. **Intrinsics:** the 28 above, then move `Math`, `Date.now` and the
-   number methods out of core.
+1. **Modules in core** (done): `import`/`export` linked at compile time on
+   every backend, and `@rolls/*` resolution.
+2. **Intrinsics:** the 28 above, the implicit `@rolls/std` prelude and
+   `--no-std`, then move `Math`, `Date.now` and the number methods out of
+   core. CI runs the core rolls from `warpy-ai/rolls` (at `ROLLS_REF`) on
+   all three backends.
 3. **FFI:** the calling convention, `oite-runtime`, and symbol binding;
    `@rolls/async` first, with timers moving out of core.
 4. **The remaining native rolls:** date, fs, crypto, tls, http, websocket.

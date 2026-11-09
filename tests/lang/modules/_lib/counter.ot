@@ -1,0 +1,12 @@
+// A module with state: importers see `count` change (a live binding).
+console.log("counter.ot runs");
+export let count = 0;
+export function increment() {
+  count = count + 1;
+  return count;
+}
+// The same local name as in shapes.ot: modules do not collide.
+let state = "counter state";
+export function counterState() {
+  return state;
+}

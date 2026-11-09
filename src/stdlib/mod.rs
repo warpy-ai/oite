@@ -1057,11 +1057,20 @@ pub fn native_object_keys(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
         && let Some(HeapObject { data }) = vm.heap.get(*ptr)
     {
         let keys: Vec<JsValue> = match data {
-            HeapData::Object(props) => props
-                .keys()
-                .filter(|k| !is_hidden_key(k))
-                .map(|k| JsValue::String(k.clone()))
-                .collect(),
+            HeapData::Object(props) => {
+                let mut names: Vec<&str> = Vec::new();
+                for k in props.keys() {
+                    if let Some(name) = crate::runtime::builtins::own_key_name(k)
+                        && !names.contains(&name)
+                    {
+                        names.push(name);
+                    }
+                }
+                names
+                    .into_iter()
+                    .map(|k| JsValue::String(k.to_string()))
+                    .collect()
+            }
             HeapData::Array(arr) => (0..arr.len())
                 .map(|i| JsValue::String(i.to_string()))
                 .collect(),

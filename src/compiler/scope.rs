@@ -141,6 +141,10 @@ pub struct ScopeInfo {
     closures: HashSet<SpanKey>,
     /// Functions (by span) whose code uses `%scope`.
     uses_env: HashSet<SpanKey>,
+    /// Identifiers (by span) that name a binding of the module's top level:
+    /// its declarations and the references to them. In a module that is
+    /// linked with others they get the module's prefix.
+    module_level: HashSet<SpanKey>,
 }
 
 impl ScopeInfo {
@@ -161,6 +165,12 @@ impl ScopeInfo {
 
     pub fn uses_env(&self, span: Span) -> bool {
         self.uses_env.contains(&key(span))
+    }
+
+    /// Whether the identifier at `span` names a top-level binding of the
+    /// module (rather than a local, or a global it does not declare).
+    pub fn is_module_level(&self, span: Span) -> bool {
+        self.module_level.contains(&key(span))
     }
 
     /// Whether top-level code (outside any function) uses `%scope`.
@@ -343,9 +353,13 @@ impl Resolver {
     }
 
     fn hoist_decl(&mut self, decl: &Decl) {
+        if is_ambient(decl) {
+            return;
+        }
         match decl {
             Decl::Fn(f) => self.declare_in(self.current, f.ident.sym.as_ref()),
             Decl::Class(c) => self.declare_in(self.current, c.ident.sym.as_ref()),
+            Decl::TsEnum(e) => self.declare_in(self.current, e.id.sym.as_ref()),
             Decl::Var(v) => {
                 let scope = if v.kind == VarDeclKind::Var {
                     self.var_scope()
@@ -392,10 +406,12 @@ impl Resolver {
             .enumerate()
             .map(|(i, o)| (i, self.lookup(o.scope, &o.name)))
             .collect();
+        let mut module_level = HashSet::new();
         for &(i, b) in &resolved {
             if let Some(b) = b {
                 let binding_scope = self.bindings[b].scope;
                 if self.scopes[binding_scope].kind == Kind::Global {
+                    module_level.insert(self.occurrences[i].span);
                     continue;
                 }
                 let occ_func = self.scopes[self.occurrences[i].scope].func;
@@ -407,7 +423,10 @@ impl Resolver {
 
         // 2. Scopes with a captured binding need an environment object.
         let mut env_scope = vec![false; self.scopes.len()];
-        let mut info = ScopeInfo::default();
+        let mut info = ScopeInfo {
+            module_level,
+            ..ScopeInfo::default()
+        };
         for b in &self.bindings {
             if b.captured {
                 env_scope[b.scope] = true;
@@ -507,6 +526,14 @@ impl Resolver {
 }
 
 impl Visit for Resolver {
+    fn visit_decl(&mut self, d: &Decl) {
+        // `declare function f(): T;` describes something defined elsewhere
+        // (a global, an intrinsic): it binds nothing.
+        if !is_ambient(d) {
+            d.visit_children_with(self);
+        }
+    }
+
     fn visit_fn_decl(&mut self, f: &FnDecl) {
         self.declare_in(self.current, f.ident.sym.as_ref());
         self.occurrence(&f.ident);
@@ -570,6 +597,14 @@ impl Visit for Resolver {
             })
             .collect();
         self.function_like(c.span, &params, c.body.as_ref());
+    }
+
+    fn visit_ts_enum_decl(&mut self, e: &TsEnumDecl) {
+        self.declare_in(self.current, e.id.sym.as_ref());
+        self.occurrence(&e.id);
+        for m in &e.members {
+            m.init.visit_with(self);
+        }
     }
 
     fn visit_class_decl(&mut self, c: &ClassDecl) {
@@ -813,6 +848,19 @@ pub fn pattern_names(pat: &Pat) -> Vec<String> {
         .collect()
 }
 
+/// A TypeScript `declare` declaration: a type for something defined
+/// elsewhere, with no code of its own.
+pub fn is_ambient(decl: &Decl) -> bool {
+    match decl {
+        Decl::Fn(f) => f.declare,
+        Decl::Class(c) => c.declare,
+        Decl::Var(v) => v.declare,
+        Decl::TsEnum(e) => e.declare,
+        Decl::TsModule(m) => m.declare,
+        _ => false,
+    }
+}
+
 /// Binding identifiers of a declaration pattern.
 /// The identifiers a `var` declares in a function body (or the program),
 /// in order and without repeats; nested functions and classes have their
@@ -821,7 +869,7 @@ pub fn var_declared(stmts: &[Stmt]) -> Vec<Ident> {
     struct Collect(Vec<Ident>);
     impl Visit for Collect {
         fn visit_var_decl(&mut self, v: &VarDecl) {
-            if v.kind == VarDeclKind::Var {
+            if v.kind == VarDeclKind::Var && !v.declare {
                 for d in &v.decls {
                     for ident in pattern_idents(&d.name) {
                         if !self.0.iter().any(|i| i.sym == ident.sym) {

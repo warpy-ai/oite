@@ -1,0 +1,3 @@
+// An import cannot be assigned to: the binding belongs to its module.
+import { count } from "./_lib/counter.ot";
+count = 5;

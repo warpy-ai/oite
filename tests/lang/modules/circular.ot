@@ -1,0 +1,3 @@
+// Modules that import each other are refused, for now.
+import { a } from "./_errors/cycle_a.ot";
+console.log(a);

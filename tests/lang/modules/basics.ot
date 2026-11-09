@@ -1,0 +1,19 @@
+// backends: vm jit aot
+// Modules linked at compile time: each runs once, dependencies first.
+import { count, increment } from "./_lib/counter.ot";
+import describe, { Circle, UNIT, shapesState as shapes } from "./_lib/shapes.ot";
+import answer, { bump, total, stateOfCounter, Circle as C2 } from "./_lib/reexports.ot";
+import * as counter from "./_lib/counter.ot";
+
+console.log("main runs");
+console.log("count", count, total);
+increment();
+increment();
+console.log("after two increments", count, total, increment());
+const c = new Circle(2);
+console.log(describe(c), c instanceof Circle, c instanceof C2, UNIT.name);
+console.log("count after new Circle", count);
+console.log(bump(), answer);
+console.log(shapes(), stateOfCounter());
+console.log(typeof counter.increment, counter.count, Object.keys(counter).length);
+console.log(typeof count, typeof describe);
