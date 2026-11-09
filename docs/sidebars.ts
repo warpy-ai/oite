@@ -21,6 +21,7 @@ const sidebars: SidebarsConfig = {
     "ecmascript-conformance",
     "platform-architecture",
     "performance",
+    "object-model",
     "development-status",
     "contributing",
   ],
