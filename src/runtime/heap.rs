@@ -131,20 +131,26 @@ pub struct ObjectHeader {
     pub kind: ObjectKind,
     /// GC mark bit (for future mark-sweep).
     pub marked: bool,
+    /// Per-kind flags (`ObjectHeader::ASCII` for strings).
+    pub flags: u8,
     /// Reserved for alignment and future use.
-    pub _reserved: [u8; 6],
+    pub _reserved: [u8; 5],
     /// Size of the object data (excluding header).
     pub size: u32,
 }
 
 impl ObjectHeader {
     pub const SIZE: usize = std::mem::size_of::<ObjectHeader>();
+    /// A string whose bytes are all ASCII: its characters are its bytes, so
+    /// indexing it needs no scan.
+    pub const ASCII: u8 = 1;
 
     pub fn new(kind: ObjectKind, size: u32) -> Self {
         Self {
             kind,
             marked: false,
-            _reserved: [0; 6],
+            flags: 0,
+            _reserved: [0; 5],
             size,
         }
     }
@@ -331,6 +337,9 @@ impl NativeHeap {
         unsafe {
             let header = ptr.as_mut::<ObjectHeader>();
             *header = ObjectHeader::new(ObjectKind::String, data_size as u32);
+            if s.is_ascii() {
+                header.flags |= ObjectHeader::ASCII;
+            }
 
             let string_obj = ptr.as_mut::<NativeString>();
             string_obj.len = s.len() as u32;

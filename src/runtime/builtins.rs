@@ -63,6 +63,47 @@ impl std::fmt::Display for Error {
     }
 }
 
+/// `s.charAt(i)`, `s.charCodeAt(i)` and `s.at(i)`, without copying `s`.
+/// `ascii` says every byte of `s` is ASCII, so character `i` is byte `i`;
+/// otherwise the characters are counted. `None` for any other method.
+pub fn string_index<H: Host>(
+    h: &H,
+    s: &str,
+    ascii: bool,
+    name: &str,
+    args: &[H::Value],
+) -> Option<Result<Outcome<H::Value>, Error>> {
+    if !matches!(name, "charAt" | "charCodeAt" | "at") {
+        return None;
+    }
+    let len = if ascii { s.len() } else { s.chars().count() };
+    let i = args
+        .first()
+        .map_or(0.0, |v| integer(h.number(v).unwrap_or(f64::NAN)));
+    let i = if name == "at" && i < 0.0 {
+        i + len as f64
+    } else {
+        i
+    };
+    let c = if i >= 0.0 && i < len as f64 {
+        let i = i as usize;
+        if ascii {
+            Some(s.as_bytes()[i] as char)
+        } else {
+            s.chars().nth(i)
+        }
+    } else {
+        None
+    };
+    Some(Ok(Outcome::Value(match (name, c) {
+        ("charCodeAt", Some(c)) => h.make_number(c as u32 as f64),
+        ("charCodeAt", None) => h.make_number(f64::NAN),
+        ("charAt", c) => h.make_string(c.map(String::from).unwrap_or_default()),
+        (_, Some(c)) => h.make_string(c.to_string()),
+        _ => h.undefined(),
+    })))
+}
+
 /// `Some(result)` if `name` is a string method, `None` otherwise.
 pub fn string_method<H: Host>(
     h: &H,
@@ -70,6 +111,9 @@ pub fn string_method<H: Host>(
     name: &str,
     args: &[H::Value],
 ) -> Option<Result<Outcome<H::Value>, Error>> {
+    if let Some(result) = string_index(h, s, s.is_ascii(), name, args) {
+        return Some(result);
+    }
     let chars: Vec<char> = s.chars().collect();
     let len = chars.len();
     let arg = |i: usize| args.get(i);

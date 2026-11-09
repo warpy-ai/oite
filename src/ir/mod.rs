@@ -642,6 +642,16 @@ impl IrOp {
             self,
             IrOp::LoadGlobal(_, _)
                 | IrOp::AddAny(_, _, _)
+                // `valueOf` may throw.
+                | IrOp::SubAny(_, _, _)
+                | IrOp::MulAny(_, _, _)
+                | IrOp::DivAny(_, _, _)
+                | IrOp::ModAny(_, _, _)
+                | IrOp::Pow(_, _, _)
+                | IrOp::Lt(_, _, _)
+                | IrOp::LtEq(_, _, _)
+                | IrOp::Gt(_, _, _)
+                | IrOp::GtEq(_, _, _)
                 | IrOp::ToStr(_, _)
                 | IrOp::GetProp(_, _, _)
                 | IrOp::SetProp(_, _, _)
