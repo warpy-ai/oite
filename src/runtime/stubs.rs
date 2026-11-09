@@ -1161,6 +1161,20 @@ pub extern "C" fn ot_call_method(
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_intrinsic(id: usize, argv: *const u64, argc: usize) -> u64 {
     let a = unsafe { args(argv, argc) };
+    // PROTOTYPE: byte reads skip the general dispatch.
+    if id == super::intrinsics::BYTE_AT && argc == 2 {
+        let i = OtValue::from_bits(a[1]).as_number().unwrap_or(f64::NAN);
+        return match as_str(OtValue::from_bits(a[0])) {
+            Some(s) if i >= 0.0 && (i as usize) < s.len() => number(s.as_bytes()[i as usize] as f64),
+            _ => number(f64::NAN),
+        };
+    }
+    if id == super::intrinsics::BYTE_LENGTH && argc == 1 {
+        return match as_str(OtValue::from_bits(a[0])) {
+            Some(s) => number(s.len() as f64),
+            None => number(f64::NAN),
+        };
+    }
     outcome(super::intrinsics::call(&NativeHost, id as u32, a), 0)
 }
 

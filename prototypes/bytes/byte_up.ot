@@ -1,0 +1,6 @@
+import * as b from "./bytestr.ot";
+let s = "";
+for (let i = 0; i < 2000; i++) { s = s + "abcde"; }
+let total = 0;
+for (let i = 0; i < 200; i++) { total = total + b.length(b.toUpperCase(s)); }
+console.log(total);

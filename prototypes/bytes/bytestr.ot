@@ -1,0 +1,73 @@
+// Prototype: string functions in Oite on byte primitives. Offsets are
+// UTF-8 byte offsets (ASCII text: the same as character offsets).
+declare function __intrinsic_byte_length(s: string): number;
+declare function __intrinsic_byte_at(s: string, i: number): number;
+declare function __intrinsic_byte_slice(s: string, start: number, end: number): string;
+declare function __intrinsic_string_from_bytes(buf: number[], start: number, end: number): string;
+
+export function length(s: string): number {
+  return __intrinsic_byte_length(s);
+}
+
+export function indexOf(s: string, search: string, from: number = 0): number {
+  let n = __intrinsic_byte_length(s);
+  let m = __intrinsic_byte_length(search);
+  if (from < 0) from = 0;
+  if (m === 0) return from < n ? from : n;
+  let first = __intrinsic_byte_at(search, 0);
+  let last = n - m;
+  for (let i = from; i <= last; i++) {
+    if (__intrinsic_byte_at(s, i) === first) {
+      let j = 1;
+      while (j < m && __intrinsic_byte_at(s, i + j) === __intrinsic_byte_at(search, j)) {
+        j++;
+      }
+      if (j === m) return i;
+    }
+  }
+  return -1;
+}
+
+export function slice(s: string, start: number, end?: number): string {
+  let n = __intrinsic_byte_length(s);
+  let a = start < 0 ? (n + start < 0 ? 0 : n + start) : (start > n ? n : start);
+  let e = end === undefined ? n : end;
+  let b = e < 0 ? (n + e < 0 ? 0 : n + e) : (e > n ? n : e);
+  return __intrinsic_byte_slice(s, a, b);
+}
+
+function isSpace(c: number): boolean {
+  return c === 32 || (c >= 9 && c <= 13);
+}
+
+export function trim(s: string): string {
+  let a = 0;
+  let b = __intrinsic_byte_length(s);
+  while (a < b && isSpace(__intrinsic_byte_at(s, a))) a++;
+  while (b > a && isSpace(__intrinsic_byte_at(s, b - 1))) b--;
+  return __intrinsic_byte_slice(s, a, b);
+}
+
+export function split(s: string, sep: string): string[] {
+  let out: string[] = [];
+  let m = __intrinsic_byte_length(sep);
+  let at = 0;
+  let i = indexOf(s, sep, 0);
+  while (i !== -1) {
+    out.push(__intrinsic_byte_slice(s, at, i));
+    at = i + m;
+    i = indexOf(s, sep, at);
+  }
+  out.push(__intrinsic_byte_slice(s, at, __intrinsic_byte_length(s)));
+  return out;
+}
+
+export function toUpperCase(s: string): string {
+  let n = __intrinsic_byte_length(s);
+  let buf: number[] = [];
+  for (let i = 0; i < n; i++) {
+    let c = __intrinsic_byte_at(s, i);
+    buf.push(c >= 97 && c <= 122 ? c - 32 : c);
+  }
+  return __intrinsic_string_from_bytes(buf, 0, n);
+}

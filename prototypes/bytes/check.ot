@@ -1,0 +1,7 @@
+import * as b from "./bytestr.ot";
+let s = "  Hello, oite world!  ";
+console.log(b.indexOf(s, "oite"), s.indexOf("oite"), b.indexOf(s, "zz"), b.indexOf(s, "o", 9), s.indexOf("o", 9));
+console.log("[" + b.slice(s, 2, -2) + "]", "[" + s.slice(2, -2) + "]", "[" + b.slice(s, -4) + "]", "[" + s.slice(-4) + "]");
+console.log("[" + b.trim(s) + "]", "[" + s.trim() + "]");
+console.log(b.split("a,b,,c", ","), "a,b,,c".split(","), b.split("abc", "x"));
+console.log(b.toUpperCase(s), s.toUpperCase(), b.length(s), s.length);

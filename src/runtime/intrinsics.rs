@@ -56,7 +56,17 @@ pub const INTRINSICS: &[&str] = &[
     "object_keys",
     // Target
     "platform",
+    // Bytes (prototype): a string's UTF-8 bytes, read without copying, and
+    // strings made from byte ranges in one copy.
+    "byte_length",
+    "byte_at",
+    "byte_slice",
+    "string_from_bytes",
 ];
+
+/// Ids with a fast path in native code.
+pub const BYTE_LENGTH: usize = 29;
+pub const BYTE_AT: usize = 30;
 
 /// The prefix that marks a call as an intrinsic.
 pub const PREFIX: &str = "__intrinsic_";
@@ -144,11 +154,51 @@ pub fn call<H: Host>(h: &H, id: u32, args: &[H::Value]) -> Result<Outcome<H::Val
                 .collect(),
         )),
         "platform" => string(std::env::consts::OS.to_string()),
+        "byte_length" => number(h.string(arg(0)).map_or(f64::NAN, |s| s.len() as f64)),
+        "byte_at" => {
+            let i = num(1);
+            let byte = h.string(arg(0)).and_then(|s| {
+                (i >= 0.0 && i.fract() == 0.0)
+                    .then(|| s.as_bytes().get(i as usize).copied())
+                    .flatten()
+            });
+            number(byte.map_or(f64::NAN, |b| b as f64))
+        }
+        "byte_slice" => {
+            let Some(s) = h.string(arg(0)) else {
+                return string(String::new());
+            };
+            let bytes = s.as_bytes();
+            let (start, end) = byte_range(bytes.len(), num(1), arg(2), h);
+            string(String::from_utf8_lossy(&bytes[start..end]).into_owned())
+        }
+        "string_from_bytes" => {
+            let elems = h.array_elements(arg(0)).unwrap_or_default();
+            let (start, end) = byte_range(elems.len(), num(1), arg(2), h);
+            let bytes: Vec<u8> = elems[start..end]
+                .iter()
+                .map(|v| h.number(v).unwrap_or(0.0) as u8)
+                .collect();
+            string(String::from_utf8_lossy(&bytes).into_owned())
+        }
         _ => Err(Error {
             kind: "ReferenceError",
             message: format!("unknown intrinsic #{id}"),
         }),
     }
+}
+
+/// `start..end` within `0..len`: `end` is `len` when undefined, and the
+/// range is empty when `end <= start`.
+fn byte_range<H: Host>(len: usize, start: f64, end: &H::Value, h: &H) -> (usize, usize) {
+    let clamp = |n: f64| if n.is_nan() || n <= 0.0 { 0 } else { (n as usize).min(len) };
+    let start = clamp(start);
+    let end = if h.strict_equal(end, &h.undefined()) {
+        len
+    } else {
+        clamp(h.number(end).unwrap_or(0.0))
+    };
+    (start, end.max(start))
 }
 
 /// `ToIntegerOrInfinity`: NaN is 0, otherwise truncated.
@@ -347,6 +397,12 @@ fn to_exponential(x: f64, fraction: Option<usize>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fast_path_ids() {
+        assert_eq!(INTRINSICS[BYTE_LENGTH], "byte_length");
+        assert_eq!(INTRINSICS[BYTE_AT], "byte_at");
+    }
 
     #[test]
     fn precision_and_exponential_match_javascript() {
