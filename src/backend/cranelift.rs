@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use super::runtime_abi::RUNTIME;
 use super::{BackendConfig, BackendError};
 use crate::ir::{BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId};
-use crate::runtime::abi::EXCEPTION_BITS;
+use crate::runtime::abi::{EXCEPTION_BITS, UNBOUND_BITS};
 
 const QNAN: u64 = 0x7FFC_0000_0000_0000;
 const TAG_BOOLEAN: u64 = 0x0001_0000_0000_0000;
@@ -56,6 +56,7 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_call,
         ot_call_method,
         ot_intrinsic,
+        ot_register_global,
         ot_array_spread,
         ot_object_spread,
         ot_add_any,
@@ -203,6 +204,35 @@ impl CraneliftCodegen {
             }
         }
 
+        // A slot for every global the program assigns (`UNBOUND_BITS` until
+        // assigned); compiled code reads and writes it directly.
+        let mut global_slots: HashMap<String, DataId> = HashMap::new();
+        for func in &ir_module.functions {
+            for block in &func.blocks {
+                for op in &block.ops {
+                    if let IrOp::StoreGlobal(name, _) = op
+                        && !global_slots.contains_key(name)
+                    {
+                        let data = self
+                            .module
+                            .declare_data(
+                                &format!("ot_global_{}", global_slots.len()),
+                                Linkage::Local,
+                                true,
+                                false,
+                            )
+                            .map_err(|e| BackendError::Cranelift(format!("declare data: {}", e)))?;
+                        let mut desc = DataDescription::new();
+                        desc.define(Box::new(UNBOUND_BITS.to_le_bytes()));
+                        self.module
+                            .define_data(data, &desc)
+                            .map_err(|e| BackendError::Cranelift(format!("define data: {}", e)))?;
+                        global_slots.insert(name.clone(), data);
+                    }
+                }
+            }
+        }
+
         // Stack frames for exception traces, alive as long as the code.
         let sites: Vec<u64> = ir_module
             .sites
@@ -228,6 +258,7 @@ impl CraneliftCodegen {
                     runtime: &self.runtime,
                     func_ids: &func_ids,
                     fn_objects: &fn_objects,
+                    global_slots: &global_slots,
                     stubs: HashMap::new(),
                     values: HashMap::new(),
                     blocks: HashMap::new(),
@@ -270,6 +301,13 @@ impl CraneliftCodegen {
             self.compiled_funcs.insert(name.clone(), ptr);
         }
 
+        // Tell the runtime where each global lives, so a lookup by name sees
+        // what compiled code stored.
+        for (name, data) in &global_slots {
+            let (slot, _) = self.module.get_finalized_data(*data);
+            crate::runtime::stubs::ot_register_global(name.as_ptr(), name.len(), slot as *mut u64);
+        }
+
         // Create the function objects that `Literal::Function` loads.
         for (addr, data) in &fn_objects {
             let code = self.compiled_funcs[&format!("func_{}", addr)];
@@ -303,6 +341,8 @@ struct Fx<'a> {
     runtime: &'a HashMap<String, (FuncId, bool)>,
     func_ids: &'a HashMap<String, FuncId>,
     fn_objects: &'a HashMap<usize, DataId>,
+    /// The program's global variables -> their slots.
+    global_slots: &'a HashMap<String, DataId>,
     stubs: HashMap<String, FuncRef>,
     values: HashMap<ValueId, Value>,
     blocks: HashMap<BlockId, Block>,
@@ -967,8 +1007,37 @@ impl Fx<'_> {
                 }
             }
             IrOp::LoadGlobal(d, name) => {
-                let (p, n) = self.name(b, name);
-                let r = self.rt_v(b, "ot_get_global", &[p, n]);
+                let r = match self.global_slots.get(name).copied() {
+                    // A global of the program: its slot, unless not yet
+                    // assigned (then the runtime: a built-in, or "not
+                    // defined").
+                    Some(data) => {
+                        let gv = self.module.declare_data_in_func(data, b.func);
+                        let p = b.ins().global_value(types::I64, gv);
+                        let v = b.ins().load(types::I64, MemFlags::trusted(), p, 0);
+                        let unbound = b.ins().icmp_imm(IntCC::Equal, v, UNBOUND_BITS as i64);
+                        let slow = b.create_block();
+                        let join = b.create_block();
+                        b.set_cold_block(slow);
+                        b.append_block_param(join, types::I64);
+                        b.ins().brif(unbound, slow, &[], join, &[v]);
+                        b.switch_to_block(slow);
+                        b.seal_block(slow);
+                        let (np, nn) = self.name(b, name);
+                        let r = self.rt_v(b, "ot_get_global", &[np, nn]);
+                        let unwind = self.unwind;
+                        self.check_exception(b, r, unwind);
+                        self.last_call = None;
+                        b.ins().jump(join, &[r]);
+                        b.switch_to_block(join);
+                        b.seal_block(join);
+                        b.block_params(join)[0]
+                    }
+                    None => {
+                        let (p, n) = self.name(b, name);
+                        self.rt_v(b, "ot_get_global", &[p, n])
+                    }
+                };
                 self.values.insert(*d, r);
             }
             IrOp::TypeOfGlobal(d, name) => {
@@ -978,8 +1047,17 @@ impl Fx<'_> {
             }
             IrOp::StoreGlobal(name, v) => {
                 let v = self.get(*v)?;
-                let (p, n) = self.name(b, name);
-                self.rt(b, "ot_set_global", &[p, n, v]);
+                match self.global_slots.get(name).copied() {
+                    Some(data) => {
+                        let gv = self.module.declare_data_in_func(data, b.func);
+                        let p = b.ins().global_value(types::I64, gv);
+                        b.ins().store(MemFlags::trusted(), v, p, 0);
+                    }
+                    None => {
+                        let (p, n) = self.name(b, name);
+                        self.rt(b, "ot_set_global", &[p, n, v]);
+                    }
+                }
             }
             IrOp::LoadThis(d) => {
                 let t = self.this.expect("this is set in the prologue");

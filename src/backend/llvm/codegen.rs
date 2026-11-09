@@ -28,7 +28,7 @@ const TAG_BOOLEAN: u64 = 0x0001_0000_0000_0000;
 const TAG_NULL: u64 = 0x0002_0000_0000_0000;
 const TAG_UNDEFINED: u64 = 0x0003_0000_0000_0000;
 const UNDEFINED: u64 = QNAN | TAG_UNDEFINED;
-use crate::runtime::abi::EXCEPTION_BITS;
+use crate::runtime::abi::{EXCEPTION_BITS, UNBOUND_BITS};
 const FALSE: u64 = QNAN | TAG_BOOLEAN;
 const TRUE: u64 = QNAN | TAG_BOOLEAN | 1;
 
@@ -45,6 +45,9 @@ pub struct LlvmCodegen {
     pub functions: BTreeMap<String, LLVMValueRef>,
     /// Function bytecode address -> global holding its function object.
     fn_objects: BTreeMap<usize, LLVMValueRef>,
+    /// The program's global variables (every name it assigns) -> the LLVM
+    /// global holding each one's value (`UNBOUND_BITS` until assigned).
+    global_slots: BTreeMap<String, LLVMValueRef>,
     /// Interned string constants: contents -> global.
     strings: HashMap<String, LLVMValueRef>,
     /// The native function type `i64 (i64 this, ptr argv, i64 argc, i64 env)`.
@@ -90,6 +93,7 @@ impl LlvmCodegen {
                 runtime: BTreeMap::new(),
                 functions: BTreeMap::new(),
                 fn_objects: BTreeMap::new(),
+                global_slots: BTreeMap::new(),
                 strings: HashMap::new(),
                 fn_ty,
                 sites: Vec::new(),
@@ -124,6 +128,25 @@ impl LlvmCodegen {
                     LLVMSetInitializer(g, LLVMConstInt(i64_ty, 0, 0));
                     LLVMSetLinkage(g, LLVMLinkage::LLVMInternalLinkage);
                     self.fn_objects.insert(addr, g);
+                }
+            }
+
+            // A slot for every global the program assigns.
+            for func in &ir_module.functions {
+                for block in &func.blocks {
+                    for op in &block.ops {
+                        if let IrOp::StoreGlobal(name, _) = op
+                            && !self.global_slots.contains_key(name)
+                        {
+                            let gname =
+                                CString::new(format!("ot_global_{}", self.global_slots.len()))
+                                    .unwrap();
+                            let g = LLVMAddGlobal(self.module, i64_ty, gname.as_ptr());
+                            LLVMSetInitializer(g, LLVMConstInt(i64_ty, UNBOUND_BITS, 0));
+                            LLVMSetLinkage(g, LLVMLinkage::LLVMInternalLinkage);
+                            self.global_slots.insert(name.clone(), g);
+                        }
+                    }
                 }
             }
 
@@ -200,6 +223,28 @@ impl LlvmCodegen {
                 let mut args = [f];
                 let obj = LLVMBuildCall2(b, mk_ty, mk, args.as_mut_ptr(), 1, NONAME);
                 LLVMBuildStore(b, obj, *global);
+            }
+
+            // Tell the runtime where each global lives, so a lookup by name
+            // sees what compiled code stored.
+            let (register, register_ty) = self.runtime["ot_register_global"];
+            for (name, slot) in &self.global_slots {
+                let init = LLVMConstStringInContext(
+                    ctx,
+                    name.as_ptr() as *const c_char,
+                    name.len() as u32,
+                    1,
+                );
+                let text = LLVMAddGlobal(
+                    self.module,
+                    LLVMTypeOf(init),
+                    b"global_name\0".as_ptr() as _,
+                );
+                LLVMSetInitializer(text, init);
+                LLVMSetGlobalConstant(text, 1);
+                LLVMSetLinkage(text, LLVMLinkage::LLVMPrivateLinkage);
+                let mut args = [text, LLVMConstInt(i64_ty, name.len() as u64, 0), *slot];
+                LLVMBuildCall2(b, register_ty, register, args.as_mut_ptr(), 3, NONAME);
             }
 
             let (init, init_ty) = self.runtime["ot_stack_init"];
@@ -1172,8 +1217,51 @@ impl Fx<'_> {
                     LLVMBuildStore(self.builder, self.get(*v)?, p);
                 }
                 IrOp::LoadGlobal(d, name) => {
-                    let (p, n) = self.string(name);
-                    let r = self.rt("ot_get_global", &[p, n]);
+                    let r = match self.cg.global_slots.get(name).copied() {
+                        // A global of the program: its slot, unless not yet
+                        // assigned (then the runtime: a built-in, or "not
+                        // defined").
+                        Some(slot) => {
+                            let v = LLVMBuildLoad2(self.builder, self.i64_ty(), slot, NONAME);
+                            let unbound = LLVMBuildICmp(
+                                self.builder,
+                                LLVMIntPredicate::LLVMIntEQ,
+                                v,
+                                self.c(UNBOUND_BITS),
+                                NONAME,
+                            );
+                            let ctx = self.cg.context;
+                            let slow = LLVMAppendBasicBlockInContext(
+                                ctx,
+                                self.function,
+                                b"global_unbound\0".as_ptr() as _,
+                            );
+                            let join = LLVMAppendBasicBlockInContext(
+                                ctx,
+                                self.function,
+                                b"global\0".as_ptr() as _,
+                            );
+                            let fast_end = LLVMGetInsertBlock(self.builder);
+                            LLVMBuildCondBr(self.builder, unbound, slow, join);
+                            LLVMPositionBuilderAtEnd(self.builder, slow);
+                            let (p, n) = self.string(name);
+                            let r = self.rt("ot_get_global", &[p, n]);
+                            self.check_exception(r, self.unwind);
+                            self.last_call = None;
+                            let slow_end = LLVMGetInsertBlock(self.builder);
+                            LLVMBuildBr(self.builder, join);
+                            LLVMPositionBuilderAtEnd(self.builder, join);
+                            let phi = LLVMBuildPhi(self.builder, self.i64_ty(), NONAME);
+                            let mut values = [v, r];
+                            let mut blocks = [fast_end, slow_end];
+                            LLVMAddIncoming(phi, values.as_mut_ptr(), blocks.as_mut_ptr(), 2);
+                            phi
+                        }
+                        None => {
+                            let (p, n) = self.string(name);
+                            self.rt("ot_get_global", &[p, n])
+                        }
+                    };
                     self.set(*d, r);
                 }
                 IrOp::TypeOfGlobal(d, name) => {
@@ -1182,9 +1270,16 @@ impl Fx<'_> {
                     self.set(*d, r);
                 }
                 IrOp::StoreGlobal(name, v) => {
-                    let (p, n) = self.string(name);
                     let v = self.get(*v)?;
-                    self.rt("ot_set_global", &[p, n, v]);
+                    match self.cg.global_slots.get(name).copied() {
+                        Some(slot) => {
+                            LLVMBuildStore(self.builder, v, slot);
+                        }
+                        None => {
+                            let (p, n) = self.string(name);
+                            self.rt("ot_set_global", &[p, n, v]);
+                        }
+                    }
                 }
                 IrOp::LoadEnv(d) => {
                     let e = self.env;
