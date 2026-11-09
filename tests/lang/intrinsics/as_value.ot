@@ -1,0 +1,3 @@
+// An intrinsic is an operation, not a function value.
+declare function __intrinsic_floor(x: number): number;
+let f = __intrinsic_floor;

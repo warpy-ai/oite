@@ -247,7 +247,10 @@ impl<'a> TypeChecker<'a> {
                 self.set_type(*dst, IrType::Boolean);
             }
 
-            IrOp::CallMethod(dst, _, _, _) => {
+            IrOp::CallMethod(dst, _, _, _)
+            | IrOp::Intrinsic(dst, _, _)
+            | IrOp::ArraySpread(dst, _, _)
+            | IrOp::ObjectSpread(dst, _, _) => {
                 self.set_type(*dst, IrType::Any);
             }
 

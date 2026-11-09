@@ -1051,41 +1051,18 @@ pub fn native_stdout_write(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
 // Object Functions
 // ============================================================================
 
-/// Object.keys(obj) - Returns an array of the object's own enumerable property names
+/// `Object.keys(obj)`: own property names (see `Host::own_keys`).
 pub fn native_object_keys(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-    if let Some(JsValue::Object(ptr)) = args.first()
-        && let Some(HeapObject { data }) = vm.heap.get(*ptr)
-    {
-        let keys: Vec<JsValue> = match data {
-            HeapData::Object(props) => {
-                let mut names: Vec<&str> = Vec::new();
-                for k in props.keys() {
-                    if let Some(name) = crate::runtime::builtins::own_key_name(k)
-                        && !names.contains(&name)
-                    {
-                        names.push(name);
-                    }
-                }
-                names
-                    .into_iter()
-                    .map(|k| JsValue::String(k.to_string()))
-                    .collect()
-            }
-            HeapData::Array(arr) => (0..arr.len())
-                .map(|i| JsValue::String(i.to_string()))
-                .collect(),
-            _ => Vec::new(),
-        };
-        let arr_ptr = vm.heap.len();
-        vm.heap.push(HeapObject {
-            data: HeapData::Array(keys),
-        });
-        return JsValue::Object(arr_ptr);
-    }
-    // Return empty array for non-objects
+    use crate::runtime::builtins::Host;
+    let target = args.first().cloned().unwrap_or(JsValue::Undefined);
+    let keys = crate::vm::VmHost(&vm.heap)
+        .own_keys(&target)
+        .into_iter()
+        .map(JsValue::String)
+        .collect();
     let arr_ptr = vm.heap.len();
     vm.heap.push(HeapObject {
-        data: HeapData::Array(Vec::new()),
+        data: HeapData::Array(keys),
     });
     JsValue::Object(arr_ptr)
 }

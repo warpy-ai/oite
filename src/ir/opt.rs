@@ -567,6 +567,17 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
             }
         }
 
+        IrOp::Intrinsic(_, _, args) => {
+            for arg in args {
+                resolve(arg);
+            }
+        }
+
+        IrOp::ArraySpread(_, t, s) | IrOp::ObjectSpread(_, t, s) => {
+            resolve(t);
+            resolve(s);
+        }
+
         IrOp::MakeClosure(_, _, env) => {
             resolve(env);
         }

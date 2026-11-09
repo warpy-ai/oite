@@ -64,6 +64,7 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Rest parameters (`function f(a, ...rest)`) | Covered                              | Covered                           |
 | Compound assignment (`+=`, `*=`, `<<=`, ...) | Covered                            | Covered                           |
 | Objects, arrays, `obj[k]`, `.length`, `push`/`pop` | Covered                      | Covered                           |
+| Spread in array and object literals (`[...a, ..."str"]`, `{...o}`) | Covered     | Covered                           |
 | Methods on object literals (`this`)        | Covered                              | Covered                           |
 | String methods (`slice`, `split`, `trim`, `indexOf`, `padStart`, ...) | Covered   | Covered (shared implementation)   |
 | Array methods (`splice`, `join`, `indexOf`, `concat`, `shift`, ...)   | Covered   | Covered (shared implementation)   |
@@ -90,6 +91,8 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Top-level `await`                          | Not supported: evaluates to its operand without waiting | Same          |
 | ES modules (`import` / `export`, re-exports, `import * as`, `@rolls/*`), linked at compile time | Covered | Covered                 |
 | Circular imports                           | Compile error                        | Compile error                     |
+| Intrinsics (`__intrinsic_*`, the 29 the rolls build on) | Covered (shared implementation) | Covered (same implementation) |
+| An unknown `__intrinsic_` name             | Compile error                        | Compile error                     |
 | Parameter decorators                       | Compile error                        | Compile error                     |
 | Implicit conversion through a user `valueOf` / `toString` (`"" + obj`, `${obj}`, `String(obj)`) | Covered | Covered       |
 | Template literals                          | Covered                              | Covered                           |

@@ -5,7 +5,7 @@
 //! a module of the `oite` crate itself.
 //!
 //! It includes the same source files as `crate::runtime` (`abi.rs`,
-//! `builtins.rs`, `heap.rs`, `stubs.rs`), so the Cranelift JIT, which calls
+//! `builtins.rs`, `heap.rs`, `intrinsics.rs`, `stubs.rs`), so the Cranelift JIT, which calls
 //! those functions in-process,
 //! and LLVM AOT binaries run exactly the same runtime code. Those files only
 //! refer to each other through `super::`, which here resolves to this root.
@@ -19,5 +19,7 @@ pub mod abi;
 pub mod builtins;
 #[path = "heap.rs"]
 pub mod heap;
+#[path = "intrinsics.rs"]
+pub mod intrinsics;
 #[path = "stubs.rs"]
 pub mod stubs;

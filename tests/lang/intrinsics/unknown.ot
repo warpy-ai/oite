@@ -1,0 +1,5 @@
+// An `__intrinsic_` name core does not have is a compile error, not a
+// function that is missing at run time.
+declare function __intrinsic_nope(x: number): number;
+console.log("never runs");
+console.log(__intrinsic_nope(1));

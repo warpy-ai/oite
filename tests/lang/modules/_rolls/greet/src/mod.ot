@@ -1,9 +1,9 @@
 // A roll that imports another roll: found next to it.
 import { capitalize } from "@rolls/words";
-declare function __intrinsic_missing(x: number): number;
+declare function __ffi_missing(x: number): number;
 export function greet(name) {
   return "Hello, " + capitalize(name) + "!";
 }
 export function useMissing() {
-  return __intrinsic_missing(1);
+  return __ffi_missing(1);
 }

@@ -2067,33 +2067,39 @@ impl VM {
             }
 
             OpCode::ArraySpread => {
-                // Pops [target_array, source_array] -> appends all source elements to target, pushes target
-                let source_val = self.stack.pop().expect("ArraySpread: missing source");
-                let target_val = self.stack.pop().expect("ArraySpread: missing target");
-
-                if let (JsValue::Object(target_ptr), JsValue::Object(source_ptr)) =
-                    (target_val, source_val)
-                {
-                    // First, collect elements from source array
-                    let source_elements: Vec<JsValue> = if let Some(HeapObject {
-                        data: HeapData::Array(arr),
-                    }) = self.heap.get(source_ptr)
-                    {
-                        arr.clone()
-                    } else {
-                        Vec::new()
-                    };
-                    // Then, append to target array
-                    if let Some(HeapObject {
-                        data: HeapData::Array(target_arr),
-                    }) = self.heap.get_mut(target_ptr)
-                    {
-                        target_arr.extend(source_elements);
+                // [target, source] -> [target]: append source's elements (an
+                // array's, or a string's characters) to the array target.
+                let source = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let target = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let items: Vec<JsValue> = match &source {
+                    JsValue::String(s) => {
+                        s.chars().map(|c| JsValue::String(c.to_string())).collect()
                     }
-                    self.stack.push(JsValue::Object(target_ptr));
-                } else {
-                    self.stack.push(JsValue::Undefined);
+                    JsValue::Object(ptr) => match self.heap.get(*ptr) {
+                        Some(HeapObject {
+                            data: HeapData::Array(arr),
+                        }) => arr.clone(),
+                        _ => Vec::new(),
+                    },
+                    _ => Vec::new(),
+                };
+                let iterable = matches!(source, JsValue::String(_))
+                    || matches!(&source, JsValue::Object(p) if matches!(
+                        self.heap.get(*p),
+                        Some(HeapObject { data: HeapData::Array(_) })
+                    ));
+                if !iterable {
+                    let shown = crate::stdlib::inspect(self, &source);
+                    return self.throw_error("TypeError", format!("{shown} is not iterable"));
                 }
+                if let JsValue::Object(ptr) = target
+                    && let Some(HeapObject {
+                        data: HeapData::Array(arr),
+                    }) = self.heap.get_mut(ptr)
+                {
+                    arr.extend(items);
+                }
+                self.stack.push(target);
             }
 
             OpCode::ObjectSpread => {
@@ -2104,15 +2110,35 @@ impl VM {
                 if let (JsValue::Object(target_ptr), JsValue::Object(source_ptr)) =
                     (target_val, source_val)
                 {
-                    // First, collect properties from source object
-                    let source_props: HashMap<String, JsValue> = if let Some(HeapObject {
-                        data: HeapData::Object(props),
-                    }) = self.heap.get(source_ptr)
-                    {
-                        props.clone()
-                    } else {
-                        HashMap::new()
+                    // The source's own properties; an accessor gives its
+                    // getter's value. Internal keys (`__proto__`) stay.
+                    let mut source_props: Vec<(String, JsValue)> = Vec::new();
+                    let stored: Vec<(String, JsValue)> = match self.heap.get(source_ptr) {
+                        Some(HeapObject {
+                            data: HeapData::Object(props),
+                        }) => props.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                        Some(HeapObject {
+                            data: HeapData::Array(items),
+                        }) => items
+                            .iter()
+                            .enumerate()
+                            .map(|(i, v)| (i.to_string(), v.clone()))
+                            .collect(),
+                        _ => Vec::new(),
                     };
+                    for (key, value) in stored {
+                        if let Some(name) = key.strip_prefix("getter:") {
+                            if crate::runtime::builtins::is_hidden_key(name) {
+                                continue;
+                            }
+                            match self.call_sync(&value, JsValue::Object(source_ptr), Vec::new()) {
+                                Ok(v) => source_props.push((name.to_string(), v)),
+                                Err(e) => return self.throw_exception(e),
+                            }
+                        } else if !crate::runtime::builtins::is_hidden_key(&key) {
+                            source_props.push((key, value));
+                        }
+                    }
                     // Then, insert into target object
                     if let Some(HeapObject {
                         data: HeapData::Object(target_props),
@@ -2663,7 +2689,19 @@ impl VM {
                         }
 
                         // Lookup the method in the object through prototype chain
-                        let method = self.get_prop_with_proto_chain(ptr, &name);
+                        let mut method = self.get_prop_with_proto_chain(ptr, &name);
+                        // An accessor: its getter gives the method (a
+                        // namespace import's members are getters).
+                        if matches!(method, JsValue::Undefined) {
+                            let getter =
+                                self.get_prop_with_proto_chain(ptr, &format!("getter:{name}"));
+                            if !matches!(getter, JsValue::Undefined) {
+                                match self.call_sync(&getter, JsValue::Object(ptr), Vec::new()) {
+                                    Ok(v) => method = v,
+                                    Err(e) => return self.throw_exception(e),
+                                }
+                            }
+                        }
 
                         if let JsValue::NativeFunction(idx) = method {
                             // For native functions, call directly
@@ -2891,6 +2929,12 @@ impl VM {
             }
 
             OpCode::ForwardArgs | OpCode::RestArgs(_) => {}
+
+            OpCode::Intrinsic(id, argc) => {
+                let args = self.pop_args(argc);
+                let result = crate::runtime::intrinsics::call(&VmHost(&self.heap), id, &args);
+                return self.finish_builtin(Some(result), JsValue::Undefined, "");
+            }
 
             OpCode::SuperForward => {
                 // Stack: [args..., count, parent]
@@ -3477,7 +3521,7 @@ impl VM {
 }
 
 /// The VM's value representation, for the shared built-in methods.
-struct VmHost<'a>(&'a Vec<HeapObject>);
+pub(crate) struct VmHost<'a>(pub(crate) &'a Vec<HeapObject>);
 
 impl crate::runtime::builtins::Host for VmHost<'_> {
     type Value = JsValue;
@@ -3538,6 +3582,41 @@ impl crate::runtime::builtins::Host for VmHost<'_> {
                 _ => None,
             },
             _ => None,
+        }
+    }
+
+    fn is_array(&self, v: &JsValue) -> bool {
+        matches!(
+            v,
+            JsValue::Object(ptr) if matches!(
+                self.0.get(*ptr),
+                Some(HeapObject { data: HeapData::Array(_) })
+            )
+        )
+    }
+
+    fn own_keys(&self, v: &JsValue) -> Vec<String> {
+        let JsValue::Object(ptr) = v else {
+            return Vec::new();
+        };
+        match self.0.get(*ptr) {
+            Some(HeapObject {
+                data: HeapData::Object(props),
+            }) => {
+                let mut names: Vec<String> = Vec::new();
+                for k in props.keys() {
+                    if let Some(name) = crate::runtime::builtins::own_key_name(k)
+                        && !names.iter().any(|n| n == name)
+                    {
+                        names.push(name.to_string());
+                    }
+                }
+                names
+            }
+            Some(HeapObject {
+                data: HeapData::Array(items),
+            }) => (0..items.len()).map(|i| i.to_string()).collect(),
+            _ => Vec::new(),
         }
     }
 

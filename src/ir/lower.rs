@@ -1216,6 +1216,29 @@ impl Lowerer {
                 self.push(dst);
             }
 
+            OpCode::ArraySpread | OpCode::ObjectSpread => {
+                let source = self.pop()?;
+                let target = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(if matches!(op, OpCode::ArraySpread) {
+                    IrOp::ArraySpread(dst, target, source)
+                } else {
+                    IrOp::ObjectSpread(dst, target, source)
+                });
+                self.push(dst);
+            }
+
+            OpCode::Intrinsic(id, argc) => {
+                let mut args = Vec::with_capacity(*argc);
+                for _ in 0..*argc {
+                    args.push(self.pop()?);
+                }
+                args.reverse();
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::Intrinsic(dst, *id, args));
+                self.push(dst);
+            }
+
             OpCode::CallMethod(name, argc) => {
                 // VM pops receiver first (top of stack), then args below
                 // Stack: [..., arg0, arg1, ..., argN, receiver]
@@ -1460,11 +1483,12 @@ impl Lowerer {
                 self.push(dst);
             }
 
-            // Spread operations - not yet supported in IR, fall back to interpreter
-            OpCode::ArrayPush | OpCode::ArraySpread | OpCode::ObjectSpread => {
-                // For now, these operations require runtime support
-                // and are handled by the interpreter
-                return Err(LowerError::UnsupportedOpcode(format!("{:?}", op)));
+            // `[..., value]` in an array literal with a spread.
+            OpCode::ArrayPush => {
+                let value = self.pop()?;
+                let arr = self.pop()?;
+                self.emit(IrOp::ArrayPush(arr, value));
+                self.push(arr);
             }
         }
 

@@ -560,6 +560,14 @@ pub enum IrOp {
     Call(ValueId, ValueId, Vec<ValueId>),
     /// Call method: dst = obj.method(args...)
     CallMethod(ValueId, ValueId, String, Vec<ValueId>),
+    /// Spread into an array literal: dst = target after `target.push(...src)`
+    ArraySpread(ValueId, ValueId, ValueId),
+    /// Spread into an object literal: dst = target after copying src's own
+    /// properties
+    ObjectSpread(ValueId, ValueId, ValueId),
+    /// Intrinsic: dst = __intrinsic_<name>(args...), `id` an index into
+    /// `runtime::intrinsics::INTRINSICS`
+    Intrinsic(ValueId, u32, Vec<ValueId>),
     /// Create closure: dst = closure(func_id, env)
     MakeClosure(ValueId, u32, ValueId),
 
@@ -643,6 +651,9 @@ impl IrOp {
                 | IrOp::ArrayPush(_, _)
                 | IrOp::Call(_, _, _)
                 | IrOp::CallMethod(_, _, _, _)
+                | IrOp::Intrinsic(_, _, _)
+                | IrOp::ArraySpread(_, _, _)
+                | IrOp::ObjectSpread(_, _, _)
                 | IrOp::Throw(_)
                 | IrOp::Rethrow(_, _)
                 | IrOp::Construct(_, _, _)
@@ -717,6 +728,9 @@ impl IrOp {
             | IrOp::RestArgs(d, _)
             | IrOp::GetSuperProp(d, _, _, _)
             | IrOp::CallMethod(d, _, _, _)
+            | IrOp::Intrinsic(d, _, _)
+            | IrOp::ArraySpread(d, _, _)
+            | IrOp::ObjectSpread(d, _, _)
             | IrOp::MakeClosure(d, _, _)
             | IrOp::TypeCheck(d, _, _)
             | IrOp::TypeGuard(d, _, _)
@@ -858,7 +872,10 @@ impl IrOp {
             }
             IrOp::SuperForward(_, parent) => vec![*parent],
             IrOp::InstanceOf(_, v, c) | IrOp::In(_, v, c) => vec![*v, *c],
-            IrOp::AsyncResolve(_, p, v) | IrOp::AsyncReject(_, p, v) => vec![*p, *v],
+            IrOp::AsyncResolve(_, p, v)
+            | IrOp::AsyncReject(_, p, v)
+            | IrOp::ArraySpread(_, p, v)
+            | IrOp::ObjectSpread(_, p, v) => vec![*p, *v],
             IrOp::Await(v, _) => vec![*v],
             IrOp::AsyncStart(_)
             | IrOp::Loc(_)
@@ -872,7 +889,7 @@ impl IrOp {
                 uses.extend(args.iter().copied());
                 uses
             }
-            IrOp::CallMono(_, _, args) => args.clone(),
+            IrOp::CallMono(_, _, args) | IrOp::Intrinsic(_, _, args) => args.clone(),
             IrOp::MakeClosure(_, _, env) => vec![*env],
 
             IrOp::Phi(_, entries) => entries.iter().map(|(_, v)| *v).collect(),
@@ -1436,6 +1453,16 @@ impl fmt::Display for IrOp {
                     method,
                     args_str.join(", ")
                 )
+            }
+            IrOp::ArraySpread(d, t, s) => write!(f, "{} = array.spread {}, {}", d, t, s),
+            IrOp::ObjectSpread(d, t, s) => write!(f, "{} = object.spread {}, {}", d, t, s),
+            IrOp::Intrinsic(d, id, args) => {
+                let args: Vec<_> = args.iter().map(|a| a.to_string()).collect();
+                let name = crate::runtime::intrinsics::INTRINSICS
+                    .get(*id as usize)
+                    .copied()
+                    .unwrap_or("?");
+                write!(f, "{} = intrinsic {}({})", d, name, args.join(", "))
             }
             IrOp::MakeClosure(d, func_id, env) => {
                 write!(f, "{} = make.closure func#{}, {}", d, func_id, env)
