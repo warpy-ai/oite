@@ -1712,73 +1712,28 @@ impl VM {
                 Err(e) => return self.throw_exception(e),
             },
 
-            OpCode::BitAnd => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    self.stack
-                        .push(JsValue::Number((to_int32(a) & to_int32(b)) as f64));
-                } else {
-                    self.stack.push(JsValue::Undefined);
-                }
-            }
-
-            OpCode::BitOr => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    self.stack
-                        .push(JsValue::Number((to_int32(a) | to_int32(b)) as f64));
-                } else {
-                    self.stack.push(JsValue::Undefined);
-                }
-            }
-
-            OpCode::Xor => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    self.stack
-                        .push(JsValue::Number((to_int32(a) ^ to_int32(b)) as f64));
-                } else {
-                    self.stack.push(JsValue::Undefined);
-                }
-            }
-
-            OpCode::ShiftLeft => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    self.stack.push(JsValue::Number(
-                        to_int32(a).wrapping_shl(to_int32(b) as u32 & 31) as f64,
-                    ));
-                } else {
-                    self.stack.push(JsValue::Undefined);
-                }
-            }
-
-            OpCode::ShiftRight => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    self.stack.push(JsValue::Number(
-                        to_int32(a).wrapping_shr(to_int32(b) as u32 & 31) as f64,
-                    ));
-                } else {
-                    self.stack.push(JsValue::Undefined);
-                }
-            }
-
-            OpCode::ShiftRightUnsigned => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    self.stack.push(JsValue::Number(
-                        (to_int32(a) as u32).wrapping_shr(to_int32(b) as u32 & 31) as f64,
-                    ));
-                } else {
-                    self.stack.push(JsValue::Undefined);
-                }
+            // Bitwise operators: both operands as 32-bit integers.
+            OpCode::BitAnd
+            | OpCode::BitOr
+            | OpCode::Xor
+            | OpCode::ShiftLeft
+            | OpCode::ShiftRight
+            | OpCode::ShiftRightUnsigned => {
+                let (a, b) = match self.numeric_operands() {
+                    Ok(ab) => ab,
+                    Err(e) => return self.throw_exception(e),
+                };
+                let (x, y) = (to_int32(a), to_int32(b));
+                let shift = (y & 31) as u32;
+                let r = match op {
+                    OpCode::BitAnd => (x & y) as f64,
+                    OpCode::BitOr => (x | y) as f64,
+                    OpCode::Xor => (x ^ y) as f64,
+                    OpCode::ShiftLeft => x.wrapping_shl(shift) as f64,
+                    OpCode::ShiftRight => x.wrapping_shr(shift) as f64,
+                    _ => (x as u32).wrapping_shr(shift) as f64,
+                };
+                self.stack.push(JsValue::Number(r));
             }
 
             OpCode::Pow => {
@@ -3677,11 +3632,12 @@ fn js_typeof(v: &JsValue) -> &'static str {
     }
 }
 
+/// JavaScript `ToInt32`: the integer part, modulo 2^32.
 fn to_int32(n: f64) -> i32 {
     if !n.is_finite() {
         return 0;
     }
-    n.trunc() as i64 as u64 as u32 as i32
+    n.trunc().rem_euclid(4_294_967_296.0) as u32 as i32
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

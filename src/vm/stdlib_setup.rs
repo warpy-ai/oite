@@ -469,15 +469,26 @@ fn setup_math_date(vm: &mut VM) {
     use crate::runtime::builtins::{MATH_CONSTANTS, MATH_FUNCTIONS, date_now, math_call};
     use crate::vm::value::NativeFn;
 
-    fn numbers(vm: &VM, args: &[JsValue]) -> Vec<f64> {
-        args.iter()
-            .map(|a| match a {
+    /// The arguments as numbers (`ToNumber`, through `valueOf` for an
+    /// object). An exception `valueOf` throws is left in `native_throw`.
+    fn numbers(vm: &mut VM, args: &[JsValue]) -> Vec<f64> {
+        let mut out = Vec::with_capacity(args.len());
+        for a in args {
+            let p = match vm.to_primitive(a, false) {
+                Ok(p) => p.unwrap_or_else(|| a.clone()),
+                Err(e) => {
+                    vm.native_throw = Some(e);
+                    return vec![f64::NAN; args.len()];
+                }
+            };
+            out.push(match &p {
                 JsValue::Object(_) => {
-                    crate::vm::errors::to_number(&JsValue::String(vm.to_js_string(a)))
+                    crate::vm::errors::to_number(&JsValue::String(vm.to_js_string(&p)))
                 }
                 other => crate::vm::errors::to_number(other),
-            })
-            .collect()
+            });
+        }
+        out
     }
     macro_rules! math_fns {
         ($($name:literal),* $(,)?) => {

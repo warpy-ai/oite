@@ -247,6 +247,7 @@ impl<'a> TypeChecker<'a> {
                 self.set_type(*dst, IrType::Boolean);
             }
 
+            IrOp::MathCall(dst, _, _) => self.set_type(*dst, IrType::Number),
             IrOp::CallMethod(dst, _, _, _)
             | IrOp::Intrinsic(dst, _, _)
             | IrOp::ArraySpread(dst, _, _)

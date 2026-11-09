@@ -513,9 +513,12 @@ pub fn math_call(name: &str, args: &[f64]) -> f64 {
         "atan" => a.atan(),
         "atan2" => a.atan2(b),
         "hypot" => args.iter().map(|x| x * x).sum::<f64>().sqrt(),
+        // NaN wins; -0 is below +0.
         "min" => args.iter().fold(f64::INFINITY, |m, &x| {
             if m.is_nan() || x.is_nan() {
                 f64::NAN
+            } else if m == x {
+                if m.is_sign_negative() { m } else { x }
             } else {
                 m.min(x)
             }
@@ -523,6 +526,8 @@ pub fn math_call(name: &str, args: &[f64]) -> f64 {
         "max" => args.iter().fold(f64::NEG_INFINITY, |m, &x| {
             if m.is_nan() || x.is_nan() {
                 f64::NAN
+            } else if m == x {
+                if m.is_sign_positive() { m } else { x }
             } else {
                 m.max(x)
             }
