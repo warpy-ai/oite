@@ -1,0 +1,12 @@
+9 5 14 3.5 false false true true
+-0.25 -0.75 -0.125 -2 true true false false
+Infinity Infinity Infinity Infinity false false true true
+NaN NaN NaN NaN false false false false
+72 5 14 3.5 false false true true
+ab NaN NaN NaN true true false false
+1 1 0 Infinity false false true true
+6 2 8 2 false false true true
+true no number
+true no number
+101 o o NaN []
+233 l o

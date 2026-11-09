@@ -1,0 +1,29 @@
+// backends: vm jit aot
+// Arithmetic and comparisons on values whose type the compiler does not
+// know: numbers take the inline path, anything else the runtime.
+function ops(a, b) {
+  return [a + b, a - b, a * b, a / b, a < b, a <= b, a > b, a >= b].join(" ");
+}
+console.log(ops(7, 2));
+console.log(ops(-0.5, 0.25));
+console.log(ops(1 / 0, 2));
+console.log(ops(0 / 0, 1));
+console.log(ops("7", 2));
+console.log(ops("a", "b"));
+console.log(ops(true, null));
+let o = { valueOf() { return 4; } };
+console.log(ops(o, 2));
+// A valueOf that throws: the exception reaches the catch.
+let bad = { valueOf() { throw new RangeError("no number"); } };
+for (let k = 0; k < 2; k++) {
+  try {
+    console.log(k === 0 ? bad - 1 : bad * 2);
+  } catch (e) {
+    console.log(e instanceof RangeError, e.message);
+  }
+}
+// String indexing: ASCII strings and others.
+let ascii = "hello";
+let other = "héllo";
+console.log(ascii.charCodeAt(1), ascii.charAt(4), ascii.at(-1), ascii.charCodeAt(9), "[" + ascii.charAt(9) + "]");
+console.log(other.charCodeAt(1), other.charAt(2), other.at(-1));

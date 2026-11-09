@@ -285,6 +285,16 @@ fn as_str(v: OtValue) -> Option<&'static str> {
     }
 }
 
+/// Whether `v` is a string known to be all ASCII (`ObjectHeader::ASCII`).
+fn is_ascii(v: OtValue) -> bool {
+    match object(v) {
+        Some((ptr, ObjectKind::String)) => {
+            unsafe { ptr.as_ref::<NativeString>() }.header.flags & ObjectHeader::ASCII != 0
+        }
+        _ => false,
+    }
+}
+
 fn new_string(s: &str) -> u64 {
     match heap().alloc_string(s) {
         Some(ptr) => OtValue::pointer(ptr).to_bits(),
@@ -1138,6 +1148,10 @@ pub extern "C" fn ot_call_method(
     // String methods, shared with the VM.
     if let Some(s) = as_str(r) {
         let a = unsafe { args(argv, argc) };
+        // Indexing: an ASCII string's flag saves scanning it.
+        if let Some(result) = builtins::string_index(&NativeHost, s, is_ascii(r), key, a) {
+            return outcome(result, recv);
+        }
         if let Some(result) = builtins::string_method(&NativeHost, s, key, a) {
             return outcome(result, recv);
         }
@@ -1348,11 +1362,32 @@ pub extern "C" fn ot_add_any(a: u64, b: u64) -> u64 {
     number(to_number(va) + to_number(vb))
 }
 
+/// `a op b` for `-`, `*`, `/`, `%` and `**`: both operands as numbers
+/// (`ToNumber`, through `valueOf` for an object, which may throw).
 fn numeric(a: u64, b: u64, f: impl Fn(f64, f64) -> f64) -> u64 {
-    number(f(
-        to_number(OtValue::from_bits(a)),
-        to_number(OtValue::from_bits(b)),
-    ))
+    let x = match number_operand(a) {
+        Ok(x) => x,
+        Err(e) => return e,
+    };
+    let y = match number_operand(b) {
+        Ok(y) => y,
+        Err(e) => return e,
+    };
+    number(f(x, y))
+}
+
+/// `ToNumber(v)`; `Err` is the exception a `valueOf` threw.
+fn number_operand(v: u64) -> Result<f64, u64> {
+    let v = OtValue::from_bits(v);
+    if v.is_number() {
+        return Ok(v.as_number_unchecked());
+    }
+    let p = to_primitive(v, false)?.unwrap_or(v);
+    Ok(if object(p).is_some() && as_str(p).is_none() {
+        to_number(OtValue::from_bits(new_string(&value_to_string(p))))
+    } else {
+        to_number(p)
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -1466,9 +1501,22 @@ pub extern "C" fn ot_eq_loose(a: u64, b: u64) -> u64 {
     boolean(loose_equal(OtValue::from_bits(a), OtValue::from_bits(b)))
 }
 
+/// `a < b` and the others: strings compare as strings, anything else as
+/// numbers, after `ToPrimitive` (whose `valueOf` may throw).
 fn compare(a: u64, b: u64, f: impl Fn(std::cmp::Ordering) -> bool) -> u64 {
     let va = OtValue::from_bits(a);
     let vb = OtValue::from_bits(b);
+    if let (Some(x), Some(y)) = (va.as_number(), vb.as_number()) {
+        return boolean(x.partial_cmp(&y).is_some_and(f));
+    }
+    let va = match to_primitive(va, false) {
+        Ok(p) => p.unwrap_or(va),
+        Err(e) => return e,
+    };
+    let vb = match to_primitive(vb, false) {
+        Ok(p) => p.unwrap_or(vb),
+        Err(e) => return e,
+    };
     if let (Some(x), Some(y)) = (as_str(va), as_str(vb)) {
         return boolean(f(x.cmp(y)));
     }

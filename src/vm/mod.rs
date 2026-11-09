@@ -707,6 +707,51 @@ impl VM {
         Ok(self.stack.pop().unwrap_or(JsValue::Undefined))
     }
 
+    /// The two operands of `-`, `*`, `/` or `%`, as numbers (`ToNumber`,
+    /// through `valueOf` for an object). [a, b] -> []
+    fn numeric_operands(&mut self) -> Result<(f64, f64), JsValue> {
+        let b = self.stack.pop().unwrap_or(JsValue::Undefined);
+        let a = self.stack.pop().unwrap_or(JsValue::Undefined);
+        let mut num = |v: JsValue| -> Result<f64, JsValue> {
+            if let JsValue::Number(n) = v {
+                return Ok(n);
+            }
+            let p = self.to_primitive(&v, false)?.unwrap_or(v);
+            Ok(match p {
+                JsValue::Object(_) => {
+                    crate::vm::errors::to_number(&JsValue::String(self.to_js_string(&p)))
+                }
+                other => crate::vm::errors::to_number(&other),
+            })
+        };
+        let a = num(a)?;
+        let b = num(b)?;
+        Ok((a, b))
+    }
+
+    /// How the operands of `<`, `<=`, `>` or `>=` compare: as strings when
+    /// both are strings after `ToPrimitive`, else as numbers (`None` when
+    /// one is NaN). [a, b] -> []
+    fn compare_operands(&mut self) -> Result<Option<std::cmp::Ordering>, JsValue> {
+        let b = self.stack.pop().unwrap_or(JsValue::Undefined);
+        let a = self.stack.pop().unwrap_or(JsValue::Undefined);
+        if let (JsValue::Number(x), JsValue::Number(y)) = (&a, &b) {
+            return Ok(x.partial_cmp(y));
+        }
+        let a = self.to_primitive(&a, false)?.unwrap_or(a);
+        let b = self.to_primitive(&b, false)?.unwrap_or(b);
+        if let (JsValue::String(x), JsValue::String(y)) = (&a, &b) {
+            return Ok(Some(x.cmp(y)));
+        }
+        let num = |vm: &Self, v: &JsValue| match v {
+            JsValue::Object(_) => {
+                crate::vm::errors::to_number(&JsValue::String(vm.to_js_string(v)))
+            }
+            other => crate::vm::errors::to_number(other),
+        };
+        Ok(num(self, &a).partial_cmp(&num(self, &b)))
+    }
+
     /// JavaScript `ToPrimitive` for an object with a user-defined
     /// `valueOf` or `toString` (string hint: `toString` first). `None`: no
     /// such method, so the value converts as before.
@@ -1657,25 +1702,15 @@ impl VM {
                 }
             }
 
-            OpCode::Sub => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    self.stack.push(JsValue::Number(a - b));
-                } else {
-                    self.stack.push(JsValue::Undefined);
-                }
-            }
+            OpCode::Sub => match self.numeric_operands() {
+                Ok((a, b)) => self.stack.push(JsValue::Number(a - b)),
+                Err(e) => return self.throw_exception(e),
+            },
 
-            OpCode::Mul => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    self.stack.push(JsValue::Number(a * b));
-                } else {
-                    self.stack.push(JsValue::Undefined);
-                }
-            }
+            OpCode::Mul => match self.numeric_operands() {
+                Ok((a, b)) => self.stack.push(JsValue::Number(a * b)),
+                Err(e) => return self.throw_exception(e),
+            },
 
             OpCode::BitAnd => {
                 if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
@@ -1756,15 +1791,10 @@ impl VM {
                 }
             }
 
-            OpCode::Div => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    self.stack.push(JsValue::Number(a / b));
-                } else {
-                    self.stack.push(JsValue::Undefined);
-                }
-            }
+            OpCode::Div => match self.numeric_operands() {
+                Ok((a, b)) => self.stack.push(JsValue::Number(a / b)),
+                Err(e) => return self.throw_exception(e),
+            },
 
             OpCode::Print => {
                 let v = self.stack.pop().unwrap_or(JsValue::Undefined);
@@ -1908,63 +1938,26 @@ impl VM {
                 }
             }
 
-            OpCode::Lt => {
-                let b = self.stack.pop();
-                let a = self.stack.pop();
-                let result = match (a, b) {
-                    (Some(JsValue::Number(a)), Some(JsValue::Number(b))) => a < b,
-                    (Some(JsValue::String(a)), Some(JsValue::String(b))) => a < b,
-                    _ => false,
+            OpCode::Lt | OpCode::LtEq | OpCode::Gt | OpCode::GtEq => {
+                let ord = match self.compare_operands() {
+                    Ok(ord) => ord,
+                    Err(e) => return self.throw_exception(e),
                 };
+                let result = ord.is_some_and(|o| match op {
+                    OpCode::Lt => o.is_lt(),
+                    OpCode::LtEq => o.is_le(),
+                    OpCode::Gt => o.is_gt(),
+                    _ => o.is_ge(),
+                });
                 self.stack.push(JsValue::Boolean(result));
             }
 
-            OpCode::LtEq => {
-                let b = self.stack.pop();
-                let a = self.stack.pop();
-                let result = match (a, b) {
-                    (Some(JsValue::Number(a)), Some(JsValue::Number(b))) => a <= b,
-                    (Some(JsValue::String(a)), Some(JsValue::String(b))) => a <= b,
-                    _ => false,
-                };
-                self.stack.push(JsValue::Boolean(result));
-            }
-
-            OpCode::Gt => {
-                let b = self.stack.pop();
-                let a = self.stack.pop();
-                let result = match (a, b) {
-                    (Some(JsValue::Number(a)), Some(JsValue::Number(b))) => a > b,
-                    (Some(JsValue::String(a)), Some(JsValue::String(b))) => a > b,
-                    _ => false,
-                };
-                self.stack.push(JsValue::Boolean(result));
-            }
-
-            OpCode::GtEq => {
-                let b = self.stack.pop();
-                let a = self.stack.pop();
-                let result = match (a, b) {
-                    (Some(JsValue::Number(a)), Some(JsValue::Number(b))) => a >= b,
-                    (Some(JsValue::String(a)), Some(JsValue::String(b))) => a >= b,
-                    _ => false,
-                };
-                self.stack.push(JsValue::Boolean(result));
-            }
-
-            OpCode::Mod => {
-                if let (Some(JsValue::Number(b)), Some(JsValue::Number(a))) =
-                    (self.stack.pop(), self.stack.pop())
-                {
-                    if b == 0.0 {
-                        self.stack.push(JsValue::Number(f64::NAN));
-                    } else {
-                        self.stack.push(JsValue::Number(a % b));
-                    }
-                } else {
-                    self.stack.push(JsValue::Number(f64::NAN));
-                }
-            }
+            // Rust's `%` on doubles is JavaScript's: the sign of `a`, NaN
+            // for a zero `b`.
+            OpCode::Mod => match self.numeric_operands() {
+                Ok((a, b)) => self.stack.push(JsValue::Number(a % b)),
+                Err(e) => return self.throw_exception(e),
+            },
 
             OpCode::StoreElement => {
                 let index_val = self.stack.pop().unwrap();
