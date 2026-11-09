@@ -48,27 +48,52 @@ Best of 3 runs, in milliseconds. *master* is `oitec` today. *Fast path* is
 the first change below (inline arithmetic on numbers), on branch
 `claude/byte-primitives`.
 
-RESULTS_TABLE
+| Benchmark | What it stresses | master | Fast path | Bun | Node | Fast path vs Bun |
+| --------- | ---------------- | -----: | --------: | --: | ---: | ---------------: |
+| `startup` | starting a process | 5 | 5 | 10 | 68 | **0.5×** |
+| `loop_local` | numbers and `%` in a function | 3,013 | 2,941 | 2,218 | 782 | 1.3× |
+| `fib` | recursion | 78 | 40 | 26 | 99 | 1.5× |
+| `strings` | concatenation, `.length` | 75 | 87 | 50 | 120 | 1.7× |
+| `string_build` | `join`, `split` | 160 | 154 | 79 | 150 | 1.9× |
+| `calls` | function calls | 148 | 67 | 26 | 121 | 2.6× |
+| `sort` | quicksort with a comparator | 238 | 208 | 71 | 140 | 2.9× |
+| `closures` | callbacks and captures | 306 | 260 | 54 | 193 | 4.8× |
+| `loop_global` | the same loop at the top level | 11,323 | 10,937 | 2,239 | 807 | 4.9× |
+| `array` | array reads and writes | 583 | 431 | 69 | 151 | 6.2× |
+| `props` | object properties | 458 | 476 | 28 | 101 | 17× |
+| `binary_trees` | allocation, recursion | 5,053 | 6,453 | 328 | 350 | 20× |
+| `methods` | method calls on a class | 452 | 345 | 17 | 92 | 20× |
+| `nbody` | floating point on objects | 5,722 | 3,904 | 128 | 208 | 30× |
+| `alloc` | small short-lived objects | 1,458 | 1,350 | 25 | 84 | 54× |
+| `bytes` | `charCodeAt` over a string | 73,200 | 74,000 | 23 | 131 | 3,200× |
+
+Bun 1.4.4 with its default options (`run.sh` clears `BUN_OPTIONS`); Node
+22.23 with `--experimental-strip-types`. `binary_trees` varies by about 20%
+between runs because of its memory use.
 
 Peak memory (MB):
 
 | Benchmark | Oite | Bun | Node |
 | --------- | ---- | --- | ---- |
-| `alloc` | 1,261 | 22 | 64 |
-| `binary_trees` | 3,775 | 53 | 111 |
-| `string_build` | 48 | 58 | 107 |
-| `closures` | 33 | 37 | 93 |
+| `alloc` | 1,260 | 29 | 64 |
+| `binary_trees` | 3,775 | 50 | 111 |
+| `string_build` | 48 | 50 | 106 |
+| `closures` | 33 | 47 | 93 |
 | `nbody` | 12 | 22 | 65 |
 | `startup` | 12 | 12 | 56 |
 
 What this says:
 
-- **Oite already wins where ahead-of-time compilation is supposed to
-  win:** starting a process takes half Bun's time, and with the fast path,
-  recursion and plain function calls are ahead of Bun.
-- **It loses badly wherever a program touches objects, globals or
-  memory:** 10 to 50 times slower, and allocation-heavy programs never give
-  memory back.
+- **Oite wins only at start-up**, where ahead-of-time compilation is
+  supposed to win: half Bun's time.
+- **Plain computation is close:** recursion, calls and numeric loops are
+  1.3 to 2.6 times Bun's time with the fast path (and already ahead of
+  Node on recursion and calls).
+- **Everything that touches objects, methods or memory is 17 to 54 times
+  slower**, and allocation-heavy programs never give memory back.
+- **Indexing a string is quadratic:** `s.charCodeAt(i)` costs time
+  proportional to the length of `s`, so scanning a string is 3,200 times
+  slower than Bun.
 
 ## Why: the causes, by cost
 
@@ -103,6 +128,10 @@ benchmark that isolates it.
 7. **Built-ins are reached through objects.** `Math.sqrt(x)` loads the
    global `Math`, looks up `sqrt` by name, and calls it, instead of
    emitting one `sqrtsd` instruction.
+8. **String indexing copies the string.** The shared string methods turn
+   the receiver into a vector of characters on every call, so
+   `s.charCodeAt(i)`, `s.charAt(i)` and `s[i]` cost time proportional to
+   `s.length`, and a loop over a string is quadratic.
 
 ## How an ahead-of-time compiler beats a JIT
 
@@ -140,7 +169,8 @@ separate pull request that adds or updates benchmarks.
 
 | Change | Closes | Expected effect |
 | ------ | ------ | --------------- |
-| **Inline number fast paths** for arithmetic and comparisons on untyped values, in both native backends (LLVM done in the prototype, Cranelift to do). | Cause 1 | Measured: `fib` and `calls` 2.2 to 2.3 times faster, ahead of Bun; arrays and properties 30% faster. |
+| **Inline number fast paths** for arithmetic and comparisons on untyped values, in both native backends (LLVM done in the prototype, Cranelift to do). | Cause 1 | Measured: `fib` and `calls` about 2 times faster, `nbody` and `array` about 30% faster. |
+| **Constant-time string indexing:** `charCodeAt`, `charAt` and `s[i]` read the string in place (directly for ASCII strings, which can be marked when they are created). | Cause 8 | `bytes` from 74 s to tens of milliseconds. |
 | **Integer fast path for `%`, `|`, `&`, `<<`, `>>`** when both operands are integers; `fmod` only otherwise. | Cause 6 | `loop_local` about 10 times faster. |
 | **Math as intrinsics in the generated code:** `Math.sqrt` becomes `llvm.sqrt`, `floor` becomes `llvm.floor`, and so on, when `Math` is not redefined. | Cause 7 | Part of `nbody`. |
 | **Top-level variables as fixed slots** in a module's data, not hash entries. | Cause 4 | `loop_global` close to `loop_local`. |
