@@ -15,11 +15,13 @@
 
 use super::abi::{EXCEPTION_BITS, OtValue, UNBOUND_BITS};
 use super::builtins;
-use super::builtins::is_hidden_key;
 use super::heap::{
     HeapPtr, NativeArray, NativeFn, NativeFunction, NativeObject, NativeString, ObjectHeader,
-    ObjectKind, PropertyMap, heap,
+    ObjectKind, heap,
 };
+use super::object::atom::{self, Atom, Role};
+use super::object::object;
+use super::object::shape::ACCESSOR;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Write;

@@ -28,6 +28,7 @@ fn main() {
         "heap.rs",
         "intrinsics.rs",
         // A directory: cargo watches every file in it.
+        "object",
         "stubs",
     ] {
         println!(
@@ -47,6 +48,10 @@ fn main() {
         .arg(&target)
         .arg("-C")
         .arg("opt-level=3")
+        // One unit: the runtime's small helpers are spread over modules
+        // and must inline into each other.
+        .arg("-C")
+        .arg("codegen-units=1")
         .arg("-C")
         .arg("panic=abort")
         .arg("-C")

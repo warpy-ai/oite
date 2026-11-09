@@ -4,9 +4,7 @@ use super::*;
 
 /// Whether the object at `ptr` is a class (marked `__class__`).
 pub(super) fn is_class(ptr: HeapPtr) -> bool {
-    props(ptr)
-        .iter()
-        .any(|(k, v)| k == "__class__" && *v == boolean(true))
+    own_value(ptr, atom::CLASS) == Some(boolean(true))
 }
 
 /// `[class C]` or `[class C extends P]`, as Node prints a class.
@@ -15,10 +13,7 @@ pub(super) fn class_summary(ptr: HeapPtr) -> String {
         Some(n) => n.to_string(),
         None => "(anonymous)".to_string(),
     };
-    let parent = props(ptr)
-        .iter()
-        .find(|(k, _)| k == "__proto__")
-        .and_then(|(_, p)| object(OtValue::from_bits(*p)))
+    let parent = object(OtValue::from_bits(obj(ptr).proto))
         .filter(|(p, kind)| *kind == ObjectKind::Object && is_class(*p));
     match parent {
         Some((p, _)) => format!("[class {} extends {}]", name_of(ptr), name_of(p)),
@@ -42,7 +37,7 @@ pub(super) fn construct_result(result: u64, this: u64) -> u64 {
 pub(super) fn run_constructor(ctor: u64, this: u64, argv: *const u64, argc: usize) -> Option<u64> {
     let c = OtValue::from_bits(ctor);
     let code = match object(c)? {
-        (ptr, ObjectKind::Object) if is_class(ptr) => lookup(ptr, "constructor")?,
+        (ptr, ObjectKind::Object) if is_class(ptr) => lookup_atom(ptr, atom::CONSTRUCTOR)?,
         (_, ObjectKind::Function) => ctor,
         _ => return None,
     };
@@ -53,7 +48,7 @@ pub(super) fn run_constructor(ctor: u64, this: u64, argv: *const u64, argc: usiz
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_construct(ctor: u64, argv: *const u64, argc: usize) -> u64 {
     if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(ctor))
-        && lookup(ptr, "__promise_ctor__").is_some()
+        && lookup_atom(ptr, atom::PROMISE_CTOR).is_some()
     {
         let executor = unsafe { args(argv, argc) }
             .first()
@@ -63,7 +58,7 @@ pub extern "C" fn ot_construct(ctor: u64, argv: *const u64, argc: usize) -> u64 
     }
     let this = ot_alloc_object();
     if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(ctor))
-        && let Some(proto) = lookup(ptr, "prototype")
+        && let Some(proto) = lookup_atom(ptr, atom::PROTOTYPE)
     {
         set_property(OtValue::from_bits(this), "__proto__", proto);
     }
@@ -136,8 +131,9 @@ pub extern "C" fn ot_get_private(obj: u64, key: *const u8, key_len: usize) -> u6
 pub extern "C" fn ot_set_private(obj: u64, key: *const u8, key_len: usize, value: u64) -> u64 {
     let key = unsafe { name(key, key_len) };
     if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(obj)) {
-        if let Some(entry) = props(ptr).iter_mut().find(|(k, _)| k == key) {
-            entry.1 = value;
+        let key_atom = atom::atom(key);
+        if own_value(ptr, key_atom).is_some() {
+            object::set_own(self::obj(ptr), key_atom, 0, value);
             return undefined();
         }
         if let Some(setter) = lookup(ptr, &format!("setter:{key}")) {
@@ -194,7 +190,7 @@ pub extern "C" fn ot_instanceof(value: u64, ctor: u64) -> u64 {
     }
     let proto = match object(OtValue::from_bits(ctor)) {
         Some((_, ObjectKind::Function)) => return boolean(true),
-        Some((ptr, ObjectKind::Object)) => lookup(ptr, "prototype"),
+        Some((ptr, ObjectKind::Object)) => lookup_atom(ptr, atom::PROTOTYPE),
         _ => None,
     };
     let Some(proto) = proto else {
@@ -205,11 +201,11 @@ pub extern "C" fn ot_instanceof(value: u64, ctor: u64) -> u64 {
         let Some((ptr, ObjectKind::Object)) = object(cur) else {
             return boolean(false);
         };
-        match props(ptr).iter().find(|(k, _)| k == "__proto__") {
-            Some((_, p)) if *p == proto => return boolean(true),
-            Some((_, p)) => cur = OtValue::from_bits(*p),
-            None => return boolean(false),
+        let p = obj(ptr).proto;
+        if p == proto {
+            return boolean(true);
         }
+        cur = OtValue::from_bits(p);
     }
     boolean(false)
 }

@@ -3,12 +3,9 @@
 
 use super::*;
 
-pub(super) fn props(ptr: HeapPtr) -> &'static mut PropertyMap {
-    let obj = unsafe { ptr.as_mut::<NativeObject>() };
-    if obj.properties.is_null() {
-        obj.properties = Box::into_raw(Box::new(PropertyMap::new()));
-    }
-    unsafe { &mut *obj.properties }
+/// The object at `ptr`, which must be an `ObjectKind::Object`.
+pub(super) fn obj(ptr: HeapPtr) -> &'static mut NativeObject {
+    unsafe { ptr.as_mut::<NativeObject>() }
 }
 
 pub(super) fn array(ptr: HeapPtr) -> &'static mut NativeArray {
@@ -49,22 +46,16 @@ pub(super) fn array_push(arr: &mut NativeArray, value: u64) -> usize {
     len + 1
 }
 
-thread_local! {
-    /// Whether a getter or setter was ever defined: until then property
-    /// access skips looking for them.
-    pub(super) static HAS_ACCESSORS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// `key` on the object at `ptr` or its prototype chain, without accessors.
-pub(super) fn lookup(ptr: HeapPtr, key: &str) -> Option<u64> {
+/// The property `atom` on the object at `ptr` or its prototype chain: its
+/// value (for an accessor, the pair) and flags.
+pub(super) fn find(ptr: HeapPtr, atom: Atom) -> Option<(u64, u8)> {
     let mut cur = ptr;
     for _ in 0..1000 {
-        let map = props(cur);
-        if let Some((_, bits)) = map.iter().find(|(k, _)| k == key) {
-            return Some(*bits);
+        let o = obj(cur);
+        if let Some(found) = object::get_own(o, atom) {
+            return Some(found);
         }
-        let (_, proto) = map.iter().find(|(k, _)| k == "__proto__")?;
-        match object(OtValue::from_bits(*proto)) {
+        match object(OtValue::from_bits(o.proto)) {
             Some((p, ObjectKind::Object)) => cur = p,
             _ => return None,
         }
@@ -72,8 +63,56 @@ pub(super) fn lookup(ptr: HeapPtr, key: &str) -> Option<u64> {
     None
 }
 
-/// Property lookup, following `__proto__`.
+/// The value of the data property `key` on the object at `ptr` or its
+/// prototype chain. `getter:x` and `setter:x` give the accessor functions
+/// of `x`.
+pub(super) fn lookup(ptr: HeapPtr, key: &str) -> Option<u64> {
+    lookup_atom(ptr, atom::atom(key))
+}
+
+pub(super) fn lookup_atom(ptr: HeapPtr, key: Atom) -> Option<u64> {
+    let part = |target: Atom, i: usize| {
+        let (v, flags) = find(ptr, target)?;
+        let f = (flags & ACCESSOR != 0).then(|| object::accessor(v)[i])?;
+        (f != undefined()).then_some(f)
+    };
+    match atom::info(key).role {
+        Role::Getter(target) => part(target, 0),
+        Role::Setter(target) => part(target, 1),
+        Role::Plain if key == atom::PROTO => {
+            let p = obj(ptr).proto;
+            (p != undefined()).then_some(p)
+        }
+        Role::Plain => {
+            let (v, flags) = find(ptr, key)?;
+            (flags & ACCESSOR == 0).then_some(v)
+        }
+    }
+}
+
+/// The value of the own data property `key`.
+pub(super) fn own_value(ptr: HeapPtr, key: Atom) -> Option<u64> {
+    let (v, flags) = object::get_own(obj(ptr), key)?;
+    (flags & ACCESSOR == 0).then_some(v)
+}
+
+/// The own data properties that `console.log` shows: (name, value).
+pub(super) fn visible_data(ptr: HeapPtr) -> Vec<(&'static str, u64)> {
+    object::own(obj(ptr))
+        .into_iter()
+        .filter(|(_, flags, _)| flags & ACCESSOR == 0)
+        .map(|(a, _, v)| (atom::info(a), v))
+        .filter(|(info, _)| !info.hidden)
+        .map(|(info, v)| (info.name, v))
+        .collect()
+}
+
+/// Property lookup, following the prototype chain.
 pub(super) fn get_property(v: OtValue, key: &str) -> u64 {
+    get_property_atom(v, atom::atom(key))
+}
+
+pub(super) fn get_property_atom(v: OtValue, key: Atom) -> u64 {
     let Some((ptr, kind)) = object(v) else {
         if v.is_null() || v.is_undefined() {
             return throw_error(
@@ -81,7 +120,7 @@ pub(super) fn get_property(v: OtValue, key: &str) -> u64 {
                 &format!(
                     "Cannot read properties of {} (reading '{}')",
                     value_to_string(v),
-                    key
+                    atom::name(key)
                 ),
             );
         }
@@ -89,54 +128,47 @@ pub(super) fn get_property(v: OtValue, key: &str) -> u64 {
     };
     match kind {
         ObjectKind::Object => {
-            if matches!(key, "then" | "catch" | "finally") && promise_id(v.to_bits()).is_some() {
+            if matches!(key, atom::THEN | atom::CATCH | atom::FINALLY)
+                && promise_id(v.to_bits()).is_some()
+            {
                 // Promise methods run through `ot_call_method`; a function
                 // so that `typeof p.then` is "function".
                 return builtin(ot_builtin_promise_static);
             }
-            if HAS_ACCESSORS.with(|a| a.get())
-                && let Some(getter) = lookup(ptr, &format!("getter:{key}"))
-                && matches!(
-                    object(OtValue::from_bits(getter)),
-                    Some((_, ObjectKind::Function))
-                )
-            {
-                return ot_call(getter, v.to_bits(), std::ptr::null(), 0);
+            if key == atom::PROTO || !atom::is_plain(key) {
+                return lookup_atom(ptr, key).unwrap_or_else(undefined);
             }
-            let mut cur = ptr;
-            for _ in 0..1000 {
-                let map = props(cur);
-                if let Some((_, bits)) = map.iter().find(|(k, _)| k == key) {
-                    return *bits;
+            match find(ptr, key) {
+                Some((pair, flags)) if flags & ACCESSOR != 0 => {
+                    let getter = object::accessor(pair)[0];
+                    if is_function_value(getter) {
+                        ot_call(getter, v.to_bits(), std::ptr::null(), 0)
+                    } else {
+                        undefined()
+                    }
                 }
-                match map.iter().find(|(k, _)| k == "__proto__") {
-                    Some((_, proto)) => match OtValue::from_bits(*proto).as_pointer() {
-                        Some(p) => cur = p,
-                        None => break,
-                    },
-                    None => break,
-                }
+                Some((value, _)) => value,
+                None => undefined(),
             }
-            undefined()
         }
         ObjectKind::Array => {
             let arr = array(ptr);
-            if key == "length" {
+            if key == atom::LENGTH {
                 return number(arr.len as f64);
             }
-            match key.parse::<usize>() {
+            match atom::name(key).parse::<usize>() {
                 Ok(i) if i < arr.len as usize => unsafe { *arr.elements.add(i) },
                 _ => undefined(),
             }
         }
         ObjectKind::String => {
             let s = unsafe { ptr.as_ref::<NativeString>().as_str() };
-            if key == "length" {
+            if key == atom::LENGTH {
                 // Byte length, matching the VM until the string model is
                 // decided (#133).
                 return number(s.len() as f64);
             }
-            match key.parse::<usize>() {
+            match atom::name(key).parse::<usize>() {
                 Ok(i) if i < s.len() => new_string(&s[i..i + 1]),
                 _ => undefined(),
             }
@@ -145,32 +177,54 @@ pub(super) fn get_property(v: OtValue, key: &str) -> u64 {
     }
 }
 
+fn is_function_value(v: u64) -> bool {
+    matches!(
+        object(OtValue::from_bits(v)),
+        Some((_, ObjectKind::Function))
+    )
+}
+
 /// `v.key = value`; `undefined`, or `EXCEPTION_BITS` if it throws.
 pub(super) fn set_property(v: OtValue, key: &str, value: u64) -> u64 {
+    set_property_atom(v, atom::atom(key), value)
+}
+
+pub(super) fn set_property_atom(v: OtValue, key: Atom, value: u64) -> u64 {
     match object(v) {
         Some((ptr, ObjectKind::Object)) => {
-            if key.starts_with("getter:") || key.starts_with("setter:") {
-                HAS_ACCESSORS.with(|a| a.set(true));
-            } else if HAS_ACCESSORS.with(|a| a.get())
-                && let Some(setter) = lookup(ptr, &format!("setter:{key}"))
-                && matches!(
-                    object(OtValue::from_bits(setter)),
-                    Some((_, ObjectKind::Function))
-                )
-            {
-                let r = ot_call(setter, v.to_bits(), &value, 1);
-                return if r == EXCEPTION_BITS { r } else { undefined() };
+            let o = obj(ptr);
+            // The common case: an own data property, or a new one on an
+            // object whose prototype chain has no such accessor.
+            if atom::is_plain(key) && key != atom::PROTO {
+                match object::get_own(o, key) {
+                    Some((_, flags)) if flags & ACCESSOR == 0 => {
+                        object::set_own(o, key, 0, value);
+                        return undefined();
+                    }
+                    _ => {}
+                }
             }
-            let map = props(ptr);
-            if let Some(entry) = map.iter_mut().find(|(k, _)| k == key) {
-                entry.1 = value;
-            } else {
-                map.push((key.to_string(), value));
+            match atom::info(key).role {
+                Role::Getter(target) => object::define_accessor(o, target, Some(value), None),
+                Role::Setter(target) => object::define_accessor(o, target, None, Some(value)),
+                Role::Plain if key == atom::PROTO => o.proto = value,
+                Role::Plain => match find(ptr, key) {
+                    // An accessor, here or on the prototype chain: its
+                    // setter, or nothing without one.
+                    Some((pair, flags)) if flags & ACCESSOR != 0 => {
+                        let setter = object::accessor(pair)[1];
+                        if is_function_value(setter) {
+                            let r = ot_call(setter, v.to_bits(), &value, 1);
+                            return if r == EXCEPTION_BITS { r } else { undefined() };
+                        }
+                    }
+                    _ => object::set_own(o, key, 0, value),
+                },
             }
         }
         Some((ptr, ObjectKind::Array)) => {
             let arr = array(ptr);
-            if key == "length" {
+            if key == atom::LENGTH {
                 let n = to_number(OtValue::from_bits(value));
                 if n >= 0.0 && n.fract() == 0.0 && n <= u32::MAX as f64 {
                     let n = n as usize;
@@ -182,7 +236,7 @@ pub(super) fn set_property(v: OtValue, key: &str, value: u64) -> u64 {
                         }
                     }
                 }
-            } else if let Ok(i) = key.parse::<usize>() {
+            } else if let Ok(i) = atom::name(key).parse::<usize>() {
                 array_set(arr, i, value);
             }
         }
@@ -194,7 +248,7 @@ pub(super) fn set_property(v: OtValue, key: &str, value: u64) -> u64 {
                     &format!(
                         "Cannot set properties of {} (setting '{}')",
                         value_to_string(v),
-                        key
+                        atom::name(key)
                     ),
                 );
             }
@@ -275,15 +329,17 @@ pub extern "C" fn ot_make_closure(code: *const u8, env: u64) -> u64 {
 /// `obj.key`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_get_prop(obj: u64, key: *const u8, key_len: usize) -> u64 {
-    get_property(OtValue::from_bits(obj), unsafe { name(key, key_len) })
+    get_property_atom(OtValue::from_bits(obj), unsafe {
+        atom::static_atom(key, key_len)
+    })
 }
 
 /// `obj.key = value`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_set_prop(obj: u64, key: *const u8, key_len: usize, value: u64) -> u64 {
-    set_property(
+    set_property_atom(
         OtValue::from_bits(obj),
-        unsafe { name(key, key_len) },
+        unsafe { atom::static_atom(key, key_len) },
         value,
     )
 }
@@ -320,8 +376,8 @@ pub extern "C" fn ot_set_index(obj: u64, key: u64, value: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_delete_prop(obj: u64, key: *const u8, key_len: usize) -> u64 {
     if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(obj)) {
-        let key = unsafe { name(key, key_len) };
-        props(ptr).retain(|(k, _)| k != key);
+        let key = unsafe { atom::static_atom(key, key_len) };
+        object::remove_own(self::obj(ptr), key);
     }
     boolean(true)
 }
@@ -329,7 +385,7 @@ pub extern "C" fn ot_delete_prop(obj: u64, key: *const u8, key_len: usize) -> u6
 /// `arr.length` (or `.length` of anything else).
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_array_len(arr: u64) -> u64 {
-    get_property(OtValue::from_bits(arr), "length")
+    get_property_atom(OtValue::from_bits(arr), atom::LENGTH)
 }
 
 /// `arr.push(value)`; returns the new length.

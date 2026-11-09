@@ -1,0 +1,101 @@
+// backends: vm jit aot
+// Objects in every storage mode: a few properties (inline slots), more
+// (overflow slots), many (dictionary), after a delete (dictionary).
+function sortedKeys(o) {
+  let keys = Object.keys(o);
+  // Insertion sort: sort() is not in core.
+  for (let i = 1; i < keys.length; i++) {
+    let k = keys[i];
+    let j = i - 1;
+    while (j >= 0 && keys[j] > k) {
+      keys[j + 1] = keys[j];
+      j--;
+    }
+    keys[j + 1] = k;
+  }
+  return keys.join(",");
+}
+function build(n) {
+  let o = {};
+  for (let i = 0; i < n; i++) o["k" + i] = i;
+  return o;
+}
+function sum(o, n) {
+  let s = 0;
+  for (let i = 0; i < n; i++) s = s + o["k" + i];
+  return s;
+}
+let sizes = [0, 1, 4, 5, 9, 64, 65, 200];
+let out = [];
+for (let i = 0; i < sizes.length; i++) {
+  let n = sizes[i];
+  let o = build(n);
+  out.push(Object.keys(o).length + ":" + sum(o, n));
+}
+console.log(out.join(" "));
+
+// Overwriting keeps one property; reading a missing one is undefined.
+let p = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6 };
+p.a = 10;
+p.f = 60;
+console.log(p.a, p.f, p.zz, sortedKeys(p));
+
+// delete, then add again.
+delete p.c;
+console.log(p.c, "c" in p, sortedKeys(p));
+p.c = 33;
+p.g = 7;
+console.log(p.c, p.g, sortedKeys(p));
+let big = build(100);
+delete big.k50;
+big.k50 = "again";
+console.log(big.k50, big.k99, Object.keys(big).length);
+
+// Objects built the same way and in another order.
+let q1 = { x: 1, y: 2 };
+let q2 = { y: 20, x: 10 };
+console.log(q1.x, q1.y, q2.x, q2.y);
+
+// Prototypes: lookup, shadowing, and a prototype that changes later.
+class Base {
+  hello() {
+    return "base";
+  }
+  get twice() {
+    return this.n * 2;
+  }
+  set twice(v) {
+    this.n = v / 2;
+  }
+}
+class Derived extends Base {
+  constructor() {
+    super();
+    this.n = 4;
+  }
+}
+let d = new Derived();
+console.log(d.hello(), d.twice, "twice" in d, "nope" in d);
+d.twice = 30;
+console.log(d.n, d.twice, sortedKeys(d));
+d.hello = () => "own";
+console.log(d.hello(), new Derived().hello());
+Base.prototype.hello = function () {
+  return "patched";
+};
+Base.prototype.extra = 99;
+console.log(new Derived().hello(), d.hello(), d.extra);
+
+// A getter with no setter: assignment does not replace it.
+class ReadOnly {
+  get v() {
+    return 1;
+  }
+}
+let r = new ReadOnly();
+r.v = 5;
+console.log(r.v);
+
+// Spread copies own properties, with accessors read as values.
+let s = { ...d, added: true };
+console.log(s.n, s.added, s.twice, typeof s.hello);

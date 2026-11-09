@@ -16,6 +16,7 @@ pub mod r#async;
 pub mod builtins;
 pub mod heap;
 pub mod intrinsics;
+pub mod object;
 pub mod stubs;
 
 pub use abi_version::ABI_VERSION;

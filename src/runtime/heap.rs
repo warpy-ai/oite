@@ -13,9 +13,10 @@
 use std::alloc::{self, Layout};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Simple property storage using a Vec instead of HashMap to avoid hashbrown dependency.
-/// This is a tradeoff: O(n) lookup but no external dependencies.
-pub type PropertyMap = Vec<(String, u64)>;
+use super::object::shape::{self, Shape};
+
+/// Property slots stored in the object itself; the rest go to `overflow`.
+pub const INLINE_SLOTS: usize = 4;
 
 /// A pointer to a heap-allocated object.
 ///
@@ -213,17 +214,21 @@ pub struct NativeFunction {
 /// `this`, the arguments, and the function's own environment.
 pub type NativeFn = extern "C" fn(this: u64, argv: *const u64, argc: usize, env: u64) -> u64;
 
-/// A native object (key-value map).
-///
-/// For simplicity, we use a Rust HashMap internally.
-/// A production implementation would use inline slots + overflow hash.
+/// A native object (docs/docs/object-model.md). Its shape says which
+/// property is in which slot; `object::object` reads and writes them.
 #[repr(C)]
 pub struct NativeObject {
     pub header: ObjectHeader,
-    /// Pointer to the property map (Vec of key-value pairs).
-    /// We store this as a raw pointer to avoid Rust's ownership rules
-    /// in the native runtime. Uses Vec instead of HashMap to avoid hashbrown dep.
-    pub properties: *mut PropertyMap,
+    /// Slots allocated at `overflow`.
+    pub overflow_cap: u32,
+    /// The layout of the properties; null in dictionary mode.
+    pub shape: *const Shape,
+    /// The prototype: an object, or `undefined`.
+    pub proto: u64,
+    /// Slots `INLINE_SLOTS..`; in dictionary mode, the `Dict`.
+    pub overflow: *mut u64,
+    /// Slots `0..INLINE_SLOTS`.
+    pub inline: [u64; INLINE_SLOTS],
 }
 
 // =========================================================================
@@ -362,8 +367,10 @@ impl NativeHeap {
             *header = ObjectHeader::new(ObjectKind::Object, data_size as u32);
 
             let obj = ptr.as_mut::<NativeObject>();
-            // Allocate the PropertyMap separately (it lives outside the bump allocator)
-            obj.properties = Box::into_raw(Box::new(PropertyMap::new()));
+            obj.overflow_cap = 0;
+            obj.shape = shape::empty();
+            obj.proto = super::abi::OtValue::undefined().to_bits();
+            obj.overflow = std::ptr::null_mut();
         }
 
         Some(ptr)
@@ -483,8 +490,12 @@ mod tests {
         assert_eq!(offset_of!(NativeFunction, code), 16);
         assert_eq!(offset_of!(NativeFunction, env), 24);
 
-        assert_eq!(size_of::<NativeObject>(), 24);
-        assert_eq!(offset_of!(NativeObject, properties), 16);
+        assert_eq!(size_of::<NativeObject>(), 40 + 8 * INLINE_SLOTS);
+        assert_eq!(offset_of!(NativeObject, overflow_cap), 12);
+        assert_eq!(offset_of!(NativeObject, shape), 16);
+        assert_eq!(offset_of!(NativeObject, proto), 24);
+        assert_eq!(offset_of!(NativeObject, overflow), 32);
+        assert_eq!(offset_of!(NativeObject, inline), 40);
     }
 
     #[test]
