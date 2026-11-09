@@ -567,7 +567,7 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
             }
         }
 
-        IrOp::Intrinsic(_, _, args) => {
+        IrOp::Intrinsic(_, _, args) | IrOp::MathCall(_, _, args) => {
             for arg in args {
                 resolve(arg);
             }
@@ -730,8 +730,70 @@ pub fn optimize_function(func: &mut IrFunction) {
 
 /// Run all optimizations on a module.
 pub fn optimize_module(module: &mut IrModule) {
+    builtin_math(module);
     for func in &mut module.functions {
         optimize_function(func);
+    }
+}
+
+/// `Math.f(args)` as one `MathCall`, which native code computes inline,
+/// when the program never assigns `Math` (so it is the built-in). A load
+/// of `Math` that nothing else uses goes too.
+pub fn builtin_math(module: &mut IrModule) {
+    use crate::runtime::builtins::MATH_FUNCTIONS;
+    let assigned = module.functions.iter().any(|f| {
+        f.blocks.iter().any(|b| {
+            b.ops
+                .iter()
+                .any(|op| matches!(op, IrOp::StoreGlobal(n, _) if n == "Math"))
+        })
+    });
+    if assigned {
+        return;
+    }
+    for func in &mut module.functions {
+        let math: HashSet<ValueId> = func
+            .blocks
+            .iter()
+            .flat_map(|b| b.ops.iter())
+            .filter_map(|op| match op {
+                IrOp::LoadGlobal(d, n) if n == "Math" => Some(*d),
+                _ => None,
+            })
+            .collect();
+        if math.is_empty() {
+            continue;
+        }
+        let mut rewritten = Vec::new();
+        for block in &mut func.blocks {
+            for op in &mut block.ops {
+                if let IrOp::CallMethod(d, obj, name, args) = op
+                    && math.contains(obj)
+                    && let Some(i) = MATH_FUNCTIONS.iter().position(|f| f == name)
+                {
+                    rewritten.push(*d);
+                    *op = IrOp::MathCall(*d, i as u32, std::mem::take(args));
+                }
+            }
+        }
+        for d in rewritten {
+            func.value_types.insert(d, crate::ir::IrType::Number);
+        }
+        let used: HashSet<ValueId> = func
+            .blocks
+            .iter()
+            .flat_map(|b| {
+                b.ops
+                    .iter()
+                    .flat_map(|op| op.uses())
+                    .chain(b.terminator.uses())
+            })
+            .collect();
+        for block in &mut func.blocks {
+            block.ops.retain(
+                |op| !matches!(op, IrOp::LoadGlobal(d, _) if math.contains(d) && !used.contains(d)),
+            );
+        }
     }
 }
 

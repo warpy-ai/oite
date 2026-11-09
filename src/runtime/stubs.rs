@@ -347,11 +347,15 @@ fn to_number(v: OtValue) -> f64 {
 
 /// JavaScript `ToInt32`.
 fn to_int32(v: OtValue) -> i32 {
-    let n = to_number(v);
+    int32(to_number(v))
+}
+
+/// JavaScript `ToInt32` of a number: the integer part, modulo 2^32.
+fn int32(n: f64) -> i32 {
     if !n.is_finite() {
         return 0;
     }
-    (n.trunc() as i64 as u64 as u32) as i32
+    n.trunc().rem_euclid(4_294_967_296.0) as u32 as i32
 }
 
 /// Number to string, as the language prints numbers.
@@ -1422,44 +1426,49 @@ pub extern "C" fn ot_neg(a: u64) -> u64 {
     number(-to_number(OtValue::from_bits(a)))
 }
 
-fn int_op(a: u64, b: u64, f: impl Fn(i32, i32) -> i32) -> u64 {
-    number(f(
-        to_int32(OtValue::from_bits(a)),
-        to_int32(OtValue::from_bits(b)),
-    ) as f64)
+/// A bitwise operator: both operands as 32-bit integers (`ToNumber`,
+/// through `valueOf` for an object, which may throw).
+fn int_op(a: u64, b: u64, f: impl Fn(i32, i32) -> f64) -> u64 {
+    let x = match number_operand(a) {
+        Ok(x) => int32(x),
+        Err(e) => return e,
+    };
+    let y = match number_operand(b) {
+        Ok(y) => int32(y),
+        Err(e) => return e,
+    };
+    number(f(x, y))
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_bit_and(a: u64, b: u64) -> u64 {
-    int_op(a, b, |x, y| x & y)
+    int_op(a, b, |x, y| (x & y) as f64)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_bit_or(a: u64, b: u64) -> u64 {
-    int_op(a, b, |x, y| x | y)
+    int_op(a, b, |x, y| (x | y) as f64)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_bit_xor(a: u64, b: u64) -> u64 {
-    int_op(a, b, |x, y| x ^ y)
+    int_op(a, b, |x, y| (x ^ y) as f64)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_shl(a: u64, b: u64) -> u64 {
-    int_op(a, b, |x, y| x.wrapping_shl((y & 31) as u32))
+    int_op(a, b, |x, y| x.wrapping_shl((y & 31) as u32) as f64)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_shr(a: u64, b: u64) -> u64 {
-    int_op(a, b, |x, y| x.wrapping_shr((y & 31) as u32))
+    int_op(a, b, |x, y| x.wrapping_shr((y & 31) as u32) as f64)
 }
 
 /// `a >>> b`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_shr_u(a: u64, b: u64) -> u64 {
-    let x = to_int32(OtValue::from_bits(a)) as u32;
-    let y = (to_int32(OtValue::from_bits(b)) & 31) as u32;
-    number(x.wrapping_shr(y) as f64)
+    int_op(a, b, |x, y| (x as u32).wrapping_shr((y & 31) as u32) as f64)
 }
 
 /// Strict equality as a raw `bool`.
@@ -1763,19 +1772,22 @@ pub extern "C" fn ot_builtin_console_error(
 
 /// A `Math` function; `env` is its index in `MATH_FUNCTIONS`.
 pub extern "C" fn ot_builtin_math(_this: u64, argv: *const u64, argc: usize, env: u64) -> u64 {
-    let a = unsafe { args(argv, argc) };
-    let nums: Vec<f64> = a
-        .iter()
-        .map(|v| {
-            let v = OtValue::from_bits(*v);
-            if object(v).is_some() && as_str(v).is_none() {
-                to_number(OtValue::from_bits(new_string(&value_to_string(v))))
-            } else {
-                to_number(v)
-            }
-        })
-        .collect();
     let id = OtValue::from_bits(env).as_number_unchecked() as usize;
+    ot_math_call(id, argv, argc)
+}
+
+/// `Math.<f>(args)`, `f` an index in `MATH_FUNCTIONS`: what native code
+/// calls when an argument is not a number (`valueOf` may throw).
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_math_call(id: usize, argv: *const u64, argc: usize) -> u64 {
+    let a = unsafe { args(argv, argc) };
+    let mut nums = Vec::with_capacity(a.len());
+    for v in a {
+        match number_operand(*v) {
+            Ok(n) => nums.push(n),
+            Err(e) => return e,
+        }
+    }
     let name = builtins::MATH_FUNCTIONS.get(id).copied().unwrap_or("");
     number(builtins::math_call(name, &nums))
 }
