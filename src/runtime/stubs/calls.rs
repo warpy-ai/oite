@@ -33,6 +33,7 @@ pub extern "C" fn ot_call_method(
     argc: usize,
 ) -> u64 {
     let r = OtValue::from_bits(recv);
+    let key_atom = unsafe { atom::static_atom(key, key_len) };
     let key = unsafe { name(key, key_len) };
 
     // Built-in array methods.
@@ -121,7 +122,7 @@ pub extern "C" fn ot_call_method(
         }
     }
 
-    let method = get_property(r, key);
+    let method = get_property_atom(r, key_atom);
     if method == EXCEPTION_BITS {
         return method;
     }
@@ -242,17 +243,12 @@ impl builtins::Host for NativeHost {
 
     fn own_keys(&self, v: &u64) -> Vec<String> {
         match object(OtValue::from_bits(*v)) {
-            Some((ptr, ObjectKind::Object)) => {
-                let mut names: Vec<String> = Vec::new();
-                for (k, _) in props(ptr).iter() {
-                    if let Some(name) = builtins::own_key_name(k)
-                        && !names.iter().any(|n| n == name)
-                    {
-                        names.push(name.to_string());
-                    }
-                }
-                names
-            }
+            Some((ptr, ObjectKind::Object)) => object::own(obj(ptr))
+                .into_iter()
+                .map(|(a, _, _)| atom::info(a))
+                .filter(|info| !info.hidden)
+                .map(|info| info.name.to_string())
+                .collect(),
             Some((ptr, ObjectKind::Array)) => (0..array(ptr).len).map(|i| i.to_string()).collect(),
             _ => Vec::new(),
         }

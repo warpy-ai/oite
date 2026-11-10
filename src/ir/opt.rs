@@ -71,6 +71,7 @@ fn has_side_effects(op: &IrOp) -> bool {
                 | IrOp::ArrayPush(_, _)
                 | IrOp::Call(_, _, _)
                 | IrOp::CallMethod(_, _, _, _)
+                | IrOp::DeleteProp(_, _, _)
                 | IrOp::TakeException(_)
                 | IrOp::Loc(_)
                 | IrOp::AsyncStart(_)

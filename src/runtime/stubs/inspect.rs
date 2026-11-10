@@ -71,29 +71,24 @@ pub(super) fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> 
             } else if is_error(ptr) {
                 // `TypeError: message`, then any other own properties.
                 let summary = error_summary(ptr);
-                let map = props(ptr);
-                let mut keys: Vec<&(String, u64)> = map
-                    .iter()
-                    .filter(|(k, _)| !is_hidden_key(k) && k != "message")
-                    .collect();
-                keys.sort_by(|a, b| a.0.cmp(&b.0));
+                let mut keys = visible_data(ptr);
+                keys.retain(|(k, _)| *k != "message");
+                keys.sort_by(|a, b| a.0.cmp(b.0));
                 if keys.is_empty() || too_deep {
                     summary
                 } else {
                     let parts: Vec<String> = keys
                         .into_iter()
                         .map(|(k, bits)| {
-                            let val = inspect_inner(OtValue::from_bits(*bits), depth + 1, seen);
+                            let val = inspect_inner(OtValue::from_bits(bits), depth + 1, seen);
                             format!("{}: {}", k, val)
                         })
                         .collect();
                     format!("{} {{ {} }}", summary, parts.join(", "))
                 }
             } else {
-                let map = props(ptr);
-                let mut keys: Vec<&(String, u64)> =
-                    map.iter().filter(|(k, _)| !is_hidden_key(k)).collect();
-                keys.sort_by(|a, b| a.0.cmp(&b.0));
+                let mut keys = visible_data(ptr);
+                keys.sort_by(|a, b| a.0.cmp(b.0));
                 if keys.is_empty() {
                     "{}".to_string()
                 } else if too_deep {
@@ -103,11 +98,11 @@ pub(super) fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> 
                         .into_iter()
                         .map(|(k, bits)| {
                             let key = if is_identifier(k) {
-                                k.clone()
+                                k.to_string()
                             } else {
                                 quote(k)
                             };
-                            let val = inspect_inner(OtValue::from_bits(*bits), depth + 1, seen);
+                            let val = inspect_inner(OtValue::from_bits(bits), depth + 1, seen);
                             format!("{}: {}", key, val)
                         })
                         .collect();

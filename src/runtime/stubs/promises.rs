@@ -103,7 +103,7 @@ pub(super) fn promise_id(v: u64) -> Option<usize> {
     let (ptr, ObjectKind::Object) = object(OtValue::from_bits(v))? else {
         return None;
     };
-    let id = props(ptr).iter().find(|(k, _)| k == "__promise__")?.1;
+    let id = own_value(ptr, atom::PROMISE)?;
     OtValue::from_bits(id).as_number().map(|n| n as usize)
 }
 

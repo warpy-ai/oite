@@ -235,9 +235,12 @@ benchmark table:
 
 1. **Done: split `stubs.rs`** into modules (no behaviour change), and add
    real layout tests.
-2. **Atoms, shapes and the new object layout**, behind the same runtime
-   functions: the backends do not change yet. Accessors and internal state
-   move out of the property list; dictionary mode.
+2. **Done: atoms, shapes and the new object layout**, behind the same
+   runtime functions: the backends do not change yet. The prototype and
+   accessors are out of the property list; dictionary mode. Still to do
+   from section 2: internal markers (`__class__`, `__promise__`,
+   `__error__`) as header flags, and showing user keys that start with
+   `__`, which the VM hides too.
 3. **Inline caches** for property reads, writes and method calls, in both
    backends.
 4. **Class instances and object literals** allocated with their slots.

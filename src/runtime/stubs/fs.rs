@@ -115,20 +115,10 @@ pub extern "C" fn ot_fs_stat(path: u64) -> u64 {
                 if let Ok(metadata) = std::fs::metadata(path_str)
                     && let Some(obj_ptr) = heap().alloc_object()
                 {
-                    let obj = obj_ptr.as_mut::<NativeObject>();
-                    if obj.properties.is_null() {
-                        obj.properties = Box::into_raw(Box::new(PropertyMap::new()));
-                    }
-                    let props = &mut *obj.properties;
-                    props.push((
-                        "__isDir".to_string(),
-                        OtValue::boolean(metadata.is_dir()).to_bits(),
-                    ));
-                    props.push((
-                        "size".to_string(),
-                        OtValue::number(metadata.len() as f64).to_bits(),
-                    ));
-                    return OtValue::pointer(obj_ptr).to_bits();
+                    let stat = OtValue::pointer(obj_ptr);
+                    set_property(stat, "__isDir", boolean(metadata.is_dir()));
+                    set_property(stat, "size", number(metadata.len() as f64));
+                    return stat.to_bits();
                 }
             }
         }
@@ -142,15 +132,10 @@ pub extern "C" fn ot_stat_is_directory(stat: u64) -> u64 {
     if let Some(ptr) = val.as_pointer() {
         unsafe {
             let header = ptr.as_ref::<ObjectHeader>();
-            if header.kind == ObjectKind::Object {
-                let obj = ptr.as_ref::<NativeObject>();
-                if !obj.properties.is_null() {
-                    for (key, value) in (*obj.properties).iter() {
-                        if key == "__isDir" {
-                            return *value;
-                        }
-                    }
-                }
+            if header.kind == ObjectKind::Object
+                && let Some(is_dir) = own_value(ptr, atom::atom("__isDir"))
+            {
+                return is_dir;
             }
         }
     }

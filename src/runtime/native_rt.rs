@@ -21,5 +21,7 @@ pub mod builtins;
 pub mod heap;
 #[path = "intrinsics.rs"]
 pub mod intrinsics;
+#[path = "object/mod.rs"]
+pub mod object;
 #[path = "stubs/mod.rs"]
 pub mod stubs;

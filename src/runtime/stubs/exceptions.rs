@@ -196,13 +196,13 @@ pub(super) fn is_error(ptr: HeapPtr) -> bool {
     if let Some(target) = error_proto {
         let mut cur = ptr;
         for _ in 0..1000 {
-            match props(cur).iter().find(|(k, _)| k == "__proto__") {
-                Some((_, p)) if *p == target => return true,
-                Some((_, p)) => match object(OtValue::from_bits(*p)) {
-                    Some((next, ObjectKind::Object)) => cur = next,
-                    _ => return false,
-                },
-                None => return false,
+            let p = obj(cur).proto;
+            if p == target {
+                return true;
+            }
+            match object(OtValue::from_bits(p)) {
+                Some((next, ObjectKind::Object)) => cur = next,
+                _ => return false,
             }
         }
         return false;
