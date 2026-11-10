@@ -53,6 +53,14 @@ pub const ADD_PROTO_OFFSET: usize = std::mem::offset_of!(PropCache, proto);
 pub const ADD_NEXT_OFFSET: usize = std::mem::offset_of!(PropCache, holder);
 pub const ADD_SLOT_OFFSET: usize = std::mem::offset_of!(PropCache, holder_offset);
 pub const ADD_EPOCH_OFFSET: usize = std::mem::offset_of!(PropCache, epoch);
+/// The second entry, as compiled code reads it for a method found on the
+/// prototype chain: the receiver's shape and prototype, the object that
+/// has the method, its slot there and the epoch.
+pub const CHAIN_SHAPE_OFFSET: usize = std::mem::offset_of!(PropCache, proto_shape);
+pub const CHAIN_PROTO_OFFSET: usize = std::mem::offset_of!(PropCache, proto);
+pub const CHAIN_HOLDER_OFFSET: usize = std::mem::offset_of!(PropCache, holder);
+pub const CHAIN_SLOT_OFFSET: usize = std::mem::offset_of!(PropCache, holder_offset);
+pub const CHAIN_EPOCH_OFFSET: usize = std::mem::offset_of!(PropCache, epoch);
 
 impl PropCache {
     pub const fn new(name_ptr: *const u8, name_len: usize) -> Self {

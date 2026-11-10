@@ -1,0 +1,37 @@
+// backends: vm jit aot
+// `===` with null, undefined and booleans is compared in compiled code;
+// numbers and strings go to the runtime. Every pair must agree.
+function eq(a, b) {
+  return a === b;
+}
+function ne(a, b) {
+  return a !== b;
+}
+let obj = { k: 1 };
+let arr = [1];
+let values = [null, undefined, true, false, 0, -0, 1, NaN, "", "a", "a" + "", obj, arr, { k: 1 }];
+let names = ["null", "undefined", "true", "false", "0", "-0", "1", "NaN", "''", "a", "a2", "obj", "arr", "obj2"];
+for (let i = 0; i < values.length; i++) {
+  let same = [];
+  for (let j = 0; j < values.length; j++) {
+    if (eq(values[i], values[j])) same.push(names[j]);
+    if (eq(values[i], values[j]) === ne(values[i], values[j])) same.push("BAD");
+  }
+  console.log(names[i], "===", same.join(" "));
+}
+
+// Constants on either side.
+function isNull(x) {
+  return x === null;
+}
+function isUndefined(x) {
+  return undefined === x;
+}
+function isTrue(x) {
+  return x === true;
+}
+let flags = [];
+for (let i = 0; i < values.length; i++) {
+  flags.push((isNull(values[i]) ? "n" : "") + (isUndefined(values[i]) ? "u" : "") + (isTrue(values[i]) ? "t" : "") + "-");
+}
+console.log(flags.join(""));

@@ -408,6 +408,7 @@ enum Local {
 
 /// Names passed to the runtime live for the whole process.
 mod arrays;
+mod equality;
 mod objects;
 
 fn leak_str(s: &str) -> (i64, i64) {
@@ -1113,8 +1114,8 @@ impl Fx<'_> {
                     let cmp = b.ins().fcmp(FloatCC::Equal, xf, yf);
                     Self::box_bool(b, cmp)
                 } else {
-                    let args = [self.get(*x)?, self.get(*y)?];
-                    self.rt_v(b, "ot_eq_strict", &args)
+                    let (xv, yv) = (self.get(*x)?, self.get(*y)?);
+                    self.strict_eq(b, xv, yv)
                 };
                 let r = if matches!(op, IrOp::NeStrict(..)) {
                     b.ins().bxor_imm(r, 1)
@@ -1519,8 +1520,7 @@ impl Fx<'_> {
                     .map(|a| self.get(*a))
                     .collect::<Result<_, _>>()?;
                 let (argv, argc) = self.arg_array(b, &vals);
-                let cache = Self::prop_cache(b, name);
-                let v = self.rt_v(b, "ot_call_method_ic", &[r, cache, argv, argc]);
+                let v = self.call_method(b, r, name, argv, argc);
                 self.values.insert(*d, v);
             }
 

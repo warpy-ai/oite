@@ -168,10 +168,7 @@ impl Fx<'_> {
             let cached_proto = LLVMBuildLoad2(b, i64t, at(cache, ic::ADD_PROTO_OFFSET), NONAME);
             ok = LLVMBuildAnd(b, ok, eq(proto, cached_proto), NONAME);
 
-            let mut epoch_global = LLVMGetNamedGlobal(self.cg.module, b"OT_EPOCH\0".as_ptr() as _);
-            if epoch_global.is_null() {
-                epoch_global = LLVMAddGlobal(self.cg.module, i32t, b"OT_EPOCH\0".as_ptr() as _);
-            }
+            let epoch_global = self.epoch_global();
             let epoch = LLVMBuildLoad2(b, i32t, epoch_global, NONAME);
             let cached_epoch = LLVMBuildLoad2(b, i32t, at(cache, ic::ADD_EPOCH_OFFSET), NONAME);
             ok = LLVMBuildAnd(b, ok, eq(epoch, cached_epoch), NONAME);
@@ -285,21 +282,7 @@ impl Fx<'_> {
             // bytes into its overflow array.
             LLVMPositionBuilderAtEnd(b, hit_bb);
             let offset = LLVMBuildLoad2(b, i32t, at(cache, ic::OFFSET_OFFSET), NONAME);
-            let inline = LLVMBuildICmp(
-                b,
-                LLVMIntPredicate::LLVMIntSGE,
-                offset,
-                LLVMConstInt(i32t, 0, 0),
-                NONAME,
-            );
-            let overflow =
-                LLVMBuildLoad2(b, ptrt, at(ptr, offset_of!(NativeObject, overflow)), NONAME);
-            let base = LLVMBuildSelect(b, inline, ptr, overflow, NONAME);
-            let flipped = LLVMBuildNot(b, offset, NONAME);
-            let bytes = LLVMBuildSelect(b, inline, offset, flipped, NONAME);
-            let bytes = LLVMBuildZExt(b, bytes, i64t, NONAME);
-            let mut idx = [bytes];
-            let slot = LLVMBuildGEP2(b, i8t, base, idx.as_mut_ptr(), 1, NONAME);
+            let slot = self.slot_addr(ptr, offset);
             let hit_value = match store {
                 Some(v) => {
                     LLVMBuildStore(b, v, slot);
@@ -330,6 +313,193 @@ impl Fx<'_> {
                 LLVMAddIncoming(phi, values.as_mut_ptr(), blocks.as_mut_ptr(), 1);
             }
             phi
+        }
+    }
+
+    /// The address of the slot `offset` (`ic::slot_offset`) of the object
+    /// at `ptr`: `offset >= 0` bytes into the object, or `!offset` bytes
+    /// into its overflow array.
+    unsafe fn slot_addr(&mut self, ptr: LLVMValueRef, offset: LLVMValueRef) -> LLVMValueRef {
+        unsafe {
+            use crate::runtime::heap::NativeObject;
+            let ctx = self.cg.context;
+            let b = self.builder;
+            let (i64t, ptrt) = (self.i64_ty(), self.ptr_ty());
+            let i32t = LLVMInt32TypeInContext(ctx);
+            let i8t = LLVMInt8TypeInContext(ctx);
+            let inline = LLVMBuildICmp(
+                b,
+                LLVMIntPredicate::LLVMIntSGE,
+                offset,
+                LLVMConstInt(i32t, 0, 0),
+                NONAME,
+            );
+            let mut idx = [LLVMConstInt(
+                i64t,
+                std::mem::offset_of!(NativeObject, overflow) as u64,
+                0,
+            )];
+            let field = LLVMBuildGEP2(b, i8t, ptr, idx.as_mut_ptr(), 1, NONAME);
+            let overflow = LLVMBuildLoad2(b, ptrt, field, NONAME);
+            let base = LLVMBuildSelect(b, inline, ptr, overflow, NONAME);
+            let flipped = LLVMBuildNot(b, offset, NONAME);
+            let bytes = LLVMBuildSelect(b, inline, offset, flipped, NONAME);
+            let mut idx = [LLVMBuildZExt(b, bytes, i64t, NONAME)];
+            LLVMBuildGEP2(b, i8t, base, idx.as_mut_ptr(), 1, NONAME)
+        }
+    }
+
+    /// Whether `v` is a heap pointer (the pointer tag, and a payload that
+    /// is not 0), and the pointer.
+    unsafe fn heap_address(&mut self, v: LLVMValueRef) -> (LLVMValueRef, LLVMValueRef) {
+        unsafe {
+            let b = self.builder;
+            let tag = LLVMBuildAnd(b, v, self.c(0x7FFF_0000_0000_0000), NONAME);
+            let tagged = LLVMBuildICmp(b, LLVMIntPredicate::LLVMIntEQ, tag, self.c(QNAN), NONAME);
+            let addr = LLVMBuildAnd(b, v, self.c(0x0000_FFFF_FFFF_FFFF), NONAME);
+            let nonnull = LLVMBuildICmp(b, LLVMIntPredicate::LLVMIntNE, addr, self.c(0), NONAME);
+            let is_ptr = LLVMBuildAnd(b, tagged, nonnull, NONAME);
+            (is_ptr, LLVMBuildIntToPtr(b, addr, self.ptr_ty(), NONAME))
+        }
+    }
+
+    /// `recv.name(...args)` through an inline cache. When `recv` is an
+    /// object of a cached shape, the method is loaded here: from the
+    /// object itself, or from the object on its prototype chain that the
+    /// cache names (while the prototype and the epoch are the cached
+    /// ones). If it is a function, it is called here. Everything else
+    /// goes to the runtime, which fills the cache.
+    pub(super) unsafe fn call_method(
+        &mut self,
+        recv: LLVMValueRef,
+        name: &str,
+        argv: LLVMValueRef,
+        argc: LLVMValueRef,
+    ) -> LLVMValueRef {
+        unsafe {
+            use crate::runtime::heap::{NativeFunction, NativeObject, ObjectKind};
+            use crate::runtime::object::ic;
+            use std::mem::offset_of;
+            let ctx = self.cg.context;
+            let b = self.builder;
+            let (i64t, ptrt) = (self.i64_ty(), self.ptr_ty());
+            let i32t = LLVMInt32TypeInContext(ctx);
+            let i8t = LLVMInt8TypeInContext(ctx);
+            let cache = self.prop_cache(name);
+            let block = |this: &Self, name: &[u8]| {
+                LLVMAppendBasicBlockInContext(ctx, this.function, name.as_ptr() as _)
+            };
+            let is_ptr_bb = block(self, b"call_ptr\0");
+            let is_obj_bb = block(self, b"call_obj\0");
+            let own_bb = block(self, b"call_own\0");
+            let chain_bb = block(self, b"call_chain\0");
+            let chain_hit_bb = block(self, b"call_chain_hit\0");
+            let found_bb = block(self, b"call_found\0");
+            let heap_bb = block(self, b"call_heap\0");
+            let call_bb = block(self, b"call_direct\0");
+            let miss_bb = block(self, b"call_miss\0");
+            let join_bb = block(self, b"call_join\0");
+            let at = |base: LLVMValueRef, offset: usize| {
+                let mut idx = [LLVMConstInt(i64t, offset as u64, 0)];
+                LLVMBuildGEP2(b, i8t, base, idx.as_mut_ptr(), 1, NONAME)
+            };
+            let eq = |x, y| LLVMBuildICmp(b, LLVMIntPredicate::LLVMIntEQ, x, y, NONAME);
+            let kind_is = |ptr: LLVMValueRef, kind: ObjectKind| {
+                let k = LLVMBuildLoad2(b, i8t, ptr, NONAME);
+                eq(k, LLVMConstInt(i8t, kind as u64, 0))
+            };
+
+            let (is_ptr, ptr) = self.heap_address(recv);
+            LLVMBuildCondBr(b, is_ptr, is_ptr_bb, miss_bb);
+
+            LLVMPositionBuilderAtEnd(b, is_ptr_bb);
+            LLVMBuildCondBr(b, kind_is(ptr, ObjectKind::Object), is_obj_bb, miss_bb);
+
+            // The method is the object's own property.
+            LLVMPositionBuilderAtEnd(b, is_obj_bb);
+            let shape = LLVMBuildLoad2(b, i64t, at(ptr, offset_of!(NativeObject, shape)), NONAME);
+            let cached = LLVMBuildLoad2(b, i64t, at(cache, ic::SHAPE_OFFSET), NONAME);
+            LLVMBuildCondBr(b, eq(shape, cached), own_bb, chain_bb);
+
+            LLVMPositionBuilderAtEnd(b, own_bb);
+            let offset = LLVMBuildLoad2(b, i32t, at(cache, ic::OFFSET_OFFSET), NONAME);
+            let slot = self.slot_addr(ptr, offset);
+            let own_method = LLVMBuildLoad2(b, i64t, slot, NONAME);
+            LLVMBuildBr(b, found_bb);
+
+            // Or it is on the prototype chain, where the cache says.
+            LLVMPositionBuilderAtEnd(b, chain_bb);
+            let chain_shape = LLVMBuildLoad2(b, i64t, at(cache, ic::CHAIN_SHAPE_OFFSET), NONAME);
+            let mut ok = eq(shape, chain_shape);
+            let proto = LLVMBuildLoad2(b, i64t, at(ptr, offset_of!(NativeObject, proto)), NONAME);
+            let cached_proto = LLVMBuildLoad2(b, i64t, at(cache, ic::CHAIN_PROTO_OFFSET), NONAME);
+            ok = LLVMBuildAnd(b, ok, eq(proto, cached_proto), NONAME);
+            let epoch = LLVMBuildLoad2(b, i32t, self.epoch_global(), NONAME);
+            let cached_epoch = LLVMBuildLoad2(b, i32t, at(cache, ic::CHAIN_EPOCH_OFFSET), NONAME);
+            ok = LLVMBuildAnd(b, ok, eq(epoch, cached_epoch), NONAME);
+            LLVMBuildCondBr(b, ok, chain_hit_bb, miss_bb);
+
+            LLVMPositionBuilderAtEnd(b, chain_hit_bb);
+            let holder = LLVMBuildLoad2(b, ptrt, at(cache, ic::CHAIN_HOLDER_OFFSET), NONAME);
+            let offset = LLVMBuildLoad2(b, i32t, at(cache, ic::CHAIN_SLOT_OFFSET), NONAME);
+            let slot = self.slot_addr(holder, offset);
+            let chain_method = LLVMBuildLoad2(b, i64t, slot, NONAME);
+            LLVMBuildBr(b, found_bb);
+
+            // A function: call its code with its environment.
+            LLVMPositionBuilderAtEnd(b, found_bb);
+            let method = LLVMBuildPhi(b, i64t, NONAME);
+            let mut values = [own_method, chain_method];
+            let mut blocks = [own_bb, chain_hit_bb];
+            LLVMAddIncoming(method, values.as_mut_ptr(), blocks.as_mut_ptr(), 2);
+            let (is_heap, function) = self.heap_address(method);
+            LLVMBuildCondBr(b, is_heap, heap_bb, miss_bb);
+
+            LLVMPositionBuilderAtEnd(b, heap_bb);
+            LLVMBuildCondBr(b, kind_is(function, ObjectKind::Function), call_bb, miss_bb);
+
+            LLVMPositionBuilderAtEnd(b, call_bb);
+            let code = LLVMBuildLoad2(
+                b,
+                ptrt,
+                at(function, offset_of!(NativeFunction, code)),
+                NONAME,
+            );
+            let env = LLVMBuildLoad2(
+                b,
+                i64t,
+                at(function, offset_of!(NativeFunction, env)),
+                NONAME,
+            );
+            let mut args = [recv, argv, argc, env];
+            let direct = LLVMBuildCall2(b, self.cg.fn_ty, code, args.as_mut_ptr(), 4, NONAME);
+            LLVMBuildBr(b, join_bb);
+
+            LLVMPositionBuilderAtEnd(b, miss_bb);
+            let miss = self.rt("ot_call_method_ic", &[recv, cache, argv, argc]);
+            LLVMBuildBr(b, join_bb);
+
+            LLVMPositionBuilderAtEnd(b, join_bb);
+            let result = LLVMBuildPhi(b, i64t, NONAME);
+            let mut values = [direct, miss];
+            let mut blocks = [call_bb, miss_bb];
+            LLVMAddIncoming(result, values.as_mut_ptr(), blocks.as_mut_ptr(), 2);
+            self.last_call = Some(result);
+            result
+        }
+    }
+
+    /// The global `OT_EPOCH` (`runtime::object::ic`), declared on first use.
+    unsafe fn epoch_global(&mut self) -> LLVMValueRef {
+        unsafe {
+            let i32t = LLVMInt32TypeInContext(self.cg.context);
+            let name = b"OT_EPOCH\0".as_ptr() as _;
+            let global = LLVMGetNamedGlobal(self.cg.module, name);
+            if global.is_null() {
+                LLVMAddGlobal(self.cg.module, i32t, name)
+            } else {
+                global
+            }
         }
     }
 }
