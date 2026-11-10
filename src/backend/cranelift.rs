@@ -40,6 +40,7 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
     syms!(
         ot_alloc_object,
         ot_alloc_object_sized,
+        ot_alloc_literal,
         ot_alloc_array,
         ot_alloc_string,
         ot_make_function,
@@ -94,6 +95,7 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_rethrow,
         ot_report_uncaught,
         ot_construct,
+        ot_construct_ic,
         ot_call_super,
         ot_get_super_prop,
         ot_instanceof,
@@ -270,6 +272,11 @@ impl CraneliftCodegen {
                     locals: Vec::new(),
                     types: &func.value_types,
                     object_slots: crate::ir::alloc_hints::object_slots(func),
+                    literals: crate::ir::alloc_hints::literal_props(
+                        func,
+                        crate::runtime::heap::MAX_INLINE_SLOTS,
+                    ),
+                    literal_stores: HashMap::new(),
                     direct: HashMap::new(),
                     env: None,
                     this: None,
@@ -356,6 +363,11 @@ struct Fx<'a> {
     types: &'a HashMap<ValueId, IrType>,
     /// How many properties each `NewObject` site is about to store.
     object_slots: HashMap<ValueId, usize>,
+    /// The properties each literal site is allocated with
+    /// (`alloc_hints::literal_props`), and how many of them have been
+    /// stored so far.
+    literals: HashMap<ValueId, Vec<String>>,
+    literal_stores: HashMap<ValueId, usize>,
     /// Values known to be a specific compiled function, with the closure
     /// environment they carry, if any.
     direct: HashMap<ValueId, (usize, Option<ValueId>)>,
@@ -396,6 +408,7 @@ enum Local {
 
 /// Names passed to the runtime live for the whole process.
 mod arrays;
+mod objects;
 
 fn leak_str(s: &str) -> (i64, i64) {
     let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
@@ -791,112 +804,6 @@ impl Fx<'_> {
             let r = f(b, pf, qf);
             Self::from_f64(b, r)
         })
-    }
-
-    /// A new inline cache (`runtime::object::ic::PropCache`) for a site
-    /// that accesses the property `name`; it lives as long as the code.
-    fn prop_cache(b: &mut FunctionBuilder, name: &str) -> Value {
-        use crate::runtime::object::ic::PropCache;
-        let (p, n) = leak_str(name);
-        let cache = Box::leak(Box::new(PropCache::new(p as *const u8, n as usize)));
-        b.ins().iconst(types::I64, cache as *mut PropCache as i64)
-    }
-
-    /// `o.name` (or `o.name = store`) through an inline cache: when `o` is
-    /// an object whose shape is the cached one, load or store its slot
-    /// here; otherwise call the runtime, which fills the cache.
-    fn cached_prop(
-        &mut self,
-        b: &mut FunctionBuilder,
-        o: Value,
-        name: &str,
-        store: Option<Value>,
-    ) -> Value {
-        use crate::runtime::heap::NativeObject;
-        use crate::runtime::object::ic;
-        use std::mem::offset_of;
-        let cache = Self::prop_cache(b, name);
-        let is_ptr_blk = b.create_block();
-        let is_obj_blk = b.create_block();
-        let hit_blk = b.create_block();
-        let miss_blk = b.create_block();
-        let join = b.create_block();
-        b.set_cold_block(miss_blk);
-        b.append_block_param(join, types::I64);
-        let flags = MemFlags::trusted();
-
-        // A heap pointer: the pointer tag, and a payload that is not 0.
-        let tag = b.ins().band_imm(o, 0x7FFF_0000_0000_0000);
-        let tagged = b.ins().icmp_imm(IntCC::Equal, tag, QNAN as i64);
-        let addr = b.ins().band_imm(o, 0x0000_FFFF_FFFF_FFFF);
-        let nonnull = b.ins().icmp_imm(IntCC::NotEqual, addr, 0);
-        let is_ptr = b.ins().band(tagged, nonnull);
-        b.ins().brif(is_ptr, is_ptr_blk, &[], miss_blk, &[]);
-
-        // An object (kind 0 in the header's first byte).
-        b.switch_to_block(is_ptr_blk);
-        b.seal_block(is_ptr_blk);
-        let kind = b.ins().load(types::I8, flags, addr, 0);
-        let is_obj = b.ins().icmp_imm(IntCC::Equal, kind, 0);
-        b.ins().brif(is_obj, is_obj_blk, &[], miss_blk, &[]);
-
-        // With the cached shape.
-        b.switch_to_block(is_obj_blk);
-        b.seal_block(is_obj_blk);
-        let shape = b.ins().load(
-            types::I64,
-            flags,
-            addr,
-            offset_of!(NativeObject, shape) as i32,
-        );
-        let cached = b
-            .ins()
-            .load(types::I64, flags, cache, ic::SHAPE_OFFSET as i32);
-        let same = b.ins().icmp(IntCC::Equal, shape, cached);
-        b.ins().brif(same, hit_blk, &[], miss_blk, &[]);
-
-        // The slot: `offset >= 0` bytes into the object, or `!offset`
-        // bytes into its overflow array.
-        b.switch_to_block(hit_blk);
-        b.seal_block(hit_blk);
-        let offset = b
-            .ins()
-            .load(types::I32, flags, cache, ic::OFFSET_OFFSET as i32);
-        let inline = b.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, offset, 0);
-        let overflow = b.ins().load(
-            types::I64,
-            flags,
-            addr,
-            offset_of!(NativeObject, overflow) as i32,
-        );
-        let base = b.ins().select(inline, addr, overflow);
-        let flipped = b.ins().bnot(offset);
-        let bytes = b.ins().select(inline, offset, flipped);
-        let bytes = b.ins().uextend(types::I64, bytes);
-        let slot = b.ins().iadd(base, bytes);
-        let hit = match store {
-            Some(v) => {
-                b.ins().store(flags, v, slot, 0);
-                Self::c(b, UNDEFINED)
-            }
-            None => b.ins().load(types::I64, flags, slot, 0),
-        };
-        b.ins().jump(join, &[hit]);
-
-        b.switch_to_block(miss_blk);
-        b.seal_block(miss_blk);
-        let miss = match store {
-            Some(v) => self.rt_v(b, "ot_set_prop_ic", &[o, cache, v]),
-            None => self.rt_v(b, "ot_get_prop_ic", &[o, cache]),
-        };
-        let unwind = self.unwind;
-        self.check_exception(b, miss, unwind);
-        self.last_call = None;
-        b.ins().jump(join, &[miss]);
-
-        b.switch_to_block(join);
-        b.seal_block(join);
-        b.block_params(join)[0]
     }
 
     /// `Math.<f>` inline on doubles, for the functions with an instruction.
@@ -1358,7 +1265,12 @@ impl Fx<'_> {
             }
 
             IrOp::NewObject(d) => {
-                let r = match self.object_slots.get(d).copied() {
+                let slots = self.object_slots.get(d).copied();
+                let r = match slots {
+                    Some(n) if self.literals.contains_key(d) => {
+                        let cache = Self::literal_cache(b, &self.literals[d], n);
+                        self.rt_v(b, "ot_alloc_literal", &[cache])
+                    }
                     Some(n) => {
                         let n = Self::c(b, n as u64);
                         self.rt_v(b, "ot_alloc_object_sized", &[n])
@@ -1384,7 +1296,21 @@ impl Fx<'_> {
             IrOp::SetProp(obj, name, v) => {
                 let o = self.get(*obj)?;
                 let v = self.get(*v)?;
-                self.cached_prop(b, o, name, Some(v));
+                // One of a literal's own properties: its slot is known.
+                let done = self.literal_stores.get(obj).copied().unwrap_or(0);
+                if self
+                    .literals
+                    .get(obj)
+                    .is_some_and(|names| done < names.len())
+                {
+                    debug_assert_eq!(&self.literals[obj][done], name);
+                    self.literal_stores.insert(*obj, done + 1);
+                    let addr = b.ins().band_imm(o, 0x0000_FFFF_FFFF_FFFF);
+                    let offset = crate::runtime::object::ic::slot_offset(done, done + 1);
+                    b.ins().store(MemFlags::trusted(), v, addr, offset);
+                } else {
+                    self.cached_prop(b, o, name, Some(v));
+                }
             }
             IrOp::GetPrivate(d, obj, name) => {
                 let o = self.get(*obj)?;
@@ -1472,7 +1398,9 @@ impl Fx<'_> {
                     .map(|a| self.get(*a))
                     .collect::<Result<_, _>>()?;
                 let (argv, argc) = self.arg_array(b, &vals);
-                let r = self.rt_v(b, "ot_construct", &[c, argv, argc]);
+                let cache = Box::leak(Box::new(crate::runtime::object::ic::NewCache::new()));
+                let cache = b.ins().iconst(types::I64, cache as *mut _ as i64);
+                let r = self.rt_v(b, "ot_construct_ic", &[c, argv, argc, cache]);
                 self.values.insert(*d, r);
             }
             IrOp::CallSuper(d, parent, args) => {

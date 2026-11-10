@@ -4,12 +4,14 @@
 //! Compiled code has one `PropCache` per `o.x`, `o.x = v` and `o.m()` site,
 //! in the binary's data. For an own data property, compiled code itself
 //! compares the object's shape with `shape` and loads or stores the slot.
-//! Everything else goes to the runtime (`stubs::ic`), which checks the other
-//! entry (a property found on the prototype chain, or a property being
-//! added) before doing the full lookup.
+//! A write that adds the property to an object of a known shape is also
+//! done in compiled code, from the second entry. Everything else goes to
+//! the runtime (`stubs::prop_ic`), which checks the second entry (a
+//! property found on the prototype chain, or a property being added)
+//! before doing the full lookup.
 
 use super::super::heap::NativeObject;
-use std::cell::Cell;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// A shape pointer no object has: an empty cache entry.
 pub const NO_SHAPE: u64 = 1;
@@ -43,6 +45,14 @@ pub struct PropCache {
 
 pub const SHAPE_OFFSET: usize = std::mem::offset_of!(PropCache, shape);
 pub const OFFSET_OFFSET: usize = std::mem::offset_of!(PropCache, offset);
+/// The second entry, as compiled code reads it for a write that adds the
+/// property: the shape before, the prototype, the shape after, the new
+/// slot and the epoch.
+pub const ADD_SHAPE_OFFSET: usize = std::mem::offset_of!(PropCache, proto_shape);
+pub const ADD_PROTO_OFFSET: usize = std::mem::offset_of!(PropCache, proto);
+pub const ADD_NEXT_OFFSET: usize = std::mem::offset_of!(PropCache, holder);
+pub const ADD_SLOT_OFFSET: usize = std::mem::offset_of!(PropCache, holder_offset);
+pub const ADD_EPOCH_OFFSET: usize = std::mem::offset_of!(PropCache, epoch);
 
 impl PropCache {
     pub const fn new(name_ptr: *const u8, name_len: usize) -> Self {
@@ -60,6 +70,49 @@ impl PropCache {
             resolved: 0,
             _pad: 0,
         }
+    }
+}
+
+/// The cache of one object literal site: the shape of the finished literal.
+/// Compiled code allocates the object in that shape (`ot_alloc_literal`)
+/// and stores property `i` in slot `i` itself.
+#[repr(C)]
+pub struct LiteralCache {
+    /// The shape with all `count` properties; 0 until the site first runs.
+    pub shape: u64,
+    /// Slots to allocate in the object itself (at least `count`).
+    pub slots: u32,
+    pub count: u32,
+    /// The property names (pointer, length), in order.
+    pub names: *const (*const u8, usize),
+}
+
+/// The cache of one `new` site: where a class of the cached shape keeps
+/// its class marker, constructor and prototype.
+#[repr(C)]
+pub struct NewCache {
+    pub shape: u64,
+    pub class_offset: i32,
+    pub ctor_offset: i32,
+    pub proto_offset: i32,
+    pub _pad: u32,
+}
+
+impl NewCache {
+    pub const fn new() -> Self {
+        NewCache {
+            shape: NO_SHAPE,
+            class_offset: 0,
+            ctor_offset: 0,
+            proto_offset: 0,
+            _pad: 0,
+        }
+    }
+}
+
+impl Default for NewCache {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -97,20 +150,22 @@ pub unsafe fn slot_at(obj: *mut NativeObject, offset: i32) -> *mut u64 {
     }
 }
 
-thread_local! {
-    static EPOCH: Cell<u32> = const { Cell::new(0) };
-}
-
 /// The prototype epoch: it changes whenever an object that is used as a
 /// prototype gets, loses or redefines a property, or gets another
 /// prototype. Cached lookups through a prototype chain are valid only in
 /// the epoch they were made in.
+///
+/// Compiled code reads it by name. It is one counter for the process: a
+/// change on any thread only makes other threads' caches miss once.
+#[unsafe(no_mangle)]
+pub static OT_EPOCH: AtomicU32 = AtomicU32::new(0);
+
 pub fn epoch() -> u32 {
-    EPOCH.with(|e| e.get())
+    OT_EPOCH.load(Ordering::Relaxed)
 }
 
 pub fn bump_epoch() {
-    EPOCH.with(|e| e.set(e.get().wrapping_add(1)));
+    OT_EPOCH.fetch_add(1, Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -125,6 +180,9 @@ mod tests {
         assert_eq!(std::mem::offset_of!(PropCache, name_ptr), 16);
         assert_eq!(std::mem::offset_of!(PropCache, proto_shape), 32);
         assert_eq!(std::mem::offset_of!(PropCache, holder_offset), 56);
+        assert_eq!(std::mem::size_of::<LiteralCache>(), 24);
+        assert_eq!(std::mem::offset_of!(LiteralCache, names), 16);
+        assert_eq!(std::mem::size_of::<NewCache>(), 24);
         assert_eq!(slot_offset(0, 4), 40);
         assert_eq!(slot_offset(3, 4), 64);
         assert_eq!(!slot_offset(4, 4), 0);

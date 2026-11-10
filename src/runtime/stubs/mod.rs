@@ -16,13 +16,13 @@
 use super::abi::{EXCEPTION_BITS, OtValue, UNBOUND_BITS};
 use super::builtins;
 use super::heap::{
-    HeapPtr, NativeArray, NativeFn, NativeFunction, NativeObject, NativeString, ObjectHeader,
-    ObjectKind, heap,
+    HeapPtr, INLINE_SLOTS, MAX_INLINE_SLOTS, NativeArray, NativeFn, NativeFunction, NativeObject,
+    NativeString, ObjectHeader, ObjectKind, heap,
 };
 use super::object::atom::{self, Atom, Role};
 use super::object::ic::{self, PropCache};
 use super::object::object;
-use super::object::shape::ACCESSOR;
+use super::object::shape::{self, ACCESSOR};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Write;

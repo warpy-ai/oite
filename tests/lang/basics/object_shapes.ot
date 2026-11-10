@@ -1,0 +1,216 @@
+// backends: jit aot
+// (The VM does not keep properties in insertion order.)
+// Object literals are allocated in their final shape, stores that add a
+// property are done in compiled code, and class instances are allocated
+// with room for their fields. None of it may change what a program sees.
+
+// Literals: key order, repeated keys, values that are literals.
+let plain = { a: 1, b: 2, c: 3 };
+let repeated = { a: 1, b: 2, a: 3 };
+let nested = { outer: { inner: { leaf: 1 } }, list: [{ k: 1 }, { k: 2 }] };
+console.log(Object.keys(plain).join(","), Object.keys(repeated).join(","), repeated.a);
+console.log(nested.outer.inner.leaf, nested.list[1].k, Object.keys(nested).join(","));
+
+// A literal with a spread in the middle.
+let copy = { zero: 0, ...plain, d: 4 };
+console.log(Object.keys(copy).join(","), copy.zero + copy.c + copy.d);
+
+// A value that throws while the literal is being built.
+function fail() {
+  throw new Error("no value");
+}
+function build(bad) {
+  return { before: 1, value: bad ? fail() : 2, after: 3 };
+}
+let caught = "";
+try {
+  build(true);
+} catch (e) {
+  caught = e.message;
+}
+let built = build(false);
+console.log(caught, built.before + built.value + built.after, Object.keys(built).join(","));
+
+// The same site makes many objects; each is its own.
+function point(x, y) {
+  return { x: x, y: y };
+}
+let points = [];
+for (let i = 0; i < 50; i++) points.push(point(i, i * 2));
+points[3].x = 100;
+points[4].z = 7;
+let total = 0;
+for (let i = 0; i < 50; i++) total = total + points[i].x + points[i].y;
+console.log(total, Object.keys(points[3]).join(","), Object.keys(points[4]).join(","));
+
+// Stores that add properties, at one site, to objects built the same way.
+function fill(o, n) {
+  o.p = n;
+  o.q = n + 1;
+  o.r = n + 2;
+  o.s = n + 3;
+  o.t = n + 4;
+  o.u = n + 5;
+}
+let filled = [];
+for (let i = 0; i < 20; i++) {
+  let o = {};
+  fill(o, i);
+  filled.push(o);
+}
+let fsum = 0;
+for (let i = 0; i < 20; i++) fsum = fsum + filled[i].p + filled[i].u;
+console.log(fsum, Object.keys(filled[19]).join(","));
+
+function setProto(o, p) {
+  o.__proto__ = p;
+}
+
+// A setter that appears on the prototype chain after the store was cached.
+class Tracked {
+  constructor() {
+    this.log = [];
+  }
+}
+class WithSetter {
+  set value(v) {
+    this.log.push("set " + v);
+  }
+  get value() {
+    return "from getter";
+  }
+}
+function setValue(o, v) {
+  o.value = v;
+}
+let plainOnes = [];
+for (let i = 0; i < 5; i++) {
+  let t = new Tracked();
+  setValue(t, i);
+  plainOnes.push(t);
+}
+setProto(Tracked.prototype, WithSetter.prototype);
+let late = new Tracked();
+setValue(late, 9);
+console.log(plainOnes[4].value, late.value, late.log.join(","), Object.keys(late).join(","));
+
+// The same store on an object of the same shape whose prototype has the
+// setter.
+function blank() {
+  let o = {};
+  return o;
+}
+function withLog() {
+  let o = blank();
+  o.log = [];
+  return o;
+}
+let bare = withLog();
+setValue(bare, 1);
+let other = withLog();
+setProto(other, WithSetter.prototype);
+setValue(other, 2);
+console.log(bare.value, other.value, other.log.join(","), Object.keys(other).join(","));
+
+// A store that adds a property to a prototype, at a site that has added
+// it to ordinary objects of the same shape: lookups through the prototype
+// that were cached must see the new property.
+function setM(o, f) {
+  o.m = f;
+}
+function callM(o) {
+  return o.m();
+}
+let grand = {};
+setM(grand, () => "inherited");
+let siblings = [];
+for (let i = 0; i < 4; i++) {
+  let p = {};
+  setProto(p, grand);
+  setM(p, () => "m" + i);
+  siblings.push(p);
+}
+let base = {};
+setProto(base, grand);
+let child = {};
+setProto(child, base);
+let seen = [callM(child), callM(child), callM(siblings[2])];
+setM(base, () => "shadow");
+seen.push(callM(child));
+setM(base, () => "replaced");
+seen.push(callM(child));
+console.log(seen.join(","));
+
+// Class instances: fields set in the constructor, some only sometimes.
+class Vec {
+  constructor(x, y, z) {
+    this.x = x;
+    this.y = y;
+    if (z !== undefined) this.z = z;
+  }
+  sum() {
+    return this.x + this.y + (this.z === undefined ? 0 : this.z);
+  }
+}
+let vecs = [];
+for (let i = 0; i < 30; i++) vecs.push(i % 3 === 0 ? new Vec(i, 1, 2) : new Vec(i, 1));
+let vsum = 0;
+for (let i = 0; i < 30; i++) vsum = vsum + vecs[i].sum();
+console.log(vsum, Object.keys(vecs[0]).join(","), Object.keys(vecs[1]).join(","), "z" in vecs[1]);
+
+// More fields than an object has room for by default, and a subclass.
+class Wide {
+  constructor(n) {
+    this.a = n; this.b = n + 1; this.c = n + 2; this.d = n + 3;
+    this.e = n + 4; this.f = n + 5; this.g = n + 6;
+  }
+}
+class Wider extends Wide {
+  constructor(n) {
+    super(n);
+    this.h = n + 7;
+    this.i = n + 8;
+  }
+}
+let wsum = 0;
+let last = null;
+for (let i = 0; i < 10; i++) {
+  let w = i % 2 === 0 ? new Wide(i) : new Wider(i);
+  wsum = wsum + w.a + w.g + (w.i === undefined ? 0 : w.i);
+  last = w;
+}
+console.log(wsum, Object.keys(last).join(","), last instanceof Wide, last instanceof Wider);
+
+// One `new` site, several constructors; a constructor that returns an
+// object; and something that is not a constructor.
+class First {
+  constructor() { this.kind = "first"; }
+}
+class Second {
+  constructor() { this.kind = "second"; }
+}
+class Replaced {
+  constructor() {
+    this.kind = "ignored";
+    return { kind: "returned" };
+  }
+}
+function make(C) {
+  return new C();
+}
+let kinds = [];
+let ctors = [First, Second, First, Replaced, Second, First];
+for (let i = 0; i < ctors.length; i++) kinds.push(make(ctors[i]).kind);
+let notCtor = "";
+try {
+  make(42);
+} catch (e) {
+  notCtor = e instanceof TypeError ? "TypeError" : "other";
+}
+console.log(kinds.join(","), notCtor);
+
+// A method added to a class's prototype after instances were made.
+First.prototype.describe = function () {
+  return "I am " + this.kind;
+};
+console.log(make(First).describe());

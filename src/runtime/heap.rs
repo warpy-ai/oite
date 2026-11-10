@@ -11,7 +11,7 @@
 //! will go through NativeHeap.
 
 use std::alloc::{self, Layout};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 
 use super::object::shape::{self, Shape};
 
@@ -146,8 +146,11 @@ pub struct ObjectHeader {
     pub flags: u8,
     /// For an object: how many property slots it stores in itself.
     pub inline_slots: u8,
+    /// For a class: how many properties its instances have had at most,
+    /// so the next one is allocated with room for them (0: not known).
+    pub instance_slots: u8,
     /// Reserved for alignment and future use.
-    pub _reserved: [u8; 4],
+    pub _reserved: [u8; 3],
     /// Size of the object data (excluding header).
     pub size: u32,
 }
@@ -167,7 +170,8 @@ impl ObjectHeader {
             marked: false,
             flags: 0,
             inline_slots: 0,
-            _reserved: [0; 4],
+            instance_slots: 0,
+            _reserved: [0; 3],
             size,
         }
     }
@@ -277,13 +281,13 @@ pub struct NativeHeap {
     /// Start of the current chunk.
     young_start: std::cell::Cell<*mut u8>,
     /// Current allocation pointer (bump pointer) in the current chunk.
-    young_ptr: AtomicUsize,
+    young_ptr: Cell<usize>,
     /// End of the current chunk.
     young_end: std::cell::Cell<*mut u8>,
     /// Every chunk allocated so far, with its size, for `Drop`.
     chunks: std::cell::RefCell<Vec<(*mut u8, usize)>>,
     /// Total bytes allocated (for stats).
-    total_allocated: AtomicUsize,
+    total_allocated: Cell<usize>,
     /// Configuration.
     config: HeapConfig,
 }
@@ -307,10 +311,10 @@ impl NativeHeap {
 
         Self {
             young_start: std::cell::Cell::new(young_start),
-            young_ptr: AtomicUsize::new(young_start as usize),
+            young_ptr: Cell::new(young_start as usize),
             young_end: std::cell::Cell::new(young_end),
             chunks: std::cell::RefCell::new(vec![(young_start, config.young_size)]),
-            total_allocated: AtomicUsize::new(0),
+            total_allocated: Cell::new(0),
             config,
         }
     }
@@ -342,11 +346,12 @@ impl NativeHeap {
     /// When the current chunk is full, a new chunk is added. Nothing is
     /// reclaimed yet (#123), so memory grows with every allocation, but an
     /// allocation never fails short of the system running out of memory.
+    #[inline]
     pub fn alloc(&self, size: usize) -> Option<HeapPtr> {
         let total_size = ObjectHeader::SIZE + size;
         let aligned_size = (total_size + 7) & !7; // 8-byte alignment
 
-        let current = self.young_ptr.load(Ordering::Relaxed);
+        let current = self.young_ptr.get();
         let mut start = current;
         if current + aligned_size > self.young_end.get() as usize {
             let chunk_size = self.config.young_size.max(aligned_size);
@@ -356,10 +361,9 @@ impl NativeHeap {
             self.young_end.set(unsafe { chunk.add(chunk_size) });
             start = chunk as usize;
         }
-        self.young_ptr
-            .store(start + aligned_size, Ordering::Relaxed);
+        self.young_ptr.set(start + aligned_size);
         self.total_allocated
-            .fetch_add(aligned_size, Ordering::Relaxed);
+            .set(self.total_allocated.get() + aligned_size);
         Some(HeapPtr::from_usize(start))
     }
 
@@ -395,6 +399,14 @@ impl NativeHeap {
     /// object itself (at most `MAX_INLINE_SLOTS`).
     pub fn alloc_object_sized(&self, slots: usize) -> Option<HeapPtr> {
         let slots = slots.min(MAX_INLINE_SLOTS);
+        self.alloc_object_shaped(slots, shape::empty(slots))
+    }
+
+    /// Allocate an object of the shape `shape`, which must be a shape of
+    /// objects with `slots` slots in themselves. Its properties' slots are
+    /// for the caller to fill.
+    #[inline]
+    pub fn alloc_object_shaped(&self, slots: usize, shape: *const Shape) -> Option<HeapPtr> {
         let data_size = std::mem::size_of::<NativeObject>() + 8 * slots - ObjectHeader::SIZE;
         let ptr = self.alloc(data_size)?;
 
@@ -405,7 +417,7 @@ impl NativeHeap {
 
             let obj = ptr.as_mut::<NativeObject>();
             obj.overflow_cap = 0;
-            obj.shape = shape::empty(slots);
+            obj.shape = shape;
             obj.proto = super::abi::OtValue::undefined().to_bits();
             obj.overflow = std::ptr::null_mut();
         }
@@ -451,12 +463,12 @@ impl NativeHeap {
 
     /// Get the total bytes allocated.
     pub fn total_allocated(&self) -> usize {
-        self.total_allocated.load(Ordering::Relaxed)
+        self.total_allocated.get()
     }
 
     /// Get the bytes remaining in the current chunk.
     pub fn bytes_remaining(&self) -> usize {
-        let current = self.young_ptr.load(Ordering::Relaxed);
+        let current = self.young_ptr.get();
         self.young_end.get() as usize - current
     }
 
@@ -470,8 +482,8 @@ impl NativeHeap {
         let (first, size) = self.chunks.borrow()[0];
         self.young_start.set(first);
         self.young_end.set(unsafe { first.add(size) });
-        self.young_ptr.store(first as usize, Ordering::SeqCst);
-        self.total_allocated.store(0, Ordering::SeqCst);
+        self.young_ptr.set(first as usize);
+        self.total_allocated.set(0);
     }
 }
 
