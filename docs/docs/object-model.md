@@ -253,7 +253,9 @@ benchmark table:
 3. **Done: inline caches** for property reads, writes and method calls,
    in both backends. Reads and writes of an own data property are checked
    in compiled code, and so are writes that add a property (since step
-   4); method calls and properties found on the prototype chain are
+   4), and method calls, whether the method is the object's own or on
+   its prototype chain: a cached method that is a function is called
+   directly. Reads of a property found on the prototype chain are
    checked in the runtime.
 4. **Done: objects allocated with their slots.** Object literals are
    allocated in their final shape, class instances with room for their

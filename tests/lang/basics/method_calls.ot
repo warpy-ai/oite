@@ -1,0 +1,164 @@
+// backends: vm jit aot
+// A method call whose receiver has a cached shape is made directly from
+// compiled code. Everything that changes which function a call reaches
+// must still be seen.
+function setProto(o, p) {
+  o.__proto__ = p;
+}
+function speak(o) {
+  return o.speak();
+}
+function addTo(o, a, b) {
+  return o.add(a, b);
+}
+
+// Methods on a class, with `this` and arguments.
+class Animal {
+  constructor(name) {
+    this.name = name;
+  }
+  speak() {
+    return this.name + " makes a sound";
+  }
+  add(a, b) {
+    return this.name + ":" + (a + b);
+  }
+}
+class Dog extends Animal {
+  speak() {
+    return this.name + " barks";
+  }
+}
+let animals = [new Animal("cat"), new Dog("rex"), new Animal("cow"), new Dog("fido")];
+let said = [];
+for (let round = 0; round < 3; round++) {
+  for (let i = 0; i < animals.length; i++) said.push(speak(animals[i]));
+}
+console.log(said.slice(0, 4).join("; "), said.length, addTo(animals[1], 2, 3), addTo(animals[0], 1, 1));
+
+// A method replaced on the prototype, then shadowed nearer the receiver.
+let rex = animals[1];
+let out = [speak(rex), speak(rex)];
+Dog.prototype.speak = function () {
+  return this.name + " howls";
+};
+out.push(speak(rex));
+let fido = animals[3];
+fido.speak = function () {
+  return this.name + " speaks for itself";
+};
+out.push(speak(fido), speak(rex));
+console.log(out.join("; "));
+
+// A method that appears between the receiver and where it was found.
+class Base {
+  hello() {
+    return "base";
+  }
+}
+class Middle extends Base {}
+class Leaf extends Middle {}
+function hello(o) {
+  return o.hello();
+}
+let leaf = new Leaf();
+let hellos = [hello(leaf), hello(leaf)];
+Middle.prototype.hello = function () {
+  return "middle";
+};
+hellos.push(hello(leaf));
+console.log(hellos.join(","));
+
+// Two receivers of one shape with different prototypes.
+let protoA = { who() { return "A"; } };
+let protoB = { who() { return "B"; } };
+function who(o) {
+  return o.who();
+}
+function bare() {
+  let o = {};
+  return o;
+}
+let a = bare();
+setProto(a, protoA);
+let b = bare();
+setProto(b, protoB);
+console.log(who(a), who(a), who(b), who(a), who(b));
+
+// A receiver whose prototype changes.
+setProto(a, protoB);
+console.log(who(a));
+
+// Own function properties, and closures as methods.
+function counter(start) {
+  let n = start;
+  return {
+    next() {
+      n = n + 1;
+      return n;
+    },
+    peek: () => n,
+  };
+}
+let c1 = counter(10);
+let c2 = counter(100);
+function next(c) {
+  return c.next();
+}
+console.log(next(c1), next(c2), next(c1), c1.peek(), c2.peek());
+
+// A property that stops being a function.
+let failed = "";
+c1.next = 5;
+try {
+  next(c1);
+} catch (e) {
+  failed = e instanceof TypeError ? "TypeError" : "other";
+}
+let c3 = counter(0);
+let before = next(c3);
+c3.next = "a string, not a function";
+try {
+  next(c3);
+} catch (e) {
+  failed = failed + (e instanceof TypeError ? " TypeError" : " other");
+}
+console.log(failed, before, next(c2));
+
+// A method that throws.
+class Thrower {
+  go(fail) {
+    if (fail) throw new Error("thrown from go");
+    return "went";
+  }
+}
+function go(o, fail) {
+  return o.go(fail);
+}
+let thrower = new Thrower();
+let results = [go(thrower, false), go(thrower, false)];
+try {
+  go(thrower, true);
+} catch (e) {
+  results.push(e.message);
+}
+console.log(results.join(","));
+
+// One site, receivers that are not objects.
+function len(x) {
+  return x.toString();
+}
+console.log(len(12), len("text"), len([1, 2]), len(12.5));
+
+// A class with more methods than a prototype has room for in itself.
+class Many {
+  m0() { return 0; } m1() { return 1; } m2() { return 2; } m3() { return 3; }
+  m4() { return 4; } m5() { return 5; } m6() { return 6; } m7() { return 7; }
+  m8() { return 8; } m9() { return 9; } m10() { return 10; } m11() { return 11; }
+  m12() { return 12; } m13() { return 13; } m14() { return 14; } m15() { return 15; }
+  m16() { return 16; } m17() { return 17; } m18() { return 18; } m19() { return 19; }
+}
+let many = new Many();
+let sum = 0;
+for (let i = 0; i < 3; i++) sum = sum + many.m0() + many.m15() + many.m16() + many.m19();
+console.log(sum);

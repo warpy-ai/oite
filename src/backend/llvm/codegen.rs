@@ -35,6 +35,7 @@ const TRUE: u64 = QNAN | TAG_BOOLEAN | 1;
 const NONAME: *const c_char = b"\0".as_ptr() as *const c_char;
 
 mod arrays;
+mod equality;
 mod objects;
 
 /// A bitwise operator on 32-bit integers.
@@ -1371,7 +1372,8 @@ impl Fx<'_> {
                         );
                         self.box_bool(cmp)
                     } else {
-                        self.rt("ot_eq_strict", &[self.get(*a)?, self.get(*b)?])
+                        let (x, y) = (self.get(*a)?, self.get(*b)?);
+                        self.strict_eq(x, y)
                     };
                     let r = if matches!(op, IrOp::NeStrict(..)) {
                         self.negate(r)
@@ -1811,8 +1813,7 @@ impl Fx<'_> {
                         .map(|a| self.get(*a))
                         .collect::<Result<_, _>>()?;
                     let (argv, argc) = self.arg_array(&vals);
-                    let cache = self.prop_cache(name);
-                    let v = self.rt("ot_call_method_ic", &[r, cache, argv, argc]);
+                    let v = self.call_method(r, name, argv, argc);
                     self.set(*d, v);
                 }
 
