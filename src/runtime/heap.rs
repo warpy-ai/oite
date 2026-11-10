@@ -15,8 +15,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::object::shape::{self, Shape};
 
-/// Property slots stored in the object itself; the rest go to `overflow`.
+/// The size of a huge page on the platforms Oite targets.
+const HUGE_PAGE: usize = 2 * 1024 * 1024;
+
+/// The size of a heap chunk.
+const CHUNK_SIZE: usize = 4 * HUGE_PAGE;
+
+/// Property slots stored in an object itself when its allocation site
+/// gives no better number; the rest go to `overflow`.
 pub const INLINE_SLOTS: usize = 4;
+
+/// The most slots an object stores in itself.
+pub const MAX_INLINE_SLOTS: usize = 16;
 
 /// A pointer to a heap-allocated object.
 ///
@@ -134,8 +144,10 @@ pub struct ObjectHeader {
     pub marked: bool,
     /// Per-kind flags (`ObjectHeader::ASCII` for strings).
     pub flags: u8,
+    /// For an object: how many property slots it stores in itself.
+    pub inline_slots: u8,
     /// Reserved for alignment and future use.
-    pub _reserved: [u8; 5],
+    pub _reserved: [u8; 4],
     /// Size of the object data (excluding header).
     pub size: u32,
 }
@@ -154,7 +166,8 @@ impl ObjectHeader {
             kind,
             marked: false,
             flags: 0,
-            _reserved: [0; 5],
+            inline_slots: 0,
+            _reserved: [0; 4],
             size,
         }
     }
@@ -228,10 +241,10 @@ pub struct NativeObject {
     pub shape: *const Shape,
     /// The prototype: an object, or `undefined`.
     pub proto: u64,
-    /// Slots `INLINE_SLOTS..`; in dictionary mode, the `Dict`.
+    /// The slots after the inline ones; in dictionary mode, the `Dict`.
     pub overflow: *mut u64,
-    /// Slots `0..INLINE_SLOTS`.
-    pub inline: [u64; INLINE_SLOTS],
+    /// The first `header.inline_slots` slots follow the object.
+    pub inline: [u64; 0],
 }
 
 // =========================================================================
@@ -249,8 +262,8 @@ pub struct HeapConfig {
 impl Default for HeapConfig {
     fn default() -> Self {
         Self {
-            young_size: 1024 * 1024,  // 1 MB
-            gc_threshold: 768 * 1024, // 75% of young_size
+            young_size: CHUNK_SIZE,
+            gc_threshold: CHUNK_SIZE / 4 * 3, // 75% of young_size
         }
     }
 }
@@ -302,11 +315,24 @@ impl NativeHeap {
         }
     }
 
+    /// A chunk of `size` bytes, aligned to a huge page. On Linux the
+    /// kernel is asked to back it with huge pages: nothing is reclaimed
+    /// yet (#123), so a program that allocates touches new memory all the
+    /// time, and with 4 KB pages most of its time goes to page faults.
     fn alloc_chunk(size: usize) -> *mut u8 {
-        let layout = Layout::from_size_align(size, 8).unwrap();
+        let layout = Layout::from_size_align(size, HUGE_PAGE).unwrap();
         let chunk = unsafe { alloc::alloc(layout) };
         if chunk.is_null() {
             alloc::handle_alloc_error(layout);
+        }
+        #[cfg(target_os = "linux")]
+        unsafe {
+            unsafe extern "C" {
+                fn madvise(addr: *mut u8, len: usize, advice: i32) -> i32;
+            }
+            const MADV_HUGEPAGE: i32 = 14;
+            // Advice only: on failure the chunk has ordinary pages.
+            madvise(chunk, size, MADV_HUGEPAGE);
         }
         chunk
     }
@@ -362,16 +388,24 @@ impl NativeHeap {
 
     /// Allocate and initialize an empty object.
     pub fn alloc_object(&self) -> Option<HeapPtr> {
-        let data_size = std::mem::size_of::<NativeObject>() - ObjectHeader::SIZE;
+        self.alloc_object_sized(INLINE_SLOTS)
+    }
+
+    /// Allocate an empty object with room for `slots` properties in the
+    /// object itself (at most `MAX_INLINE_SLOTS`).
+    pub fn alloc_object_sized(&self, slots: usize) -> Option<HeapPtr> {
+        let slots = slots.min(MAX_INLINE_SLOTS);
+        let data_size = std::mem::size_of::<NativeObject>() + 8 * slots - ObjectHeader::SIZE;
         let ptr = self.alloc(data_size)?;
 
         unsafe {
             let header = ptr.as_mut::<ObjectHeader>();
             *header = ObjectHeader::new(ObjectKind::Object, data_size as u32);
+            header.inline_slots = slots as u8;
 
             let obj = ptr.as_mut::<NativeObject>();
             obj.overflow_cap = 0;
-            obj.shape = shape::empty();
+            obj.shape = shape::empty(slots);
             obj.proto = super::abi::OtValue::undefined().to_bits();
             obj.overflow = std::ptr::null_mut();
         }
@@ -444,7 +478,7 @@ impl NativeHeap {
 impl Drop for NativeHeap {
     fn drop(&mut self) {
         for &(chunk, size) in self.chunks.borrow().iter() {
-            let layout = Layout::from_size_align(size, 8).unwrap();
+            let layout = Layout::from_size_align(size, HUGE_PAGE).unwrap();
             unsafe {
                 alloc::dealloc(chunk, layout);
             }
@@ -493,7 +527,8 @@ mod tests {
         assert_eq!(offset_of!(NativeFunction, code), 16);
         assert_eq!(offset_of!(NativeFunction, env), 24);
 
-        assert_eq!(size_of::<NativeObject>(), 40 + 8 * INLINE_SLOTS);
+        assert_eq!(offset_of!(ObjectHeader, inline_slots), 3);
+        assert_eq!(size_of::<NativeObject>(), 40);
         assert_eq!(offset_of!(NativeObject, overflow_cap), 12);
         assert_eq!(offset_of!(NativeObject, shape), 16);
         assert_eq!(offset_of!(NativeObject, proto), 24);

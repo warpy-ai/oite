@@ -12,6 +12,7 @@
 //! - Bytecode (current VM format) or AST
 //! - Native backends (Cranelift, LLVM)
 
+pub mod alloc_hints;
 pub mod format;
 pub mod lower;
 pub mod opt;

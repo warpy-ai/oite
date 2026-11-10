@@ -369,6 +369,7 @@ impl LlvmCodegen {
                 blocks,
                 locals: Vec::new(),
                 types: &func.value_types,
+                object_slots: crate::ir::alloc_hints::object_slots(func),
                 direct: HashMap::new(),
                 this: LLVMGetParam(f, 0),
                 env: LLVMGetParam(f, 3),
@@ -471,6 +472,8 @@ struct Fx<'a> {
     blocks: HashMap<BlockId, LLVMBasicBlockRef>,
     locals: Vec<LLVMValueRef>,
     types: &'a HashMap<ValueId, IrType>,
+    /// How many properties each `NewObject` site is about to store.
+    object_slots: HashMap<ValueId, usize>,
     /// Values known to be a specific compiled function (for direct calls),
     /// with the closure environment they carry, if any.
     direct: HashMap<ValueId, (usize, Option<ValueId>)>,
@@ -1668,7 +1671,10 @@ impl Fx<'_> {
                 }
 
                 IrOp::NewObject(d) => {
-                    let r = self.rt("ot_alloc_object", &[]);
+                    let r = match self.object_slots.get(d).copied() {
+                        Some(n) => self.rt("ot_alloc_object_sized", &[self.c(n as u64)]),
+                        None => self.rt("ot_alloc_object", &[]),
+                    };
                     self.set(*d, r);
                 }
                 IrOp::NewArray(d) => {

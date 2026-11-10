@@ -20,6 +20,7 @@ pub const RUNTIME: &[(&str, bool, &[Ty])] = {
     use Ty::*;
     &[
         ("ot_alloc_object", true, &[]),
+        ("ot_alloc_object_sized", true, &[Len]),
         ("ot_alloc_array", true, &[Len]),
         ("ot_alloc_string", true, &[Ptr, Len]),
         ("ot_make_function", true, &[Ptr]),

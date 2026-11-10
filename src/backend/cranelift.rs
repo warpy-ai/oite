@@ -39,6 +39,7 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
     }
     syms!(
         ot_alloc_object,
+        ot_alloc_object_sized,
         ot_alloc_array,
         ot_alloc_string,
         ot_make_function,
@@ -268,6 +269,7 @@ impl CraneliftCodegen {
                     blocks: HashMap::new(),
                     locals: Vec::new(),
                     types: &func.value_types,
+                    object_slots: crate::ir::alloc_hints::object_slots(func),
                     direct: HashMap::new(),
                     env: None,
                     this: None,
@@ -352,6 +354,8 @@ struct Fx<'a> {
     blocks: HashMap<BlockId, Block>,
     locals: Vec<Local>,
     types: &'a HashMap<ValueId, IrType>,
+    /// How many properties each `NewObject` site is about to store.
+    object_slots: HashMap<ValueId, usize>,
     /// Values known to be a specific compiled function, with the closure
     /// environment they carry, if any.
     direct: HashMap<ValueId, (usize, Option<ValueId>)>,
@@ -1354,7 +1358,13 @@ impl Fx<'_> {
             }
 
             IrOp::NewObject(d) => {
-                let r = self.rt_v(b, "ot_alloc_object", &[]);
+                let r = match self.object_slots.get(d).copied() {
+                    Some(n) => {
+                        let n = Self::c(b, n as u64);
+                        self.rt_v(b, "ot_alloc_object_sized", &[n])
+                    }
+                    None => self.rt_v(b, "ot_alloc_object", &[]),
+                };
                 self.values.insert(*d, r);
             }
             IrOp::NewArray(d) => {

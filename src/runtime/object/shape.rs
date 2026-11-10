@@ -2,6 +2,7 @@
 //! properties in the same order. A shape is immutable and lives for the
 //! whole run; adding a property moves an object to the next shape.
 
+use super::super::heap::MAX_INLINE_SLOTS;
 use super::atom::Atom;
 use std::cell::RefCell;
 
@@ -19,6 +20,10 @@ pub struct Prop {
 }
 
 pub struct Shape {
+    /// How many slots objects of this shape store in themselves. Objects
+    /// of one shape agree on it, so a slot's place is a property of the
+    /// shape.
+    pub inline_slots: u8,
     /// The properties in insertion order: property `i` is in slot `i`.
     pub props: Vec<Prop>,
     /// The shapes reached by adding one property.
@@ -26,8 +31,9 @@ pub struct Shape {
 }
 
 impl Shape {
-    fn new(props: Vec<Prop>) -> *const Shape {
+    fn new(inline_slots: u8, props: Vec<Prop>) -> *const Shape {
         Box::leak(Box::new(Shape {
+            inline_slots,
             props,
             transitions: RefCell::new(Vec::new()),
         }))
@@ -52,19 +58,21 @@ impl Shape {
         }
         let mut props = self.props.clone();
         props.push(Prop { atom, flags });
-        let next = Shape::new(props);
+        let next = Shape::new(self.inline_slots, props);
         transitions.push((atom, flags, next));
         next
     }
 }
 
 thread_local! {
-    static EMPTY: *const Shape = Shape::new(Vec::new());
+    static EMPTY: [*const Shape; MAX_INLINE_SLOTS + 1] =
+        std::array::from_fn(|slots| Shape::new(slots as u8, Vec::new()));
 }
 
-/// The shape of an object with no properties.
-pub fn empty() -> *const Shape {
-    EMPTY.with(|s| *s)
+/// The shape of an object with no properties and `inline_slots` slots in
+/// the object itself.
+pub fn empty(inline_slots: usize) -> *const Shape {
+    EMPTY.with(|s| s[inline_slots.min(MAX_INLINE_SLOTS)])
 }
 
 #[cfg(test)]
@@ -73,7 +81,8 @@ mod tests {
 
     #[test]
     fn same_order_same_shape() {
-        let e = unsafe { &*empty() };
+        assert_ne!(empty(2), empty(4));
+        let e = unsafe { &*empty(4) };
         let a = e.with(100, 0);
         let ab = unsafe { &*a }.with(101, 0);
         assert_eq!(e.with(100, 0), a);

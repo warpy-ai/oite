@@ -245,7 +245,13 @@ benchmark table:
    in both backends. Reads and writes of an own data property are checked
    in compiled code; method calls, properties found on the prototype
    chain and writes that add a property are checked in the runtime.
-4. **Class instances and object literals** allocated with their slots.
+4. **Partly done: objects allocated with their slots.** An object literal
+   is allocated with one inline slot per property it is given
+   (`src/ir/alloc_hints.rs`), up to 16; every other object gets 4. `new C()`
+   on a class calls the constructor directly. The heap asks for huge
+   pages, because most of the allocation time was the kernel mapping and
+   zeroing memory. Still to do: class instances sized from their fields
+   and constructor, and allocation directly in the final shape.
 5. **Closure environments** as slot arrays (compiler, VM and both
    backends).
 6. **Done: inline array element access** and `length`, in both backends.

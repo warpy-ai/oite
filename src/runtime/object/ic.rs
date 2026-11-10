@@ -8,7 +8,7 @@
 //! entry (a property found on the prototype chain, or a property being
 //! added) before doing the full lookup.
 
-use super::super::heap::{INLINE_SLOTS, NativeObject};
+use super::super::heap::NativeObject;
 use std::cell::Cell;
 
 /// A shape pointer no object has: an empty cache entry.
@@ -63,13 +63,23 @@ impl PropCache {
     }
 }
 
-/// Where slot `i` is, as compiled code wants it: `>= 0` is a byte offset
-/// from the object; `< 0` is `!offset` bytes into the overflow array.
-pub fn slot_offset(i: usize) -> i32 {
-    if i < INLINE_SLOTS {
+/// Where slot `i` is in an object with `inline_slots` slots in itself, as
+/// compiled code wants it: `>= 0` is a byte offset from the object; `< 0`
+/// is `!offset` bytes into the overflow array.
+pub fn slot_offset(i: usize, inline_slots: usize) -> i32 {
+    if i < inline_slots {
         (std::mem::offset_of!(NativeObject, inline) + 8 * i) as i32
     } else {
-        !((8 * (i - INLINE_SLOTS)) as i32)
+        !((8 * (i - inline_slots)) as i32)
+    }
+}
+
+/// The slot index `offset` stands for (the inverse of `slot_offset`).
+pub fn slot_index(offset: i32, inline_slots: usize) -> usize {
+    if offset >= 0 {
+        (offset as usize - std::mem::offset_of!(NativeObject, inline)) / 8
+    } else {
+        inline_slots + (!offset as usize) / 8
     }
 }
 
@@ -115,12 +125,13 @@ mod tests {
         assert_eq!(std::mem::offset_of!(PropCache, name_ptr), 16);
         assert_eq!(std::mem::offset_of!(PropCache, proto_shape), 32);
         assert_eq!(std::mem::offset_of!(PropCache, holder_offset), 56);
-        assert_eq!(slot_offset(0), 40);
-        assert_eq!(
-            slot_offset(INLINE_SLOTS - 1),
-            40 + 8 * (INLINE_SLOTS as i32 - 1)
-        );
-        assert_eq!(!slot_offset(INLINE_SLOTS), 0);
-        assert_eq!(!slot_offset(INLINE_SLOTS + 2), 16);
+        assert_eq!(slot_offset(0, 4), 40);
+        assert_eq!(slot_offset(3, 4), 64);
+        assert_eq!(!slot_offset(4, 4), 0);
+        assert_eq!(!slot_offset(6, 4), 16);
+        assert_eq!(!slot_offset(0, 0), 0);
+        for (i, inline) in [(0, 4), (3, 4), (4, 4), (9, 2), (0, 0)] {
+            assert_eq!(slot_index(slot_offset(i, inline), inline), i);
+        }
     }
 }

@@ -2,7 +2,6 @@
 //! code calls when its own check of the cache misses.
 
 use super::*;
-use std::mem::offset_of;
 
 /// The site's property name as an atom (interned on first use).
 fn cache_atom(c: &mut PropCache) -> Atom {
@@ -40,19 +39,20 @@ fn remember_read(c: &mut PropCache, o: &NativeObject, key: Atom) {
     match shape.find(key) {
         Some((i, flags)) if flags & ACCESSOR == 0 => {
             c.shape = o.shape as u64;
-            c.offset = ic::slot_offset(i);
+            c.offset = ic::slot_offset(i, shape.inline_slots as usize);
         }
         Some(_) => {}
         None => {
             let mut holder = o.proto;
             for _ in 0..1000 {
                 let Some(h) = shaped(holder) else { return };
-                match unsafe { &*h.shape }.find(key) {
+                let holder_shape = unsafe { &*h.shape };
+                match holder_shape.find(key) {
                     Some((i, flags)) if flags & ACCESSOR == 0 => {
                         c.proto_shape = o.shape as u64;
                         c.proto = o.proto;
                         c.holder = h as *mut NativeObject as u64;
-                        c.holder_offset = ic::slot_offset(i);
+                        c.holder_offset = ic::slot_offset(i, holder_shape.inline_slots as usize);
                         c.epoch = ic::epoch();
                         return;
                     }
@@ -97,12 +97,7 @@ pub extern "C" fn ot_set_prop_ic(target: u64, cache: *mut PropCache, value: u64)
         && c.epoch == ic::epoch()
         && o.header.flags & ObjectHeader::PROTOTYPE == 0
     {
-        let inline = offset_of!(NativeObject, inline) as i32;
-        let slot = if c.holder_offset >= 0 {
-            ((c.holder_offset - inline) / 8) as usize
-        } else {
-            crate_inline_slots() + (!c.holder_offset / 8) as usize
-        };
+        let slot = ic::slot_index(c.holder_offset, o.header.inline_slots as usize);
         object::reserve(o, slot);
         unsafe { *ic::slot_at(o, c.holder_offset) = value };
         o.shape = c.holder as *const _;
@@ -120,7 +115,7 @@ pub extern "C" fn ot_set_prop_ic(target: u64, cache: *mut PropCache, value: u64)
         if before == o.shape {
             // The property was there: later writes store in place.
             c.shape = o.shape as u64;
-            c.offset = ic::slot_offset(i);
+            c.offset = ic::slot_offset(i, after.inline_slots as usize);
         } else if !before.is_null()
             && unsafe { &*before }.with(key, 0) == o.shape
             && o.header.flags & ObjectHeader::PROTOTYPE == 0
@@ -128,15 +123,11 @@ pub extern "C" fn ot_set_prop_ic(target: u64, cache: *mut PropCache, value: u64)
             c.proto_shape = before as u64;
             c.proto = o.proto;
             c.holder = o.shape as u64;
-            c.holder_offset = ic::slot_offset(i);
+            c.holder_offset = ic::slot_offset(i, after.inline_slots as usize);
             c.epoch = ic::epoch();
         }
     }
     result
-}
-
-fn crate_inline_slots() -> usize {
-    super::super::heap::INLINE_SLOTS
 }
 
 /// `recv.key(...args)` through the site's cache.

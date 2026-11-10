@@ -1,9 +1,9 @@
 //! An object's own properties: slots laid out by its shape (the first
-//! `INLINE_SLOTS` in the object, the rest in an overflow array), or a
-//! dictionary.
+//! `header.inline_slots` in the object, the rest in an overflow array), or
+//! a dictionary.
 
 use super::super::abi::OtValue;
-use super::super::heap::{INLINE_SLOTS, NativeObject};
+use super::super::heap::NativeObject;
 use super::atom::Atom;
 use super::dictionary::Dict;
 use super::shape::{ACCESSOR, MAX_PROPS, Shape};
@@ -18,19 +18,21 @@ fn dict(obj: &NativeObject) -> &'static mut Dict {
 }
 
 fn slot(obj: &NativeObject, i: usize) -> *mut u64 {
-    if i < INLINE_SLOTS {
+    let inline = obj.header.inline_slots as usize;
+    if i < inline {
         obj.inline.as_ptr().wrapping_add(i) as *mut u64
     } else {
-        unsafe { obj.overflow.add(i - INLINE_SLOTS) }
+        unsafe { obj.overflow.add(i - inline) }
     }
 }
 
 /// Make room for slot `i`.
 pub fn reserve(obj: &mut NativeObject, i: usize) {
-    if i < INLINE_SLOTS {
+    let inline = obj.header.inline_slots as usize;
+    if i < inline {
         return;
     }
-    let needed = i + 1 - INLINE_SLOTS;
+    let needed = i + 1 - inline;
     let cap = obj.overflow_cap as usize;
     if needed <= cap {
         return;
