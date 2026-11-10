@@ -1,0 +1,287 @@
+---
+sidebar_position: 10
+title: Types
+description: Phase 3 of the performance plan - type annotations become checked contracts, and compiled code uses them to drop its type checks.
+keywords: [performance, types, type checker, inference, unboxed, specialization]
+---
+
+# Types (performance phase 3)
+
+> **Status:** design for review. Nothing here is implemented yet. It is
+> phase 3 of [Performance](performance.md) and closes #124.
+
+## Why
+
+After phase 2 ([Object model](object-model.md)) the benchmarks make almost
+no runtime calls. What is left is compiled code checking types
+(native `--release`):
+
+| Benchmark | Oite | Bun | Where the time is |
+| --------- | ---: | --: | ----------------- |
+| `nbody` | 577 ms | 95 ms | 99% compiled code: about 1,000 instructions for 18 floating-point operations |
+| `methods` | 78 ms | 12 ms | 100% compiled code: 150 instructions for `c.inc(1)` |
+| `props` | 65 ms | 19 ms | compiled code |
+| `calls` | 54 ms | 22 ms | arguments boxed into an array for every call |
+
+Every value is a boxed 64-bit word. `a + b` checks that both are numbers
+and has a path that calls the runtime; every call packs its arguments into
+an array; every property read checks that the receiver is a pointer, an
+object, and of the cached shape.
+
+**Goal of phase 3:** code whose types the compiler knows runs without
+those checks: numbers in floating-point registers, arguments in registers,
+calls direct. `props`, `methods`, `nbody` and `closures` within 1.5 times
+Bun's time; `fib` and `calls` ahead of Bun.
+
+## How types work today
+
+- **Annotations are parsed and dropped.** `let s: string = 42` compiles
+  and runs (#124). Interfaces, type aliases, `as` and generics are erased
+  in `src/compiler/mod.rs`.
+- **The compiler's intermediate form (IR) is built from bytecode**, not
+  from the syntax tree, and bytecode has no types. Every parameter, local
+  and return value is `any` in the IR.
+- **One pass infers types inside a function** (`src/ir/typecheck.rs`),
+  from constants and operators only. It never rejects a program. It does
+  not see parameters, calls, return values or properties, so a loop
+  counter is a number but `fib(n)` is not.
+- **A known type only removes a check.** The value stays a boxed word.
+- **`src/types/` (about 1,900 lines of checker and inference) is never
+  called.** Only its `Type` enum is used, by the borrow checker.
+- **The self-hosted compiler (`compiler/`) has its own structural
+  checker** in Oite (`compiler/passes/types.ot`). `oitec build` does not
+  use it.
+
+## The design
+
+### 1. What a type means
+
+**An annotation is a contract. No annotation means dynamic.**
+
+- `x: number` promises that `x` holds a number whenever it is read. The
+  compiler checks it, and compiled code relies on it.
+- A variable, parameter or return value with no annotation is not
+  checked. `let x = 0; x = "a"` stays legal. The compiler still infers
+  what it can for speed (sections 5 and 6), but inference never rejects a
+  program.
+- `any` is the explicit dynamic type. A value of type `any` can be used
+  anywhere, and is checked when it enters a typed place (section 3).
+
+This is the difference from TypeScript: there, an unannotated `let x = 0`
+is a `number` and a wrong annotation is only a lint. Here an annotation is
+either true at run time or the program stops.
+
+### 2. The type language
+
+First version:
+
+| Type | Notes |
+| ---- | ----- |
+| `number`, `string`, `boolean` | |
+| `null`, `undefined`, `void` | **Not** part of other types: `number` is never `null`. Write `number \| null`. |
+| `any` | Dynamic. `unknown` is `any` that must be narrowed before use. |
+| `T[]`, `Array<T>` | |
+| Class names | Nominal: an instance of the class or a subclass. |
+| Object types and interfaces | Structural: has these properties with these types. |
+| Function types | `(a: number) => string` |
+| Unions | `A \| B`, narrowed by `typeof`, `=== null`, `instanceof`, truthiness. |
+| Optional | `x?: T` is `T \| undefined`. |
+| Type aliases, enums | Enums already exist at run time. |
+| Generics | Checked; erased to `any` in compiled code in the first version. |
+
+Not in the first version: intersections, conditional and mapped types,
+overloads, tuples. They are reported as "not supported yet", not silently
+accepted.
+
+### 3. Soundness: checks where dynamic meets typed
+
+A contract is only useful to the compiler if nothing can break it. Fully
+static soundness is not possible while `any` exists, so the rule is:
+
+**A value is checked when it moves from a dynamic place to a typed one.**
+
+| Where | Check |
+| ----- | ----- |
+| `any` assigned or passed to a typed variable, parameter or return | The value's tag (number, string, boolean, null, undefined) or class |
+| A typed function called from dynamic code | Its parameters, at a checked entry point (section 5) |
+| A read from the heap in typed code (`p.x`, `a[i]`) | The tag of the value read |
+| `x as T` | The same check as an assignment. It is no longer free. |
+
+A failed check throws a `TypeError` that names the expected and actual
+types and the source position.
+
+The third row is what keeps this simple. Objects and arrays can be
+reached from dynamic code, which may store anything in them. So typed code
+does not trust the heap: it checks what it reads. That is one compare and
+a branch that is never taken, against today's check on every operand of
+every operator plus a runtime path. Between reads, values are trusted and
+unboxed.
+
+Structural types (object types, interfaces) and element types of arrays
+are checked statically where both sides are typed, and at reads otherwise.
+They are not checked deeply at the boundary: passing an `any` to a
+parameter of type `{ x: number }` checks that it is an object, and `p.x`
+checks the number when it is read.
+
+Section 7 removes the heap-read check for class fields later.
+
+### 4. The checker
+
+- **Runs on the syntax tree**, before code generation, next to the borrow
+  checker, for every backend and for `oitec check`.
+- **Local inference, in one direction.** Declared types flow down into
+  expressions; expression types flow up. No global inference, no
+  unification variables. An unannotated variable has the type `any` to
+  the checker.
+- **Narrowing** by control flow, as in section 2.
+- **Errors use the existing diagnostics** (file, line, column, snippet).
+- **Its output is a type table**: for each function, the types of its
+  parameters and return value; for each typed local and each class, its
+  declared types. Lowering to IR reads this table (the bytecode stays
+  untyped; the table is keyed by function address and source site, which
+  bytecode already carries for stack traces).
+- **`src/types/`:** the `Type` enum is kept and gains unions, `null`,
+  `undefined` and classes. `checker.rs` is replaced by small modules
+  (`src/types/check/`), reusing what fits. `inference.rs` (unification)
+  is removed: nothing in this design needs it.
+
+### 5. Typed code generation
+
+With types in the IR:
+
+- **Unboxed numbers.** A value of type `number` is an `f64` in the IR and
+  in a floating-point register. `a + b`, `a < b` and `Math.sqrt(a)` are
+  one instruction each, with no check and no runtime path. A number is
+  boxed only when it enters a dynamic place (an `any`, the heap, a
+  dynamic call); boxing a number is a bit copy.
+- **Booleans** are unboxed the same way.
+- **Two entry points per typed function:**
+  - a **typed entry**, with unboxed numbers and booleans in registers and
+    no argument array, used by direct calls from code that knows the
+    function and has checked types;
+  - the **dynamic entry** (`this, argv, argc, env`, as today), which
+    checks the arguments, then calls the typed entry. Method calls
+    through caches and calls from dynamic code use it.
+- **Integers stay internal.** A `number` proven to be an integer in range
+  (loop counters, array indexes) is kept as an integer, as in phase 1.
+  There is no integer type in the language.
+- **Strings, objects and arrays** stay pointers. Knowing the type removes
+  the "is it a pointer of this kind" checks on them.
+
+### 6. Speed for code without annotations
+
+Most existing Oite code has no annotations (5 of 121 test files, 1 of 16
+benchmarks), and a program must not need them to be fast.
+
+- **Local inference in the IR** (the existing pass), extended with the
+  type table: results of typed calls, typed properties, and numbers read
+  from the heap after their check.
+- **Specialisation by argument types.** Oite compiles a whole program at
+  once. When a known function with unannotated parameters is called
+  directly with arguments whose types are known, the compiler makes a
+  copy of the function for those types (`fib` for a `number`), with a
+  typed entry, and calls the copy. The original stays for dynamic calls.
+  The IR already has an unused operation for this (`CallMono`). Copies
+  are limited per function, so code size is bounded.
+- **Return types are inferred** for a specialised copy from its body, so
+  `fib(n - 1) + fib(n - 2)` is an `f64` addition.
+
+So `function fib(n) { ... }` called as `fib(32)` compiles to the same code
+as `function fib(n: number): number`. The annotation's value is the
+contract and the error message, not the speed.
+
+### 7. Objects (after the first version)
+
+- **Declared class fields have fixed slots.** A field declaration
+  (`x: number;` in a class body) already defines the property on every
+  instance before the constructor runs, in declaration order, parent
+  class first. So field `i` is in slot `i` of every instance. Typed code
+  reads `p.x` on a `p: Point` with one load: no cache, no shape check.
+- **This needs one rule:** a declared field cannot be deleted. `delete
+  p.x` on a declared field is a compile error where the type is known,
+  and a `TypeError` otherwise. (JavaScript allows it.)
+- **Typed fields checked on write.** When every store to a declared field
+  is checked (typed code statically, dynamic code in the runtime), a read
+  needs no check at all.
+- **Methods called directly** when the receiver's class is known and the
+  method is not overridden in the program.
+- **Inlining** of small known functions, which the typed entry makes
+  possible.
+
+## Effect on the rest of the system
+
+- **Language:** three changes.
+  1. A program with a wrong annotation no longer compiles (or stops with
+     a `TypeError` where the value came from dynamic code).
+  2. `null` and `undefined` are not members of other types.
+  3. `as` is a checked conversion.
+  Code with no annotations behaves exactly as before.
+- **Existing code:**
+  - `tests/lang`: almost no annotations; expected to pass unchanged.
+  - **The rolls** are heavily annotated (all 13 source files; 64 unions,
+    52 `any`). They must pass the checker before it can reject programs.
+  - **The self-hosted compiler** (`compiler/`, about 1,000 annotations,
+    many nullable values typed as non-null) will need fixes or `any`.
+- **Rollout:** the checker first reports **warnings** on `build` and
+  `run`, and errors on `oitec check`. When the rolls, the self-hosted
+  compiler and the tests are clean, warnings become errors. Typed code
+  generation only relies on annotations once they are errors.
+- **The VM:** runs the same checks (the checker is in the front end; the
+  boundary checks become bytecode). It stays a boxed interpreter.
+- **Rolls:** no API change. They get faster where they are annotated,
+  which is everywhere.
+- **Phase 4 (memory):** typed locals and known object types are what
+  escape analysis and ownership need; this phase gives it that
+  information.
+
+## Code organisation
+
+Under the file-size rule (about 800 lines), the files this phase touches
+are split first, each in its own pull request with no behaviour change:
+`src/compiler/mod.rs`, `src/ir/lower.rs`, and the two backends
+(`cranelift.rs`, `llvm/codegen.rs`), which phase 2 began to split.
+
+New code:
+
+- `src/types/check/`: `mod.rs`, `expr.rs`, `stmt.rs`, `narrow.rs`,
+  `classes.rs`, `assign.rs` (assignability), `table.rs` (the type table).
+- `src/ir/spec.rs`: specialisation.
+- `src/backend/*/typed.rs`: typed entries and unboxed values.
+
+## Order of work
+
+Each step is one pull request, with tests on vm, jit and aot.
+
+1. **Split the large files** (several pull requests, no behaviour change).
+2. **The checker**, reporting warnings: types of section 2, local
+   inference, narrowing, the type table. `oitec check` reports errors.
+   Golden tests for accepted and rejected programs (`tests/lang/types/`).
+3. **Make the rolls and the self-hosted compiler pass**, then turn
+   warnings into errors. Closes #124.
+4. **Boundary checks** (section 3) on every backend.
+5. **Types in the IR and unboxed numbers** inside a function.
+6. **Typed entries and direct typed calls.**
+7. **Specialisation** of unannotated functions.
+8. **Class field layout and typed field access** (section 7), then
+   direct method calls and inlining.
+
+Expected effect, as estimates to be checked by each step's benchmarks:
+steps 5 to 7 are for `fib`, `calls`, `nbody` and the loops; step 8 is for
+`props` and `methods`. Steps 2 to 4 change no timings.
+
+## Risks
+
+- **It is a language change.** Existing annotated code may stop compiling.
+  The warning period and `any` are the mitigation; the rule that
+  unannotated code is untouched limits it to code that made a promise.
+- **Checked `as` and heap-read checks cost time** in code that crosses
+  between typed and dynamic often. The alternative, trusting annotations,
+  makes a wrong annotation a crash instead of an error.
+- **Two representations of a value** (boxed and unboxed) in the IR, in two
+  backends, with exceptions and resumable `async` functions. This is the
+  largest piece of engineering in the phase; step 5 does it inside one
+  function before step 6 crosses calls.
+- **Code size** from specialisation, bounded by the per-function limit.
+- **Two checkers**: this one in Rust and `compiler/passes/types.ot` in the
+  self-hosted compiler. They will disagree until the self-hosted compiler
+  is brought in line; `oitec build` uses only the Rust one.
