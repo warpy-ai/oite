@@ -1,0 +1,61 @@
+// backends: jit aot
+// Element access and `length`: native code reads and writes in-bounds
+// elements itself; everything else goes through the runtime.
+// (Not on the VM yet: it reads a[-1] and a[1.5] as elements, ignores
+// `a.length = n` and a["0"] = v, and has no number keys on objects.)
+function get(a, i) {
+  return a[i];
+}
+function set(a, i, v) {
+  a[i] = v;
+}
+function len(x) {
+  return x.length;
+}
+let a = [10, 20, 30];
+let out = [];
+let keys = [0, 2, 3, -1, 1.5, -0, NaN, Infinity, "1", "x", null, undefined, true];
+for (let i = 0; i < keys.length; i++) out.push(String(get(a, keys[i])));
+console.log(out.join(" "));
+
+// Writes: in bounds, at the end, past the end (holes), with a string key.
+set(a, 1, 21);
+set(a, 3, 40);
+set(a, 6, 70);
+set(a, "0", 11);
+console.log(a.join(","), len(a), String(a[4]), String(a[5]));
+console.log(len(a), String(get(a, -1)), String(get(a, 1.5)));
+
+// length of arrays, strings, objects and other values.
+console.log(len([]), len([1, 2, 3]), len("hello"), len(""), len({ length: "own" }), String(len({})), String(len(7)));
+try {
+  len(undefined);
+} catch (e) {
+  console.log(e instanceof TypeError);
+}
+a.length = 2;
+console.log(len(a), a.join(","), String(get(a, 2)));
+
+// Indexing other things.
+let o = { 0: "zero", 5: "five", k: "v" };
+let s = "abc";
+console.log(get(o, 0), get(o, 5), get(o, "k"), String(get(o, 1)), get(s, 1), String(get(s, 9)), String(get(7, 0)));
+set(o, 7, "seven");
+console.log(get(o, 7), get(o, "7"));
+try {
+  get(null, 0);
+} catch (e) {
+  console.log(e instanceof TypeError);
+}
+
+// A loop: fill, update in place, sum.
+let xs = [];
+for (let i = 0; i < 1000; i++) xs[i] = i;
+let total = 0;
+for (let k = 0; k < 3; k++) {
+  for (let i = 0; i < xs.length; i++) {
+    xs[i] = xs[i] + 1;
+    total = total + xs[i];
+  }
+}
+console.log(total, xs.length, xs[0], xs[999]);

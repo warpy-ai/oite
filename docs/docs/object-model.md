@@ -248,7 +248,7 @@ benchmark table:
 4. **Class instances and object literals** allocated with their slots.
 5. **Closure environments** as slot arrays (compiler, VM and both
    backends).
-6. **Inline array element access.**
+6. **Done: inline array element access** and `length`, in both backends.
 
 Expected effect, as estimates to be checked by each step's benchmarks:
 steps 2 and 3 take `props`, `methods` and `nbody` most of the way;
