@@ -138,7 +138,10 @@ The generated code for `o.x`:
 
 - **Writes** cache both kinds of store: writing an existing slot (same
   shape before and after) and adding a property (shape A to shape B, with
-  the slot to fill). The second is what makes constructors fast.
+  the slot to fill). The second is what makes constructors fast. Compiled
+  code does an addition itself when the object has the cached shape and
+  prototype, no prototype has changed since (the epoch), the object is
+  not a prototype and the new slot is in the object.
 - **Method calls** cache where the method was found. A method is usually on
   the prototype, so the cell also records the *holder* (the prototype
   object) and a **prototype epoch**. Any change to an object that is used
@@ -163,15 +166,21 @@ The generated code for `o.x`:
 
 ### 5. Classes and object literals
 
-- **Instances get their final shape up front.** A class's field
-  declarations, and the assignments to `this.x` at the top of its
-  constructor, give the field order at compile time. `new C()` allocates
-  an object with those slots inline, already in that shape. The
-  constructor's stores then hit the "existing slot" cache, with no
-  transitions.
-- **Object literals** `{ a, b, c }` allocate with three inline slots and
-  move through the cached transitions. A literal with only constant keys
-  could later be allocated directly in its final shape.
+- **Object literals are allocated in their final shape.** The compiler
+  finds the properties a literal stores before anything else can see the
+  object (`src/ir/alloc_hints.rs`). The site's cache holds the shape with
+  all of them; `{ a, b, c }` is one call that allocates the object in that
+  shape, and three stores to slots 0, 1 and 2, with no checks.
+- **Instances are allocated with room for their fields.** A class
+  remembers how many properties its instances had when their constructor
+  returned, and allocates the next one with that many slots (never fewer
+  than the default 4). Instances are not given their final shape up
+  front: a constructor may set a field only sometimes, and an instance
+  must not have a property its constructor did not store. The
+  constructor's stores are cached additions instead (section 3), done in
+  compiled code.
+- **A `new` site has a cache** of where the class keeps its constructor
+  and prototype, so construction does not search the class.
 - **The class object and the constructor** keep their current
   representation in this phase. Making functions real objects with shapes
   (`f.prototype`, `f.name`, statics on functions) is a later step.
@@ -243,15 +252,14 @@ benchmark table:
    `__`, which the VM hides too.
 3. **Done: inline caches** for property reads, writes and method calls,
    in both backends. Reads and writes of an own data property are checked
-   in compiled code; method calls, properties found on the prototype
-   chain and writes that add a property are checked in the runtime.
-4. **Partly done: objects allocated with their slots.** An object literal
-   is allocated with one inline slot per property it is given
-   (`src/ir/alloc_hints.rs`), up to 16; every other object gets 4. `new C()`
-   on a class calls the constructor directly. The heap asks for huge
-   pages, because most of the allocation time was the kernel mapping and
-   zeroing memory. Still to do: class instances sized from their fields
-   and constructor, and allocation directly in the final shape.
+   in compiled code, and so are writes that add a property (since step
+   4); method calls and properties found on the prototype chain are
+   checked in the runtime.
+4. **Done: objects allocated with their slots.** Object literals are
+   allocated in their final shape, class instances with room for their
+   fields, and a `new` site caches where the class keeps its constructor
+   and prototype (section 5). The heap asks for huge pages, because most
+   of the allocation time was the kernel mapping and zeroing memory.
 5. **Closure environments** as slot arrays (compiler, VM and both
    backends).
 6. **Done: inline array element access** and `length`, in both backends.

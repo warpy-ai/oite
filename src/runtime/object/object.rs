@@ -17,7 +17,8 @@ fn dict(obj: &NativeObject) -> &'static mut Dict {
     unsafe { &mut *(obj.overflow as *mut Dict) }
 }
 
-fn slot(obj: &NativeObject, i: usize) -> *mut u64 {
+/// Slot `i` of `obj`, which must have room for it.
+pub fn slot(obj: &NativeObject, i: usize) -> *mut u64 {
     let inline = obj.header.inline_slots as usize;
     if i < inline {
         obj.inline.as_ptr().wrapping_add(i) as *mut u64

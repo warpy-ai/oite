@@ -44,23 +44,51 @@ pub(super) fn run_constructor(ctor: u64, this: u64, argv: *const u64, argc: usiz
     Some(construct_result(ot_call(code, this, argv, argc), this))
 }
 
+/// A new instance of `class`: an object whose prototype is `proto`, then
+/// the constructor `code` on it. The instance is allocated with room for
+/// as many properties as the class's instances have had when their
+/// constructor returned.
+fn construct_class(
+    class: &mut NativeObject,
+    code: u64,
+    proto: Option<u64>,
+    argv: *const u64,
+    argc: usize,
+) -> u64 {
+    // Never fewer than the default: properties are also added to instances
+    // after the constructor.
+    let slots = (class.header.instance_slots as usize).max(INLINE_SLOTS);
+    let Some(this_ptr) = heap().alloc_object_sized(slots) else {
+        return undefined();
+    };
+    let this = OtValue::pointer(this_ptr).to_bits();
+    if let Some(proto) = proto {
+        obj(this_ptr).proto = proto;
+        mark_prototype(proto);
+    }
+    let result = construct_result(ot_call(code, this, argv, argc), this);
+    let instance = obj(this_ptr);
+    if !instance.shape.is_null() {
+        let props = unsafe { &*instance.shape }
+            .props
+            .len()
+            .min(MAX_INLINE_SLOTS);
+        if props > class.header.instance_slots as usize {
+            class.header.instance_slots = props as u8;
+        }
+    }
+    result
+}
+
 /// `new ctor(...args)`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_construct(ctor: u64, argv: *const u64, argc: usize) -> u64 {
-    // A class: an instance whose prototype is the class's, then its
-    // constructor.
     if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(ctor))
         && is_class(ptr)
         && let Some(code) = lookup_atom(ptr, atom::CONSTRUCTOR)
     {
-        let this = ot_alloc_object();
-        if let Some(proto) = lookup_atom(ptr, atom::PROTOTYPE)
-            && let Some((t, _)) = object(OtValue::from_bits(this))
-        {
-            obj(t).proto = proto;
-            mark_prototype(proto);
-        }
-        return construct_result(ot_call(code, this, argv, argc), this);
+        let proto = lookup_atom(ptr, atom::PROTOTYPE);
+        return construct_class(obj(ptr), code, proto, argv, argc);
     }
     if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(ctor))
         && lookup_atom(ptr, atom::PROMISE_CTOR).is_some()
@@ -84,6 +112,50 @@ pub extern "C" fn ot_construct(ctor: u64, argv: *const u64, argc: usize) -> u64 
             &format!("{} is not a constructor", inspect(OtValue::from_bits(ctor))),
         ),
     }
+}
+
+/// `new ctor(...args)` through the site's cache: a class of the cached
+/// shape has its marker, constructor and prototype in known slots.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_construct_ic(
+    ctor: u64,
+    argv: *const u64,
+    argc: usize,
+    cache: *mut ic::NewCache,
+) -> u64 {
+    let c = unsafe { &mut *cache };
+    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(ctor)) {
+        let class = obj(ptr);
+        if class.shape as u64 == c.shape {
+            let raw = class as *mut NativeObject;
+            let at = |offset| unsafe { *ic::slot_at(raw, offset) };
+            if at(c.class_offset) == boolean(true) {
+                let (code, proto) = (at(c.ctor_offset), at(c.proto_offset));
+                return construct_class(class, code, Some(proto), argv, argc);
+            }
+        } else if !class.shape.is_null() {
+            // Remember the slots, when all three are the class's own data
+            // properties.
+            let shape = unsafe { &*class.shape };
+            let data = |key| match shape.find(key) {
+                Some((i, flags)) if flags & ACCESSOR == 0 => {
+                    Some(ic::slot_offset(i, shape.inline_slots as usize))
+                }
+                _ => None,
+            };
+            if let (Some(class_offset), Some(ctor_offset), Some(proto_offset)) = (
+                data(atom::CLASS),
+                data(atom::CONSTRUCTOR),
+                data(atom::PROTOTYPE),
+            ) {
+                c.shape = class.shape as u64;
+                c.class_offset = class_offset;
+                c.ctor_offset = ctor_offset;
+                c.proto_offset = proto_offset;
+            }
+        }
+    }
+    ot_construct(ctor, argv, argc)
 }
 
 /// `super(...args)`: the parent class's constructor on the current `this`.

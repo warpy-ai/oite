@@ -330,6 +330,29 @@ pub extern "C" fn ot_alloc_object_sized(slots: usize) -> u64 {
     }
 }
 
+/// Allocate the object of a literal site, already in the shape it has
+/// once its properties are stored; compiled code stores them next.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_alloc_literal(cache: *mut ic::LiteralCache) -> u64 {
+    let c = unsafe { &mut *cache };
+    if c.shape == 0 {
+        let names = unsafe { std::slice::from_raw_parts(c.names, c.count as usize) };
+        let mut shape = shape::empty(c.slots as usize);
+        for &(ptr, len) in names {
+            shape = unsafe { &*shape }.with(unsafe { atom::static_atom(ptr, len) }, 0);
+        }
+        c.shape = shape as u64;
+    }
+    let ptr = heap()
+        .alloc_object_shaped(c.slots as usize, c.shape as *const _)
+        .expect("out of memory");
+    let slots = obj(ptr).inline.as_mut_ptr();
+    for i in 0..c.count as usize {
+        unsafe { *slots.add(i) = undefined() };
+    }
+    OtValue::pointer(ptr).to_bits()
+}
+
 /// Allocate a new empty array with room for `capacity` elements.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_alloc_array(capacity: usize) -> u64 {

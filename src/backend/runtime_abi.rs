@@ -21,6 +21,7 @@ pub const RUNTIME: &[(&str, bool, &[Ty])] = {
     &[
         ("ot_alloc_object", true, &[]),
         ("ot_alloc_object_sized", true, &[Len]),
+        ("ot_alloc_literal", true, &[Ptr]),
         ("ot_alloc_array", true, &[Len]),
         ("ot_alloc_string", true, &[Ptr, Len]),
         ("ot_make_function", true, &[Ptr]),
@@ -75,6 +76,7 @@ pub const RUNTIME: &[(&str, bool, &[Ty])] = {
         ("ot_rethrow", true, &[Val, Val]),
         ("ot_report_uncaught", false, &[]),
         ("ot_construct", true, &[Val, Ptr, Len]),
+        ("ot_construct_ic", true, &[Val, Ptr, Len, Ptr]),
         ("ot_call_super", true, &[Val, Val, Ptr, Len]),
         ("ot_get_super_prop", true, &[Val, Val, Ptr, Len]),
         ("ot_instanceof", true, &[Val, Val]),

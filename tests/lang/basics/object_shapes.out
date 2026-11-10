@@ -1,0 +1,13 @@
+a,b,c a,b 3
+1 2 outer,list
+zero,a,b,c,d 7
+no value 6 before,value,after
+3772 x,y x,y,z
+480 p,q,r,s,t,u
+4 from getter set 9 log
+1 from getter set 2 log
+inherited,inherited,m2,shadow,replaced
+485 x,y,z x,y false
+215 a,b,c,d,e,f,g,h,i true true
+first,second,first,returned,second,first TypeError
+I am first
