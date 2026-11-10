@@ -26,7 +26,7 @@ fn slot(obj: &NativeObject, i: usize) -> *mut u64 {
 }
 
 /// Make room for slot `i`.
-fn reserve(obj: &mut NativeObject, i: usize) {
+pub fn reserve(obj: &mut NativeObject, i: usize) {
     if i < INLINE_SLOTS {
         return;
     }
@@ -59,14 +59,20 @@ pub fn get_own(obj: &NativeObject, atom: Atom) -> Option<(u64, u8)> {
     }
 }
 
-/// Add an own property, or replace its value and flags.
-pub fn set_own(obj: &mut NativeObject, atom: Atom, flags: u8, value: u64) {
+/// Add an own property, or replace its value and flags. Returns whether
+/// the object's layout changed (anything but a new value in place).
+pub fn set_own(obj: &mut NativeObject, atom: Atom, flags: u8, value: u64) -> bool {
     let Some(s) = shape(obj) else {
-        dict(obj).set(atom, flags, value);
-        return;
+        let d = dict(obj);
+        let same = matches!(d.get(atom), Some((_, f)) if f == flags);
+        d.set(atom, flags, value);
+        return !same;
     };
     match s.find(atom) {
-        Some((i, f)) if f == flags => unsafe { *slot(obj, i) = value },
+        Some((i, f)) if f == flags => {
+            unsafe { *slot(obj, i) = value };
+            return false;
+        }
         None if s.props.len() < MAX_PROPS => {
             let i = s.props.len();
             reserve(obj, i);
@@ -79,6 +85,7 @@ pub fn set_own(obj: &mut NativeObject, atom: Atom, flags: u8, value: u64) {
             dict(obj).set(atom, flags, value);
         }
     }
+    true
 }
 
 /// Remove an own property. The object becomes a dictionary.

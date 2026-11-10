@@ -241,8 +241,10 @@ benchmark table:
    from section 2: internal markers (`__class__`, `__promise__`,
    `__error__`) as header flags, and showing user keys that start with
    `__`, which the VM hides too.
-3. **Inline caches** for property reads, writes and method calls, in both
-   backends.
+3. **Done: inline caches** for property reads, writes and method calls,
+   in both backends. Reads and writes of an own data property are checked
+   in compiled code; method calls, properties found on the prototype
+   chain and writes that add a property are checked in the runtime.
 4. **Class instances and object literals** allocated with their slots.
 5. **Closure environments** as slot arrays (compiler, VM and both
    backends).

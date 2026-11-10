@@ -46,6 +46,22 @@ pub(super) fn array_push(arr: &mut NativeArray, value: u64) -> usize {
     len + 1
 }
 
+/// `value` becomes some object's prototype: from now on, changes to its
+/// layout invalidate cached lookups.
+pub(super) fn mark_prototype(value: u64) {
+    if let Some((p, ObjectKind::Object)) = object(OtValue::from_bits(value)) {
+        obj(p).header.flags |= ObjectHeader::PROTOTYPE;
+    }
+}
+
+/// The layout or the prototype of `o` changed. If `o` is a prototype,
+/// lookups cached through it are stale.
+pub(super) fn layout_changed(o: &NativeObject) {
+    if o.header.flags & ObjectHeader::PROTOTYPE != 0 {
+        ic::bump_epoch();
+    }
+}
+
 /// The property `atom` on the object at `ptr` or its prototype chain: its
 /// value (for an accessor, the pair) and flags.
 pub(super) fn find(ptr: HeapPtr, atom: Atom) -> Option<(u64, u8)> {
@@ -205,9 +221,19 @@ pub(super) fn set_property_atom(v: OtValue, key: Atom, value: u64) -> u64 {
                 }
             }
             match atom::info(key).role {
-                Role::Getter(target) => object::define_accessor(o, target, Some(value), None),
-                Role::Setter(target) => object::define_accessor(o, target, None, Some(value)),
-                Role::Plain if key == atom::PROTO => o.proto = value,
+                Role::Getter(target) => {
+                    object::define_accessor(o, target, Some(value), None);
+                    layout_changed(o);
+                }
+                Role::Setter(target) => {
+                    object::define_accessor(o, target, None, Some(value));
+                    layout_changed(o);
+                }
+                Role::Plain if key == atom::PROTO => {
+                    o.proto = value;
+                    mark_prototype(value);
+                    layout_changed(o);
+                }
                 Role::Plain => match find(ptr, key) {
                     // An accessor, here or on the prototype chain: its
                     // setter, or nothing without one.
@@ -218,7 +244,11 @@ pub(super) fn set_property_atom(v: OtValue, key: Atom, value: u64) -> u64 {
                             return if r == EXCEPTION_BITS { r } else { undefined() };
                         }
                     }
-                    _ => object::set_own(o, key, 0, value),
+                    _ => {
+                        if object::set_own(o, key, 0, value) {
+                            layout_changed(o);
+                        }
+                    }
                 },
             }
         }
@@ -377,7 +407,10 @@ pub extern "C" fn ot_set_index(obj: u64, key: u64, value: u64) -> u64 {
 pub extern "C" fn ot_delete_prop(obj: u64, key: *const u8, key_len: usize) -> u64 {
     if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(obj)) {
         let key = unsafe { atom::static_atom(key, key_len) };
-        object::remove_own(self::obj(ptr), key);
+        let o = self::obj(ptr);
+        if object::remove_own(o, key) {
+            layout_changed(o);
+        }
     }
     boolean(true)
 }

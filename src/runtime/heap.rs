@@ -145,6 +145,9 @@ impl ObjectHeader {
     /// A string whose bytes are all ASCII: its characters are its bytes, so
     /// indexing it needs no scan.
     pub const ASCII: u8 = 1;
+    /// An object that is some object's prototype: changing its layout
+    /// invalidates cached lookups (`object::ic`).
+    pub const PROTOTYPE: u8 = 1;
 
     pub fn new(kind: ObjectKind, size: u32) -> Self {
         Self {

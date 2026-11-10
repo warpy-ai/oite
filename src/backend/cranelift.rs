@@ -58,6 +58,9 @@ fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_intrinsic,
         ot_register_global,
         ot_math_call,
+        ot_get_prop_ic,
+        ot_set_prop_ic,
+        ot_call_method_ic,
         ot_array_spread,
         ot_object_spread,
         ot_add_any,
@@ -784,6 +787,112 @@ impl Fx<'_> {
         })
     }
 
+    /// A new inline cache (`runtime::object::ic::PropCache`) for a site
+    /// that accesses the property `name`; it lives as long as the code.
+    fn prop_cache(b: &mut FunctionBuilder, name: &str) -> Value {
+        use crate::runtime::object::ic::PropCache;
+        let (p, n) = leak_str(name);
+        let cache = Box::leak(Box::new(PropCache::new(p as *const u8, n as usize)));
+        b.ins().iconst(types::I64, cache as *mut PropCache as i64)
+    }
+
+    /// `o.name` (or `o.name = store`) through an inline cache: when `o` is
+    /// an object whose shape is the cached one, load or store its slot
+    /// here; otherwise call the runtime, which fills the cache.
+    fn cached_prop(
+        &mut self,
+        b: &mut FunctionBuilder,
+        o: Value,
+        name: &str,
+        store: Option<Value>,
+    ) -> Value {
+        use crate::runtime::heap::NativeObject;
+        use crate::runtime::object::ic;
+        use std::mem::offset_of;
+        let cache = Self::prop_cache(b, name);
+        let is_ptr_blk = b.create_block();
+        let is_obj_blk = b.create_block();
+        let hit_blk = b.create_block();
+        let miss_blk = b.create_block();
+        let join = b.create_block();
+        b.set_cold_block(miss_blk);
+        b.append_block_param(join, types::I64);
+        let flags = MemFlags::trusted();
+
+        // A heap pointer: the pointer tag, and a payload that is not 0.
+        let tag = b.ins().band_imm(o, 0x7FFF_0000_0000_0000);
+        let tagged = b.ins().icmp_imm(IntCC::Equal, tag, QNAN as i64);
+        let addr = b.ins().band_imm(o, 0x0000_FFFF_FFFF_FFFF);
+        let nonnull = b.ins().icmp_imm(IntCC::NotEqual, addr, 0);
+        let is_ptr = b.ins().band(tagged, nonnull);
+        b.ins().brif(is_ptr, is_ptr_blk, &[], miss_blk, &[]);
+
+        // An object (kind 0 in the header's first byte).
+        b.switch_to_block(is_ptr_blk);
+        b.seal_block(is_ptr_blk);
+        let kind = b.ins().load(types::I8, flags, addr, 0);
+        let is_obj = b.ins().icmp_imm(IntCC::Equal, kind, 0);
+        b.ins().brif(is_obj, is_obj_blk, &[], miss_blk, &[]);
+
+        // With the cached shape.
+        b.switch_to_block(is_obj_blk);
+        b.seal_block(is_obj_blk);
+        let shape = b.ins().load(
+            types::I64,
+            flags,
+            addr,
+            offset_of!(NativeObject, shape) as i32,
+        );
+        let cached = b
+            .ins()
+            .load(types::I64, flags, cache, ic::SHAPE_OFFSET as i32);
+        let same = b.ins().icmp(IntCC::Equal, shape, cached);
+        b.ins().brif(same, hit_blk, &[], miss_blk, &[]);
+
+        // The slot: `offset >= 0` bytes into the object, or `!offset`
+        // bytes into its overflow array.
+        b.switch_to_block(hit_blk);
+        b.seal_block(hit_blk);
+        let offset = b
+            .ins()
+            .load(types::I32, flags, cache, ic::OFFSET_OFFSET as i32);
+        let inline = b.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, offset, 0);
+        let overflow = b.ins().load(
+            types::I64,
+            flags,
+            addr,
+            offset_of!(NativeObject, overflow) as i32,
+        );
+        let base = b.ins().select(inline, addr, overflow);
+        let flipped = b.ins().bnot(offset);
+        let bytes = b.ins().select(inline, offset, flipped);
+        let bytes = b.ins().uextend(types::I64, bytes);
+        let slot = b.ins().iadd(base, bytes);
+        let hit = match store {
+            Some(v) => {
+                b.ins().store(flags, v, slot, 0);
+                Self::c(b, UNDEFINED)
+            }
+            None => b.ins().load(types::I64, flags, slot, 0),
+        };
+        b.ins().jump(join, &[hit]);
+
+        b.switch_to_block(miss_blk);
+        b.seal_block(miss_blk);
+        let miss = match store {
+            Some(v) => self.rt_v(b, "ot_set_prop_ic", &[o, cache, v]),
+            None => self.rt_v(b, "ot_get_prop_ic", &[o, cache]),
+        };
+        let unwind = self.unwind;
+        self.check_exception(b, miss, unwind);
+        self.last_call = None;
+        b.ins().jump(join, &[miss]);
+
+        b.switch_to_block(join);
+        b.seal_block(join);
+        b.block_params(join)[0]
+    }
+
     /// `Math.<f>` inline on doubles, for the functions with an instruction.
     fn math_inline(b: &mut FunctionBuilder, name: &str, xs: &[Value]) -> Option<Value> {
         Some(match (name, xs.len()) {
@@ -1253,15 +1362,13 @@ impl Fx<'_> {
             }
             IrOp::GetProp(d, obj, name) => {
                 let o = self.get(*obj)?;
-                let (p, n) = self.name(b, name);
-                let r = self.rt_v(b, "ot_get_prop", &[o, p, n]);
+                let r = self.cached_prop(b, o, name, None);
                 self.values.insert(*d, r);
             }
             IrOp::SetProp(obj, name, v) => {
                 let o = self.get(*obj)?;
                 let v = self.get(*v)?;
-                let (p, n) = self.name(b, name);
-                self.rt(b, "ot_set_prop", &[o, p, n, v]);
+                self.cached_prop(b, o, name, Some(v));
             }
             IrOp::GetPrivate(d, obj, name) => {
                 let o = self.get(*obj)?;
@@ -1464,8 +1571,8 @@ impl Fx<'_> {
                     .map(|a| self.get(*a))
                     .collect::<Result<_, _>>()?;
                 let (argv, argc) = self.arg_array(b, &vals);
-                let (p, n) = self.name(b, name);
-                let v = self.rt_v(b, "ot_call_method", &[r, p, n, argv, argc]);
+                let cache = Self::prop_cache(b, name);
+                let v = self.rt_v(b, "ot_call_method_ic", &[r, cache, argv, argc]);
                 self.values.insert(*d, v);
             }
 

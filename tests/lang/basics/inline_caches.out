@@ -1,0 +1,8 @@
+1 2 3 1 2 3 1 2 3 10 20 30 
+A1 B2 A1 B2
+base base base2 mid own mid mid
+p1 x1 p2 x2 p2 x2 p1 x1
+inherited inherited changed own changed
+1 2 undefined undefined set 3,set 4
+1498500 in a dictionary undefined undefined
+true
