@@ -391,6 +391,8 @@ enum Local {
 }
 
 /// Names passed to the runtime live for the whole process.
+mod arrays;
+
 fn leak_str(s: &str) -> (i64, i64) {
     let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
     (leaked.as_ptr() as i64, leaked.len() as i64)
@@ -1362,7 +1364,11 @@ impl Fx<'_> {
             }
             IrOp::GetProp(d, obj, name) => {
                 let o = self.get(*obj)?;
-                let r = self.cached_prop(b, o, name, None);
+                let r = if name == "length" {
+                    self.length(b, o)
+                } else {
+                    self.cached_prop(b, o, name, None)
+                };
                 self.values.insert(*d, r);
             }
             IrOp::SetProp(obj, name, v) => {
@@ -1388,10 +1394,14 @@ impl Fx<'_> {
                 let r = self.rt_v(b, "ot_delete_prop", &[o, p, n]);
                 self.values.insert(*d, r);
             }
-            IrOp::GetElement(d, obj, key) => self.rt_binop(b, *d, "ot_get_index", *obj, *key)?,
+            IrOp::GetElement(d, obj, key) => {
+                let (o, k) = (self.get(*obj)?, self.get(*key)?);
+                let r = self.element(b, o, k, None);
+                self.values.insert(*d, r);
+            }
             IrOp::SetElement(obj, key, v) => {
-                let args = [self.get(*obj)?, self.get(*key)?, self.get(*v)?];
-                self.rt(b, "ot_set_index", &args);
+                let (o, k, v) = (self.get(*obj)?, self.get(*key)?, self.get(*v)?);
+                self.element(b, o, k, Some(v));
             }
             IrOp::ArrayLen(d, a) => self.rt_unop(b, *d, "ot_array_len", *a)?,
             IrOp::ArrayPush(a, v) => {

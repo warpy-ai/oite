@@ -34,6 +34,8 @@ const TRUE: u64 = QNAN | TAG_BOOLEAN | 1;
 
 const NONAME: *const c_char = b"\0".as_ptr() as *const c_char;
 
+mod arrays;
+
 /// A bitwise operator on 32-bit integers.
 #[derive(Clone, Copy)]
 enum IntOp {
@@ -1675,7 +1677,11 @@ impl Fx<'_> {
                 }
                 IrOp::GetProp(d, obj, name) => {
                     let o = self.get(*obj)?;
-                    let r = self.cached_prop(o, name, None);
+                    let r = if name == "length" {
+                        self.length(o)
+                    } else {
+                        self.cached_prop(o, name, None)
+                    };
                     self.set(*d, r);
                 }
                 IrOp::SetProp(obj, name, v) => {
@@ -1701,10 +1707,14 @@ impl Fx<'_> {
                     let r = self.rt("ot_delete_prop", &[o, p, n]);
                     self.set(*d, r);
                 }
-                IrOp::GetElement(d, obj, key) => self.rt_binop(*d, "ot_get_index", *obj, *key)?,
+                IrOp::GetElement(d, obj, key) => {
+                    let (o, k) = (self.get(*obj)?, self.get(*key)?);
+                    let r = self.element(o, k, None);
+                    self.set(*d, r);
+                }
                 IrOp::SetElement(obj, key, v) => {
-                    let args = [self.get(*obj)?, self.get(*key)?, self.get(*v)?];
-                    self.rt("ot_set_index", &args);
+                    let (o, k, v) = (self.get(*obj)?, self.get(*key)?, self.get(*v)?);
+                    self.element(o, k, Some(v));
                 }
                 IrOp::ArrayLen(d, a) => {
                     let r = self.rt("ot_array_len", &[self.get(*a)?]);
