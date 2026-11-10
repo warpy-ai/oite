@@ -47,6 +47,21 @@ pub(super) fn run_constructor(ctor: u64, this: u64, argv: *const u64, argc: usiz
 /// `new ctor(...args)`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_construct(ctor: u64, argv: *const u64, argc: usize) -> u64 {
+    // A class: an instance whose prototype is the class's, then its
+    // constructor.
+    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(ctor))
+        && is_class(ptr)
+        && let Some(code) = lookup_atom(ptr, atom::CONSTRUCTOR)
+    {
+        let this = ot_alloc_object();
+        if let Some(proto) = lookup_atom(ptr, atom::PROTOTYPE)
+            && let Some((t, _)) = object(OtValue::from_bits(this))
+        {
+            obj(t).proto = proto;
+            mark_prototype(proto);
+        }
+        return construct_result(ot_call(code, this, argv, argc), this);
+    }
     if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(ctor))
         && lookup_atom(ptr, atom::PROMISE_CTOR).is_some()
     {

@@ -87,6 +87,11 @@ pub(super) fn lookup(ptr: HeapPtr, key: &str) -> Option<u64> {
 }
 
 pub(super) fn lookup_atom(ptr: HeapPtr, key: Atom) -> Option<u64> {
+    // An ordinary name: a data property.
+    if atom::is_plain(key) && key != atom::PROTO {
+        let (v, flags) = find(ptr, key)?;
+        return (flags & ACCESSOR == 0).then_some(v);
+    }
     let part = |target: Atom, i: usize| {
         let (v, flags) = find(ptr, target)?;
         let f = (flags & ACCESSOR != 0).then(|| object::accessor(v)[i])?;
@@ -310,6 +315,16 @@ pub(super) fn index_of(key: OtValue) -> Option<usize> {
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_alloc_object() -> u64 {
     match heap().alloc_object() {
+        Some(ptr) => OtValue::pointer(ptr).to_bits(),
+        None => undefined(),
+    }
+}
+
+/// Allocate a new empty object with room for `slots` properties in the
+/// object itself: what its allocation site is about to store.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_alloc_object_sized(slots: usize) -> u64 {
+    match heap().alloc_object_sized(slots) {
         Some(ptr) => OtValue::pointer(ptr).to_bits(),
         None => undefined(),
     }
