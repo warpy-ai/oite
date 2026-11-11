@@ -39,7 +39,7 @@ console.log(fib(35)); // Compiled to native code!
 > target: the JIT and AOT backends run functions and closures, objects, arrays,
 > strings, globals, classes, exceptions and async/await, and refuse what they
 > cannot run yet (modules), which for now runs only in the VM (the debugging
-> interpreter). Type annotations are not checked yet, and memory is
+> interpreter). Type annotations are checked as warnings for now, and memory is
 > never freed. See
 > [Development Status](docs/docs/development-status.md) for what runs on which
 > backend, and [#136](https://github.com/warpy-ai/oite/issues/136) for the roadmap.

@@ -1,0 +1,7 @@
+12:23: Type 'null' is not assignable to type 'string'.
+20:25: Type 'null' is not assignable to type 'number'.
+24:20: Type 'string | undefined' is not assignable to type 'string'.
+39:62: Type 'string | null' is not assignable to type 'string'.
+46:16: Type 'Cat' is not assignable to type 'Dog'.
+61:21: Type 'string | undefined' is not assignable to type 'string'.
+73:24: Type 'number | null' is not assignable to type 'number'.

@@ -7,7 +7,8 @@ keywords: [performance, types, type checker, inference, unboxed, specialization]
 
 # Types (performance phase 3)
 
-> **Status:** design agreed; nothing here is implemented yet. It is
+> **Status:** design agreed; step 2 (the checker, as warnings) is
+> implemented. It is
 > phase 3 of [Performance](performance.md) and closes #124. Agreed:
 > annotations are contracts and unannotated code stays dynamic; `null`
 > and `undefined` are not part of other types; `as` is checked; the
@@ -143,10 +144,39 @@ Section 7 removes the heap-read check for class fields later.
   declared types. Lowering to IR reads this table (the bytecode stays
   untyped; the table is keyed by function address and source site, which
   bytecode already carries for stack traces).
-- **`src/types/`:** the `Type` enum is kept and gains unions, `null`,
-  `undefined` and classes. `checker.rs` is replaced by small modules
-  (`src/types/check/`), reusing what fits. `inference.rs` (unification)
-  is removed: nothing in this design needs it.
+- **`src/types/`:** the checker is in `src/types/check/`, with its own
+  representation of types (`ty.rs`). The old `Type` enum stays for the
+  borrow checker, which is its only user. The unused `checker.rs`,
+  `inference.rs` and `convert.rs` are removed.
+
+#### What the checker does today (step 2)
+
+It reports, as warnings on `build`, `jit` and a plain run, and as errors
+on `oitec check`:
+
+- a value of a known type stored where another type is declared: a
+  variable, a property, an array element, a class field, a `return`;
+- an argument that does not fit a parameter, and a call that leaves out
+  an argument for a typed parameter;
+- a call of something that is a number, a string, a boolean or an array;
+- a type it does not model (tuples, intersections, conditional and
+  mapped types), which it treats as `any`.
+
+It narrows by `typeof`, comparison with `null` and `undefined`,
+truthiness, `instanceof`, `Array.isArray`, `&&`, `||`, `!`, `?:`, `??`,
+early `return`/`throw`, and assignment. Warnings in the files of a roll
+a program imports are not shown when compiling that program.
+
+Not yet, each a follow-up:
+
+- **Names imported from another module are `any`.** A call to an
+  imported function is not checked.
+- **Generics are not checked.** A type parameter is `any`.
+- **A property that a type does not declare is `any`**, not an error.
+- **The type table for code generation** is built in step 5, when
+  lowering first reads it.
+- **Tuples.** The rolls use them; they need a type before the rolls can
+  pass (step 3).
 
 ### 5. Typed code generation
 
@@ -246,8 +276,10 @@ are split first, each in its own pull request with no behaviour change:
 
 New code:
 
-- `src/types/check/`: `mod.rs`, `expr.rs`, `stmt.rs`, `narrow.rs`,
-  `classes.rs`, `assign.rs` (assignability), `table.rs` (the type table).
+- `src/types/check/`: `mod.rs`, `ty.rs`, `resolve.rs`, `assign.rs`
+  (assignability), `classes.rs`, `functions.rs`, `stmt.rs`, `expr.rs`,
+  `narrow.rs`, `flow.rs`, `builtins.rs`; later `table.rs` (the type
+  table).
 - `src/ir/spec.rs`: specialisation.
 - `src/backend/*/typed.rs`: typed entries and unboxed values.
 
@@ -256,9 +288,11 @@ New code:
 Each step is one pull request, with tests on vm, jit and aot.
 
 1. **Split the large files** (several pull requests, no behaviour change).
-2. **The checker**, reporting warnings: types of section 2, local
-   inference, narrowing, the type table. `oitec check` reports errors.
-   Golden tests for accepted and rejected programs (`tests/lang/types/`).
+2. **Done: the checker**, reporting warnings: types of section 2, local
+   inference and narrowing. `oitec check` reports errors. Tests for
+   accepted and rejected programs are in `tests/types/`
+   (`tests/type_check.rs`). What it leaves for later is listed in
+   section 4.
 3. **Make the rolls and the self-hosted compiler pass**, then turn
    warnings into errors. Closes #124.
 4. **Boundary checks** (section 3) on every backend.

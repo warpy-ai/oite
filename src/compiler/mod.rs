@@ -29,6 +29,35 @@ pub struct Compiler {
     pub borrow_checker: BorrowChecker,
     /// Source positions of the last program compiled.
     pub debug_info: DebugInfo,
+    /// What the type checker found in the last module compiled.
+    pub type_diagnostics: Vec<Diagnostic>,
+    /// What the type checker found in each file of the last program
+    /// compiled (`compile_program`).
+    pub warnings: Vec<FileWarnings>,
+}
+
+/// What the type checker found in one file. For now these are warnings:
+/// they do not stop compilation (docs/docs/types.md, "Rollout").
+pub struct FileWarnings {
+    pub file: String,
+    pub source: String,
+    pub diagnostics: Vec<Diagnostic>,
+    /// The file is not part of the program being compiled, but something
+    /// it imports from elsewhere (a roll).
+    pub dependency: bool,
+}
+
+impl FileWarnings {
+    /// The findings as `file:line:col: <kind>: message`, with the source
+    /// line.
+    pub fn render(&self, kind: &'static str) -> String {
+        let diagnostics = self
+            .diagnostics
+            .iter()
+            .map(|d| Diagnostic { kind, ..d.clone() })
+            .collect();
+        CompileError::new(diagnostics).render(&self.file, &self.source)
+    }
 }
 
 impl Default for Compiler {
@@ -42,6 +71,8 @@ impl Compiler {
         Self {
             borrow_checker: BorrowChecker::new(),
             debug_info: DebugInfo::default(),
+            type_diagnostics: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -113,6 +144,11 @@ impl Compiler {
                 .and_then(|(note, span)| Some((note, position(span)?)));
             return Err(CompileError::single(d));
         }
+
+        self.type_diagnostics = crate::types::check::check_program(program)
+            .into_iter()
+            .map(|d| Diagnostic::new("warning", d.message, position(d.span)))
+            .collect();
 
         let mut codegen = Codegen::new();
         codegen.link = link;

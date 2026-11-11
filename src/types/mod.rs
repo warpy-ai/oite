@@ -1,9 +1,7 @@
 //! Type system with ownership, borrowing, and lifetime tracking.
 
-pub mod checker;
-pub mod convert;
+pub mod check;
 pub mod error;
-pub mod inference;
 pub mod registry;
 
 use std::collections::{BTreeMap, HashMap};

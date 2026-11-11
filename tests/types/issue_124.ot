@@ -1,0 +1,6 @@
+// The program of issue #124. It still runs (the checker reports
+// warnings for now), and `oitec check` rejects it.
+function add(a: number, b: number): number { return a + b; }
+let s: string = 42;
+let r: string = add("hello", "world");
+console.log(r);

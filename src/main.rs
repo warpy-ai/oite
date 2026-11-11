@@ -279,8 +279,19 @@ fn compile_program_or_exit(
     source: &str,
 ) -> Vec<compiler::modules::CompiledModule> {
     match compiler.compile_program(filename, source, module_options()) {
-        Ok(modules) => modules,
+        Ok(modules) => {
+            print_type_warnings(compiler);
+            modules
+        }
         Err(e) => exit_on_compile_error(filename, source, &e),
+    }
+}
+
+/// Print what the type checker found in the program's own files, as
+/// warnings. Files of the rolls it imports are not reported here.
+fn print_type_warnings(compiler: &Compiler) {
+    for file in compiler.warnings.iter().filter(|f| !f.dependency) {
+        eprintln!("{}", file.render("warning"));
     }
 }
 
@@ -448,6 +459,7 @@ fn main() {
 
     match compiler.compile_program(filename, &main_source, module_options()) {
         Ok(modules) => {
+            print_type_warnings(&compiler);
             let (main_bytecode, parts) = compiler::modules::concat(modules, 0);
             let offset = vm.append_program(main_bytecode);
             for (start, file, source, debug) in parts {
@@ -523,8 +535,13 @@ fn check_file(filename: &str) {
     let mut compiler = Compiler::new();
     match compiler.compile_program(filename, &source, module_options()) {
         Ok(_) => {
-            // Success - no errors
-            std::process::exit(0);
+            // `check` reports what the type checker found as errors.
+            let mut failed = false;
+            for file in compiler.warnings.iter().filter(|f| !f.dependency) {
+                eprintln!("{}", file.render("type error"));
+                failed = true;
+            }
+            std::process::exit(if failed { 1 } else { 0 });
         }
         Err(e) => exit_on_compile_error(filename, &source, &e),
     }
