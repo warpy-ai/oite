@@ -15,7 +15,7 @@
 use llvm_sys::core::*;
 use llvm_sys::prelude::*;
 use llvm_sys::{LLVMIntPredicate, LLVMLinkage, LLVMRealPredicate};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char};
 
 use crate::backend::BackendError;
@@ -66,6 +66,9 @@ pub struct LlvmCodegen {
     /// The fast entry (arguments in registers, see `codegen/fast.rs`) of
     /// the functions that have one, by IR name: (function, type).
     fast: BTreeMap<String, (LLVMValueRef, LLVMTypeRef)>,
+    /// The typed entry (the fast entry without the parameter checks) of
+    /// the functions that check a parameter, by IR name.
+    typed: BTreeMap<String, fast::TypedEntry>,
     /// Function bytecode address -> global holding its function object.
     fn_objects: BTreeMap<usize, LLVMValueRef>,
     /// The program's global variables (every name it assigns) -> the LLVM
@@ -116,6 +119,7 @@ impl LlvmCodegen {
                 runtime: BTreeMap::new(),
                 functions: BTreeMap::new(),
                 fast: BTreeMap::new(),
+                typed: BTreeMap::new(),
                 fn_objects: BTreeMap::new(),
                 global_slots: BTreeMap::new(),
                 strings: HashMap::new(),
@@ -218,7 +222,10 @@ impl LlvmCodegen {
             }
 
             for func in &ir_module.functions {
-                self.compile_function(func)?;
+                self.compile_function(func, false)?;
+                if self.typed.contains_key(&func.name) {
+                    self.compile_function(func, true)?;
+                }
             }
 
             self.build_c_main()?;
@@ -229,10 +236,23 @@ impl LlvmCodegen {
         }
     }
 
-    unsafe fn compile_function(&mut self, func: &IrFunction) -> Result<(), BackendError> {
+    /// Compile `func`. With `typed`, into its typed entry: the same code
+    /// without the checks of its parameters (`codegen/fast.rs`).
+    unsafe fn compile_function(
+        &mut self,
+        func: &IrFunction,
+        typed: bool,
+    ) -> Result<(), BackendError> {
         unsafe {
             // The code goes into the fast entry, if the function has one.
-            let fast = self.fast.get(&func.name).map(|(f, _)| *f);
+            let fast = match typed {
+                true => Some(self.typed[&func.name].function),
+                false => self.fast.get(&func.name).map(|(f, _)| *f),
+            };
+            let trusted = match typed {
+                true => fast::param_checks(func).1,
+                false => Default::default(),
+            };
             let f = fast.unwrap_or(self.functions[&func.name]);
             let env_param = match fast {
                 Some(_) => func.params.len() as u32 + 1,
@@ -268,6 +288,7 @@ impl LlvmCodegen {
                 ),
                 literal_stores: HashMap::new(),
                 direct: HashMap::new(),
+                trusted,
                 this: LLVMGetParam(f, 0),
                 env: LLVMGetParam(f, env_param),
                 function: f,
@@ -357,7 +378,7 @@ impl LlvmCodegen {
             }
             LLVMDisposeBuilder(fx.prologue);
             LLVMDisposeBuilder(fx.builder);
-            if fast.is_some() {
+            if fast.is_some() && !typed {
                 self.build_dynamic_entry(func);
             }
             Ok(())
@@ -393,6 +414,10 @@ struct Fx<'a> {
     blocks: HashMap<BlockId, LLVMBasicBlockRef>,
     locals: Vec<LLVMValueRef>,
     types: &'a HashMap<ValueId, IrType>,
+    /// The checks of this function's parameters that its caller has
+    /// already made (the typed entry): results of `IrOp::CheckType` that
+    /// are the value itself.
+    trusted: HashSet<ValueId>,
     /// How many properties each `NewObject` site is about to store.
     object_slots: HashMap<ValueId, usize>,
     /// The properties each literal site is allocated with

@@ -11,6 +11,70 @@
 
 use super::*;
 
+/// A function's typed entry: its fast entry without the checks of its
+/// parameters, for a caller that has made them.
+pub(super) struct TypedEntry {
+    pub function: LLVMValueRef,
+    /// The type each parameter is checked against on entry, where it is
+    /// one the IR models.
+    pub params: Vec<Option<IrType>>,
+}
+
+/// The checks `func` makes of its parameters before it does anything
+/// else: the type each parameter must have, and the results of those
+/// `IrOp::CheckType`. A check against a type the IR does not model (a
+/// union, an object) is not among them: no caller can prove it.
+pub(super) fn param_checks(func: &IrFunction) -> (Vec<Option<IrType>>, HashSet<ValueId>) {
+    let mut params = vec![None; func.params.len()];
+    let mut results = HashSet::new();
+    // Which parameter a local slot, or a value, holds.
+    let mut slots: HashMap<u32, usize> = HashMap::new();
+    let mut values: HashMap<ValueId, usize> = (0..func.params.len())
+        .map(|i| (ValueId(i as u32), i))
+        .collect();
+    let Some(entry) = func.blocks.first() else {
+        return (params, results);
+    };
+    for op in &entry.ops {
+        match op {
+            IrOp::Const(_, _) | IrOp::Loc(_) => {}
+            IrOp::StoreLocal(slot, v) => match values.get(v) {
+                Some(&i) => {
+                    slots.insert(*slot, i);
+                }
+                None => {
+                    slots.remove(slot);
+                }
+            },
+            IrOp::LoadLocal(d, slot) => {
+                if let Some(&i) = slots.get(slot) {
+                    values.insert(*d, i);
+                }
+            }
+            IrOp::Copy(d, s) => {
+                if let Some(&i) = values.get(s) {
+                    values.insert(*d, i);
+                }
+            }
+            IrOp::CheckType(d, src, kinds) => {
+                let ty = IrType::of_kinds(*kinds);
+                match values.get(src) {
+                    Some(&i) if ty != IrType::Any => {
+                        params[i] = Some(ty);
+                        results.insert(*d);
+                        values.insert(*d, i);
+                    }
+                    // A check no caller can make for the function: what
+                    // follows it must not run before it.
+                    _ => break,
+                }
+            }
+            _ => break,
+        }
+    }
+    (params, results)
+}
+
 /// More parameters than this, and a function keeps only its dynamic
 /// entry.
 const MAX_REGISTER_PARAMS: usize = 8;
@@ -41,6 +105,19 @@ impl LlvmCodegen {
             let f = LLVMAddFunction(self.module, name.as_ptr(), ty);
             LLVMSetLinkage(f, LLVMLinkage::LLVMInternalLinkage);
             self.fast.insert(func.name.clone(), (f, ty));
+
+            // A typed entry, if the function checks a parameter against
+            // a type the IR models. (Not with debug info: one function
+            // would be described twice.)
+            let (params, _) = param_checks(func);
+            if self.debug_info || params.iter().all(Option::is_none) {
+                return;
+            }
+            let name = CString::new(format!("{}.typed", func.name)).unwrap();
+            let function = LLVMAddFunction(self.module, name.as_ptr(), ty);
+            LLVMSetLinkage(function, LLVMLinkage::LLVMInternalLinkage);
+            self.typed
+                .insert(func.name.clone(), TypedEntry { function, params });
         }
     }
 
@@ -88,15 +165,31 @@ impl LlvmCodegen {
 impl Fx<'_> {
     /// Call the function `name` through its fast entry, if it has one:
     /// `args` padded with `undefined`, or cut, to the parameters it
-    /// declares.
+    /// declares. `proved` is what is known about each argument.
     pub(super) unsafe fn call_fast(
         &mut self,
         name: &str,
         args: &[LLVMValueRef],
+        proved: &[IrType],
         env: LLVMValueRef,
     ) -> Option<LLVMValueRef> {
         unsafe {
-            let (fast, fast_ty) = *self.cg.fast.get(name)?;
+            let (mut fast, fast_ty) = *self.cg.fast.get(name)?;
+            // The typed entry, when every parameter the function checks
+            // is passed a value already known to have the type.
+            if let Some(typed) = self.cg.typed.get(name) {
+                let all = typed
+                    .params
+                    .iter()
+                    .enumerate()
+                    .all(|(i, wanted)| match wanted {
+                        Some(ty) => proved.get(i) == Some(ty),
+                        None => true,
+                    });
+                if all {
+                    fast = typed.function;
+                }
+            }
             let params = LLVMCountParams(fast) as usize - 2;
             let undefined = self.c(UNDEFINED);
             let mut a = vec![undefined];

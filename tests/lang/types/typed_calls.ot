@@ -1,0 +1,69 @@
+// backends: vm jit aot
+// flags: --strict-types
+//
+// A call whose arguments the caller has proved skips the function's own
+// checks; any other call still makes them.
+
+function attempt(label: string, f: () => any) {
+    try {
+        console.log(label + ":", f());
+    } catch (e) {
+        console.log(label + ":", e.name + ": " + e.message);
+    }
+}
+function dyn(v: any): any {
+    return v;
+}
+
+function add(a: number, b: number): number {
+    return a + b;
+}
+function sum(n: number): number {
+    let s: number = 0;
+    for (let i: number = 0; i < n; i++) {
+        s = add(s, i);
+    }
+    return s;
+}
+console.log(sum(1000));
+
+// Proved: literals, typed variables, arithmetic.
+attempt("literals", () => add(1, 2));
+attempt("variables", () => {
+    const x: number = 20;
+    const y: number = 22;
+    return add(x, y);
+});
+attempt("arithmetic", () => add(2 * 3, 10 - 4));
+
+// Not proved: the function checks.
+attempt("dynamic ok", () => add(dyn(1), dyn(2)));
+attempt("dynamic wrong", () => add(dyn(1), dyn("2")));
+attempt("one proved, one wrong", () => add(1, dyn(null)));
+attempt("missing", () => dyn(add)(1));
+attempt("through a value", () => dyn(add)("a", 1));
+
+// A parameter the caller cannot prove (a union) is always checked.
+function label(n: number, suffix: string | null): string {
+    return n + (suffix === null ? "" : suffix);
+}
+attempt("union ok", () => label(1, "x") + label(2, null));
+attempt("union wrong", () => label(1, dyn(5)));
+
+// A default value is applied before the check.
+function scale(n: number, by: number = 2): number {
+    return n * by;
+}
+attempt("default", () => scale(4) + scale(4, 3));
+attempt("default wrong", () => scale(4, dyn("3")));
+
+// Recursion and booleans.
+function fact(n: number): number {
+    return n <= 1 ? 1 : n * fact(n - 1);
+}
+function pick(flag: boolean, a: number, b: number): number {
+    return flag ? a : b;
+}
+attempt("recursion", () => fact(10));
+attempt("boolean", () => pick(true, 1, 2) + pick(false, 1, 2));
+attempt("boolean wrong", () => pick(dyn(1), 1, 2));

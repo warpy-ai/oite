@@ -44,10 +44,16 @@ impl<'a> TypeChecker<'a> {
 
     /// Run type inference on the function.
     pub fn infer(&mut self) {
-        // Initialize worklist with entry block
+        // Every block is processed at least once, entry first. (A block
+        // is processed again when a predecessor learns something.)
         let entry = self.func.entry_block();
         self.worklist.push_back(entry);
         self.in_worklist.insert(entry);
+        for block in &self.func.blocks {
+            if self.in_worklist.insert(block.id) {
+                self.worklist.push_back(block.id);
+            }
+        }
 
         // Process blocks until fixpoint
         while let Some(block_id) = self.worklist.pop_front() {
