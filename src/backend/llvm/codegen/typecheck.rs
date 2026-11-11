@@ -6,8 +6,9 @@ use crate::runtime::builtins::Kind;
 impl Fx<'_> {
     /// `v` if its kind is in the set `kinds`, else a TypeError. A number,
     /// a boolean, `null` and `undefined` are recognised here by their
-    /// bits; anything else (a kind on the heap, or a failure) goes to the
-    /// runtime's `check_type`.
+    /// bits, and a string, an array, a function or an object by the kind
+    /// in its header; a class type and a failure go to the runtime's
+    /// `check_type`.
     pub(super) unsafe fn check_type(&mut self, v: LLVMValueRef, kinds: u32) -> LLVMValueRef {
         unsafe {
             let b = self.builder;
@@ -36,17 +37,42 @@ impl Fx<'_> {
             };
             let slow_bb = block(self, b"type_slow\0");
             let join_bb = block(self, b"type_ok\0");
-            let fast_bb = LLVMGetInsertBlock(b);
+            let heap = Kind::heap_kinds(kinds);
+            let rest_bb = if heap == 0 {
+                slow_bb
+            } else {
+                block(self, b"type_heap\0")
+            };
+            // The blocks that reach `type_ok` with `v` itself.
+            let mut passed = Vec::new();
             match tests.split_first() {
                 Some((first, rest)) => {
                     let ok = rest
                         .iter()
                         .fold(*first, |acc, t| LLVMBuildOr(b, acc, *t, NONAME));
-                    LLVMBuildCondBr(b, ok, join_bb, slow_bb);
+                    passed.push(LLVMGetInsertBlock(b));
+                    LLVMBuildCondBr(b, ok, join_bb, rest_bb);
                 }
                 None => {
-                    LLVMBuildBr(b, slow_bb);
+                    LLVMBuildBr(b, rest_bb);
                 }
+            }
+            if heap != 0 {
+                let ptr_bb = block(self, b"type_ptr\0");
+                LLVMPositionBuilderAtEnd(b, rest_bb);
+                let (is_ptr, ptr) = self.heap_pointer(v);
+                LLVMBuildCondBr(b, is_ptr, ptr_bb, slow_bb);
+
+                LLVMPositionBuilderAtEnd(b, ptr_bb);
+                let i8t = LLVMInt8TypeInContext(ctx);
+                let kind = LLVMBuildLoad2(b, i8t, ptr, NONAME);
+                let kind = LLVMBuildZExt(b, kind, self.i64_ty(), NONAME);
+                let bit = LLVMBuildShl(b, self.c(1), kind, NONAME);
+                let accepted = LLVMBuildAnd(b, bit, self.c(heap), NONAME);
+                let accepted =
+                    LLVMBuildICmp(b, LLVMIntPredicate::LLVMIntNE, accepted, self.c(0), NONAME);
+                passed.push(ptr_bb);
+                LLVMBuildCondBr(b, accepted, join_bb, slow_bb);
             }
 
             LLVMPositionBuilderAtEnd(b, slow_bb);
@@ -58,15 +84,17 @@ impl Fx<'_> {
             LLVMBuildBr(b, join_bb);
 
             LLVMPositionBuilderAtEnd(b, join_bb);
-            let result = if tests.is_empty() {
-                checked
-            } else {
-                let phi = LLVMBuildPhi(b, self.i64_ty(), NONAME);
-                let mut values = [v, checked];
-                let mut blocks = [fast_bb, slow_bb];
-                LLVMAddIncoming(phi, values.as_mut_ptr(), blocks.as_mut_ptr(), 2);
-                phi
-            };
+            let phi = LLVMBuildPhi(b, self.i64_ty(), NONAME);
+            let mut values: Vec<LLVMValueRef> = passed.iter().map(|_| v).collect();
+            values.push(checked);
+            passed.push(slow_bb);
+            LLVMAddIncoming(
+                phi,
+                values.as_mut_ptr(),
+                passed.as_mut_ptr(),
+                values.len() as u32,
+            );
+            let result = phi;
             // The exception, if the check failed.
             self.last_call = Some(result);
             result

@@ -1,0 +1,74 @@
+// backends: vm jit aot
+// flags: --strict-types
+//
+// Typed code computes what untyped code does: compiled code relies on
+// the types the checker proved (docs/docs/types.md, section 5).
+
+function fib(n: number): number {
+    return n < 2 ? n : fib(n - 1) + fib(n - 2);
+}
+console.log(fib(20));
+
+function mean(xs: number[]): number {
+    let total: number = 0;
+    for (let i: number = 0; i < xs.length; i++) {
+        total += xs[i];
+    }
+    return xs.length === 0 ? 0 : total / xs.length;
+}
+console.log(mean([1, 2, 3, 4]), mean([]));
+
+function describe(n: number, even: boolean, label: string): string {
+    const sign: string = n < 0 ? "-" : "+";
+    if (even && n % 2 === 0) {
+        return label + sign + "even";
+    }
+    return label + sign + (even ? "odd" : "any");
+}
+console.log(describe(4, true, "a"), describe(-3, true, "b"), describe(7, false, "c"));
+
+// A typed variable that a closure assigns: every read sees the new value.
+function counter(): () => number {
+    let count: number = 0;
+    const next = (): number => {
+        count = count + 1;
+        return count;
+    };
+    next();
+    const seen: number = count;
+    next();
+    return () => seen * 10 + count;
+}
+console.log(counter()());
+
+// Number edge cases stay numbers.
+function divide(a: number, b: number): number {
+    return a / b;
+}
+console.log(divide(1, 0), divide(-1, 0), divide(0, 0), divide(7, 2));
+
+// A typed value handed to dynamic code and back.
+function twice(f: (n: number) => number, n: number): number {
+    return f(f(n));
+}
+console.log(twice((n: number): number => n * n, 3));
+
+interface Point { x: number; y: number; }
+function length2(p: Point): number {
+    return p.x * p.x + p.y * p.y;
+}
+console.log(length2({ x: 3, y: 4 }));
+
+function greet(name: string, times: number): string {
+    let out: string = "";
+    for (let i: number = 0; i < times; i++) {
+        out = out + name + (i + 1 < times ? "," : "");
+    }
+    return out;
+}
+console.log(greet("ab", 3));
+
+function flip(b: boolean): boolean {
+    return !b;
+}
+console.log(flip(true), flip(flip(true)));

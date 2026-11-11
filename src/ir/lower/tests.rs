@@ -128,3 +128,80 @@ fn test_lower_loop() {
     // Should have multiple blocks due to the loop
     assert!(func.blocks.len() >= 3);
 }
+
+/// What the compiler emits, with types strict, for
+/// `function f(n: number) { return n - 1; }`: the parameter is checked on
+/// entry, and each read of it is a number the checker has proved.
+fn typed_parameter() -> Vec<OpCode> {
+    use crate::runtime::builtins::Kind;
+    use crate::runtime::intrinsics;
+    let number = JsValue::Number(Kind::Number.bit() as f64);
+    let check = intrinsics::id("check_type").unwrap();
+    let assume = intrinsics::id("assume_type").unwrap();
+    vec![
+        // The argument: a value the IR knows nothing about.
+        OpCode::Load("argument".to_string()),
+        OpCode::Let("n".to_string()),
+        OpCode::Load("n".to_string()),
+        OpCode::Push(number.clone()),
+        OpCode::Intrinsic(check, 2),
+        OpCode::Pop,
+        OpCode::Load("n".to_string()),
+        OpCode::Push(number),
+        OpCode::Intrinsic(assume, 2),
+        OpCode::Push(JsValue::Number(1.0)),
+        OpCode::Sub,
+        OpCode::Return,
+    ]
+}
+
+#[test]
+fn a_type_check_is_its_own_instruction() {
+    let func = lower_function("f", &typed_parameter()).unwrap();
+    let ir = func.to_string();
+    assert!(ir.contains("check.type"), "{ir}");
+    // Neither the check nor the assumption is a call into the runtime.
+    assert!(!ir.contains("intrinsic"), "{ir}");
+}
+
+#[test]
+fn a_proved_type_makes_arithmetic_typed() {
+    let mut func = lower_function("f", &typed_parameter()).unwrap();
+    crate::ir::typecheck::typecheck_function(&mut func);
+    let ir = func.to_string();
+    assert!(ir.contains("sub.num"), "{ir}");
+    assert!(!ir.contains("sub.any"), "{ir}");
+}
+
+#[test]
+fn the_check_survives_what_it_proved() {
+    // Both reads of `n` are one value after optimization. The second is
+    // known to be a number only because the first passed the check, so
+    // the check must stay.
+    let mut func = lower_function("f", &typed_parameter()).unwrap();
+    crate::ir::typecheck::typecheck_function(&mut func);
+    crate::ir::opt::optimize_function(&mut func);
+    let ir = func.to_string();
+    assert!(ir.contains("check.type"), "{ir}");
+    assert!(ir.contains("sub.num"), "{ir}");
+}
+
+#[test]
+fn a_check_of_a_known_number_is_dropped() {
+    use crate::runtime::builtins::Kind;
+    let check = crate::runtime::intrinsics::id("check_type").unwrap();
+    // `(1 + 2) as number`
+    let instructions = vec![
+        OpCode::Push(JsValue::Number(1.0)),
+        OpCode::Push(JsValue::Number(2.0)),
+        OpCode::Add,
+        OpCode::Push(JsValue::Number(Kind::Number.bit() as f64)),
+        OpCode::Intrinsic(check, 2),
+        OpCode::Return,
+    ];
+    let mut func = lower_function("f", &instructions).unwrap();
+    crate::ir::typecheck::typecheck_function(&mut func);
+    crate::ir::opt::optimize_function(&mut func);
+    let ir = func.to_string();
+    assert!(!ir.contains("check.type"), "{ir}");
+}

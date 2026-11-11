@@ -6,8 +6,9 @@ use crate::runtime::builtins::Kind;
 impl Fx<'_> {
     /// `v` if its kind is in the set `kinds`, else a TypeError. A number,
     /// a boolean, `null` and `undefined` are recognised here by their
-    /// bits; anything else (a kind on the heap, or a failure) goes to the
-    /// runtime's `check_type`.
+    /// bits, and a string, an array, a function or an object by the kind
+    /// in its header; a class type and a failure go to the runtime's
+    /// `check_type`.
     pub(super) fn check_type(&mut self, b: &mut FunctionBuilder, v: Value, kinds: u32) -> Value {
         let has = |kind: Kind| kinds & kind.bit() != 0;
         let mut ok: Option<Value> = None;
@@ -40,13 +41,35 @@ impl Fx<'_> {
         let slow_blk = b.create_block();
         let join = b.create_block();
         b.append_block_param(join, types::I64);
+        let heap = Kind::heap_kinds(kinds);
+        let rest_blk = if heap == 0 {
+            slow_blk
+        } else {
+            b.create_block()
+        };
         match ok {
             Some(ok) => {
-                b.ins().brif(ok, join, &[v], slow_blk, &[]);
+                b.ins().brif(ok, join, &[v], rest_blk, &[]);
             }
             None => {
-                b.ins().jump(slow_blk, &[]);
+                b.ins().jump(rest_blk, &[]);
             }
+        }
+        if heap != 0 {
+            let ptr_blk = b.create_block();
+            b.switch_to_block(rest_blk);
+            b.seal_block(rest_blk);
+            let (is_ptr, addr) = Self::heap_pointer(b, v);
+            b.ins().brif(is_ptr, ptr_blk, &[], slow_blk, &[]);
+
+            b.switch_to_block(ptr_blk);
+            b.seal_block(ptr_blk);
+            let kind = b.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+            let kind = b.ins().uextend(types::I64, kind);
+            let one = b.ins().iconst(types::I64, 1);
+            let bit = b.ins().ishl(one, kind);
+            let accepted = b.ins().band_imm(bit, heap as i64);
+            b.ins().brif(accepted, join, &[v], slow_blk, &[]);
         }
 
         b.switch_to_block(slow_blk);

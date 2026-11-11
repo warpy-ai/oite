@@ -133,14 +133,15 @@ Section 7 removes the heap-read check for class fields later.
 
 The checks are **off by default**. `oitec --strict-types <command>` (or
 `OITE_STRICT_TYPES=1`) turns them on, and makes what the checker reports
-an error. They are opt-in for two reasons: a program that passes a wrong
-value through `any` runs today and would stop, and each check is a call
-into the runtime until step 5 compiles it as a compare and a branch.
+an error. They are opt-in because a program that passes a wrong value through
+`any` runs today and would stop.
 
 The checker records where a check is needed
 (`src/types/check/guards.rs`), and the compiler emits it as one
 intrinsic, `check_type(value, kinds)`, so the VM, the JIT and native
-binaries run the same check:
+binaries run the same check. In compiled code it is an instruction of
+its own (`IrOp::CheckType`): a few compares and a branch, with a call to
+the runtime only when the check fails or the type is a class (step 5).
 
 | Where | Checked |
 | ----- | ------- |
@@ -252,6 +253,45 @@ With types in the IR:
 - **Strings, objects and arrays** stay pointers. Knowing the type removes
   the "is it a pointer of this kind" checks on them.
 
+#### What compiled code relies on today (step 5)
+
+With `--strict-types`, the checker also records what it has **proved**
+about a value, and the compiler passes it on as `assume_type(value,
+kinds)`. Lowering to IR turns that into the type of the value and emits
+nothing; the VM runs it as a check, so a mistake in the checker shows up
+as an error there instead of a wrong result in a binary.
+
+| Proved | Because |
+| ------ | ------- |
+| A read of a parameter declared `number`, `boolean` or `string` | It was checked on entry |
+| A read of a `let` or `const` declared with one of those types and an initialiser | Every store to it is checked |
+| The result of calling a function declaration, or a constant whose initialiser is a function, declared to return one of those types | Its `return`s are checked |
+
+The declared type is used, not what control flow narrowed the variable
+to, and a `var` is left out (it exists, as `undefined`, before its
+initialiser runs).
+
+The optimizer removes a check of a value that is already known to have
+the type, but never on the strength of what that same check proved.
+
+Typed programs, native `--release --strict-types`, best of 5
+(`benches/perf/run.sh --typed`):
+
+| Benchmark | Typed, strict | Same source, not strict | Bun |
+| --------- | ------------: | ----------------------: | --: |
+| `calls` | 53 ms | 56 ms | 24 ms |
+| `fib` | 24 ms | 21 ms | 20 ms |
+| `loop_local` | 508 ms | 505 ms | 1,811 ms |
+| `nbody` | 503 ms | 517 ms | 96 ms |
+
+The differences are within the noise of the machine (about 15%); by
+instruction count `fib` and `nbody` change by less than 1%. Step 5
+removes the type tests around arithmetic, and those were already cheap:
+what these programs spend their time on is the call itself (`fib`,
+`calls`: step 6) and property access (`nbody`: step 8). What step 5
+does establish is that the checks of strict mode cost nothing
+measurable here, and it gives steps 6 to 8 the types they need.
+
 ### 6. Speed for code without annotations
 
 Most existing Oite code has no annotations (5 of 121 test files, 1 of 16
@@ -351,9 +391,13 @@ Each step is one pull request, with tests on vm, jit and aot.
    warnings into errors, after a release has shipped them as warnings.
 4. **Done, behind `--strict-types`: boundary checks** (section 3) on
    every backend. They become the default together with errors (step 3),
-   once step 5 has made them cheap and the code listed in section 3
-   passes with them on.
-5. **Types in the IR and unboxed numbers** inside a function.
+   once the code listed in section 3 passes with them on.
+5. **Done, behind `--strict-types`: types in the IR.** A check is
+   compiled inline, and what the checker proved reaches the IR, so
+   arithmetic and comparisons on typed numbers have no type tests (see
+   "What compiled code relies on today" in section 5). A number is
+   already stored as its own bits, so there was no box to remove: the
+   cost was the tests.
 6. **Typed entries and direct typed calls.**
 7. **Specialisation** of unannotated functions.
 8. **Class field layout and typed field access** (section 7), then
