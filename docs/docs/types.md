@@ -7,8 +7,11 @@ keywords: [performance, types, type checker, inference, unboxed, specialization]
 
 # Types (performance phase 3)
 
-> **Status:** design for review. Nothing here is implemented yet. It is
-> phase 3 of [Performance](performance.md) and closes #124.
+> **Status:** design agreed; nothing here is implemented yet. It is
+> phase 3 of [Performance](performance.md) and closes #124. Agreed:
+> annotations are contracts and unannotated code stays dynamic; `null`
+> and `undefined` are not part of other types; `as` is checked; the
+> checker reports warnings first.
 
 ## Why
 
