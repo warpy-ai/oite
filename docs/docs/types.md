@@ -300,7 +300,10 @@ Each step is one pull request, with tests on vm, jit and aot.
    (`tests/type_check.rs`). What it leaves for later is listed in
    section 4.
 3. **Make the rolls and the self-hosted compiler pass**, then turn
-   warnings into errors. Closes #124.
+   warnings into errors. Closes #124. Done so far: the checker finds
+   nothing in the repository's Oite code or in the core rolls, and a test
+   keeps it so (`existing_code_has_no_findings`). Still to do: turn the
+   warnings into errors, after a release has shipped them as warnings.
 4. **Boundary checks** (section 3) on every backend.
 5. **Types in the IR and unboxed numbers** inside a function.
 6. **Typed entries and direct typed calls.**

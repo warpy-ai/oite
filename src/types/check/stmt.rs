@@ -49,22 +49,29 @@ impl Checker {
     fn check_if(&mut self, i: &IfStmt) {
         self.expr(&i.test);
         let facts = self.facts(&i.test);
-        let mut assigned: Vec<String> = flow::assigned_in(&i.cons).into_iter().collect();
+        // The variables and properties a branch assigns, and what each is
+        // declared as. Only those with a declared type have anything to
+        // track.
+        let mut assigned = flow::assigned_places(&i.cons);
         if let Some(alt) = &i.alt {
-            assigned.extend(flow::assigned_in(alt));
+            for place in flow::assigned_places(alt) {
+                if !assigned.iter().any(|(path, _)| *path == place.0) {
+                    assigned.push(place);
+                }
+            }
         }
-        assigned.sort();
-        assigned.dedup();
-        // Only variables with a declared type have anything to track.
-        assigned.retain(|name| !self.declared(name).is_dynamic());
+        assigned.retain(|(path, place)| match place {
+            Expr::Ident(_) => !self.declared(path).is_dynamic(),
+            _ => true,
+        });
 
         let then_exits = flow::exits(&i.cons);
         let else_exits = i.alt.as_deref().is_some_and(flow::exits);
         let mut ends: Vec<Vec<Ty>> = vec![Vec::new(); assigned.len()];
         let mut end_of_branch = |checker: &mut Self, leaves: bool| {
             if !leaves {
-                for (name, types) in assigned.iter().zip(ends.iter_mut()) {
-                    types.push(checker.ident(name));
+                for ((_, place), types) in assigned.iter().zip(ends.iter_mut()) {
+                    types.push(checker.expr(place));
                 }
             }
         };
@@ -88,11 +95,13 @@ impl Checker {
         } else if else_exits && !then_exits {
             self.apply(&facts.then);
         }
-        for (name, types) in assigned.iter().zip(ends) {
+        for ((path, place), types) in assigned.iter().zip(ends) {
             let merged = Ty::union(types);
             if !merged.is_dynamic() && merged != Ty::Never {
-                self.forget(name);
-                self.narrow(name, merged);
+                if matches!(place, Expr::Ident(_)) {
+                    self.forget(path);
+                }
+                self.narrow(path, merged);
             }
         }
     }

@@ -5,3 +5,4 @@
 46:16: Type 'Cat' is not assignable to type 'Dog'.
 61:21: Type 'string | undefined' is not assignable to type 'string'.
 73:24: Type 'number | null' is not assignable to type 'number'.
+94:12: Type 'null | string' is not assignable to type 'string'.

@@ -177,7 +177,10 @@ jobs:
         if: env.HAS_ROLLS_TOKEN == 'true'
         env:
           OITE_CORE_ROLLS: ${{ github.workspace }}/rolls-src
-        run: cargo test --release --test golden core_rolls
+        run: |
+          cargo test --release --test golden core_rolls
+          # The type checker must find nothing in the core rolls either.
+          cargo test --release --test type_check existing_code_has_no_findings
 
   lint:
     name: Lint

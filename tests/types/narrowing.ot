@@ -73,3 +73,29 @@ function loops(items: (number | null)[]): number {
   let result: number = last;
   return last === null ? 0 : last;
 }
+
+// A property assigned in a branch: afterwards it is what the branches
+// that reach the end left it as.
+class Cache {
+  value: string | null = null;
+  count: number | null = null;
+  get(): string {
+    if (!this.value) {
+      this.value = "computed";
+    }
+    return this.value;
+  }
+  either(flag: boolean): string {
+    if (flag) { this.value = "a"; } else { this.value = "b"; }
+    return this.value;
+  }
+  maybe(flag: boolean): string {
+    if (flag) { this.value = null; }
+    return this.value;
+  }
+  bump(): number {
+    if (this.count === null) this.count = 0;
+    this.count = this.count + 1;
+    return this.count;
+  }
+}
