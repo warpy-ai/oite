@@ -112,6 +112,15 @@ jobs:
             fi
           done
 
+          # `oitec build --release` (exercised by the tests) runs the LLVM command-line
+          # tools from $LLVM_SYS_180_PREFIX/bin. They load the conda env's dylibs, so
+          # they stay in that env; the prefix only gets wrappers that exec them.
+          for tool in opt llc llvm-link llvm-lto; do
+            printf '#!/bin/sh\nexec "%s/bin/%s" "$@"\n' "$CONDA_ENV" "$tool" > "$LLVM_PREFIX/bin/$tool"
+            chmod +x "$LLVM_PREFIX/bin/$tool"
+            test -x "$CONDA_ENV/bin/$tool"
+          done
+
           # Verify: llvm-config runs, and the archives are for the target
           "$LLVM_PREFIX/bin/llvm-config" --version
           "$LLVM_PREFIX/bin/llvm-config" --link-static --system-libs
