@@ -484,7 +484,7 @@ Oite/
 │   │   └── format.rs             # IR serialization
 │   ├── backend/
 │   │   ├── mod.rs                # Backend trait
-│   │   ├── cranelift.rs          # JIT backend
+│   │   ├── cranelift/            # JIT backend
 │   │   ├── jit.rs                # JIT runtime
 │   │   ├── layout.rs             # Memory layout
 │   │   └── llvm/                 # AOT backend

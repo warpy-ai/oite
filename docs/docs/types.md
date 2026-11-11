@@ -323,7 +323,7 @@ contract and the error message, not the speed.
 Under the file-size rule (about 800 lines), the files this phase touches
 are split first, each in its own pull request with no behaviour change:
 `src/compiler/mod.rs`, `src/ir/lower.rs`, and the two backends
-(`cranelift.rs`, `llvm/codegen.rs`), which phase 2 began to split.
+(`cranelift/` and `llvm/codegen/`): all are split.
 
 New code:
 
