@@ -37,6 +37,7 @@ const NONAME: *const c_char = b"\0".as_ptr() as *const c_char;
 mod arrays;
 mod entry;
 mod equality;
+mod fast;
 mod numeric;
 mod objects;
 mod ops;
@@ -62,6 +63,9 @@ pub struct LlvmCodegen {
     runtime: BTreeMap<String, (LLVMValueRef, LLVMTypeRef)>,
     /// Compiled functions by IR name (`main`, `func_<addr>`).
     pub functions: BTreeMap<String, LLVMValueRef>,
+    /// The fast entry (arguments in registers, see `codegen/fast.rs`) of
+    /// the functions that have one, by IR name: (function, type).
+    fast: BTreeMap<String, (LLVMValueRef, LLVMTypeRef)>,
     /// Function bytecode address -> global holding its function object.
     fn_objects: BTreeMap<usize, LLVMValueRef>,
     /// The program's global variables (every name it assigns) -> the LLVM
@@ -111,6 +115,7 @@ impl LlvmCodegen {
                 target_triple,
                 runtime: BTreeMap::new(),
                 functions: BTreeMap::new(),
+                fast: BTreeMap::new(),
                 fn_objects: BTreeMap::new(),
                 global_slots: BTreeMap::new(),
                 strings: HashMap::new(),
@@ -140,6 +145,9 @@ impl LlvmCodegen {
                 let f = LLVMAddFunction(self.module, cname.as_ptr(), self.fn_ty);
                 LLVMSetLinkage(f, LLVMLinkage::LLVMInternalLinkage);
                 self.functions.insert(func.name.clone(), f);
+                if Self::takes_registers(func) {
+                    self.declare_fast(func);
+                }
 
                 if let Some(addr) = function_addr(&func.name) {
                     let gname = CString::new(format!("ot_fnobj_{}", addr)).unwrap();
@@ -223,7 +231,13 @@ impl LlvmCodegen {
 
     unsafe fn compile_function(&mut self, func: &IrFunction) -> Result<(), BackendError> {
         unsafe {
-            let f = self.functions[&func.name];
+            // The code goes into the fast entry, if the function has one.
+            let fast = self.fast.get(&func.name).map(|(f, _)| *f);
+            let f = fast.unwrap_or(self.functions[&func.name]);
+            let env_param = match fast {
+                Some(_) => func.params.len() as u32 + 1,
+                None => 3,
+            };
             let ctx = self.context;
             let builder = LLVMCreateBuilderInContext(ctx);
             let prologue_builder = LLVMCreateBuilderInContext(ctx);
@@ -255,11 +269,18 @@ impl LlvmCodegen {
                 literal_stores: HashMap::new(),
                 direct: HashMap::new(),
                 this: LLVMGetParam(f, 0),
-                env: LLVMGetParam(f, 3),
+                env: LLVMGetParam(f, env_param),
                 function: f,
                 last_call: None,
                 exception_return: None,
-                args: (LLVMGetParam(f, 1), LLVMGetParam(f, 2)),
+                // (Not looked at by a function with a fast entry.)
+                args: match fast {
+                    Some(_) => (
+                        LLVMConstNull(LLVMPointerTypeInContext(ctx, 0)),
+                        null_i64(ctx),
+                    ),
+                    None => (LLVMGetParam(f, 1), LLVMGetParam(f, 2)),
+                },
                 frame: None,
                 site: None,
                 trace_blocks: HashMap::new(),
@@ -280,7 +301,7 @@ impl LlvmCodegen {
                 LLVMSetCurrentDebugLocation2(fx.prologue, loc);
                 fx.di_scope = Some(scope);
             }
-            fx.prologue_setup(func, f)?;
+            fx.prologue_setup(func, f, fast.is_some())?;
 
             for block in &func.blocks {
                 LLVMPositionBuilderAtEnd(fx.builder, fx.blocks[&block.id]);
@@ -304,7 +325,17 @@ impl LlvmCodegen {
 
             // The prologue falls through to the IR entry block, unless the
             // stack is exhausted: below `OT_STACK_LIMIT`, throw a RangeError.
-            if let Some(first) = func.blocks.first() {
+            // A function that calls nothing that can run code (no op of its
+            // own can throw, a failed type check aside) cannot be what
+            // exhausts the stack: it is not checked.
+            let leaf = func
+                .blocks
+                .iter()
+                .flat_map(|b| &b.ops)
+                .all(|op| !op.can_throw() || matches!(op, IrOp::CheckType(_, _, _)));
+            if let (true, Some(first)) = (leaf, func.blocks.first()) {
+                LLVMBuildBr(fx.prologue, fx.blocks[&first.id]);
+            } else if let Some(first) = func.blocks.first() {
                 let i64_ty = fx.i64_ty();
                 // The address of a slot in this frame stands for the stack
                 // pointer (`llvm.frameaddress` would force a frame pointer).
@@ -326,6 +357,9 @@ impl LlvmCodegen {
             }
             LLVMDisposeBuilder(fx.prologue);
             LLVMDisposeBuilder(fx.builder);
+            if fast.is_some() {
+                self.build_dynamic_entry(func);
+            }
             Ok(())
         }
     }
@@ -338,6 +372,10 @@ impl Drop for LlvmCodegen {
             LLVMContextDispose(self.context);
         }
     }
+}
+
+fn null_i64(ctx: LLVMContextRef) -> LLVMValueRef {
+    unsafe { LLVMConstInt(LLVMInt64TypeInContext(ctx), 0, 0) }
 }
 
 /// `func_123` -> 123
@@ -626,12 +664,12 @@ impl Fx<'_> {
         &mut self,
         func: &IrFunction,
         f: LLVMValueRef,
+        fast: bool,
     ) -> Result<(), BackendError> {
         unsafe {
             let b = self.prologue;
             let i64_ty = self.i64_ty();
-            let argv = LLVMGetParam(f, 1);
-            let argc = LLVMGetParam(f, 2);
+            let (argv, argc) = self.args;
             if func.is_async {
                 // Locals live in a heap frame that survives an `await`.
                 let (enter, enter_ty) = self.cg.runtime["ot_async_enter"];
@@ -655,6 +693,10 @@ impl Fx<'_> {
             let undef_slot = LLVMBuildAlloca(b, i64_ty, b"undef\0".as_ptr() as _);
             LLVMBuildStore(b, self.c(UNDEFINED), undef_slot);
             for i in 0..func.params.len() {
+                if fast {
+                    self.set(ValueId(i as u32), LLVMGetParam(f, i as u32 + 1));
+                    continue;
+                }
                 // argv[i] if i < argc, else undefined (branch-free).
                 let present = LLVMBuildICmp(
                     b,

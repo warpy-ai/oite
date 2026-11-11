@@ -293,6 +293,42 @@ small typed functions (`calls`). What these programs still spend their
 time on is the call itself (`fib`: step 6) and property access (`nbody`:
 step 8).
 
+#### Direct calls today (step 6, first part)
+
+Every function has the dynamic entry `(this, argv, argc, env)`, which is
+what a function object holds. A function that never looks at its
+argument array (no rest parameter, not async, at most 8 parameters) also
+has a **fast entry**, `(this, arg0 .. argN, env)`, and its code is
+compiled into that one; the dynamic entry unpacks the array and calls
+it. A call that knows which function it calls (a function declaration, a
+closure created in the same function) calls the fast entry: no argument
+array, a missing argument passed as `undefined`, an extra one dropped.
+This needs no types and no `--strict-types`. It is in the LLVM backend
+(`src/backend/llvm/codegen/fast.rs`); the JIT still passes the array.
+
+A function that calls nothing that can run code has no stack-overflow
+check: it cannot be what exhausts the stack.
+
+Native `--release`, best of 5, before and after:
+
+| Benchmark | Before | After | Bun |
+| --------- | -----: | ----: | --: |
+| `fib` | 22 ms | 19 ms | 19 ms |
+| `fib(38)` | 338 ms (7.46 G instructions) | 285 ms (5.12 G) | 215 ms |
+| `binary_trees` | 355 ms | 340 ms | 218 ms |
+| typed `fib`, `--strict-types` | 23 ms | 18 ms | 19 ms |
+| typed `fib(38)`, `--strict-types` | 357 ms (6.77 G) | 281 ms (4.11 G) | 215 ms |
+
+The other benchmarks do not change (their calls were already inlined, or
+they do not call).
+
+One case gets slower, in strict mode only: typed `calls` goes from 47 ms
+to 66 ms, with the same number of instructions (460 M before, 440 M
+after). Its loop inlines `add` together with `add`'s parameter checks,
+and the code LLVM now produces for that loop is slower for a reason not
+identified. The second part of this step removes those checks from such
+a call (the caller has proved the types), which removes the cause.
+
 ### 6. Speed for code without annotations
 
 Most existing Oite code has no annotations (5 of 121 test files, 1 of 16
@@ -399,7 +435,10 @@ Each step is one pull request, with tests on vm, jit and aot.
    "What compiled code relies on today" in section 5). A number is
    already stored as its own bits, so there was no box to remove: the
    cost was the tests.
-6. **Typed entries and direct typed calls.**
+6. **Typed entries and direct typed calls.** Done: a fast entry with
+   the arguments in registers, for every direct call, typed or not (see
+   "Direct calls today" in section 5). Still to do: an entry that skips
+   the parameter checks when the caller has proved the argument types.
 7. **Specialisation** of unannotated functions.
 8. **Class field layout and typed field access** (section 7), then
    direct method calls and inlining.
