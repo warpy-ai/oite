@@ -151,6 +151,10 @@ impl Checker {
             self.guard(id.id.span, &ty);
         }
         self.declare(name, ty, false);
+        // Checked on entry, so it holds from the first instruction.
+        if !param.rest && matches!(pat, Pat::Ident(_)) {
+            self.make_definite(name);
+        }
     }
 
     /// Check the body of a function whose `this` is `this`.
@@ -239,6 +243,7 @@ impl Checker {
                         };
                         self.guard(id.id.span, &ty);
                         self.declare(id.id.sym.as_ref(), ty, false);
+                        self.make_definite(id.id.sym.as_ref());
                     }
                     TsParamPropParam::Assign(a) => {
                         let param = self.param_of(&a.left);

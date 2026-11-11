@@ -61,6 +61,10 @@ pub const INTRINSICS: &[&str] = &[
     // compiler calls it where a type annotation must hold when the
     // program runs (docs/docs/types.md, section 3).
     "check_type",
+    // `assume_type(value, kinds)`: the same, where the type checker has
+    // proved it. Compiled code trusts it and does nothing; the VM checks
+    // it, so a mistake in the type checker shows up as an error.
+    "assume_type",
 ];
 
 /// The prefix that marks a call as an intrinsic.
@@ -149,7 +153,7 @@ pub fn call<H: Host>(h: &H, id: u32, args: &[H::Value]) -> Result<Outcome<H::Val
                 .collect(),
         )),
         "platform" => string(std::env::consts::OS.to_string()),
-        "check_type" => {
+        "check_type" | "assume_type" => {
             let kinds = num(1) as u32;
             let kind = h.kind(arg(0));
             if kinds & kind.bit() != 0 {

@@ -302,6 +302,12 @@ impl Checker {
             {
                 self.fix_fn(id.id.sym.as_ref());
             }
+            // `var` exists, as `undefined`, before its initialiser runs.
+            if let (Pat::Ident(id), Some(_)) = (&d.name, &d.init)
+                && var.kind != VarDeclKind::Var
+            {
+                self.make_definite(id.id.sym.as_ref());
+            }
         }
     }
 

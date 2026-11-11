@@ -30,10 +30,14 @@ impl Codegen {
     /// `[value] -> [value]`: if the type checker asked for the value at
     /// `span` to be checked when the program runs, check it.
     pub(super) fn emit_guard(&mut self, span: Span) {
-        let Some(&kinds) = self.guards.get(&(span.lo.0, span.hi.0)) else {
-            return;
+        let key = (span.lo.0, span.hi.0);
+        // A check proves more than a fact the checker had already.
+        let (name, kinds) = match (self.guards.get(&key), self.facts.get(&key)) {
+            (Some(&kinds), _) => ("check_type", kinds),
+            (None, Some(&kinds)) => ("assume_type", kinds),
+            (None, None) => return,
         };
-        let check = intrinsics::id("check_type").expect("the check_type intrinsic");
+        let check = intrinsics::id(name).expect("a type intrinsic");
         self.instructions
             .push(OpCode::Push(JsValue::Number(kinds as f64)));
         self.instructions.push(OpCode::Intrinsic(check, 2));

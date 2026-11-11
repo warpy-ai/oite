@@ -253,6 +253,7 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         IrOp::RestArgs(_, _) => CompileStrategy::StubCall(stubs::ALLOC_OBJECT),
         IrOp::CallMethod(_, _, _, _)
         | IrOp::Intrinsic(_, _, _)
+        | IrOp::CheckType(_, _, _)
         | IrOp::MathCall(_, _, _)
         | IrOp::ArraySpread(_, _, _)
         | IrOp::ObjectSpread(_, _, _) => CompileStrategy::StubCall(stubs::CALL),

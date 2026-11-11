@@ -486,6 +486,11 @@ impl Fx<'_> {
                     let r = self.math_call(*func, args)?;
                     self.set(*d, r);
                 }
+                IrOp::CheckType(d, src, kinds) => {
+                    let v = self.get(*src)?;
+                    let r = self.check_type(v, *kinds);
+                    self.set(*d, r);
+                }
                 IrOp::Intrinsic(d, id, args) => {
                     let vals: Vec<LLVMValueRef> = args
                         .iter()
