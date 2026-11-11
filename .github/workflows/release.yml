@@ -39,13 +39,16 @@ jobs:
             artifact_name: oitec
             asset_name: oitec-aarch64-apple-darwin
 
+          # The Linux binaries are built on the oldest Ubuntu image offered: a binary
+          # needs at least the glibc it was built against, so building on 24.04 gave
+          # binaries that could not start on Ubuntu 22.04 or Debian 12.
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
             artifact_name: oitec
             asset_name: oitec-x86_64-unknown-linux-gnu
 
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
+            os: ubuntu-22.04-arm
             artifact_name: oitec
             asset_name: oitec-aarch64-unknown-linux-gnu
 
@@ -64,12 +67,17 @@ jobs:
       - name: Install LLVM 18 (Ubuntu)
         if: runner.os == 'Linux'
         run: |
-          # Install LLVM 18 dev headers, Polly, and zstd from the distro repo.
-          # See ci.yml for why we avoid apt.llvm.org's llvm.sh (it upgrades libllvm18
-          # to a snapshot that Breaks the distro llvm-18-dev). The arm64 runner image
-          # preinstalls no LLVM, so the dev headers must be installed explicitly.
+          # Ubuntu 22.04 has no LLVM 18 of its own, so it comes from apt.llvm.org's
+          # repository for 22.04 (jammy). ci.yml avoids apt.llvm.org on 24.04 because
+          # its packages clash with the distro's LLVM 18 there; 22.04 has none to
+          # clash with.
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm-18.list
           sudo apt-get update
           sudo apt-get install -y llvm-18-dev libpolly-18-dev libzstd-dev
+          /usr/lib/llvm-18/bin/llvm-config --version
           echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
 
       - name: Install LLVM 18 (macOS)
@@ -178,6 +186,21 @@ jobs:
         if: runner.os == 'Linux'
         run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
 
+      - name: Verify the glibc the binary needs (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # The newest glibc version any symbol of oitec asks for is the oldest glibc
+          # it can start on. Building on a newer image would raise it unnoticed.
+          BIN=target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          ldd "$BIN"
+          needed=$(objdump -T "$BIN" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+          echo "oitec needs $needed"
+          newest=$(printf '%s\n' "$needed" GLIBC_2.35 | sort -V | tail -1)
+          if [ "$newest" != GLIBC_2.35 ]; then
+            echo "ERROR: oitec needs $needed; it must start on glibc 2.35 (Ubuntu 22.04)" >&2
+            exit 1
+          fi
+
       - name: Verify the binary is self-contained (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -220,9 +243,67 @@ jobs:
           path: ${{ matrix.asset_name }}.tar.gz
           retention-days: 1
 
+  # A user's machine has no checkout, no LLVM and no Homebrew, and may be older
+  # than the image a binary was built on. So each binary is also run, exactly as
+  # downloaded, on other machines: the oldest macOS images offered, the Ubuntu
+  # the Linux binaries are built for, and a Debian 12 container.
+  smoke:
+    name: Run ${{ matrix.asset_name }} on ${{ matrix.container || matrix.os }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            asset_name: oitec-aarch64-apple-darwin
+          - os: macos-15-intel
+            asset_name: oitec-x86_64-apple-darwin
+          - os: ubuntu-22.04
+            asset_name: oitec-x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04-arm
+            asset_name: oitec-aarch64-unknown-linux-gnu
+          - os: ubuntu-latest
+            container: debian:12
+            asset_name: oitec-x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            container: debian:12
+            asset_name: oitec-aarch64-unknown-linux-gnu
+    steps:
+      - name: Download the binary
+        uses: actions/download-artifact@v4 # v4.3.0
+        with:
+          name: ${{ matrix.asset_name }}
+
+      - name: Install a C compiler (container)
+        if: matrix.container != ''
+        run: |
+          # A native build links with the system's C compiler; a bare container
+          # has none.
+          apt-get update
+          apt-get install -y gcc
+
+      - name: Run it
+        run: |
+          tar -xzf ${{ matrix.asset_name }}.tar.gz
+          if [ "$(uname)" = Darwin ]; then sw_vers; otool -L oitec; else cat /etc/os-release; ldd oitec; fi
+
+          printf 'function add(a: number, b: number): number { return a + b; }\nconsole.log("sum", add(2, 3));\n' > hello.ot
+
+          echo "--- interpreter"
+          ./oitec hello.ot | tee run.out
+          grep -q "sum 5" run.out
+
+          echo "--- native build"
+          ./oitec build hello.ot -o hello
+          ./hello | tee native.out
+          grep -q "sum 5" native.out
+
   release:
     name: Create Release
-    needs: build
+    needs: [build, smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Publish only for tag pushes. A workflow_dispatch run has no tag, so the version
