@@ -63,7 +63,7 @@ must fail with an error. It must never approximate.
 
 ### 4. Every IR op is handled everywhere, or rejected everywhere
 
-Adding an `IrOp` (`src/ir/mod.rs`) means handling it in Cranelift (`src/backend/cranelift.rs`) and in LLVM (`src/backend/llvm/codegen.rs`),
+Adding an `IrOp` (`src/ir/mod.rs`) means handling it in Cranelift (`src/backend/cranelift/ops.rs`) and in LLVM (`src/backend/llvm/codegen.rs`),
 or rejecting it in lowering until both can. Lowering must also not
 assume a value on the operand stack survives a jump: `spill_stack` and
 `reload_stack` carry stack values across block edges.

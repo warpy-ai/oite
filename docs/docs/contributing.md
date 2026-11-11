@@ -69,7 +69,6 @@ change touches first:
 | `src/vm/mod.rs` | 3,455 |
 | `src/backend/llvm/codegen.rs` | 1,855 |
 | `src/ir/mod.rs` | 1,696 |
-| `src/backend/cranelift.rs` | 1,582 |
 | `src/stdlib/mod.rs` | 1,062 |
 | `src/main.rs` | 1,050 |
 | `src/compiler/borrow_ck.rs` | 1,025 |
