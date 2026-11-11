@@ -95,18 +95,44 @@ pub struct Checker {
     pub diags: Vec<TypeDiag>,
 }
 
-/// Check a program and return what it found, in source order.
-pub fn check_program(program: &Program) -> Vec<TypeDiag> {
+/// What the checker knows about the modules of a program checked so
+/// far, by the global name the linker gives each top-level binding
+/// (`compiler::modules`).
+#[derive(Default)]
+pub struct TypeWorld {
+    decls: Vec<TypeDecl>,
+    values: HashMap<String, Ty>,
+    types: HashMap<String, DeclId>,
+}
+
+/// Check a program and return what it found, in source order. With
+/// `link`, the program is a module of a linked program: what it imports
+/// has the types `world` recorded for the modules checked before it, and
+/// its own top-level names are recorded for the modules after it.
+pub fn check_program(
+    program: &Program,
+    world: &mut TypeWorld,
+    link: Option<&crate::compiler::modules::ModuleLink>,
+) -> Vec<TypeDiag> {
     let mut checker = Checker {
-        decls: Vec::new(),
+        decls: std::mem::take(&mut world.decls),
         scopes: vec![Scope::default()],
         fns: Vec::new(),
         diags: Vec::new(),
     };
     match program {
         Program::Module(module) => {
-            let stmts: Vec<&Stmt> = module.body.iter().filter_map(module_item_stmt).collect();
-            checker.hoist(stmts.iter().copied());
+            checker.declare_imports(module, world, link);
+            let decls: Vec<&Decl> = module
+                .body
+                .iter()
+                .filter_map(|item| match item {
+                    ModuleItem::Stmt(Stmt::Decl(decl)) => Some(decl),
+                    ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => Some(&export.decl),
+                    _ => None,
+                })
+                .collect();
+            checker.hoist_decls(&decls);
             for item in &module.body {
                 checker.check_module_item(item);
             }
@@ -118,20 +144,82 @@ pub fn check_program(program: &Program) -> Vec<TypeDiag> {
             }
         }
     }
+    // What the module declares at its top level, for those that import
+    // from it.
+    let prefix = link.map_or("", |l| l.prefix.as_str());
+    let top = &checker.scopes[0];
+    for (name, var) in &top.vars {
+        world
+            .values
+            .insert(format!("{prefix}{name}"), var.ty.clone());
+    }
+    for (name, id) in &top.types {
+        world.types.insert(format!("{prefix}{name}"), *id);
+    }
+    world.decls = checker.decls;
     let mut diags = checker.diags;
     diags.sort_by_key(|d| d.span.lo);
     diags
 }
 
-/// The statement of a module item, when it is one.
-fn module_item_stmt(item: &ModuleItem) -> Option<&Stmt> {
-    match item {
-        ModuleItem::Stmt(stmt) => Some(stmt),
-        ModuleItem::ModuleDecl(_) => None,
-    }
-}
-
 impl Checker {
+    /// Declare what the module imports: with the type recorded for it
+    /// when it comes from a module of the same program, otherwise as
+    /// dynamic.
+    fn declare_imports(
+        &mut self,
+        module: &Module,
+        world: &TypeWorld,
+        link: Option<&crate::compiler::modules::ModuleLink>,
+    ) {
+        for item in &module.body {
+            let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item else {
+                continue;
+            };
+            for spec in &import.specifiers {
+                let local = match spec {
+                    ImportSpecifier::Named(s) => &s.local,
+                    ImportSpecifier::Default(s) => &s.local,
+                    ImportSpecifier::Namespace(s) => &s.local,
+                };
+                let name = local.sym.as_ref();
+                // `import type { T }`: only a type.
+                if let Some(id) = link
+                    .and_then(|l| l.type_imports.get(name))
+                    .and_then(|global| world.types.get(global))
+                {
+                    self.scope().types.insert(name.to_string(), *id);
+                    continue;
+                }
+                // `import * as ns`: an object with the module's exports.
+                if let Some(members) = link.and_then(|l| l.namespaces.get(name)) {
+                    let mut obj = ObjTy::default();
+                    for (export, global) in members {
+                        obj.set(Prop {
+                            name: export.clone(),
+                            ty: world.values.get(global).cloned().unwrap_or(Ty::Any),
+                            optional: false,
+                        });
+                    }
+                    // Anything else on it is not known.
+                    obj.index = Some(Ty::Any);
+                    self.declare(name, Ty::Object(Rc::new(obj)), true);
+                    continue;
+                }
+                let global = link.and_then(|l| l.imports.get(name));
+                let ty = global
+                    .and_then(|g| world.values.get(g))
+                    .cloned()
+                    .unwrap_or(Ty::Any);
+                // A class is also the type of its instances.
+                if let Ty::ClassValue(id) = &ty {
+                    self.scope().types.insert(name.to_string(), *id);
+                }
+                self.declare(name, ty, true);
+            }
+        }
+    }
+
     fn report(&mut self, span: Span, message: impl Into<String>) {
         self.diags.push(TypeDiag {
             span,

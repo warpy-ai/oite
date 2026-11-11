@@ -18,17 +18,7 @@ impl Checker {
                     DefaultDecl::Class(c) => self.check_class(None, &c.class),
                     DefaultDecl::TsInterfaceDecl(_) => {}
                 },
-                // Names from other modules are dynamic.
-                ModuleDecl::Import(import) => {
-                    for spec in &import.specifiers {
-                        let local = match spec {
-                            ImportSpecifier::Named(s) => &s.local,
-                            ImportSpecifier::Default(s) => &s.local,
-                            ImportSpecifier::Namespace(s) => &s.local,
-                        };
-                        self.declare(local.sym.as_ref(), Ty::Any, true);
-                    }
-                }
+                // Imports were declared before anything else.
                 _ => {}
             },
         }

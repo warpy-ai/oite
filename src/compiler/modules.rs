@@ -38,6 +38,10 @@ pub struct ModuleLink {
     pub imports: HashMap<String, String>,
     /// `import * as ns`: local name -> (export name, global name), sorted.
     pub namespaces: HashMap<String, Vec<(String, String)>>,
+    /// Types imported with `import type`: local name -> the global name
+    /// the type has in the module it is declared in. For the type checker;
+    /// a type has no code.
+    pub type_imports: HashMap<String, String>,
 }
 
 /// Where `@rolls/*` modules are found.
@@ -180,6 +184,7 @@ impl Compiler {
         let exports = linker.export_tables()?;
         let mut compiled = Vec::new();
         self.warnings.clear();
+        self.type_world = Default::default();
         let program_dir = linker.modules[0].path.parent().map(Path::to_path_buf);
         for &m in &linker.order {
             let link = linker.link_for(m, &exports)?;
@@ -556,6 +561,7 @@ impl Linker<'_> {
             prefix: module.prefix.clone(),
             imports: self.imports_of(m, tables)?,
             namespaces: HashMap::new(),
+            type_imports: HashMap::new(),
         };
         if let Program::Module(ast) = &module.parsed.program {
             for item in &ast.body {
@@ -563,6 +569,20 @@ impl Linker<'_> {
                     continue;
                 };
                 for s in &import.specifiers {
+                    if let ImportSpecifier::Named(n) = s
+                        && (import.type_only || n.is_type_only)
+                    {
+                        let spec = import.src.value.to_string_lossy().into_owned();
+                        let name = n
+                            .imported
+                            .as_ref()
+                            .map(export_name)
+                            .unwrap_or_else(|| n.local.sym.to_string());
+                        if let Some(dep) = module.deps.get(&spec) {
+                            let global = format!("{}{}", self.modules[*dep].prefix, name);
+                            link.type_imports.insert(n.local.sym.to_string(), global);
+                        }
+                    }
                     if let ImportSpecifier::Namespace(ns) = s {
                         let spec = import.src.value.to_string_lossy().into_owned();
                         let mut members: Vec<(String, String)> = tables[module.deps[&spec]]
