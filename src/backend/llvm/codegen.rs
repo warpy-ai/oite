@@ -325,7 +325,17 @@ impl LlvmCodegen {
 
             // The prologue falls through to the IR entry block, unless the
             // stack is exhausted: below `OT_STACK_LIMIT`, throw a RangeError.
-            if let Some(first) = func.blocks.first() {
+            // A function that calls nothing that can run code (no op of its
+            // own can throw, a failed type check aside) cannot be what
+            // exhausts the stack: it is not checked.
+            let leaf = func
+                .blocks
+                .iter()
+                .flat_map(|b| &b.ops)
+                .all(|op| !op.can_throw() || matches!(op, IrOp::CheckType(_, _, _)));
+            if let (true, Some(first)) = (leaf, func.blocks.first()) {
+                LLVMBuildBr(fx.prologue, fx.blocks[&first.id]);
+            } else if let Some(first) = func.blocks.first() {
                 let i64_ty = fx.i64_ty();
                 // The address of a slot in this frame stands for the stack
                 // pointer (`llvm.frameaddress` would force a frame pointer).
