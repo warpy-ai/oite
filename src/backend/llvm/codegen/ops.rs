@@ -320,9 +320,22 @@ impl Fx<'_> {
                         .iter()
                         .map(|a| self.get(*a))
                         .collect::<Result<_, _>>()?;
-                    let (argv, argc) = self.arg_array(&vals);
                     let undefined = self.c(UNDEFINED);
-                    let target = self.direct.get(callee).copied().and_then(|(addr, env)| {
+                    // A callee that is a known function: its fast entry,
+                    // with the arguments in registers, if it has one.
+                    let known = self.direct.get(callee).copied();
+                    if let Some((addr, env)) = known {
+                        let env = match env {
+                            Some(e) => self.get(e)?,
+                            None => undefined,
+                        };
+                        if let Some(r) = self.call_fast(&format!("func_{}", addr), &vals, env) {
+                            self.set(*d, r);
+                            return Ok(());
+                        }
+                    }
+                    let (argv, argc) = self.arg_array(&vals);
+                    let target = known.and_then(|(addr, env)| {
                         self.cg
                             .functions
                             .get(&format!("func_{}", addr))
