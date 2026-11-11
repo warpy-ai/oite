@@ -1,0 +1,29 @@
+// The program of issue #124, and one mistake of each common kind.
+function add(a: number, b: number): number { return a + b; }
+let s: string = 42;
+let r: string = add("hello", "world");
+console.log(r);
+
+interface Point { x: number; y: number; label?: string }
+let p: Point = { x: 1, y: "two" };
+let q: Point = { x: 1 };
+class Animal {
+  name: string;
+  constructor(name: string) { this.name = name; }
+  speak(): string { return 5; }
+}
+let a: Animal = new Animal(3);
+a.name = 7;
+function maybe(): number | null { return null; }
+let m: number = maybe();
+function g(n: number | null) { if (n !== null) { let k: number = n; } else { let k2: number = n; } }
+function f(x?: number) { let y: number = x; if (x !== undefined) { let z: number = x; } }
+f();
+add(1);
+let xs: number[] = [1, 2, "3"];
+xs.push("4");
+let u: any = "str";
+let v: number = u;
+let w = 5; w = "now a string";
+let len: number = "abc".length;
+let t: "a" | "b" = "c";

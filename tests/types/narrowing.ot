@@ -1,0 +1,75 @@
+// What a condition establishes about a variable or a property, and when
+// that stops holding.
+interface Box { value: number | null; label?: string }
+class Cat { name: string = "cat"; }
+class Dog { bark(): string { return "woof"; } }
+
+function typeofs(x: string | number | boolean | null): string {
+  if (typeof x === "string") return x;
+  if (typeof x === "number") return x.toFixed(1);
+  if (typeof x === "boolean") { let b: boolean = x; return "bool"; }
+  let n: null = x;
+  let wrong: string = x;
+  return "null";
+}
+
+function properties(b: Box): number {
+  if (b.value !== null) {
+    let v: number = b.value;
+    b.value = null;
+    let stale: number = b.value;
+    return v;
+  }
+  if (b.label) { let l: string = b.label; }
+  let l2: string = b.label;
+  return 0;
+}
+
+function assigned(x: number | null): number {
+  if (x === null) x = 0;
+  let afterBranch: number = x;
+  x = 5;
+  let afterAssign: number = x;
+  return afterAssign;
+}
+
+function closures(x: string | null, y: string | null) {
+  if (x === null || y === null) return;
+  const fixed = x;
+  let reads = () => { let a: string = fixed; let b: string = y; };
+  y = null;
+}
+
+function instances(pet: Cat | Dog): string {
+  if (pet instanceof Dog) return pet.bark();
+  let c: Cat = pet;
+  let d: Dog = pet;
+  return c.name;
+}
+
+function arrays(v: number | number[]): number {
+  if (Array.isArray(v)) { let xs: number[] = v; return xs.length; }
+  let n: number = v;
+  return n;
+}
+
+function logical(a: string | undefined, b: number | null): string {
+  let s1: string = a ?? "default";
+  let s2: string = a || "default";
+  let n1: number = b !== null ? b : 0;
+  let ok: boolean = a !== undefined && a.length > 0;
+  let bad: string = a;
+  return s1 + s2;
+}
+
+function loops(items: (number | null)[]): number {
+  let last: number | null = null;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item === null) continue;
+    let n: number = item;
+    last = n;
+  }
+  let result: number = last;
+  return last === null ? 0 : last;
+}

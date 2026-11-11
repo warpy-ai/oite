@@ -73,10 +73,8 @@ change touches first:
 | `src/stdlib/mod.rs` | 1,062 |
 | `src/main.rs` | 1,050 |
 | `src/compiler/borrow_ck.rs` | 1,025 |
-| `src/types/checker.rs` | 1,005 |
 | `src/compiler/scope.rs` | 951 |
 | `src/ir/opt.rs` | 923 |
-| `src/types/inference.rs` | 917 |
 | `src/types/mod.rs` | 813 |
 
 ## Project Structure

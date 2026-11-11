@@ -149,6 +149,8 @@ impl Compiler {
         let parsed = parse(source, Some(syntax_for(entry)))?;
         if module_requests(&parsed.program).is_empty() {
             let code = self.compile_parsed(&parsed, None)?;
+            self.warnings.clear();
+            self.keep_warnings(entry, source, false);
             return Ok(vec![CompiledModule {
                 file: entry.to_string(),
                 source: source.to_string(),
@@ -177,12 +179,20 @@ impl Compiler {
 
         let exports = linker.export_tables()?;
         let mut compiled = Vec::new();
+        self.warnings.clear();
+        let program_dir = linker.modules[0].path.parent().map(Path::to_path_buf);
         for &m in &linker.order {
             let link = linker.link_for(m, &exports)?;
             let module = &linker.modules[m];
             let code = self
                 .compile_parsed(&module.parsed, Some(link))
                 .map_err(|e| e.in_file(&module.file, &module.source))?;
+            // A module outside the entry's directory is something the
+            // program depends on, not part of it.
+            let dependency = program_dir
+                .as_ref()
+                .is_some_and(|dir| !module.path.starts_with(dir));
+            self.keep_warnings(&module.file, &module.source, dependency);
             compiled.push(CompiledModule {
                 file: module.file.clone(),
                 source: module.source.clone(),
@@ -191,6 +201,21 @@ impl Compiler {
             });
         }
         Ok(compiled)
+    }
+}
+
+impl Compiler {
+    /// File what the type checker found in the module just compiled.
+    fn keep_warnings(&mut self, file: &str, source: &str, dependency: bool) {
+        let diagnostics = std::mem::take(&mut self.type_diagnostics);
+        if !diagnostics.is_empty() {
+            self.warnings.push(super::FileWarnings {
+                file: file.to_string(),
+                source: source.to_string(),
+                diagnostics,
+                dependency,
+            });
+        }
     }
 }
 

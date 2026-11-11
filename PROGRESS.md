@@ -143,10 +143,10 @@ Full TypeScript-style language with ownership semantics.
 
 #### Type System
 
-- Type annotations: `let x: number`, `function add(a: number): number`
+- Type annotations: `let x: number`, `function add(a: number): number`,
+  checked as warnings (`oitec check` reports errors); see `docs/docs/types.md`
 - Ownership: `Ref<T>`, `MutRef<T>`, move semantics
-- Generics with monomorphization
-- Hindley-Milner inference
+- Generics: parsed; a type parameter is `any` to the checker
 
 #### Control Flow
 
