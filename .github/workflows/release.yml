@@ -141,6 +141,11 @@ jobs:
           # Clean any cached artifacts that might have wrong architecture
           cargo clean
 
+          # .cargo/config.toml puts /opt/homebrew/opt/zstd/lib first on the linker search
+          # path. ld stops at the arm64 libzstd.dylib it finds there, ignores it for its
+          # architecture, and never reaches the x86_64 libzstd.a -- so take it away.
+          sudo rm -rf /opt/homebrew/opt/zstd
+
           export MACOSX_DEPLOYMENT_TARGET=14.0
 
           # Link with Apple's clang (rustc's default `cc`). It cross-links x86_64 from an
