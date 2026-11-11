@@ -285,9 +285,18 @@ verify_install() {
 
     echo ""
     if [ -x "${bin_dir}/oitec" ]; then
-        local version
-        version=$("${bin_dir}/oitec" --version 2>/dev/null || echo "unknown")
-        info "oitec installed: ${version}"
+        # oitec must be able to start on this machine. A missing shared library
+        # makes the loader kill it (status >= 126) before it runs at all; any
+        # lower status is oitec itself answering, which is all this checks.
+        local output status=0
+        output=$("${bin_dir}/oitec" --version 2>&1) || status=$?
+        if [ "$status" -ge 126 ] || printf '%s' "$output" | grep -q -E 'Library not loaded|error while loading shared libraries|GLIBC_[0-9.]+. not found'; then
+            warn "oitec is installed at ${bin_dir}/oitec but cannot start on this machine:"
+            printf '%s\n' "$output" | sed 's/^/    /' >&2
+            warn "Please report this at https://github.com/${GITHUB_REPO}/issues"
+            return 1
+        fi
+        info "oitec installed: ${bin_dir}/oitec"
     else
         warn "oitec binary not found at ${bin_dir}/oitec"
         return 1
