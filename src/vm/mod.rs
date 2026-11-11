@@ -1,6 +1,7 @@
 /// Maximum call stack depth to prevent stack overflow in deeply recursive code
 pub const MAX_CALL_STACK_DEPTH: usize = 1000;
 
+pub mod element;
 pub mod errors;
 pub mod module_cache;
 pub mod opcodes;
@@ -1061,6 +1062,14 @@ impl VM {
                         return ExecResult::Continue;
                     }
 
+                    if name == "length" && self.is_array(ptr) {
+                        if let Err(e) = self.set_array_length(ptr, &value) {
+                            return self.throw_exception(e);
+                        }
+                        self.ip += 1;
+                        return ExecResult::Continue;
+                    }
+
                     // No setter found, store the value directly
                     if let Some(heap_item) = self.heap.get_mut(ptr)
                         && let HeapData::Object(props) = &mut heap_item.data
@@ -1082,25 +1091,6 @@ impl VM {
                 let value = self.stack.pop().unwrap();
                 let target = self.stack.pop().unwrap();
 
-                // arr[i] = v on an array: set the element, growing the array.
-                // (Previously only plain objects were handled, so this
-                // assignment was silently ignored.)
-                if let (JsValue::Object(ptr), JsValue::Number(n)) = (&target, &key_val)
-                    && *n >= 0.0
-                    && n.fract() == 0.0
-                    && let Some(HeapObject {
-                        data: HeapData::Array(arr),
-                    }) = self.heap.get_mut(*ptr)
-                {
-                    let i = *n as usize;
-                    if i >= arr.len() {
-                        arr.resize(i + 1, JsValue::Undefined);
-                    }
-                    arr[i] = value;
-                    self.ip += 1;
-                    return ExecResult::Continue;
-                }
-
                 if matches!(target, JsValue::Null | JsValue::Undefined) {
                     let shown = self.to_js_string(&target);
                     let key = self.to_js_string(&key_val);
@@ -1109,14 +1099,8 @@ impl VM {
                         format!("Cannot set properties of {shown} (setting '{key}')"),
                     );
                 }
-                if let JsValue::Object(ptr) = target {
-                    let key_name = self.to_js_string(&key_val);
-
-                    if let Some(heap_item) = self.heap.get_mut(ptr)
-                        && let HeapData::Object(props) = &mut heap_item.data
-                    {
-                        props.insert(key_name, value);
-                    }
+                if let Err(e) = self.set_element(&target, &key_val, value) {
+                    return self.throw_exception(e);
                 }
             }
 
@@ -1136,102 +1120,8 @@ impl VM {
                     );
                 }
 
-                match (target, key_val) {
-                    (JsValue::Object(ptr), JsValue::Number(idx)) => {
-                        // Array access: arr[index]
-                        if let Some(heap_obj) = self.heap.get(ptr)
-                            && let HeapData::Array(arr) = &heap_obj.data
-                        {
-                            let i = idx as usize;
-                            let val = arr.get(i).cloned().unwrap_or(JsValue::Undefined);
-                            self.stack.push(val.clone());
-                            self.ip += 1;
-                            return ExecResult::Continue;
-                        }
-                        self.stack.push(JsValue::Undefined);
-                    }
-                    (JsValue::Object(ptr), key_val) => {
-                        let key_name = self.to_js_string(&key_val);
-
-                        // Check if this is an array - handle string numeric indices
-                        if let Some(heap_obj) = self.heap.get(ptr) {
-                            match &heap_obj.data {
-                                HeapData::Array(arr) => {
-                                    // Try to parse as number for array access
-                                    if let Ok(i) = key_name.parse::<usize>() {
-                                        let val = arr.get(i).cloned().unwrap_or(JsValue::Undefined);
-                                        self.stack.push(val);
-                                    } else if key_name == "length" {
-                                        self.stack.push(JsValue::Number(arr.len() as f64));
-                                    } else if matches!(
-                                        key_name.as_str(),
-                                        "push"
-                                            | "pop"
-                                            | "shift"
-                                            | "unshift"
-                                            | "splice"
-                                            | "slice"
-                                            | "concat"
-                                            | "join"
-                                            | "indexOf"
-                                            | "lastIndexOf"
-                                            | "includes"
-                                            | "reverse"
-                                            | "fill"
-                                            | "at"
-                                            | "map"
-                                            | "filter"
-                                            | "forEach"
-                                            | "reduce"
-                                            | "find"
-                                            | "findIndex"
-                                            | "some"
-                                            | "every"
-                                            | "flat"
-                                            | "flatMap"
-                                            | "sort"
-                                    ) {
-                                        self.stack.push(JsValue::NativeFunction(0));
-                                    } else {
-                                        self.stack.push(JsValue::Undefined);
-                                    }
-                                }
-                                _ => {
-                                    // Object access: obj[key] - look up with prototype chain
-                                    let value = self.get_prop_with_proto_chain(ptr, &key_name);
-                                    self.stack.push(value.clone());
-                                }
-                            }
-                        } else {
-                            self.stack.push(JsValue::Undefined);
-                        }
-                    }
-                    (JsValue::String(s), JsValue::Number(idx)) => {
-                        // String char access: str[index]
-                        // Use O(1) byte indexing for ASCII strings (common case)
-                        let i = idx as usize;
-                        let bytes = s.as_bytes();
-                        let char_val = if i < bytes.len() {
-                            let b = bytes[i];
-                            if b < 128 {
-                                // ASCII: O(1) fast path
-                                JsValue::String((b as char).to_string())
-                            } else {
-                                // Non-ASCII: fallback to chars().nth() - O(n) but rare
-                                s.chars()
-                                    .nth(i)
-                                    .map(|c| JsValue::String(c.to_string()))
-                                    .unwrap_or(JsValue::Undefined)
-                            }
-                        } else {
-                            JsValue::Undefined
-                        };
-                        self.stack.push(char_val);
-                    }
-                    _ => {
-                        self.stack.push(JsValue::Undefined);
-                    }
-                }
+                let value = self.get_element(&target, &key_val);
+                self.stack.push(value);
             }
 
             OpCode::GetProp(name) => {
@@ -1274,34 +1164,7 @@ impl VM {
                                 HeapData::Array(arr) => {
                                     if name == "length" {
                                         self.stack.push(JsValue::Number(arr.len() as f64));
-                                    } else if matches!(
-                                        name.as_str(),
-                                        "push"
-                                            | "pop"
-                                            | "shift"
-                                            | "unshift"
-                                            | "splice"
-                                            | "slice"
-                                            | "concat"
-                                            | "join"
-                                            | "indexOf"
-                                            | "lastIndexOf"
-                                            | "includes"
-                                            | "reverse"
-                                            | "fill"
-                                            | "at"
-                                            | "map"
-                                            | "filter"
-                                            | "forEach"
-                                            | "reduce"
-                                            | "find"
-                                            | "findIndex"
-                                            | "some"
-                                            | "every"
-                                            | "flat"
-                                            | "flatMap"
-                                            | "sort"
-                                    ) {
+                                    } else if element::is_array_method(&name) {
                                         // Array methods are handled by CallMethod;
                                         // return a function-typed value so typeof reports "function"
                                         self.stack.push(JsValue::NativeFunction(0));
@@ -1919,17 +1782,8 @@ impl VM {
                 let value = self.stack.pop().unwrap();
                 let array_ptr = self.stack.pop().unwrap();
 
-                if let (JsValue::Object(ptr), JsValue::Number(idx)) = (array_ptr, index_val)
-                    && let Some(HeapObject {
-                        data: HeapData::Array(arr),
-                    }) = self.heap.get_mut(ptr)
-                {
-                    let i = idx as usize;
-                    // Extend array if needed (JS semantics)
-                    if i >= arr.len() {
-                        arr.resize(i + 1, JsValue::Undefined);
-                    }
-                    arr[i] = value;
+                if let Err(e) = self.set_element(&array_ptr, &index_val, value) {
+                    return self.throw_exception(e);
                 }
             }
 
@@ -1945,56 +1799,8 @@ impl VM {
             OpCode::LoadElement => {
                 let index_val = self.stack.pop().expect("Missing index");
                 let target = self.stack.pop().expect("Missing target (array or String)");
-                match (target, index_val) {
-                    (JsValue::Object(ptr), JsValue::Number(idx)) => {
-                        if let Some(heap_obj) = self.heap.get(ptr)
-                            && let HeapData::Array(arr) = &heap_obj.data
-                        {
-                            let i = idx as usize;
-                            let val = arr.get(i).cloned().unwrap_or(JsValue::Undefined);
-                            self.stack.push(val);
-                        }
-                    }
-                    // Handle string index for arrays (needed for for...in loops)
-                    (JsValue::Object(ptr), JsValue::String(idx_str)) => {
-                        if let Some(heap_obj) = self.heap.get(ptr) {
-                            match &heap_obj.data {
-                                HeapData::Array(arr) => {
-                                    // Try to parse as number for array access
-                                    if let Ok(i) = idx_str.parse::<usize>() {
-                                        let val = arr.get(i).cloned().unwrap_or(JsValue::Undefined);
-                                        self.stack.push(val);
-                                    } else {
-                                        self.stack.push(JsValue::Undefined);
-                                    }
-                                }
-                                HeapData::Object(props) => {
-                                    // Object property access by string key
-                                    let val =
-                                        props.get(&idx_str).cloned().unwrap_or(JsValue::Undefined);
-                                    self.stack.push(val);
-                                }
-                                _ => {
-                                    self.stack.push(JsValue::Undefined);
-                                }
-                            }
-                        } else {
-                            self.stack.push(JsValue::Undefined);
-                        }
-                    }
-                    (JsValue::String(s), JsValue::Number(idx)) => {
-                        let i = idx as usize;
-                        let char_val = s
-                            .chars()
-                            .nth(i)
-                            .map(|c| JsValue::String(c.to_string()))
-                            .unwrap_or(JsValue::Undefined);
-                        self.stack.push(char_val);
-                    }
-                    _ => {
-                        self.stack.push(JsValue::Undefined);
-                    }
-                }
+                let value = self.get_element(&target, &index_val);
+                self.stack.push(value);
             }
 
             OpCode::ArrayPush => {
