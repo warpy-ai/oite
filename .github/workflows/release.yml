@@ -29,11 +29,13 @@ jobs:
         include:
           - target: x86_64-apple-darwin
             os: macos-latest
+            conda_platform: osx-64
             artifact_name: oitec
             asset_name: oitec-x86_64-apple-darwin
 
           - target: aarch64-apple-darwin
             os: macos-latest
+            conda_platform: osx-arm64
             artifact_name: oitec
             asset_name: oitec-aarch64-apple-darwin
 
@@ -70,26 +72,23 @@ jobs:
           sudo apt-get install -y llvm-18-dev libpolly-18-dev libzstd-dev
           echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
 
-      - name: Install LLVM 18 (macOS aarch64)
-        if: runner.os == 'macOS' && matrix.target == 'aarch64-apple-darwin'
+      - name: Install LLVM 18 (macOS)
+        if: runner.os == 'macOS'
         run: |
-          # Remove any pre-installed x86_64 LLVM that could interfere
-          sudo rm -rf /usr/local/opt/llvm@18 /usr/local/opt/llvm || true
-          brew install llvm@18 zstd
-          # Use explicit ARM Homebrew path
-          echo "LLVM_SYS_180_PREFIX=/opt/homebrew/opt/llvm@18" >> $GITHUB_ENV
-
-      - name: Install LLVM 18 (macOS x86_64 cross-compile)
-        if: runner.os == 'macOS' && matrix.target == 'x86_64-apple-darwin'
-        run: |
-          # llvm-sys needs an LLVM built for the *target* (x86_64), not for the arm64
-          # host. Homebrew no longer supports Intel macOS -- its installer aborts under
-          # `arch -x86_64` -- so the x86_64 LLVM 18 and zstd come from conda-forge's
-          # osx-64 channel, fetched by the host's (arm64) micromamba.
+          # The release binary must run on a Mac that has no Homebrew and no LLVM, so
+          # it may load nothing but what ships with macOS. Homebrew's llvm@18 cannot
+          # give that: its lib/ carries libunwind/libc++ dylibs whose install names
+          # point back into /opt/homebrew, and linking against it left oitec needing
+          # /opt/homebrew/opt/llvm@18/lib/libunwind.1.dylib at startup. Homebrew also
+          # no longer supports Intel macOS at all (its installer aborts under
+          # `arch -x86_64`), and llvm-sys needs an LLVM built for the *target*.
+          #
+          # So both macOS targets take LLVM 18 and zstd from conda-forge, for the
+          # target's platform, fetched by the host's micromamba.
           brew install micromamba
           export MAMBA_ROOT_PREFIX="$RUNNER_TEMP/mamba"
-          CONDA_ENV="$RUNNER_TEMP/conda-x86_64"
-          micromamba create -y -p "$CONDA_ENV" --platform osx-64 \
+          CONDA_ENV="$RUNNER_TEMP/conda-llvm"
+          micromamba create -y -p "$CONDA_ENV" --platform ${{ matrix.conda_platform }} \
             --override-channels -c conda-forge llvmdev=18.1.8 zstd-static=1.5.7
 
           # Link against a prefix holding only llvm-config, the headers and the static
@@ -98,28 +97,35 @@ jobs:
           # names are @rpath-relative: picked up by -lc++/-lz/-lxml2/-lzstd they would
           # leave oitec depending on libraries end-user machines do not have. With only
           # .a files here, zstd links statically and the rest resolve to the macOS SDK.
-          LLVM_PREFIX="$RUNNER_TEMP/llvm18-x86_64"
+          LLVM_PREFIX="$RUNNER_TEMP/llvm18"
           mkdir -p "$LLVM_PREFIX/bin" "$LLVM_PREFIX/lib"
           cp "$CONDA_ENV/bin/llvm-config" "$LLVM_PREFIX/bin/"
           cp -R "$CONDA_ENV/include" "$LLVM_PREFIX/include"
           cp "$CONDA_ENV"/lib/libLLVM*.a "$CONDA_ENV/lib/libzstd.a" "$LLVM_PREFIX/lib/"
 
-          # llvm-config is itself an x86_64 binary (run through Rosetta) that loads
-          # @rpath/libc++.1.dylib from ../lib. Only the versioned names are copied, so
-          # the linker's -lc++ lookup (libc++.dylib / libc++.a) still misses them.
+          # llvm-config (for x86_64, run through Rosetta) loads @rpath/libc++.1.dylib
+          # from ../lib. Only the versioned names are copied, so the linker's -lc++
+          # lookup (libc++.dylib / libc++.a) still misses them.
           for lib in libc++.1.dylib libc++abi.1.dylib; do
             if [ -e "$CONDA_ENV/lib/$lib" ]; then
               cp -L "$CONDA_ENV/lib/$lib" "$LLVM_PREFIX/lib/"
             fi
           done
 
-          # Verify: llvm-config runs, and the archives are x86_64
+          # Verify: llvm-config runs, and the archives are for the target
           "$LLVM_PREFIX/bin/llvm-config" --version
           "$LLVM_PREFIX/bin/llvm-config" --link-static --system-libs
           lipo -info "$LLVM_PREFIX/lib/libLLVMCore.a" "$LLVM_PREFIX/lib/libzstd.a"
 
+          # .cargo/config.toml puts /opt/homebrew/opt/zstd/lib first on the linker search
+          # path. A libzstd.dylib there wins over the static archive: on arm64 it becomes
+          # a runtime dependency on Homebrew, and for x86_64 ld skips it for its
+          # architecture and then never reaches libzstd.a. Take it away (after
+          # micromamba, which may itself load it, has finished).
+          sudo rm -rf /opt/homebrew/opt/zstd
+
           echo "LLVM_SYS_180_PREFIX=$LLVM_PREFIX" >> "$GITHUB_ENV"
-          rustup target add x86_64-apple-darwin
+          echo "LIBRARY_PATH=$LLVM_PREFIX/lib" >> "$GITHUB_ENV"
 
           # Note: the linker stays Apple's clang (rustc's default `cc`). It links x86_64
           # from an arm64 host natively (rustc passes -arch x86_64) and locates the macOS
@@ -141,67 +147,52 @@ jobs:
           # Clean any cached artifacts that might have wrong architecture
           cargo clean
 
-          # .cargo/config.toml puts /opt/homebrew/opt/zstd/lib first on the linker search
-          # path. ld stops at the arm64 libzstd.dylib it finds there, ignores it for its
-          # architecture, and never reaches the x86_64 libzstd.a -- so take it away.
-          sudo rm -rf /opt/homebrew/opt/zstd
-
           export MACOSX_DEPLOYMENT_TARGET=14.0
 
           # Link with Apple's clang (rustc's default `cc`). It cross-links x86_64 from an
           # arm64 host and finds the SDK by itself. The only library directory it is
-          # pointed at is the x86_64 LLVM prefix, which holds static archives only
-          # (LLVM and libzstd.a), so the binary gets no runtime dependency on
-          # libzstd.1.dylib or any other non-system library.
+          # pointed at is the x86_64 LLVM prefix, which holds static archives only.
           LLVM_LIB="$LLVM_SYS_180_PREFIX/lib"
-          export LIBRARY_PATH="$LLVM_LIB"
           export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-arch -C link-arg=x86_64 -C link-arg=-L$LLVM_LIB -C link-arg=-mmacosx-version-min=14.0"
 
           cargo build --release --target ${{ matrix.target }}
 
-          # Everything the binary loads must ship with macOS.
-          BIN=target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
-          lipo -info "$BIN"
-          otool -L "$BIN"
-          if otool -L "$BIN" | tail -n +2 | grep -v -E '^[[:space:]]+(/usr/lib/|/System/Library/)'; then
-            echo "ERROR: binary depends on a non-system library" >&2
-            exit 1
-          fi
-
       - name: Build release binary
-        if: matrix.target != 'x86_64-apple-darwin' && matrix.target != 'aarch64-apple-darwin'
+        if: matrix.target != 'x86_64-apple-darwin'
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Run tests
         if: matrix.target != 'x86_64-apple-darwin'
         run: cargo test --release --target ${{ matrix.target }}
 
-      - name: Force static libzstd (macOS aarch64)
-        if: matrix.target == 'aarch64-apple-darwin'
-        run: |
-          # llvm-sys links zstd via `-lzstd`; macOS ld prefers libzstd.dylib over
-          # libzstd.a when both are present, baking a dependency on the Homebrew path
-          # /opt/homebrew/opt/zstd/lib/libzstd.1.dylib that is absent on end-user
-          # machines. llvm-config itself loads libzstd at runtime, so the dylib must
-          # stay until after the build/test phase; only then can we remove it and
-          # relink the final binary so ld falls back to the static libzstd.a.
-          sudo rm -f /opt/homebrew/opt/zstd/lib/libzstd*.dylib /opt/homebrew/lib/libzstd*.dylib
-          touch src/main.rs
-          cargo build --release --target ${{ matrix.target }}
-
       - name: Strip binary (Linux)
         if: runner.os == 'Linux'
         run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
 
-      - name: Verify no dynamic zstd dependency (macOS)
+      - name: Verify the binary is self-contained (macOS)
         if: runner.os == 'macOS'
         run: |
-          if otool -L target/${{ matrix.target }}/release/${{ matrix.artifact_name }} | grep -q libzstd; then
-            echo "ERROR: binary still dynamically links to libzstd" >&2
-            otool -L target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          # Everything oitec loads must ship with macOS: a dependency on Homebrew, conda
+          # or any other build-machine path aborts at startup on an end-user Mac.
+          BIN=target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          lipo -info "$BIN"
+          otool -L "$BIN"
+          if otool -L "$BIN" | tail -n +2 | grep -v -E '^[[:space:]]+(/usr/lib/|/System/Library/)'; then
+            echo "ERROR: binary depends on a non-system library (listed above)" >&2
             exit 1
           fi
-          echo "OK: no dynamic zstd dependency"
+          echo "OK: only system libraries"
+
+          # And it must actually start (x86_64 runs through Rosetta). oitec has no
+          # --version flag, so only the loader's verdict counts: a dyld failure aborts
+          # with a signal (status >= 126), an ordinary usage error exits with 1 or 2.
+          status=0
+          "$BIN" --version || status=$?
+          if [ "$status" -ge 126 ]; then
+            echo "ERROR: oitec failed to start (exit status $status)" >&2
+            exit 1
+          fi
+          echo "OK: oitec starts (exit status $status)"
 
       - name: Strip binary (macOS)
         if: runner.os == 'macOS'
