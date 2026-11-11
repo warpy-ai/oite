@@ -329,7 +329,12 @@ impl Fx<'_> {
                             Some(e) => self.get(e)?,
                             None => undefined,
                         };
-                        if let Some(r) = self.call_fast(&format!("func_{}", addr), &vals, env) {
+                        let name = format!("func_{}", addr);
+                        let proved: Vec<IrType> = args
+                            .iter()
+                            .map(|a| self.types.get(a).cloned().unwrap_or(IrType::Any))
+                            .collect();
+                        if let Some(r) = self.call_fast(&name, &vals, &proved, env) {
                             self.set(*d, r);
                             return Ok(());
                         }
@@ -501,7 +506,10 @@ impl Fx<'_> {
                 }
                 IrOp::CheckType(d, src, kinds) => {
                     let v = self.get(*src)?;
-                    let r = self.check_type(v, *kinds);
+                    let r = match self.trusted.contains(d) {
+                        true => v,
+                        false => self.check_type(v, *kinds),
+                    };
                     self.set(*d, r);
                 }
                 IrOp::Intrinsic(d, id, args) => {

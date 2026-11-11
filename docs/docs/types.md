@@ -322,12 +322,34 @@ Native `--release`, best of 5, before and after:
 The other benchmarks do not change (their calls were already inlined, or
 they do not call).
 
-One case gets slower, in strict mode only: typed `calls` goes from 47 ms
-to 66 ms, with the same number of instructions (460 M before, 440 M
-after). Its loop inlines `add` together with `add`'s parameter checks,
-and the code LLVM now produces for that loop is slower for a reason not
-identified. The second part of this step removes those checks from such
-a call (the caller has proved the types), which removes the cause.
+#### Typed entries (step 6, second part)
+
+With `--strict-types`, a function that checks a parameter against
+`number`, `boolean` or `string` before it does anything else also gets a
+**typed entry**: its fast entry without those checks. A direct call uses
+it when every such parameter is passed a value the IR already knows has
+the type (a literal, a typed variable, the result of arithmetic). Any
+other call, and every call through a function value, uses an entry that
+checks. A parameter with a union or object type, and one with a default
+value, is always checked by the function.
+
+IR type inference also visits every block now. It used to stop after the
+entry block when that block learned nothing new, which left the values
+defined in later blocks without a type.
+
+Typed programs, native `--release --strict-types`, best of 5, before
+step 6 and now:
+
+| Benchmark | Before step 6 | Now | Bun |
+| --------- | ------------: | --: | --: |
+| `calls` | 50 ms | 41 ms | 19 ms |
+| `fib(38)` | 357 ms (6.77 G instructions) | about 265 ms (3.29 G) | about 220 ms |
+| `loop_local` | 493 ms | 445 ms | 1,758 ms |
+| `nbody` | 484 ms | 383 ms | 93 ms |
+
+Between the two parts, typed `calls` was slower (66 ms): the first part
+alone made LLVM produce a slower loop around the inlined parameter
+checks. The typed entry removes those checks from that call.
 
 ### 6. Speed for code without annotations
 
@@ -436,9 +458,11 @@ Each step is one pull request, with tests on vm, jit and aot.
    already stored as its own bits, so there was no box to remove: the
    cost was the tests.
 6. **Typed entries and direct typed calls.** Done: a fast entry with
-   the arguments in registers, for every direct call, typed or not (see
-   "Direct calls today" in section 5). Still to do: an entry that skips
-   the parameter checks when the caller has proved the argument types.
+   the arguments in registers, for every direct call, typed or not, and
+   behind `--strict-types` a typed entry that skips the parameter checks
+   the caller has proved (see "Direct calls today" and "Typed entries" in
+   section 5). In the LLVM backend; the JIT still passes an argument
+   array.
 7. **Specialisation** of unannotated functions.
 8. **Class field layout and typed field access** (section 7), then
    direct method calls and inlining.
