@@ -81,7 +81,7 @@ fn setup_promise(vm: &mut VM) {
     let reject_idx = vm.register_native(native_promise_reject);
     let all_idx = vm.register_native(native_promise_all);
     let race_idx = vm.register_native(native_promise_race);
-    let mut props = std::collections::HashMap::new();
+    let mut props = crate::vm::value::PropMap::new();
     props.insert("__type__".to_string(), JsValue::String("Promise".into()));
     props.insert("resolve".to_string(), JsValue::NativeFunction(resolve_idx));
     props.insert("reject".to_string(), JsValue::NativeFunction(reject_idx));
@@ -100,7 +100,7 @@ fn setup_console(vm: &mut VM) {
     let log_idx = vm.register_native(crate::stdlib::native_log);
     let error_idx = vm.register_native(crate::stdlib::native_error);
     let console_ptr = vm.heap.len();
-    let mut console_props = std::collections::HashMap::new();
+    let mut console_props = crate::vm::value::PropMap::new();
     console_props.insert("log".to_string(), JsValue::NativeFunction(log_idx));
     console_props.insert("error".to_string(), JsValue::NativeFunction(error_idx));
     vm.heap.push(HeapObject {
@@ -129,7 +129,7 @@ fn setup_bytestream(vm: &mut VM) {
     let to_array_idx = vm.register_native(native_byte_stream_to_array);
 
     let byte_stream_ptr = vm.heap.len();
-    let mut byte_stream_props = std::collections::HashMap::new();
+    let mut byte_stream_props = crate::vm::value::PropMap::new();
     byte_stream_props.insert(
         "create".to_string(),
         JsValue::NativeFunction(create_byte_stream_idx),
@@ -178,7 +178,7 @@ fn setup_string(vm: &mut VM) {
 
     // Create String as an object with methods
     let string_ptr = vm.heap.len();
-    let mut string_props = std::collections::HashMap::new();
+    let mut string_props = crate::vm::value::PropMap::new();
     string_props.insert(
         "fromCharCode".to_string(),
         JsValue::NativeFunction(string_from_char_code_idx),
@@ -219,7 +219,7 @@ fn setup_fs(vm: &mut VM) {
     let fs_stat_sync_idx = vm.register_native(native_stat_sync);
 
     let fs_ptr = vm.heap.len();
-    let mut fs_props = std::collections::HashMap::new();
+    let mut fs_props = crate::vm::value::PropMap::new();
     fs_props.insert(
         "readFileSync".to_string(),
         JsValue::NativeFunction(fs_read_file_idx),
@@ -267,7 +267,7 @@ fn setup_json(vm: &mut VM) {
     let parse_idx = vm.register_native(native_json_parse);
 
     let json_ptr = vm.heap.len();
-    let mut json_props = std::collections::HashMap::new();
+    let mut json_props = crate::vm::value::PropMap::new();
     json_props.insert(
         "stringify".to_string(),
         JsValue::NativeFunction(stringify_idx),
@@ -295,7 +295,7 @@ fn setup_globals(vm: &mut VM) {
 fn setup_map_set(vm: &mut VM) {
     // Create Map constructor object
     let map_ptr = vm.heap.len();
-    let mut map_props = std::collections::HashMap::new();
+    let mut map_props = crate::vm::value::PropMap::new();
     // Mark this as a Map constructor for detection in Construct opcode
     map_props.insert("__type__".to_string(), JsValue::String("Map".to_string()));
     vm.heap.push(HeapObject {
@@ -307,7 +307,7 @@ fn setup_map_set(vm: &mut VM) {
 
     // Create Set constructor object
     let set_ptr = vm.heap.len();
-    let mut set_props = std::collections::HashMap::new();
+    let mut set_props = crate::vm::value::PropMap::new();
     // Mark this as a Set constructor for detection in Construct opcode
     set_props.insert("__type__".to_string(), JsValue::String("Set".to_string()));
     vm.heap.push(HeapObject {
@@ -364,7 +364,7 @@ fn setup_process(vm: &mut VM) {
 
     // Create process.env object with get/set methods
     let env_ptr = vm.heap.len();
-    let mut env_props = std::collections::HashMap::new();
+    let mut env_props = crate::vm::value::PropMap::new();
     env_props.insert("get".to_string(), JsValue::NativeFunction(getenv_idx));
     env_props.insert("set".to_string(), JsValue::NativeFunction(setenv_idx));
     vm.heap.push(HeapObject {
@@ -373,7 +373,7 @@ fn setup_process(vm: &mut VM) {
 
     // Create process.stdin object
     let stdin_ptr = vm.heap.len();
-    let mut stdin_props = std::collections::HashMap::new();
+    let mut stdin_props = crate::vm::value::PropMap::new();
     stdin_props.insert(
         "readLine".to_string(),
         JsValue::NativeFunction(stdin_read_line_idx),
@@ -388,7 +388,7 @@ fn setup_process(vm: &mut VM) {
 
     // Create process.stdout object
     let stdout_ptr = vm.heap.len();
-    let mut stdout_props = std::collections::HashMap::new();
+    let mut stdout_props = crate::vm::value::PropMap::new();
     stdout_props.insert(
         "write".to_string(),
         JsValue::NativeFunction(stdout_write_idx),
@@ -405,7 +405,7 @@ fn setup_process(vm: &mut VM) {
 
     // Create process object
     let process_ptr = vm.heap.len();
-    let mut process_props = std::collections::HashMap::new();
+    let mut process_props = crate::vm::value::PropMap::new();
     process_props.insert("env".to_string(), JsValue::Object(env_ptr));
     process_props.insert("stdin".to_string(), JsValue::Object(stdin_ptr));
     process_props.insert("stdout".to_string(), JsValue::Object(stdout_ptr));
@@ -452,7 +452,7 @@ fn setup_object(vm: &mut VM) {
 
     // Create Object global with keys method
     let object_ptr = vm.heap.len();
-    let mut object_props = std::collections::HashMap::new();
+    let mut object_props = crate::vm::value::PropMap::new();
     object_props.insert("keys".to_string(), JsValue::NativeFunction(keys_idx));
     vm.heap.push(HeapObject {
         data: HeapData::Object(object_props),
@@ -504,7 +504,7 @@ fn setup_math_date(vm: &mut VM) {
     ];
     debug_assert_eq!(fns.len(), MATH_FUNCTIONS.len());
 
-    let mut math = std::collections::HashMap::new();
+    let mut math = crate::vm::value::PropMap::new();
     for (name, f) in fns {
         let idx = vm.register_native(f);
         math.insert(name.to_string(), JsValue::NativeFunction(idx));
@@ -518,7 +518,7 @@ fn setup_math_date(vm: &mut VM) {
     });
 
     let now_idx = vm.register_native(|_vm, _args| JsValue::Number(date_now()));
-    let mut date = std::collections::HashMap::new();
+    let mut date = crate::vm::value::PropMap::new();
     date.insert("now".to_string(), JsValue::NativeFunction(now_idx));
     let date_ptr = vm.heap.len();
     vm.heap.push(HeapObject {

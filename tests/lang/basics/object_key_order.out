@@ -1,0 +1,13 @@
+a,b,c
+zebra,apple,mango,Banana,_x
+z,y,x,w
+z,y,x,w 40
+one,three,four
+one,three,four,two
+zebra,apple,mango,Banana,_x
+first,zebra,apple,mango,Banana,_x,last 20
+qwertyuioplkjhgfdsa
+y,x,label
+{ a: 1, b: 2, c: 3 }
+{ zebra: 1, apple: 2, mango: 3, Banana: 4, _x: 5 }
+{ one: 1, three: 3, four: 4, two: 22 }
