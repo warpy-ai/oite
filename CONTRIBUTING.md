@@ -37,7 +37,7 @@ The `.out` / `.err` files define correct behaviour. No backend is the
 reference, including the VM. A backend that cannot run a construct correctly
 must fail with an error. It must never approximate.
 
-- In `src/ir/lower.rs`, an opcode the native backends do not implement returns
+- In `src/ir/lower/`, an opcode the native backends do not implement returns
   `LowerError::NotSupportedNatively`. Do not lower it to a no-op or to
   `undefined`.
 - The `// backends: vm jit aot` directive at the top of a test runs it on

@@ -477,7 +477,7 @@ Oite/
 │   │   └── borrow_ck.rs          # Borrow checker
 │   ├── ir/
 │   │   ├── mod.rs                # SSA IR types
-│   │   ├── lower.rs              # Bytecode → IR
+│   │   ├── lower/                # Bytecode → IR
 │   │   ├── typecheck.rs          # Type inference
 │   │   ├── verify.rs             # Validation
 │   │   ├── opt.rs                # Optimizations
