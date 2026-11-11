@@ -1,0 +1,7 @@
+// backends: vm
+// (JSON is not available in native code yet.)
+// JSON.stringify writes properties in insertion order.
+let mixed = { zebra: 1, apple: 2, mango: 3, Banana: 4, _x: 5 };
+mixed.added = 6;
+console.log(JSON.stringify(mixed));
+console.log(JSON.stringify({ nested: { c: 1, a: 2, b: 3 }, list: [{ y: 1, x: 2 }] }));

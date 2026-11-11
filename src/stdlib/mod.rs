@@ -51,10 +51,8 @@ const INSPECT_DEPTH: usize = 2;
 /// Human-readable rendering of a value, in the style of Node's
 /// `util.inspect`: `[ 1, 2, 3 ]`, `{ x: 1, y: 's' }`, `[Circular]`.
 ///
-/// Object keys are printed in sorted order: objects are stored in a hash
-/// map, so insertion order is not available, and sorting keeps output
-/// deterministic. Keys starting with `__` are internal (`__proto__`,
-/// `__type__`) and are not shown.
+/// Object keys are printed in insertion order. Keys starting with `__`
+/// are internal (`__proto__`, `__type__`) and are not shown.
 pub fn inspect(vm: &VM, value: &JsValue) -> String {
     let mut seen = Vec::new();
     inspect_inner(vm, value, 0, &mut seen)
@@ -119,11 +117,10 @@ fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) 
                 HeapData::Object(props) if vm.is_error(*ptr) => {
                     // `TypeError: message`, then any other own properties.
                     let summary = vm.error_summary(*ptr);
-                    let mut keys: Vec<&String> = props
+                    let keys: Vec<&String> = props
                         .keys()
                         .filter(|k| !is_hidden_key(k) && *k != "message")
                         .collect();
-                    keys.sort();
                     if keys.is_empty() || too_deep {
                         summary
                     } else {
@@ -137,9 +134,7 @@ fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) 
                     }
                 }
                 HeapData::Object(props) => {
-                    let mut keys: Vec<&String> =
-                        props.keys().filter(|k| !is_hidden_key(k)).collect();
-                    keys.sort();
+                    let keys: Vec<&String> = props.keys().filter(|k| !is_hidden_key(k)).collect();
                     if keys.is_empty() {
                         "{}".to_string()
                     } else if too_deep {
@@ -330,7 +325,7 @@ pub fn native_stat_sync(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     if let Some(JsValue::String(path)) = args.first() {
         match std::fs::metadata(path) {
             Ok(metadata) => {
-                let mut stat_props = std::collections::HashMap::new();
+                let mut stat_props = crate::vm::value::PropMap::new();
 
                 let (is_dir_fn, is_file_fn) = if metadata.is_dir() {
                     (
@@ -666,7 +661,7 @@ fn json_stringify_value(vm: &VM, value: &JsValue, indent: usize, pretty: bool) -
                         if props.is_empty() {
                             "{}".to_string()
                         } else {
-                            let mut items: Vec<String> = props
+                            let items: Vec<String> = props
                                 .iter()
                                 .map(|(k, v)| {
                                     format!(
@@ -678,7 +673,6 @@ fn json_stringify_value(vm: &VM, value: &JsValue, indent: usize, pretty: bool) -
                                     )
                                 })
                                 .collect();
-                            items.sort(); // Sort for consistent output
                             format!(
                                 "{{{}{}{}{}}}",
                                 newline,
@@ -817,7 +811,7 @@ pub fn native_exec(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
             let exit_code = result.status.code().unwrap_or(-1);
 
             // Create result object
-            let mut response = std::collections::HashMap::new();
+            let mut response = crate::vm::value::PropMap::new();
             response.insert("exitCode".to_string(), JsValue::Number(exit_code as f64));
             response.insert("stdout".to_string(), JsValue::String(stdout));
             response.insert("stderr".to_string(), JsValue::String(stderr));
@@ -833,7 +827,7 @@ pub fn native_exec(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
 }
 
 fn create_exec_error(vm: &mut VM, message: &str) -> JsValue {
-    let mut response = std::collections::HashMap::new();
+    let mut response = crate::vm::value::PropMap::new();
     response.insert("exitCode".to_string(), JsValue::Number(-1.0));
     response.insert("stdout".to_string(), JsValue::String("".to_string()));
     response.insert("stderr".to_string(), JsValue::String(message.to_string()));
@@ -917,7 +911,7 @@ pub fn native_fetch(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
             let status_text = resp.status_text().to_string();
 
             // Collect response headers
-            let mut resp_headers = std::collections::HashMap::new();
+            let mut resp_headers = crate::vm::value::PropMap::new();
             for name in resp.headers_names() {
                 if let Some(value) = resp.header(&name) {
                     resp_headers.insert(name.to_lowercase(), JsValue::String(value.to_string()));
@@ -932,7 +926,7 @@ pub fn native_fetch(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
         }
         Err(ureq::Error::Status(code, resp)) => {
             let status_text = resp.status_text().to_string();
-            let mut resp_headers = std::collections::HashMap::new();
+            let mut resp_headers = crate::vm::value::PropMap::new();
             for name in resp.headers_names() {
                 if let Some(value) = resp.header(&name) {
                     resp_headers.insert(name.to_lowercase(), JsValue::String(value.to_string()));
@@ -949,7 +943,7 @@ fn create_fetch_response(
     vm: &mut VM,
     status: u16,
     status_text: &str,
-    headers: std::collections::HashMap<String, JsValue>,
+    headers: crate::vm::value::PropMap,
     body: &str,
     _redirected: bool,
 ) -> JsValue {
@@ -960,7 +954,7 @@ fn create_fetch_response(
     });
 
     // Create response object
-    let mut response = std::collections::HashMap::new();
+    let mut response = crate::vm::value::PropMap::new();
     response.insert("status".to_string(), JsValue::Number(status as f64));
     response.insert(
         "statusText".to_string(),
@@ -982,7 +976,7 @@ fn create_fetch_response(
 }
 
 fn create_fetch_error(vm: &mut VM, message: &str) -> JsValue {
-    let mut response = std::collections::HashMap::new();
+    let mut response = crate::vm::value::PropMap::new();
     response.insert("status".to_string(), JsValue::Number(0.0));
     response.insert("statusText".to_string(), JsValue::String("".to_string()));
     response.insert("ok".to_string(), JsValue::Boolean(false));

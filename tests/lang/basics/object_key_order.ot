@@ -1,0 +1,63 @@
+// backends: vm jit aot
+// Own properties are kept in insertion order, wherever the order shows.
+
+// Object.keys of a literal.
+let plain = { a: 1, b: 2, c: 3 };
+console.log(Object.keys(plain).join(","));
+
+// Keys that do not sort the way they were written.
+let mixed = { zebra: 1, apple: 2, mango: 3, Banana: 4, _x: 5 };
+console.log(Object.keys(mixed).join(","));
+
+// Properties added after the literal go last, in the order they were added.
+let grown = { z: 1 };
+grown.y = 2;
+grown["x"] = 3;
+grown.w = 4;
+console.log(Object.keys(grown).join(","));
+
+// Writing to an existing property keeps its place.
+grown.z = 10;
+grown.x = 30;
+console.log(Object.keys(grown).join(","), grown.z + grown.x);
+
+// A deleted property that is added again goes last.
+let edited = { one: 1, two: 2, three: 3, four: 4 };
+delete edited.two;
+console.log(Object.keys(edited).join(","));
+edited.two = 22;
+console.log(Object.keys(edited).join(","));
+
+// for...in
+let seen = [];
+for (let key in mixed) {
+  seen.push(key);
+}
+console.log(seen.join(","));
+
+// Spread keeps the order of each source; a repeated key keeps its first place.
+let spread = { first: 0, ...mixed, last: 9, apple: 20 };
+console.log(Object.keys(spread).join(","), spread.apple);
+
+// Many properties.
+let big = {};
+let names = ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "l", "k", "j", "h", "g", "f", "d", "s", "a"];
+for (let i = 0; i < names.length; i++) {
+  big[names[i]] = i;
+}
+console.log(Object.keys(big).join(""));
+
+// Class instances: fields in the order the constructor assigns them.
+class Point {
+  constructor() {
+    this.y = 2;
+    this.x = 1;
+    this.label = "p";
+  }
+}
+console.log(Object.keys(new Point()).join(","));
+
+// console.log of an object.
+console.log(plain);
+console.log(mixed);
+console.log(edited);

@@ -21,6 +21,7 @@ pub use crate::vm::value::JsValue;
 pub use crate::vm::value::NativeFn;
 pub use crate::vm::value::Promise;
 pub use crate::vm::value::PromiseState;
+pub use crate::vm::value::PropMap;
 pub use sha2::Digest;
 pub use std::collections::{HashMap, VecDeque};
 pub use std::fs;
@@ -31,9 +32,9 @@ pub use swc_ecma_parser::{Parser, Syntax, TsSyntax, lexer::Lexer};
 pub use tokio::runtime::Runtime;
 pub use tokio::sync::mpsc;
 
-/// Parse module source and extract exports as a HashMap
-fn parse_module_exports(source: &str, file_name: &str) -> HashMap<String, JsValue> {
-    let mut exports = HashMap::new();
+/// Parse module source and extract exports, in source order
+fn parse_module_exports(source: &str, file_name: &str) -> PropMap {
+    let mut exports = PropMap::new();
 
     let cm: swc_common::SourceMap = Default::default();
     let fm = cm.new_source_file(
@@ -434,7 +435,7 @@ impl VM {
         source: &str,
         path: &Path,
         export_names: &[String],
-    ) -> Result<HashMap<String, JsValue>, String> {
+    ) -> Result<PropMap, String> {
         let syntax = if path.to_string_lossy().ends_with(".ts")
             || path.to_string_lossy().ends_with(".tsx")
         {
@@ -501,7 +502,7 @@ impl VM {
         // Restore stack to prevent module execution from corrupting caller's stack
         self.stack = saved_stack;
 
-        let mut exports = HashMap::new();
+        let mut exports = PropMap::new();
         let global_locals = &self.call_stack[0].locals;
 
         for name in export_names {
@@ -1017,7 +1018,7 @@ impl VM {
             OpCode::NewObject => {
                 let ptr = self.heap.len();
                 self.heap.push(HeapObject {
-                    data: HeapData::Object(HashMap::new()),
+                    data: HeapData::Object(PropMap::new()),
                 });
                 self.stack.push(JsValue::Object(ptr));
             }
@@ -1030,7 +1031,7 @@ impl VM {
                     .expect("NewObjectWithProto: missing prototype");
                 let ptr = self.heap.len();
                 self.heap.push(HeapObject {
-                    data: HeapData::Object(HashMap::new()),
+                    data: HeapData::Object(PropMap::new()),
                 });
 
                 // Set the prototype
@@ -1552,7 +1553,7 @@ impl VM {
                 if let JsValue::Object(obj_id) = obj_val {
                     if obj_id < self.heap.len() {
                         if let HeapData::Object(ref mut props) = self.heap[obj_id].data {
-                            props.remove(prop_name);
+                            props.shift_remove(prop_name);
                             self.stack.push(JsValue::Boolean(true));
                         } else {
                             self.stack.push(JsValue::Boolean(false));
@@ -2004,7 +2005,7 @@ impl VM {
                 let this_ptr = self.heap.len();
                 let this_obj = JsValue::Object(this_ptr);
                 self.heap.push(HeapObject {
-                    data: HeapData::Object(HashMap::new()),
+                    data: HeapData::Object(PropMap::new()),
                 });
 
                 // Set prototype if we have one
@@ -3057,7 +3058,7 @@ impl VM {
                             let exports =
                                 parse_module_exports(&source, &canonical_path.to_string_lossy());
                             let export_names: Vec<String> = exports.keys().cloned().collect();
-                            let mut namespace_props = HashMap::new();
+                            let mut namespace_props = PropMap::new();
                             namespace_props.insert(
                                 "__path__".to_string(),
                                 JsValue::String(canonical_path.to_string_lossy().into_owned()),
@@ -3214,7 +3215,7 @@ impl VM {
                         {
                             props.clone()
                         } else {
-                            HashMap::new()
+                            PropMap::new()
                         }
                     }
                     Some(_) => {

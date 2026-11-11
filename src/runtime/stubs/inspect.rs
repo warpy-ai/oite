@@ -12,8 +12,8 @@ pub(super) const INSPECT_DEPTH: usize = 2;
 /// Human-readable rendering of a value, in the style of Node's
 /// `util.inspect`. Must stay identical to `stdlib::inspect` in the VM, so
 /// `console.log` prints the same on every backend: `[ 1, 2, 3 ]`,
-/// `{ x: 1, y: 's' }`, `[Circular]`. Object keys are sorted, and keys
-/// starting with `__` are internal and hidden.
+/// `{ x: 1, y: 's' }`, `[Circular]`. Object keys are in insertion
+/// order, and keys starting with `__` are internal and hidden.
 pub fn inspect(v: OtValue) -> String {
     let mut seen = Vec::new();
     inspect_inner(v, 0, &mut seen)
@@ -73,7 +73,6 @@ pub(super) fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> 
                 let summary = error_summary(ptr);
                 let mut keys = visible_data(ptr);
                 keys.retain(|(k, _)| *k != "message");
-                keys.sort_by(|a, b| a.0.cmp(b.0));
                 if keys.is_empty() || too_deep {
                     summary
                 } else {
@@ -87,8 +86,7 @@ pub(super) fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> 
                     format!("{} {{ {} }}", summary, parts.join(", "))
                 }
             } else {
-                let mut keys = visible_data(ptr);
-                keys.sort_by(|a, b| a.0.cmp(b.0));
+                let keys = visible_data(ptr);
                 if keys.is_empty() {
                     "{}".to_string()
                 } else if too_deep {

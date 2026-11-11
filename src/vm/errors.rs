@@ -9,8 +9,6 @@
 //! With `OITE_DEBUG_THROW=1` the report also lists the bytecode around the
 //! throw.
 
-use std::collections::HashMap;
-
 use super::value::{HeapData, HeapObject, JsValue};
 use super::{ExecResult, VM};
 
@@ -46,7 +44,7 @@ impl VM {
         let Some(proto) = self.class_prototype(kind) else {
             return JsValue::String(format!("{kind}: {message}"));
         };
-        let mut props = HashMap::new();
+        let mut props = crate::vm::value::PropMap::new();
         props.insert("message".to_string(), JsValue::String(message));
         props.insert("__proto__".to_string(), JsValue::Object(proto));
         let ptr = self.heap.len();

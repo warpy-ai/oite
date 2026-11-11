@@ -16,7 +16,6 @@ function find(xs, want) {
   return () => "none";
 }
 console.log(find([1, 2, 3], 2)(), find([1], 5)());
-// (One key: the VM's property order is not insertion order yet.)
 let keys = [];
 for (let k in { only: 1 }) { keys.push(() => k); }
 console.log(keys.length, keys[0]());

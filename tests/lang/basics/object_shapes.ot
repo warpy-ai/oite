@@ -1,5 +1,6 @@
 // backends: jit aot
-// (The VM does not keep properties in insertion order.)
+// (The VM gets the setter-on-the-prototype case below wrong; key order on
+// the VM is covered by object_key_order.ot.)
 // Object literals are allocated in their final shape, stores that add a
 // property are done in compiled code, and class instances are allocated
 // with room for their fields. None of it may change what a program sees.
