@@ -1,0 +1,23 @@
+// What a module imports has the types its module declares.
+import { Box, scale, label, LIMIT, loose } from "./_lib/shapes.ot";
+import type { Size, Unit } from "./_lib/shapes.ot";
+import * as shapes from "./_lib/shapes.ot";
+
+let b: Box = new Box(2, 3);
+let bigger: Box = scale(b, 2);
+let area: number = bigger.area();
+let text: string = label(area, "px");
+let limit: number = LIMIT;
+let anything: string = loose;
+
+scale(b, "2");
+scale(5, 2);
+let notBox: string = scale(b, 2);
+label(1, "pt");
+new Box("2", 3);
+let limitText: string = LIMIT;
+let size: Size = { width: 1, height: "2" };
+let unit: Unit = "cm";
+let viaNamespace: string = shapes.scale(b, 2);
+shapes.label("1", "px");
+let unknownExport: number = shapes.missing;

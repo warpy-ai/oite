@@ -192,7 +192,10 @@ impl Checker {
             "boolean" => matches!(m, Ty::Boolean),
             "undefined" => matches!(m, Ty::Undefined | Ty::Void),
             "function" => matches!(m, Ty::Function(_) | Ty::ClassValue(_)),
-            "object" => matches!(m, Ty::Null | Ty::Array(_) | Ty::Object(_) | Ty::Named(_)),
+            "object" => matches!(
+                m,
+                Ty::Null | Ty::Array(_) | Ty::Tuple(_) | Ty::Object(_) | Ty::Named(_)
+            ),
             _ => false,
         };
         // A member whose kind is not known stays on both sides.
@@ -276,11 +279,13 @@ impl Checker {
         Facts {
             then: Self::fact(
                 subject,
-                self.filtered(&current, |m| matches!(m, Ty::Array(_)) || m.is_dynamic()),
+                self.filtered(&current, |m| {
+                    matches!(m, Ty::Array(_) | Ty::Tuple(_)) || m.is_dynamic()
+                }),
             ),
             otherwise: Self::fact(
                 subject,
-                self.filtered(&current, |m| !matches!(m, Ty::Array(_))),
+                self.filtered(&current, |m| !matches!(m, Ty::Array(_) | Ty::Tuple(_))),
             ),
         }
     }
@@ -299,7 +304,12 @@ impl Checker {
         let always_truthy = |m: &Ty| {
             matches!(
                 m,
-                Ty::Array(_) | Ty::Object(_) | Ty::Named(_) | Ty::Function(_) | Ty::ClassValue(_)
+                Ty::Array(_)
+                    | Ty::Tuple(_)
+                    | Ty::Object(_)
+                    | Ty::Named(_)
+                    | Ty::Function(_)
+                    | Ty::ClassValue(_)
             )
         };
         Facts {

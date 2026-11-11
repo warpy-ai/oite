@@ -24,6 +24,8 @@ pub enum Ty {
     /// A string literal type, `"a"`.
     StrLit(Rc<str>),
     Array(Rc<Ty>),
+    /// `[A, B]`: an array with these elements, in order.
+    Tuple(Rc<[Ty]>),
     /// An object type written out: `{ x: number; y?: string }`.
     Object(Rc<ObjTy>),
     /// An interface, a type alias, or an instance of a class.
@@ -154,6 +156,12 @@ impl Ty {
         matches!(self, Ty::Null | Ty::Undefined | Ty::Void)
     }
 
+    /// The elements of a tuple as one type: what an element at an
+    /// unknown position is.
+    pub fn tuple_element(elems: &[Ty]) -> Ty {
+        Ty::union(elems.iter().cloned())
+    }
+
     /// The type of a literal as a variable holds it: `"a"` is a `string`.
     pub fn widened(&self) -> Ty {
         match self {
@@ -191,6 +199,16 @@ impl fmt::Display for Show<'_> {
                 Ty::Union(_) | Ty::Function(_) => write!(f, "({})[]", show(elem)),
                 _ => write!(f, "{}[]", show(elem)),
             },
+            Ty::Tuple(elems) => {
+                write!(f, "[")?;
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", show(e))?;
+                }
+                write!(f, "]")
+            }
             Ty::Object(obj) => {
                 if obj.props.is_empty() && obj.index.is_none() {
                     return write!(f, "{{}}");

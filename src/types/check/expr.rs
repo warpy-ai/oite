@@ -381,6 +381,15 @@ impl Checker {
             MemberProp::Ident(name) => self.member_type(&object, name.sym.as_ref()),
             MemberProp::Computed(c) => {
                 let key = self.expr(&c.expr);
+                // `pair[0]`: the element at that position.
+                if let (Ty::Tuple(elems), Expr::Lit(Lit::Num(n))) =
+                    (self.expand(&object), c.expr.as_ref())
+                {
+                    return elems
+                        .get(n.value as usize)
+                        .cloned()
+                        .unwrap_or(Ty::Undefined);
+                }
                 self.element_type(&object, &key)
             }
             MemberProp::PrivateName(_) => Ty::Any,
@@ -438,6 +447,9 @@ impl Checker {
             Ty::String | Ty::StrLit(_) => builtins::string_member(name).unwrap_or(Ty::Any),
             Ty::Number => builtins::number_member(name).unwrap_or(Ty::Any),
             Ty::Array(elem) => builtins::array_member(elem, name).unwrap_or(Ty::Any),
+            Ty::Tuple(elems) => {
+                builtins::array_member(&Ty::tuple_element(elems), name).unwrap_or(Ty::Any)
+            }
             Ty::ClassValue(id) => self.static_member(*id, name).map_or(Ty::Any, |p| p.ty),
             Ty::Object(_) | Ty::Named(_) => {
                 let Some(members) = self.members(&object) else {
@@ -503,6 +515,7 @@ impl Checker {
                         | Ty::Null
                         | Ty::Undefined
                         | Ty::Array(_)
+                        | Ty::Tuple(_)
                 );
                 if not_callable {
                     let message = format!(

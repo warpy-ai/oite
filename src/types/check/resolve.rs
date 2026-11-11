@@ -63,9 +63,45 @@ impl Checker {
                 self.resolve(&op.type_ann)
             }
             TsType::TsTypePredicate(_) => Ty::Boolean,
-            TsType::TsTupleType(t) => self.unsupported(t.span, "tuple types"),
+            TsType::TsTupleType(t) => {
+                // `[A, B?]` and `[A, ...B[]]` have no fixed length: they
+                // are arrays of their elements.
+                let fixed = t.elem_types.iter().all(|e| {
+                    !matches!(
+                        e.ty.as_ref(),
+                        TsType::TsOptionalType(_) | TsType::TsRestType(_)
+                    )
+                });
+                let elems: Vec<Ty> = t
+                    .elem_types
+                    .iter()
+                    .map(|e| match e.ty.as_ref() {
+                        TsType::TsRestType(rest) => match self.resolve(&rest.type_ann) {
+                            Ty::Array(elem) => (*elem).clone(),
+                            _ => Ty::Any,
+                        },
+                        other => self.resolve(other),
+                    })
+                    .collect();
+                if fixed {
+                    Ty::Tuple(elems.into())
+                } else {
+                    Ty::array(Ty::tuple_element(&elems))
+                }
+            }
             TsType::TsConditionalType(t) => self.unsupported(t.span, "conditional types"),
-            TsType::TsMappedType(t) => self.unsupported(t.span, "mapped types"),
+            // `{ [K in Keys]: V }`: an object whose every property is a
+            // `V`.
+            TsType::TsMappedType(t) => {
+                let value = match &t.type_ann {
+                    Some(ty) => self.resolve(ty),
+                    None => Ty::Any,
+                };
+                Ty::Object(Rc::new(ObjTy {
+                    props: Vec::new(),
+                    index: Some(value),
+                }))
+            }
             _ => Ty::Any,
         }
     }

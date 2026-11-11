@@ -31,6 +31,9 @@ pub struct Compiler {
     pub debug_info: DebugInfo,
     /// What the type checker found in the last module compiled.
     pub type_diagnostics: Vec<Diagnostic>,
+    /// What the type checker knows about the modules compiled so far: a
+    /// module sees the types of what it imports.
+    pub type_world: crate::types::check::TypeWorld,
     /// What the type checker found in each file of the last program
     /// compiled (`compile_program`).
     pub warnings: Vec<FileWarnings>,
@@ -72,6 +75,7 @@ impl Compiler {
             borrow_checker: BorrowChecker::new(),
             debug_info: DebugInfo::default(),
             type_diagnostics: Vec::new(),
+            type_world: Default::default(),
             warnings: Vec::new(),
         }
     }
@@ -145,10 +149,11 @@ impl Compiler {
             return Err(CompileError::single(d));
         }
 
-        self.type_diagnostics = crate::types::check::check_program(program)
-            .into_iter()
-            .map(|d| Diagnostic::new("warning", d.message, position(d.span)))
-            .collect();
+        self.type_diagnostics =
+            crate::types::check::check_program(program, &mut self.type_world, link.as_ref())
+                .into_iter()
+                .map(|d| Diagnostic::new("warning", d.message, position(d.span)))
+                .collect();
 
         let mut codegen = Codegen::new();
         codegen.link = link;

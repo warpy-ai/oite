@@ -167,16 +167,22 @@ truthiness, `instanceof`, `Array.isArray`, `&&`, `||`, `!`, `?:`, `??`,
 early `return`/`throw`, and assignment. Warnings in the files of a roll
 a program imports are not shown when compiling that program.
 
+A module sees the types of what it imports from another module of the
+program: functions, classes, constants, namespaces (`import * as`), and
+interfaces and aliases imported with `import type`.
+
 Not yet, each a follow-up:
 
-- **Names imported from another module are `any`.** A call to an
-  imported function is not checked.
 - **Generics are not checked.** A type parameter is `any`.
 - **A property that a type does not declare is `any`**, not an error.
+- **An array literal is accepted as a tuple** when each element could be
+  one of the tuple's elements, whatever its position: `[1, 2]` passes as
+  a `[string, number]`.
+- **Intersection and conditional types** are reported as not supported
+  and are `any`. A mapped type is an object whose properties all have
+  the mapped type.
 - **The type table for code generation** is built in step 5, when
   lowering first reads it.
-- **Tuples.** The rolls use them; they need a type before the rolls can
-  pass (step 3).
 
 ### 5. Typed code generation
 

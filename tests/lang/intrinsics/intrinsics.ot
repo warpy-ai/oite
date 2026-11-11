@@ -18,7 +18,7 @@ declare function __intrinsic_atan2(y: number, x: number): number;
 declare function __intrinsic_fround(x: number): number;
 declare function __intrinsic_imul(a: number, b: number): number;
 declare function __intrinsic_random(): number;
-declare function __intrinsic_parse_int(s: string, radix: number): number;
+declare function __intrinsic_parse_int(s: string, radix: number | undefined): number;
 declare function __intrinsic_parse_float(s: string): number;
 declare function __intrinsic_to_fixed(x: number, digits: number): string;
 declare function __intrinsic_to_precision(x: number, p: number | undefined): string;

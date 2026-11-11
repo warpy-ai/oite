@@ -89,7 +89,7 @@ impl Checker {
                 }
                 _ => None,
             },
-            Ty::Array(_) | Ty::Function(_) | Ty::ClassValue(_) => Some(Members {
+            Ty::Array(_) | Ty::Tuple(_) | Ty::Function(_) | Ty::ClassValue(_) => Some(Members {
                 obj: ObjTy::default(),
                 closed: false,
             }),
@@ -122,6 +122,16 @@ impl Checker {
             (Ty::StrLit(_), Ty::String) => true,
             (Ty::Undefined, Ty::Void) | (Ty::Void, Ty::Undefined) => true,
             (Ty::Array(a), Ty::Array(b)) => self.assignable_at(a, b, next),
+            (Ty::Tuple(a), Ty::Tuple(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| self.assignable_at(x, y, next))
+            }
+            (Ty::Tuple(a), Ty::Array(b)) => a.iter().all(|x| self.assignable_at(x, b, next)),
+            // An array literal has the type of an array. It may be a
+            // tuple if every element could be one of the tuple's.
+            (Ty::Array(a), Ty::Tuple(b)) => self.assignable_at(a, &Ty::tuple_element(b), next),
             (Ty::Function(a), Ty::Function(b)) => self.fn_assignable(a, b, next),
             (Ty::ClassValue(_), Ty::Function(_)) => true,
             // Class types are nominal: an instance of the class or of a
