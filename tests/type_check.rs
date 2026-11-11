@@ -108,3 +108,63 @@ fn findings_are_warnings_when_running() {
         "stderr: {stderr}"
     );
 }
+
+fn collect_programs(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if path.is_dir() {
+            // `_lib/`, `_rolls/`: modules other programs import.
+            if !name.starts_with('_') {
+                collect_programs(&path, out);
+            }
+        } else if name.ends_with(".ot") {
+            out.push(path);
+        }
+    }
+}
+
+/// The Oite code in this repository keeps its promises: the checker finds
+/// nothing in the self-hosted compiler, the standard library, the
+/// examples, the benchmarks or the language tests. (`tests/types` holds
+/// the programs that are wrong on purpose.) With `OITE_CORE_ROLLS`, the
+/// core rolls are held to the same.
+#[test]
+fn existing_code_has_no_findings() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    for dir in [
+        "compiler",
+        "bootstrap",
+        "std",
+        "examples",
+        "benches/perf",
+        "tests/lang",
+        "tests/language",
+        "tests/compiler",
+        "tests/integration",
+        "tests/core_rolls",
+    ] {
+        collect_programs(&root.join(dir), &mut files);
+    }
+    if let Ok(rolls) = std::env::var("OITE_CORE_ROLLS") {
+        collect_programs(Path::new(&rolls), &mut files);
+    }
+    files.sort();
+    assert!(files.len() > 100, "found only {} programs", files.len());
+    let mut findings = Vec::new();
+    for file in &files {
+        let (found, _) = check(file);
+        for line in found {
+            findings.push(format!("{}:{line}", file.display()));
+        }
+    }
+    assert!(
+        findings.is_empty(),
+        "the type checker reports:\n{}",
+        findings.join("\n")
+    );
+}

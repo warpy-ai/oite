@@ -24,12 +24,31 @@ pub(super) fn assigned_in<N: VisitWith<Assigned>>(node: &N) -> HashSet<String> {
     visitor.names
 }
 
+/// The variables and property paths `node` assigns directly (`x = 1`,
+/// `this.a.b = 1`, `x++`), each with an expression that reads it.
+pub(super) fn assigned_places<N: VisitWith<Assigned>>(node: &N) -> Vec<(String, Expr)> {
+    let mut visitor = Assigned::default();
+    node.visit_with(&mut visitor);
+    visitor.places
+}
+
 #[derive(Default)]
 pub(super) struct Assigned {
     names: HashSet<String>,
+    places: Vec<(String, Expr)>,
 }
 
 impl Assigned {
+    /// Record `expr` as a place that is assigned, if it is a variable or
+    /// a property path.
+    fn place(&mut self, expr: Expr) {
+        if let Some(path) = super::narrow::path_of(&expr)
+            && !self.places.iter().any(|(p, _)| *p == path)
+        {
+            self.places.push((path, expr));
+        }
+    }
+
     fn root(&mut self, expr: &Expr) {
         match expr {
             Expr::Ident(id) => {
@@ -74,8 +93,12 @@ impl Visit for Assigned {
             AssignTarget::Simple(simple) => match simple {
                 SimpleAssignTarget::Ident(id) => {
                     self.names.insert(id.id.sym.to_string());
+                    self.place(Expr::Ident(id.id.clone()));
                 }
-                SimpleAssignTarget::Member(m) => self.root(&m.obj),
+                SimpleAssignTarget::Member(m) => {
+                    self.root(&m.obj);
+                    self.place(Expr::Member(m.clone()));
+                }
                 SimpleAssignTarget::Paren(p) => self.root(&p.expr),
                 _ => {}
             },
@@ -90,6 +113,7 @@ impl Visit for Assigned {
 
     fn visit_update_expr(&mut self, update: &UpdateExpr) {
         self.root(&update.arg);
+        self.place((*update.arg).clone());
         update.visit_children_with(self);
     }
 }
