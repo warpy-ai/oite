@@ -220,9 +220,53 @@ jobs:
           path: ${{ matrix.asset_name }}.tar.gz
           retention-days: 1
 
+  # The build jobs run on the newest runner images. A user's machine may be
+  # older, and has no checkout, no LLVM and no Homebrew. So each binary is
+  # also run, exactly as downloaded, on the oldest images still offered.
+  smoke:
+    name: Run ${{ matrix.asset_name }} on ${{ matrix.os }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            asset_name: oitec-aarch64-apple-darwin
+          - os: macos-15
+            asset_name: oitec-aarch64-apple-darwin
+          - os: macos-15-intel
+            asset_name: oitec-x86_64-apple-darwin
+          - os: ubuntu-22.04
+            asset_name: oitec-x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04-arm
+            asset_name: oitec-aarch64-unknown-linux-gnu
+    steps:
+      - name: Download the binary
+        uses: actions/download-artifact@v4 # v4.3.0
+        with:
+          name: ${{ matrix.asset_name }}
+
+      - name: Run it
+        run: |
+          tar -xzf ${{ matrix.asset_name }}.tar.gz
+          if [ "$(uname)" = Darwin ]; then sw_vers; otool -L oitec; else cat /etc/os-release; ldd oitec; fi
+
+          printf 'function add(a: number, b: number): number { return a + b; }\nconsole.log("sum", add(2, 3));\n' > hello.ot
+
+          echo "--- interpreter"
+          ./oitec hello.ot | tee run.out
+          grep -q "sum 5" run.out
+
+          echo "--- native build"
+          ./oitec build hello.ot -o hello
+          ./hello | tee native.out
+          grep -q "sum 5" native.out
+
   release:
     name: Create Release
-    needs: build
+    needs: [build, smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Publish only for tag pushes. A workflow_dispatch run has no tag, so the version
