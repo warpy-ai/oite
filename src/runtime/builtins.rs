@@ -23,6 +23,8 @@ pub trait Host {
     fn array_elements(&self, v: &Self::Value) -> Option<Vec<Self::Value>>;
     /// Whether `v` is an array.
     fn is_array(&self, v: &Self::Value) -> bool;
+    /// What kind of value `v` is.
+    fn kind(&self, v: &Self::Value) -> Kind;
     /// `Object.keys(v)`: an object's own property names, an array's indices,
     /// nothing for any other value.
     fn own_keys(&self, v: &Self::Value) -> Vec<String>;
@@ -31,6 +33,71 @@ pub trait Host {
     fn make_string(&self, s: String) -> Self::Value;
     fn make_bool(&self, b: bool) -> Self::Value;
     fn undefined(&self) -> Self::Value;
+}
+
+/// What kind of value something is, as far as a type annotation can ask
+/// when the program runs (docs/docs/types.md, section 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Number,
+    String,
+    Boolean,
+    Null,
+    Undefined,
+    Array,
+    /// A function or a class.
+    Function,
+    /// Any other object.
+    Object,
+}
+
+impl Kind {
+    const ALL: [Kind; 8] = [
+        Kind::Number,
+        Kind::String,
+        Kind::Boolean,
+        Kind::Null,
+        Kind::Undefined,
+        Kind::Array,
+        Kind::Function,
+        Kind::Object,
+    ];
+
+    /// This kind in a set of kinds.
+    pub const fn bit(self) -> u32 {
+        1 << self as u32
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Number => "number",
+            Kind::String => "string",
+            Kind::Boolean => "boolean",
+            Kind::Null => "null",
+            Kind::Undefined => "undefined",
+            Kind::Array => "array",
+            Kind::Function => "function",
+            Kind::Object => "object",
+        }
+    }
+
+    /// The kinds in the set `kinds`, as an error message names them:
+    /// `number | null`.
+    pub fn names(kinds: u32) -> String {
+        // A structural object type accepts every kind of object.
+        let objects = Kind::Object.bit() | Kind::Array.bit() | Kind::Function.bit();
+        let kinds = if kinds & objects == objects {
+            kinds & !(Kind::Array.bit() | Kind::Function.bit())
+        } else {
+            kinds
+        };
+        let names: Vec<&str> = Kind::ALL
+            .iter()
+            .filter(|k| kinds & k.bit() != 0)
+            .map(|k| k.name())
+            .collect();
+        names.join(" | ")
+    }
 }
 
 /// The result of a built-in method call.
@@ -49,6 +116,13 @@ pub struct Error {
 }
 
 impl Error {
+    pub fn type_error(message: impl Into<String>) -> Self {
+        Error {
+            kind: "TypeError",
+            message: message.into(),
+        }
+    }
+
     pub fn range(message: impl Into<String>) -> Self {
         Error {
             kind: "RangeError",

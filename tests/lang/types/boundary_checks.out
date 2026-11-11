@@ -1,0 +1,48 @@
+param ok: 42
+param string: TypeError: Expected number, got string
+param missing: TypeError: Expected number, got undefined
+optional given: hi a!
+optional left out: hi a
+optional wrong: TypeError: Expected string | undefined, got number
+default used: 20
+default given: 6
+default wrong: TypeError: Expected number, got string
+union number: <1>
+union null: <null>
+union undefined: TypeError: Expected number | string | null, got undefined
+arrow ok: yes
+arrow wrong: TypeError: Expected boolean, got number
+let ok: 1
+let wrong: TypeError: Expected number, got string
+assign wrong: TypeError: Expected string, got number
+compound wrong: TypeError: Expected number, got string
+return ok: s
+return wrong: TypeError: Expected string, got number
+as ok: text
+as wrong: TypeError: Expected string, got null
+as narrows: TypeError: Expected string, got number
+non-null ok: 8
+non-null wrong: TypeError: Expected number, got null
+array ok: 2
+array wrong: TypeError: Expected array, got object
+object ok: n
+object wrong: TypeError: Expected object, got string
+class ok: 1
+class wrong: TypeError: Expected object, got number
+function ok: 8
+function wrong: TypeError: Expected function, got object
+class value: 3
+field ok: 1
+field changed by dynamic code: TypeError: Expected number, got string
+nullable field: null
+nullable field wrong: TypeError: Expected string | null, got number
+property of an object type: TypeError: Expected string, got number
+element ok: 2
+element changed by dynamic code: TypeError: Expected number, got string
+optional chain on null: undefined
+optional chain wrong: TypeError: Expected number | undefined, got boolean
+method ok: 8
+method replaced: TypeError: Expected number, got string
+function value: TypeError: Expected number, got string
+dynamic: a1
+any: s

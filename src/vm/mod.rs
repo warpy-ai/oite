@@ -3350,6 +3350,32 @@ impl crate::runtime::builtins::Host for VmHost<'_> {
         )
     }
 
+    fn kind(&self, v: &JsValue) -> crate::runtime::builtins::Kind {
+        use crate::runtime::builtins::Kind;
+        match v {
+            JsValue::Number(_) => Kind::Number,
+            JsValue::String(_) => Kind::String,
+            JsValue::Boolean(_) => Kind::Boolean,
+            JsValue::Null => Kind::Null,
+            JsValue::Undefined => Kind::Undefined,
+            JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::Accessor(_, _) => {
+                Kind::Function
+            }
+            JsValue::Promise(_) => Kind::Object,
+            JsValue::Object(ptr) => match self.0.get(*ptr) {
+                Some(HeapObject {
+                    data: HeapData::Array(_),
+                }) => Kind::Array,
+                Some(HeapObject {
+                    data: HeapData::Object(props),
+                }) if matches!(props.get("__class__"), Some(JsValue::Boolean(true))) => {
+                    Kind::Function
+                }
+                _ => Kind::Object,
+            },
+        }
+    }
+
     fn own_keys(&self, v: &JsValue) -> Vec<String> {
         let JsValue::Object(ptr) = v else {
             return Vec::new();

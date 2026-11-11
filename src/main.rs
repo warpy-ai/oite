@@ -254,6 +254,10 @@ fn take_roll_flags(args: &mut Vec<String>) -> compiler::modules::ModuleOptions {
             let spec = spec.to_string();
             args.remove(i);
             spec
+        } else if args[i] == "--strict-types" {
+            args.remove(i);
+            types::set_strict(true);
+            continue;
         } else {
             let is_program =
                 i == 1 && !COMMANDS.contains(&args[i].as_str()) && !args[i].starts_with('-');
@@ -288,10 +292,20 @@ fn compile_program_or_exit(
 }
 
 /// Print what the type checker found in the program's own files, as
-/// warnings. Files of the rolls it imports are not reported here.
+/// warnings. Files of the rolls it imports are not reported here. With
+/// `--strict-types` they are errors, and the program does not run.
 fn print_type_warnings(compiler: &Compiler) {
+    let strict = compiler.strict_types;
+    let mut found = false;
     for file in compiler.warnings.iter().filter(|f| !f.dependency) {
-        eprintln!("{}", file.render("warning"));
+        eprintln!(
+            "{}",
+            file.render(if strict { "type error" } else { "warning" })
+        );
+        found = true;
+    }
+    if strict && found {
+        std::process::exit(1);
     }
 }
 
@@ -321,6 +335,11 @@ fn main() {
         eprintln!("  --emit-llvm                    Emit LLVM IR to .ll file");
         eprintln!("  --emit-obj                     Emit object file to .o file");
         eprintln!("  --verify-ir                    Validate IR and exit");
+        eprintln!();
+        eprintln!("Options for every command:");
+        eprintln!("  --roll @rolls/<name>=<dir>     Where to find a roll");
+        eprintln!("  --strict-types                 Type errors stop compilation, and values are");
+        eprintln!("                                 checked against type annotations at run time");
         return;
     }
 

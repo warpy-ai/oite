@@ -17,7 +17,7 @@
 //! release: adding an intrinsic is a minor change; changing or removing one is
 //! a breaking change. Arguments a call leaves out are `undefined`.
 
-use super::builtins::{self, Error, Host, Outcome};
+use super::builtins::{self, Error, Host, Kind, Outcome};
 
 /// The intrinsics, by name without the `__intrinsic_` prefix. An
 /// intrinsic's id is its index here.
@@ -56,6 +56,11 @@ pub const INTRINSICS: &[&str] = &[
     "object_keys",
     // Target
     "platform",
+    // Types: `check_type(value, kinds)` is `value` if its kind is in the
+    // set `kinds` (`builtins::Kind::bit`), or else a TypeError. The
+    // compiler calls it where a type annotation must hold when the
+    // program runs (docs/docs/types.md, section 3).
+    "check_type",
 ];
 
 /// The prefix that marks a call as an intrinsic.
@@ -144,6 +149,18 @@ pub fn call<H: Host>(h: &H, id: u32, args: &[H::Value]) -> Result<Outcome<H::Val
                 .collect(),
         )),
         "platform" => string(std::env::consts::OS.to_string()),
+        "check_type" => {
+            let kinds = num(1) as u32;
+            let kind = h.kind(arg(0));
+            if kinds & kind.bit() != 0 {
+                return Ok(Outcome::Value(arg(0).clone()));
+            }
+            Err(Error::type_error(format!(
+                "Expected {}, got {}",
+                Kind::names(kinds),
+                kind.name()
+            )))
+        }
         _ => Err(Error {
             kind: "ReferenceError",
             message: format!("unknown intrinsic #{id}"),

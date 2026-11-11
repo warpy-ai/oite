@@ -105,8 +105,30 @@ fn backends(source: &str) -> Vec<Backend> {
     vec![Backend::Vm]
 }
 
-fn run(backend: Backend, file: &Path, scratch: &Path, rolls: &Path) -> Result<Output, String> {
-    let oitec = || oitec(rolls);
+/// `// flags: --strict-types` in a test's leading comment: options
+/// `oitec` gets before its command.
+fn flags(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .map(str::trim)
+        .take_while(|line| line.starts_with("//"))
+        .find_map(|line| line.trim_start_matches("//").trim().strip_prefix("flags:"))
+        .map(|rest| rest.split_whitespace().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+fn run(
+    backend: Backend,
+    file: &Path,
+    scratch: &Path,
+    rolls: &Path,
+    flags: &[String],
+) -> Result<Output, String> {
+    let oitec = || {
+        let mut cmd = oitec(rolls);
+        cmd.args(flags);
+        cmd
+    };
     match backend {
         // Run from a scratch directory, the way a user program runs: no
         // std/prelude.ot from the repository root is picked up.
@@ -150,9 +172,10 @@ fn check(file: &Path, scratch: &Path, rolls: &Path) -> Result<(), String> {
     let err_path = file.with_extension("err");
     let bless = std::env::var_os("OITE_BLESS").is_some();
 
+    let flags = flags(&source);
     for backend in backends(&source) {
         let output =
-            run(backend, file, scratch, rolls).map_err(|e| format!("[{backend:?}] {e}"))?;
+            run(backend, file, scratch, rolls, &flags).map_err(|e| format!("[{backend:?}] {e}"))?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 

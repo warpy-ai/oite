@@ -21,9 +21,22 @@ impl Codegen {
         let saved_mark = std::mem::replace(&mut self.mark_span, at);
         self.mark(at);
         self.gen_expr_inner(expr);
+        self.emit_guard(expr.span());
         self.current_span = saved;
         self.mark_span = saved_mark;
         self.mark(saved_mark);
+    }
+
+    /// `[value] -> [value]`: if the type checker asked for the value at
+    /// `span` to be checked when the program runs, check it.
+    pub(super) fn emit_guard(&mut self, span: Span) {
+        let Some(&kinds) = self.guards.get(&(span.lo.0, span.hi.0)) else {
+            return;
+        };
+        let check = intrinsics::id("check_type").expect("the check_type intrinsic");
+        self.instructions
+            .push(OpCode::Push(JsValue::Number(kinds as f64)));
+        self.instructions.push(OpCode::Intrinsic(check, 2));
     }
 
     pub(super) fn gen_expr_inner(&mut self, expr: &Expr) {

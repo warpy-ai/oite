@@ -296,50 +296,59 @@ impl Checker {
     pub(super) fn check_var_decl(&mut self, var: &VarDecl) {
         let konst = var.kind == VarDeclKind::Const;
         for d in &var.decls {
-            match &d.name {
-                Pat::Ident(id) => {
-                    let name = id.id.sym.as_ref();
-                    match &id.type_ann {
-                        Some(ann) => {
-                            let declared = self.resolve(&ann.type_ann);
-                            let found = d.init.as_ref().map(|init| {
-                                let found = self.expr(init);
-                                self.check_assignable(&found, &declared, init.span());
-                                found
-                            });
-                            self.declare(name, declared.clone(), konst);
-                            if let Some(found) = found {
-                                self.narrow_by_assignment(name, &found, &declared);
-                            }
-                        }
-                        None => {
-                            let found = d.init.as_ref().map(|init| (self.expr(init), init));
-                            // No annotation: the variable is dynamic. A
-                            // constant bound to a function, a class or a
-                            // primitive literal is known for what it is.
-                            let ty = match found {
-                                Some((ty, init)) if konst && is_fixed(init) => ty.widened(),
-                                _ => Ty::Any,
-                            };
-                            self.declare(name, ty, konst);
-                        }
-                    }
-                }
-                pattern => {
-                    if let Some(init) = &d.init {
-                        let found = self.expr(init);
-                        let ann = match pattern {
-                            Pat::Array(p) => p.type_ann.as_deref(),
-                            Pat::Object(p) => p.type_ann.as_deref(),
-                            _ => None,
-                        };
-                        if let Some(ann) = ann {
-                            let declared = self.resolve(&ann.type_ann);
+            self.check_declarator(d, konst);
+            if let (true, Pat::Ident(id), Some(init)) = (konst, &d.name, &d.init)
+                && is_function(init)
+            {
+                self.fix_fn(id.id.sym.as_ref());
+            }
+        }
+    }
+
+    fn check_declarator(&mut self, d: &VarDeclarator, konst: bool) {
+        match &d.name {
+            Pat::Ident(id) => {
+                let name = id.id.sym.as_ref();
+                match &id.type_ann {
+                    Some(ann) => {
+                        let declared = self.resolve(&ann.type_ann);
+                        let found = d.init.as_ref().map(|init| {
+                            let found = self.expr(init);
                             self.check_assignable(&found, &declared, init.span());
+                            found
+                        });
+                        self.declare(name, declared.clone(), konst);
+                        if let Some(found) = found {
+                            self.narrow_by_assignment(name, &found, &declared);
                         }
                     }
-                    self.declare_pattern(pattern, konst);
+                    None => {
+                        let found = d.init.as_ref().map(|init| (self.expr(init), init));
+                        // No annotation: the variable is dynamic. A
+                        // constant bound to a function, a class or a
+                        // primitive literal is known for what it is.
+                        let ty = match found {
+                            Some((ty, init)) if konst && is_fixed(init) => ty.widened(),
+                            _ => Ty::Any,
+                        };
+                        self.declare(name, ty, konst);
+                    }
                 }
+            }
+            pattern => {
+                if let Some(init) = &d.init {
+                    let found = self.expr(init);
+                    let ann = match pattern {
+                        Pat::Array(p) => p.type_ann.as_deref(),
+                        Pat::Object(p) => p.type_ann.as_deref(),
+                        _ => None,
+                    };
+                    if let Some(ann) = ann {
+                        let declared = self.resolve(&ann.type_ann);
+                        self.check_assignable(&found, &declared, init.span());
+                    }
+                }
+                self.declare_pattern(pattern, konst);
             }
         }
     }
@@ -356,6 +365,15 @@ impl Checker {
 
 /// Whether a constant initialised with `init` has a type worth knowing
 /// without an annotation: a function, a class or a primitive literal.
+/// Whether `init` is a function written here.
+fn is_function(init: &Expr) -> bool {
+    match init {
+        Expr::Fn(_) | Expr::Arrow(_) => true,
+        Expr::Paren(p) => is_function(&p.expr),
+        _ => false,
+    }
+}
+
 fn is_fixed(init: &Expr) -> bool {
     match init {
         Expr::Fn(_) | Expr::Arrow(_) | Expr::Class(_) => true,

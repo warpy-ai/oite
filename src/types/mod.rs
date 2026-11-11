@@ -1,6 +1,8 @@
 //! Type system with ownership, borrowing, and lifetime tracking.
 
 pub mod check;
+mod strict;
+pub use strict::{set_strict, strict};
 pub mod error;
 pub mod registry;
 

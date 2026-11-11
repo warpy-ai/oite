@@ -14,6 +14,7 @@ mod classes;
 mod expr;
 mod flow;
 mod functions;
+mod guards;
 mod narrow;
 mod resolve;
 mod stmt;
@@ -24,6 +25,8 @@ use std::rc::Rc;
 use swc_common::Span;
 use swc_ecma_ast::*;
 use ty::{DeclId, FnTy, ObjTy, Param, Prop, Show, Ty};
+
+pub use guards::Guards;
 
 /// Something the checker reports.
 #[derive(Clone, Debug)]
@@ -62,6 +65,9 @@ struct Var {
     /// The declared type; `any` for a variable with no annotation.
     ty: Ty,
     konst: bool,
+    /// Always the function it was declared with: a function declaration,
+    /// or a constant whose initialiser is a function.
+    fixed_fn: bool,
 }
 
 #[derive(Default)]
@@ -93,6 +99,11 @@ pub struct Checker {
     scopes: Vec<Scope>,
     fns: Vec<FnCtx>,
     pub diags: Vec<TypeDiag>,
+    /// Where the program checks a value when it runs.
+    guards: Guards,
+    /// The member expression checked last is a property of a string, a
+    /// number or a boolean: a method the language provides.
+    built_in_member: bool,
 }
 
 /// What the checker knows about the modules of a program checked so
@@ -105,7 +116,15 @@ pub struct TypeWorld {
     types: HashMap<String, DeclId>,
 }
 
-/// Check a program and return what it found, in source order. With
+/// What the checker found in a program.
+pub struct Checked {
+    /// What it reports, in source order.
+    pub diags: Vec<TypeDiag>,
+    /// The values to check when the program runs.
+    pub guards: Guards,
+}
+
+/// Check a program. With
 /// `link`, the program is a module of a linked program: what it imports
 /// has the types `world` recorded for the modules checked before it, and
 /// its own top-level names are recorded for the modules after it.
@@ -113,12 +132,14 @@ pub fn check_program(
     program: &Program,
     world: &mut TypeWorld,
     link: Option<&crate::compiler::modules::ModuleLink>,
-) -> Vec<TypeDiag> {
+) -> Checked {
     let mut checker = Checker {
         decls: std::mem::take(&mut world.decls),
         scopes: vec![Scope::default()],
         fns: Vec::new(),
         diags: Vec::new(),
+        guards: Guards::new(),
+        built_in_member: false,
     };
     match program {
         Program::Module(module) => {
@@ -159,7 +180,10 @@ pub fn check_program(
     world.decls = checker.decls;
     let mut diags = checker.diags;
     diags.sort_by_key(|d| d.span.lo);
-    diags
+    Checked {
+        diags,
+        guards: checker.guards,
+    }
 }
 
 impl Checker {
@@ -281,9 +305,20 @@ impl Checker {
     }
 
     fn declare(&mut self, name: &str, ty: Ty, konst: bool) {
-        self.scope()
-            .vars
-            .insert(name.to_string(), Var { ty, konst });
+        let var = Var {
+            ty,
+            konst,
+            fixed_fn: false,
+        };
+        self.scope().vars.insert(name.to_string(), var);
+    }
+
+    /// The variable `name`, just declared here, always holds the
+    /// function it was declared with.
+    fn fix_fn(&mut self, name: &str) {
+        if let Some(var) = self.scope().vars.get_mut(name) {
+            var.fixed_fn = true;
+        }
     }
 
     fn lookup_type(&self, name: &str) -> Option<TypeName> {

@@ -103,7 +103,7 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Stack overflow                             | `RangeError`                         | `RangeError` (stack-pointer check) |
 | Uncaught exceptions                        | `Uncaught TypeError: ...` and its stack trace on stderr, exit 1 | Same   |
 | String `length` / indexing                 | Counts UTF-8 bytes ([#133](https://github.com/warpy-ai/oite/issues/133))            | -                                 |
-| Type annotations                           | Checked, as warnings; `oitec check` reports errors ([Types](types.md), [#124](https://github.com/warpy-ai/oite/issues/124)) | -                                 |
+| Type annotations                           | Checked, as warnings; `oitec check` reports errors; `--strict-types` makes them errors and checks values at run time ([Types](types.md), [#124](https://github.com/warpy-ai/oite/issues/124)) | -                                 |
 | Ownership / borrow checking                | Compile-time checks run; moves are enforced | -                          |
 
 ### Compilers
