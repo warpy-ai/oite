@@ -274,23 +274,24 @@ initialiser runs).
 The optimizer removes a check of a value that is already known to have
 the type, but never on the strength of what that same check proved.
 
-Typed programs, native `--release --strict-types`, best of 5
-(`benches/perf/run.sh --typed`):
+Typed programs (`benches/perf/typed/`, `benches/perf/run.sh --typed`),
+native `--release`, the same source with and without `--strict-types`:
 
-| Benchmark | Typed, strict | Same source, not strict | Bun |
-| --------- | ------------: | ----------------------: | --: |
-| `calls` | 53 ms | 56 ms | 24 ms |
-| `fib` | 24 ms | 21 ms | 20 ms |
-| `loop_local` | 508 ms | 505 ms | 1,811 ms |
-| `nbody` | 503 ms | 517 ms | 96 ms |
+| Benchmark | Instructions, strict against not | Strict | Not strict | Bun |
+| --------- | -------------------------------: | -----: | ---------: | --: |
+| `calls` | −39% | 47 ms | 55 ms | 19 ms |
+| `fib(38)` | −9% | 352 ms | 335 ms | 216 ms |
+| `nbody` | −5% | 483 ms | 519 ms | 96 ms |
+| `loop_local` | not counted | 511 ms | 500 ms | 1,773 ms |
 
-The differences are within the noise of the machine (about 15%); by
-instruction count `fib` and `nbody` change by less than 1%. Step 5
-removes the type tests around arithmetic, and those were already cheap:
-what these programs spend their time on is the call itself (`fib`,
-`calls`: step 6) and property access (`nbody`: step 8). What step 5
-does establish is that the checks of strict mode cost nothing
-measurable here, and it gives steps 6 to 8 the types they need.
+Times are the best of 7 on a machine whose noise is about 15%; the
+instruction counts (callgrind) are exact. `fib` runs fewer instructions
+but not less time, which is not explained yet.
+
+Step 5 removes the type tests around arithmetic, which lets LLVM inline
+small typed functions (`calls`). What these programs still spend their
+time on is the call itself (`fib`: step 6) and property access (`nbody`:
+step 8).
 
 ### 6. Speed for code without annotations
 

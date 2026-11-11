@@ -76,28 +76,25 @@ impl Fx<'_> {
             }
 
             LLVMPositionBuilderAtEnd(b, slow_bb);
-            let id =
-                crate::runtime::intrinsics::id("check_type").expect("the check_type intrinsic");
-            let kinds_value = self.c((kinds as f64).to_bits());
-            let (argv, argc) = self.arg_array(&[v, kinds_value]);
-            let checked = self.rt("ot_intrinsic", &[self.c(id as u64), argv, argc]);
+            let checked = self.rt("ot_check_type", &[v, self.c(kinds as u64)]);
+            // Only this path can fail, so only it looks for the exception.
+            self.check_exception(checked, self.unwind);
+            let checked_bb = LLVMGetInsertBlock(b);
             LLVMBuildBr(b, join_bb);
 
             LLVMPositionBuilderAtEnd(b, join_bb);
             let phi = LLVMBuildPhi(b, self.i64_ty(), NONAME);
             let mut values: Vec<LLVMValueRef> = passed.iter().map(|_| v).collect();
             values.push(checked);
-            passed.push(slow_bb);
+            passed.push(checked_bb);
             LLVMAddIncoming(
                 phi,
                 values.as_mut_ptr(),
                 passed.as_mut_ptr(),
                 values.len() as u32,
             );
-            let result = phi;
-            // The exception, if the check failed.
-            self.last_call = Some(result);
-            result
+            self.last_call = None;
+            phi
         }
     }
 }

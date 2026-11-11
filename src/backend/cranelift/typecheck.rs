@@ -75,18 +75,15 @@ impl Fx<'_> {
         b.switch_to_block(slow_blk);
         b.seal_block(slow_blk);
         b.set_cold_block(slow_blk);
-        let id = crate::runtime::intrinsics::id("check_type").expect("the check_type intrinsic");
-        let kinds_value = Self::c(b, (kinds as f64).to_bits());
-        let (argv, argc) = self.arg_array(b, &[v, kinds_value]);
-        let id = Self::c(b, id as u64);
-        let checked = self.rt_v(b, "ot_intrinsic", &[id, argv, argc]);
+        let kinds_value = Self::c(b, kinds as u64);
+        let checked = self.rt_v(b, "ot_check_type", &[v, kinds_value]);
+        // Only this path can fail, so only it looks for the exception.
+        self.check_exception(b, checked, self.unwind);
         b.ins().jump(join, &[checked]);
 
         b.switch_to_block(join);
         b.seal_block(join);
-        let result = b.block_params(join)[0];
-        // The exception, if the check failed.
-        self.last_call = Some(result);
-        result
+        self.last_call = None;
+        b.block_params(join)[0]
     }
 }
