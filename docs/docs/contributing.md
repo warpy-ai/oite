@@ -67,7 +67,7 @@ change touches first:
 | File | Lines |
 | ---- | ----: |
 | `src/compiler/mod.rs` | 3,827 |
-| `src/vm/mod.rs` | 3,648 |
+| `src/vm/mod.rs` | 3,454 |
 | `src/ir/lower.rs` | 2,049 |
 | `src/backend/llvm/codegen.rs` | 1,811 |
 | `src/ir/mod.rs` | 1,695 |

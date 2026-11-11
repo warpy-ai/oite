@@ -1,8 +1,6 @@
-// backends: jit aot
+// backends: vm jit aot
 // Element access and `length`: native code reads and writes in-bounds
 // elements itself; everything else goes through the runtime.
-// (Not on the VM yet: it reads a[-1] and a[1.5] as elements, ignores
-// `a.length = n` and a["0"] = v, and has no number keys on objects.)
 function get(a, i) {
   return a[i];
 }
