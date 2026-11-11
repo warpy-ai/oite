@@ -91,7 +91,7 @@ Register-based SSA IR with type tracking and optimizations.
 
 **Key Files:**
 
-- `src/ir/lower.rs` - Bytecode → SSA lowering
+- `src/ir/lower/` - Bytecode → SSA lowering
 - `src/ir/typecheck.rs` - Flow-sensitive type inference
 - `src/ir/opt.rs` - DCE, constant folding, CSE, copy propagation
 - `src/ir/verify.rs` - IR validation + borrow checking
