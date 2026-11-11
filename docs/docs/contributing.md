@@ -66,18 +66,17 @@ change touches first:
 
 | File | Lines |
 | ---- | ----: |
-| `src/compiler/mod.rs` | 3,827 |
-| `src/vm/mod.rs` | 3,454 |
+| `src/vm/mod.rs` | 3,455 |
 | `src/ir/lower.rs` | 2,049 |
-| `src/backend/llvm/codegen.rs` | 1,811 |
-| `src/ir/mod.rs` | 1,695 |
-| `src/backend/cranelift.rs` | 1,527 |
-| `src/stdlib/mod.rs` | 1,068 |
+| `src/backend/llvm/codegen.rs` | 1,855 |
+| `src/ir/mod.rs` | 1,696 |
+| `src/backend/cranelift.rs` | 1,582 |
+| `src/stdlib/mod.rs` | 1,062 |
 | `src/main.rs` | 1,050 |
 | `src/compiler/borrow_ck.rs` | 1,025 |
 | `src/types/checker.rs` | 1,005 |
 | `src/compiler/scope.rs` | 951 |
-| `src/ir/opt.rs` | 922 |
+| `src/ir/opt.rs` | 923 |
 | `src/types/inference.rs` | 917 |
 | `src/types/mod.rs` | 813 |
 
