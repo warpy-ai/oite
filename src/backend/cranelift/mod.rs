@@ -321,6 +321,7 @@ mod numeric;
 mod objects;
 mod ops;
 mod symbols;
+mod typecheck;
 
 use symbols::runtime_symbol;
 

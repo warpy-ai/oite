@@ -164,6 +164,7 @@ impl Compiler {
         let mut codegen = Codegen::new();
         if self.strict_types {
             codegen.guards = checked.guards;
+            codegen.facts = checked.facts;
         }
         codegen.link = link;
         match program {
@@ -445,6 +446,9 @@ pub struct Codegen {
     /// program runs, from the type checker; empty unless types are
     /// strict.
     pub(crate) guards: crate::types::check::Guards,
+    /// The expressions whose kind the type checker proved; empty unless
+    /// types are strict.
+    pub(crate) facts: crate::types::check::Guards,
     /// Whether the code being generated keeps its innermost environment in
     /// `%scope` (some variable in reach is captured).
     env_active: bool,
@@ -464,6 +468,7 @@ impl Codegen {
         Self {
             instructions: Vec::new(),
             guards: Default::default(),
+            facts: Default::default(),
             scope_stack: vec![Vec::new()],
             in_function: false,
             in_async_function: false,

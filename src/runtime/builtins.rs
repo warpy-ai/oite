@@ -81,6 +81,29 @@ impl Kind {
         }
     }
 
+    /// The kinds of heap object (as a set of `1 << ObjectKind`) that are
+    /// enough, on sight, to pass a check for the set `kinds`. A plain
+    /// object is not among them unless functions pass too: an object may
+    /// be a class, which is a function.
+    pub fn heap_kinds(kinds: u32) -> u64 {
+        use super::heap::ObjectKind;
+        let has = |kind: Kind| kinds & kind.bit() != 0;
+        let mut set = 0;
+        if has(Kind::String) {
+            set |= 1 << ObjectKind::String as u64;
+        }
+        if has(Kind::Array) {
+            set |= 1 << ObjectKind::Array as u64;
+        }
+        if has(Kind::Function) {
+            set |= 1 << ObjectKind::Function as u64;
+        }
+        if has(Kind::Object) && has(Kind::Function) {
+            set |= 1 << ObjectKind::Object as u64;
+        }
+        set
+    }
+
     /// The kinds in the set `kinds`, as an error message names them:
     /// `number | null`.
     pub fn names(kinds: u32) -> String {

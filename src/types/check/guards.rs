@@ -74,6 +74,18 @@ impl Checker {
         }
     }
 
+    /// The value of the expression at `span` is proved to be a `ty`.
+    /// Recorded when that is one kind compiled code makes use of: a
+    /// number, a boolean or a string.
+    pub(super) fn proved(&mut self, span: Span, ty: &Ty) {
+        let simple = [Kind::Number, Kind::Boolean, Kind::String].map(Kind::bit);
+        if let Some(kinds) = self.kinds(ty)
+            && simple.contains(&kinds)
+        {
+            self.facts.insert((span.lo.0, span.hi.0), kinds);
+        }
+    }
+
     /// The expression at `span` is not evaluated as a value (a callee, the
     /// target of an assignment): nothing to check there.
     pub(super) fn unguard(&mut self, span: Span) {

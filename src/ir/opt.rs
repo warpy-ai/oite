@@ -6,7 +6,7 @@
 //! - Common Subexpression Elimination (CSE)
 //! - Copy Propagation
 
-use crate::ir::{IrFunction, IrModule, IrOp, Literal, Terminator, ValueId};
+use crate::ir::{IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId};
 use std::collections::{HashMap, HashSet};
 
 // ============================================================================
@@ -313,21 +313,63 @@ enum ExprKey {
 pub fn common_subexpression_elimination(func: &mut IrFunction) {
     // Map from expression to the value that computes it
     let mut available: HashMap<ExprKey, ValueId> = HashMap::new();
+    let types = &mut func.value_types;
+    let type_of = |types: &HashMap<ValueId, IrType>, v: ValueId| {
+        types.get(&v).cloned().unwrap_or(IrType::Any)
+    };
+
+    // The values a check reads. What is known about such a value may be
+    // known only because the check passed, so it never justifies
+    // removing the check.
+    let check_sources: HashSet<ValueId> = func
+        .blocks
+        .iter()
+        .flat_map(|b| &b.ops)
+        .filter_map(|op| match op {
+            IrOp::CheckType(_, src, _) => Some(*src),
+            _ => None,
+        })
+        .collect();
+    // In this block so far: value checked -> the checked value.
+    let mut checked: HashMap<ValueId, ValueId> = HashMap::new();
 
     for block in &mut func.blocks {
         // Clear available expressions at block boundaries (conservative)
         available.clear();
+        checked.clear();
 
         let ops = std::mem::take(&mut block.ops);
         let mut new_ops = Vec::with_capacity(ops.len());
 
         for op in ops {
+            // A check of what the value is already known to be.
+            if let IrOp::CheckType(dst, src, kinds) = op {
+                let wanted = IrType::of_kinds(kinds);
+                if wanted != IrType::Any && type_of(types, src) == wanted {
+                    new_ops.push(IrOp::Copy(dst, src));
+                    continue;
+                }
+            }
             let key = extract_expr_key(&op);
             if let Some((key, dst)) = &key
                 && let Some(&existing) = available.get(key)
             {
+                // The same value: what is known about one holds for the
+                // other. If it was checked, use the checked value, which
+                // has the type the check gave it.
+                let known = type_of(types, *dst);
+                let mut source = existing;
+                if known != IrType::Any && type_of(types, existing) == IrType::Any {
+                    match checked.get(&existing) {
+                        Some(&passed) if type_of(types, passed) == known => source = passed,
+                        _ if check_sources.contains(&existing) => {}
+                        _ => {
+                            types.insert(existing, known);
+                        }
+                    }
+                }
                 // Replace with copy
-                new_ops.push(IrOp::Copy(*dst, existing));
+                new_ops.push(IrOp::Copy(*dst, source));
                 continue;
             }
 
@@ -336,7 +378,9 @@ pub fn common_subexpression_elimination(func: &mut IrFunction) {
             // property: earlier reads of them are stale. Arithmetic on
             // values, and this function's own locals, are not affected (no
             // callee can store to them).
-            if has_side_effects(&op) && !matches!(op, IrOp::LoadGlobal(_, _)) {
+            // (A type check runs no code and writes nothing.)
+            let inert = matches!(op, IrOp::LoadGlobal(_, _) | IrOp::CheckType(_, _, _));
+            if has_side_effects(&op) && !inert {
                 available.retain(|k, _| {
                     matches!(
                         k,
@@ -348,6 +392,9 @@ pub fn common_subexpression_elimination(func: &mut IrFunction) {
                 available.remove(&ExprKey::LoadLocal(slot));
             }
 
+            if let IrOp::CheckType(dst, src, _) = op {
+                checked.insert(src, dst);
+            }
             if let Some((key, dst)) = key {
                 available.insert(key, dst);
             }
@@ -567,6 +614,8 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
                 resolve(arg);
             }
         }
+
+        IrOp::CheckType(_, src, _) => resolve(src),
 
         IrOp::Intrinsic(_, _, args) | IrOp::MathCall(_, _, args) => {
             for arg in args {

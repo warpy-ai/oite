@@ -143,6 +143,16 @@ pub extern "C" fn ot_intrinsic(id: usize, argv: *const u64, argc: usize) -> u64 
     outcome(super::super::intrinsics::call(&NativeHost, id as u32, a), 0)
 }
 
+/// A type annotation checked when the program runs, where compiled code
+/// could not tell on sight: `value` if its kind is in the set `kinds`
+/// (`builtins::Kind::bit`), else a TypeError.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_check_type(value: u64, kinds: usize) -> u64 {
+    let id = super::super::intrinsics::id("check_type").expect("the check_type intrinsic");
+    let args = [value, number(kinds as f64)];
+    outcome(super::super::intrinsics::call(&NativeHost, id, &args), 0)
+}
+
 /// `[..., ...source]`: append `source`'s elements (an array's, or a
 /// string's characters) to the array `target`; `target`.
 #[unsafe(no_mangle)]

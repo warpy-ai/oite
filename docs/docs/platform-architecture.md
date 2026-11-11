@@ -177,7 +177,7 @@ The contract is 29 intrinsics:
 | Strings | `string_length` `char_at` `char_code_at` `from_char_code` |
 | Values | `is_array` `object_keys` |
 | Target | `platform` |
-| Types | `check_type`: emitted by the compiler where a type annotation is checked at run time ([Types](types.md), section 3) |
+| Types | `check_type` `assume_type`: emitted by the compiler where a type annotation is checked at run time, or was proved ([Types](types.md), sections 3 and 5) |
 
 Each behaves as the JavaScript built-in it stands for (`Math.floor`,
 `parseInt`, `Number.prototype.toPrecision`, `String.fromCharCode`,

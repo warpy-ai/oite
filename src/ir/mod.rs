@@ -89,6 +89,22 @@ pub enum IrType {
 }
 
 impl IrType {
+    /// The type of a value whose kind is in the set `kinds`
+    /// (`runtime::builtins::Kind::bit`): a single kind the IR models, or
+    /// `Any`.
+    pub fn of_kinds(kinds: u32) -> IrType {
+        use crate::runtime::builtins::Kind;
+        if kinds == Kind::Number.bit() {
+            IrType::Number
+        } else if kinds == Kind::Boolean.bit() {
+            IrType::Boolean
+        } else if kinds == Kind::String.bit() {
+            IrType::String
+        } else {
+            IrType::Any
+        }
+    }
+
     /// Check if this type is a heap-allocated reference type.
     pub fn is_heap_type(&self) -> bool {
         matches!(
@@ -572,6 +588,10 @@ pub enum IrOp {
     /// Intrinsic: dst = __intrinsic_<name>(args...), `id` an index into
     /// `runtime::intrinsics::INTRINSICS`
     Intrinsic(ValueId, u32, Vec<ValueId>),
+    /// A type annotation checked when the program runs: dst = src if its
+    /// kind is in the set `kinds` (`runtime::builtins::Kind::bit`), else
+    /// a TypeError (docs/docs/types.md, section 3)
+    CheckType(ValueId, ValueId, u32),
     /// Create closure: dst = closure(func_id, env)
     MakeClosure(ValueId, u32, ValueId),
 
@@ -672,6 +692,7 @@ impl IrOp {
                 | IrOp::Call(_, _, _)
                 | IrOp::CallMethod(_, _, _, _)
                 | IrOp::Intrinsic(_, _, _)
+                | IrOp::CheckType(_, _, _)
                 | IrOp::MathCall(_, _, _)
                 | IrOp::ArraySpread(_, _, _)
                 | IrOp::ObjectSpread(_, _, _)
@@ -750,6 +771,7 @@ impl IrOp {
             | IrOp::GetSuperProp(d, _, _, _)
             | IrOp::CallMethod(d, _, _, _)
             | IrOp::Intrinsic(d, _, _)
+            | IrOp::CheckType(d, _, _)
             | IrOp::MathCall(d, _, _)
             | IrOp::ArraySpread(d, _, _)
             | IrOp::ObjectSpread(d, _, _)
@@ -914,6 +936,7 @@ impl IrOp {
             IrOp::CallMono(_, _, args)
             | IrOp::Intrinsic(_, _, args)
             | IrOp::MathCall(_, _, args) => args.clone(),
+            IrOp::CheckType(_, src, _) => vec![*src],
             IrOp::MakeClosure(_, _, env) => vec![*env],
 
             IrOp::Phi(_, entries) => entries.iter().map(|(_, v)| *v).collect(),
@@ -1487,6 +1510,10 @@ impl fmt::Display for IrOp {
                     .copied()
                     .unwrap_or("?");
                 write!(f, "{} = math.{}({})", d, name, args.join(", "))
+            }
+            IrOp::CheckType(d, src, kinds) => {
+                let kinds = crate::runtime::builtins::Kind::names(*kinds);
+                write!(f, "{} = check.type {}, {}", d, src, kinds)
             }
             IrOp::Intrinsic(d, id, args) => {
                 let args: Vec<_> = args.iter().map(|a| a.to_string()).collect();

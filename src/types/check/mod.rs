@@ -68,6 +68,9 @@ struct Var {
     /// Always the function it was declared with: a function declaration,
     /// or a constant whose initialiser is a function.
     fixed_fn: bool,
+    /// Holds a value of its declared type from the moment it exists: a
+    /// parameter, or a `let` or `const` with an initialiser.
+    definite: bool,
 }
 
 #[derive(Default)]
@@ -101,6 +104,9 @@ pub struct Checker {
     pub diags: Vec<TypeDiag>,
     /// Where the program checks a value when it runs.
     guards: Guards,
+    /// What the checker proved about the kind of a value, by the span of
+    /// its expression: compiled code may rely on it without a check.
+    facts: Guards,
     /// The member expression checked last is a property of a string, a
     /// number or a boolean: a method the language provides.
     built_in_member: bool,
@@ -122,6 +128,8 @@ pub struct Checked {
     pub diags: Vec<TypeDiag>,
     /// The values to check when the program runs.
     pub guards: Guards,
+    /// The values whose kind is proved: nothing to check.
+    pub facts: Guards,
 }
 
 /// Check a program. With
@@ -139,6 +147,7 @@ pub fn check_program(
         fns: Vec::new(),
         diags: Vec::new(),
         guards: Guards::new(),
+        facts: Guards::new(),
         built_in_member: false,
     };
     match program {
@@ -183,6 +192,7 @@ pub fn check_program(
     Checked {
         diags,
         guards: checker.guards,
+        facts: checker.facts,
     }
 }
 
@@ -309,8 +319,17 @@ impl Checker {
             ty,
             konst,
             fixed_fn: false,
+            definite: false,
         };
         self.scope().vars.insert(name.to_string(), var);
+    }
+
+    /// The variable `name`, just declared here, has held a value of its
+    /// declared type since it came to exist.
+    fn make_definite(&mut self, name: &str) {
+        if let Some(var) = self.scope().vars.get_mut(name) {
+            var.definite = true;
+        }
     }
 
     /// The variable `name`, just declared here, always holds the

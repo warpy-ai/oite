@@ -17,7 +17,17 @@ impl Checker {
                 Lit::Null(_) => Ty::Null,
                 _ => Ty::Any,
             },
-            Expr::Ident(id) => self.ident(id.sym.as_ref()),
+            Expr::Ident(id) => {
+                // The declared type, not what control flow narrowed it
+                // to: a closure may have assigned the variable since.
+                if let Some(var) = self.lookup_var(id.sym.as_ref())
+                    && var.definite
+                {
+                    let declared = var.ty.clone();
+                    self.proved(id.span, &declared);
+                }
+                self.ident(id.sym.as_ref())
+            }
             Expr::This(_) => match self.narrowed("this") {
                 Some(ty) => ty,
                 None => self.fns.last().map_or(Ty::Any, |ctx| ctx.this.clone()),
@@ -586,9 +596,17 @@ impl Checker {
         match self.expand(&callee) {
             Ty::Function(sig) => {
                 let ret = self.check_arguments(&sig, &call.args, call.span);
-                if let (false, Callee::Expr(callee)) = (known, &call.callee) {
-                    let result = self.chained(callee, ret.clone());
-                    self.guard(call.span, &result);
+                match (known, &call.callee) {
+                    (false, Callee::Expr(callee)) => {
+                        let result = self.chained(callee, ret.clone());
+                        self.guard(call.span, &result);
+                    }
+                    // The function is the one declared, and what it
+                    // returns was checked there.
+                    (true, Callee::Expr(callee)) if matches!(callee.as_ref(), Expr::Ident(_)) => {
+                        self.proved(call.span, &ret);
+                    }
+                    _ => {}
                 }
                 ret
             }

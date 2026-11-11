@@ -40,6 +40,7 @@ mod equality;
 mod numeric;
 mod objects;
 mod ops;
+mod typecheck;
 
 /// A bitwise operator on 32-bit integers.
 #[derive(Clone, Copy)]

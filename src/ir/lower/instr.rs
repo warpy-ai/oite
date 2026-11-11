@@ -408,6 +408,8 @@ impl Lowerer {
                 self.push(dst);
             }
 
+            OpCode::Intrinsic(id, 2) if self.type_contract(*id)? => {}
+
             OpCode::Intrinsic(id, argc) => {
                 let mut args = Vec::with_capacity(*argc);
                 for _ in 0..*argc {
@@ -689,5 +691,43 @@ impl Lowerer {
             JsValue::Accessor(_, _) => (Literal::Null, IrType::Any),
             JsValue::Promise(_) => (Literal::Null, IrType::Any),
         }
+    }
+
+    /// `check_type(value, kinds)` and `assume_type(value, kinds)` with
+    /// constant `kinds`, which is how the compiler writes a type
+    /// annotation the program relies on (docs/docs/types.md, section 3).
+    /// A check becomes `IrOp::CheckType`. An assumption is something the
+    /// type checker proved: it costs nothing here and gives the value its
+    /// type. Returns whether the instruction was one of these.
+    fn type_contract(&mut self, id: u32) -> Result<bool, LowerError> {
+        use crate::runtime::intrinsics;
+        let check = intrinsics::id("check_type") == Some(id);
+        let assume = intrinsics::id("assume_type") == Some(id);
+        if !check && !assume {
+            return Ok(false);
+        }
+        let [.., value, kinds_value] = self.stack[..] else {
+            return Ok(false);
+        };
+        let block = self.func.block_mut(self.current_block);
+        let kinds = match block.ops.last() {
+            Some(IrOp::Const(v, Literal::Number(n))) if *v == kinds_value => *n as u32,
+            _ => return Ok(false),
+        };
+        block.ops.pop();
+        self.pop()?;
+        self.pop()?;
+        if assume {
+            let ty = IrType::of_kinds(kinds);
+            if ty != IrType::Any {
+                self.func.value_types.insert(value, ty);
+            }
+            self.push(value);
+        } else {
+            let dst = self.alloc_value(IrType::of_kinds(kinds));
+            self.emit(IrOp::CheckType(dst, value, kinds));
+            self.push(dst);
+        }
+        Ok(true)
     }
 }

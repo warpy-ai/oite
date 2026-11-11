@@ -248,6 +248,8 @@ impl<'a> TypeChecker<'a> {
             }
 
             IrOp::MathCall(dst, _, _) => self.set_type(*dst, IrType::Number),
+            // A value that passed the check is what the check asked for.
+            IrOp::CheckType(dst, _, kinds) => self.set_type(*dst, IrType::of_kinds(*kinds)),
             IrOp::CallMethod(dst, _, _, _)
             | IrOp::Intrinsic(dst, _, _)
             | IrOp::ArraySpread(dst, _, _)

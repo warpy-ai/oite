@@ -33,6 +33,7 @@ pub(super) fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_call,
         ot_call_method,
         ot_intrinsic,
+        ot_check_type,
         ot_register_global,
         ot_math_call,
         ot_get_prop_ic,

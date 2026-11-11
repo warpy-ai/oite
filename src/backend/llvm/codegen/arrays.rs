@@ -9,7 +9,7 @@ use std::mem::offset_of;
 impl Fx<'_> {
     /// Whether `v` is a heap pointer, and its address. Emitted in the
     /// current block.
-    unsafe fn heap_pointer(&mut self, v: LLVMValueRef) -> (LLVMValueRef, LLVMValueRef) {
+    pub(super) unsafe fn heap_pointer(&mut self, v: LLVMValueRef) -> (LLVMValueRef, LLVMValueRef) {
         unsafe {
             let b = self.builder;
             let tag = LLVMBuildAnd(b, v, self.c(0x7FFF_0000_0000_0000), NONAME);

@@ -8,7 +8,7 @@ use std::mem::offset_of;
 
 impl Fx<'_> {
     /// Whether `v` is a heap pointer, and its address.
-    fn heap_pointer(b: &mut FunctionBuilder, v: Value) -> (Value, Value) {
+    pub(super) fn heap_pointer(b: &mut FunctionBuilder, v: Value) -> (Value, Value) {
         let tag = b.ins().band_imm(v, 0x7FFF_0000_0000_0000);
         let tagged = b.ins().icmp_imm(IntCC::Equal, tag, QNAN as i64);
         let addr = b.ins().band_imm(v, 0x0000_FFFF_FFFF_FFFF);
