@@ -6,8 +6,15 @@ use super::*;
 use swc_common::Spanned;
 
 impl Checker {
-    /// Report that `src` is not assignable to `dst`, if it is not.
+    /// Report that `src` is not assignable to `dst`, if it is not. The
+    /// expression at `span` is what is stored: if the checker does not
+    /// know what it is, it is checked when the program runs.
     pub(super) fn check_assignable(&mut self, src: &Ty, dst: &Ty, span: Span) {
+        self.guard_flow(src, dst, span);
+        self.report_unassignable(src, dst, span);
+    }
+
+    pub(super) fn report_unassignable(&mut self, src: &Ty, dst: &Ty, span: Span) {
         if self.assignable(src, dst) {
             return;
         }
@@ -139,6 +146,10 @@ impl Checker {
         } else {
             param.ty.clone()
         };
+        // Its function may be called from dynamic code.
+        if let (false, Pat::Ident(id)) = (param.rest, pat) {
+            self.guard(id.id.span, &ty);
+        }
         self.declare(name, ty, false);
     }
 
@@ -221,6 +232,12 @@ impl Checker {
                 ParamOrTsParamProp::TsParamProp(p) => match &p.param {
                     TsParamPropParam::Ident(id) => {
                         let ty = self.annotation(id.type_ann.as_deref());
+                        let ty = if id.id.optional && !ty.is_dynamic() {
+                            Ty::union([ty, Ty::Undefined])
+                        } else {
+                            ty
+                        };
+                        self.guard(id.id.span, &ty);
                         self.declare(id.id.sym.as_ref(), ty, false);
                     }
                     TsParamPropParam::Assign(a) => {

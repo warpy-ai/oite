@@ -1,0 +1,14 @@
+// backends: vm jit aot
+//
+// Without --strict-types nothing is checked when the program runs: a
+// wrong value goes through, as it always did.
+
+function double(n: number): number {
+    return n * 2;
+}
+const loose: any = double;
+console.log(loose("a"));
+const text: string = loose(2);
+console.log(text);
+const label = (loose as any) as string;
+console.log(typeof label);

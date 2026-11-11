@@ -67,6 +67,7 @@ impl Checker {
             }
             Expr::Update(u) => {
                 self.expr(&u.arg);
+                self.unguard(u.arg.span());
                 Ty::Number
             }
             Expr::Bin(bin) => self.binary(bin),
@@ -116,16 +117,20 @@ impl Checker {
             // A cast is checked when the program runs; here it is the
             // type it names.
             Expr::TsAs(cast) => {
-                self.expr(&cast.expr);
-                self.resolve(&cast.type_ann)
+                let found = self.expr(&cast.expr);
+                self.cast(&found, &cast.type_ann, cast.span)
             }
             Expr::TsTypeAssertion(cast) => {
-                self.expr(&cast.expr);
-                self.resolve(&cast.type_ann)
+                let found = self.expr(&cast.expr);
+                self.cast(&found, &cast.type_ann, cast.span)
             }
-            Expr::TsNonNull(e) => {
-                let ty = self.expr(&e.expr);
-                self.without_nullish(&ty)
+            Expr::TsNonNull(non_null) => {
+                let ty = self.expr(&non_null.expr);
+                let present = self.without_nullish(&ty);
+                if present != ty {
+                    self.guard(non_null.span, &present);
+                }
+                present
             }
             Expr::TsConstAssertion(e) => self.expr(&e.expr),
             Expr::TsInstantiation(e) => self.expr(&e.expr),
@@ -137,6 +142,16 @@ impl Checker {
             }
             _ => Ty::Any,
         }
+    }
+
+    /// `<found> as T`: the type it names. Unless the checker knows the
+    /// value is one, it is checked when the program runs.
+    fn cast(&mut self, found: &Ty, ann: &TsType, span: Span) -> Ty {
+        let wanted = self.resolve(ann);
+        if found.is_dynamic() || !self.assignable(found, &wanted) {
+            self.guard(span, &wanted);
+        }
+        wanted
     }
 
     /// The type of the variable `name` here.
@@ -351,7 +366,15 @@ impl Checker {
             }
             None => value.clone(),
         };
-        self.check_assignable(&stored, &target, assign.right.span());
+        match assign.op.to_update() {
+            // What is stored is the result of the operation, which is
+            // the value of the whole expression.
+            Some(_) => {
+                self.report_unassignable(&stored, &target, assign.right.span());
+                self.guard_flow(&stored, &target, assign.span);
+            }
+            None => self.check_assignable(&stored, &target, assign.right.span()),
+        }
         if let Some(path) = path {
             match &assign.left {
                 AssignTarget::Simple(SimpleAssignTarget::Ident(_)) => {
@@ -376,8 +399,20 @@ impl Checker {
     /// what control flow narrowed it to): what a store is checked
     /// against.
     fn member_declared(&mut self, m: &MemberExpr) -> Ty {
+        self.member_parts(m).0
+    }
+
+    /// The declared type of the property, and whether reading it reads
+    /// the heap (which dynamic code can write): a property of an object
+    /// or an element of an array, not `"abc".length`.
+    fn member_parts(&mut self, m: &MemberExpr) -> (Ty, bool) {
         let object = self.expr(&m.obj);
-        match &m.prop {
+        let built_in = match self.expand(&object) {
+            Ty::String | Ty::StrLit(_) | Ty::Number | Ty::Boolean => true,
+            Ty::Array(_) | Ty::Tuple(_) => matches!(m.prop, MemberProp::Ident(_)),
+            _ => false,
+        };
+        let ty = match &m.prop {
             MemberProp::Ident(name) => self.member_type(&object, name.sym.as_ref()),
             MemberProp::Computed(c) => {
                 let key = self.expr(&c.expr);
@@ -385,15 +420,18 @@ impl Checker {
                 if let (Ty::Tuple(elems), Expr::Lit(Lit::Num(n))) =
                     (self.expand(&object), c.expr.as_ref())
                 {
-                    return elems
-                        .get(n.value as usize)
-                        .cloned()
-                        .unwrap_or(Ty::Undefined);
+                    let elem = elems.get(n.value as usize).cloned();
+                    return (elem.unwrap_or(Ty::Undefined), true);
                 }
                 self.element_type(&object, &key)
             }
             MemberProp::PrivateName(_) => Ty::Any,
-        }
+        };
+        self.built_in_member = matches!(
+            self.expand(&object),
+            Ty::String | Ty::StrLit(_) | Ty::Number | Ty::Boolean
+        );
+        (ty, !built_in)
     }
 
     fn member(&mut self, m: &MemberExpr) -> Ty {
@@ -404,10 +442,33 @@ impl Checker {
         {
             return builtins::math_member(name.sym.as_ref());
         }
-        let declared = self.member_declared(m);
+        let (declared, heap) = self.member_parts(m);
+        if heap {
+            // Checked against the declared type: what control flow
+            // established about a property does not survive a call.
+            let read = self.chained(&m.obj, declared.clone());
+            self.guard(m.span, &read);
+        }
         match path_of(&Expr::Member(m.clone())).and_then(|path| self.narrowed(&path)) {
             Some(narrowed) => narrowed,
             None => declared,
+        }
+    }
+
+    /// `ty`, or `undefined` if the expression it was read from is inside
+    /// an optional chain (`a?.b.c` is `undefined` when `a` is).
+    fn chained(&self, object: &Expr, ty: Ty) -> Ty {
+        let mut cur = object;
+        loop {
+            match cur {
+                Expr::OptChain(_) => return Ty::union([ty, Ty::Undefined]),
+                Expr::Member(m) => cur = &m.obj,
+                Expr::Call(CallExpr {
+                    callee: Callee::Expr(callee),
+                    ..
+                }) => cur = callee,
+                _ => return ty,
+            }
         }
     }
 
@@ -427,7 +488,9 @@ impl Checker {
                 if ty.is_dynamic() {
                     Ty::Any
                 } else {
-                    Ty::union([ty, Ty::Undefined])
+                    let ty = Ty::union([ty, Ty::Undefined]);
+                    self.guard(chain.span, &ty);
+                    ty
                 }
             }
             OptChainBase::Call(call) => {
@@ -500,8 +563,35 @@ impl Checker {
             Callee::Expr(callee) => self.expr(callee),
             Callee::Super(_) | Callee::Import(_) => Ty::Any,
         };
+        // Whether the function called is known to be the one declared:
+        // a function declaration, a constant whose initialiser is a
+        // function, or a method of a string or a number. Anything else
+        // can come from dynamic code, so its result is checked.
+        let known = match &call.callee {
+            Callee::Expr(callee) => match callee.as_ref() {
+                Expr::Ident(id) => match self.lookup_var(id.sym.as_ref()) {
+                    Some(var) => var.fixed_fn,
+                    None => true,
+                },
+                Expr::Member(m) => {
+                    self.unguard(m.span);
+                    let math = matches!(m.obj.as_ref(), Expr::Ident(o)
+                        if o.sym.as_ref() == "Math" && self.lookup_var("Math").is_none());
+                    math || self.built_in_member
+                }
+                _ => false,
+            },
+            _ => true,
+        };
         match self.expand(&callee) {
-            Ty::Function(sig) => self.check_arguments(&sig, &call.args, call.span),
+            Ty::Function(sig) => {
+                let ret = self.check_arguments(&sig, &call.args, call.span);
+                if let (false, Callee::Expr(callee)) = (known, &call.callee) {
+                    let result = self.chained(callee, ret.clone());
+                    self.guard(call.span, &result);
+                }
+                ret
+            }
             other => {
                 for arg in &call.args {
                     self.expr(&arg.expr);

@@ -1,0 +1,222 @@
+// backends: vm jit aot
+// flags: --strict-types
+//
+// A value is checked where it moves from dynamic code to a typed place
+// (docs/docs/types.md, section 3).
+
+function attempt(label: string, f: () => any) {
+    try {
+        console.log(label + ":", f());
+    } catch (e) {
+        console.log(label + ":", e.name + ": " + e.message);
+    }
+}
+
+// Something the checker knows nothing about.
+function dyn(v: any): any {
+    return v;
+}
+
+// --- parameters ---
+
+function double(n: number): number {
+    return n * 2;
+}
+function greet(name: string, punctuation?: string): string {
+    return "hi " + name + (punctuation === undefined ? "" : punctuation);
+}
+function scaled(n: number, factor: number = 10): number {
+    return n * factor;
+}
+function show(v: number | string | null): string {
+    return "<" + v + ">";
+}
+const arrow = (flag: boolean): string => (flag ? "yes" : "no");
+
+attempt("param ok", () => dyn(double)(21));
+attempt("param string", () => dyn(double)("21"));
+attempt("param missing", () => dyn(double)());
+attempt("optional given", () => dyn(greet)("a", "!"));
+attempt("optional left out", () => dyn(greet)("a"));
+attempt("optional wrong", () => dyn(greet)("a", 1));
+attempt("default used", () => dyn(scaled)(2));
+attempt("default given", () => dyn(scaled)(2, 3));
+attempt("default wrong", () => dyn(scaled)(2, "3"));
+attempt("union number", () => dyn(show)(1));
+attempt("union null", () => dyn(show)(null));
+attempt("union undefined", () => dyn(show)(undefined));
+attempt("arrow ok", () => dyn(arrow)(true));
+attempt("arrow wrong", () => dyn(arrow)(1));
+
+// --- variables, assignments and results ---
+
+attempt("let ok", () => {
+    const n: number = dyn(1);
+    return n;
+});
+attempt("let wrong", () => {
+    const n: number = dyn("one");
+    return n;
+});
+attempt("assign wrong", () => {
+    let s: string = "a";
+    s = dyn(2);
+    return s;
+});
+attempt("compound wrong", () => {
+    let n: number = 1;
+    n += dyn("x");
+    return n;
+});
+attempt("return ok", () => {
+    function f(v: any): string {
+        return v;
+    }
+    return f("s");
+});
+attempt("return wrong", () => {
+    function f(v: any): string {
+        return v;
+    }
+    return f(3);
+});
+
+// --- casts ---
+
+attempt("as ok", () => dyn("text") as string);
+attempt("as wrong", () => dyn(null) as string);
+attempt("as narrows", () => {
+    const v: number | string = dyn(5);
+    return (v as string).length;
+});
+attempt("non-null ok", () => {
+    const v: number | null = dyn(7);
+    return v! + 1;
+});
+attempt("non-null wrong", () => {
+    const v: number | null = dyn(null);
+    return v! + 1;
+});
+
+// --- kinds of object ---
+
+class Point {
+    x: number;
+    label: string | null = null;
+    constructor(x: number) {
+        this.x = x;
+    }
+    twice(): number {
+        return this.x * 2;
+    }
+}
+interface Named {
+    name: string;
+}
+
+attempt("array ok", () => {
+    const a: number[] = dyn([1, 2]);
+    return a.length;
+});
+attempt("array wrong", () => {
+    const a: number[] = dyn({ length: 2 });
+    return a.length;
+});
+attempt("object ok", () => {
+    const o: Named = dyn({ name: "n" });
+    return o.name;
+});
+attempt("object wrong", () => {
+    const o: Named = dyn("n");
+    return o.name;
+});
+attempt("class ok", () => {
+    const p: Point = dyn(new Point(1));
+    return p.x;
+});
+attempt("class wrong", () => {
+    const p: Point = dyn(1);
+    return p.x;
+});
+attempt("function ok", () => {
+    const f: (n: number) => number = dyn(double);
+    return f(4);
+});
+attempt("function wrong", () => {
+    const f: (n: number) => number = dyn({});
+    return f(4);
+});
+attempt("class value", () => {
+    const c: typeof Point = dyn(Point);
+    return new c(3).x;
+});
+
+// --- reads from the heap ---
+
+attempt("field ok", () => {
+    const p: Point = new Point(1);
+    return p.x;
+});
+attempt("field changed by dynamic code", () => {
+    const p: Point = new Point(1);
+    dyn(p).x = "one";
+    return p.x;
+});
+attempt("nullable field", () => {
+    const p: Point = new Point(1);
+    return p.label;
+});
+attempt("nullable field wrong", () => {
+    const p: Point = new Point(1);
+    dyn(p).label = 5;
+    return p.label;
+});
+attempt("property of an object type", () => {
+    const o: Named = dyn({ name: 5 });
+    return o.name;
+});
+attempt("element ok", () => {
+    const a: number[] = [1, 2];
+    return a[1];
+});
+attempt("element changed by dynamic code", () => {
+    const a: number[] = [1, 2];
+    dyn(a)[1] = "two";
+    return a[1];
+});
+attempt("optional chain on null", () => {
+    const p: Point | null = dyn(null);
+    return p?.x;
+});
+attempt("optional chain wrong", () => {
+    const p: Point | null = new Point(1);
+    dyn(p).x = true;
+    return p?.x;
+});
+
+// --- results of calls that dynamic code can replace ---
+
+attempt("method ok", () => {
+    const p: Point = new Point(4);
+    return p.twice();
+});
+attempt("method replaced", () => {
+    const p: Point = new Point(4);
+    dyn(p).twice = () => "eight";
+    return p.twice();
+});
+attempt("function value", () => {
+    const f: () => number = dyn(() => "n");
+    return f();
+});
+
+// --- code with no annotations is not checked ---
+
+function loose(a, b) {
+    return a + b;
+}
+attempt("dynamic", () => loose("a", 1));
+attempt("any", () => {
+    const v: any = dyn("s");
+    return v;
+});

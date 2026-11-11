@@ -37,6 +37,9 @@ pub struct Compiler {
     /// What the type checker found in each file of the last program
     /// compiled (`compile_program`).
     pub warnings: Vec<FileWarnings>,
+    /// Check values against type annotations when the program runs
+    /// (`--strict-types`; docs/docs/types.md, section 3).
+    pub strict_types: bool,
 }
 
 /// What the type checker found in one file. For now these are warnings:
@@ -77,6 +80,7 @@ impl Compiler {
             type_diagnostics: Vec::new(),
             type_world: Default::default(),
             warnings: Vec::new(),
+            strict_types: crate::types::strict(),
         }
     }
 
@@ -149,13 +153,18 @@ impl Compiler {
             return Err(CompileError::single(d));
         }
 
-        self.type_diagnostics =
-            crate::types::check::check_program(program, &mut self.type_world, link.as_ref())
-                .into_iter()
-                .map(|d| Diagnostic::new("warning", d.message, position(d.span)))
-                .collect();
+        let checked =
+            crate::types::check::check_program(program, &mut self.type_world, link.as_ref());
+        self.type_diagnostics = checked
+            .diags
+            .into_iter()
+            .map(|d| Diagnostic::new("warning", d.message, position(d.span)))
+            .collect();
 
         let mut codegen = Codegen::new();
+        if self.strict_types {
+            codegen.guards = checked.guards;
+        }
         codegen.link = link;
         match program {
             Program::Module(module) => {
@@ -432,6 +441,10 @@ pub struct Codegen {
     class_name: Option<String>,
     /// Where every variable lives (see `scope.rs`).
     pub scopes: ScopeInfo,
+    /// The expressions and parameters whose value is checked when the
+    /// program runs, from the type checker; empty unless types are
+    /// strict.
+    pub(crate) guards: crate::types::check::Guards,
     /// Whether the code being generated keeps its innermost environment in
     /// `%scope` (some variable in reach is captured).
     env_active: bool,
@@ -450,6 +463,7 @@ impl Codegen {
     pub fn new() -> Self {
         Self {
             instructions: Vec::new(),
+            guards: Default::default(),
             scope_stack: vec![Vec::new()],
             in_function: false,
             in_async_function: false,

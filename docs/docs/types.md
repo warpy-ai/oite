@@ -106,7 +106,7 @@ static soundness is not possible while `any` exists, so the rule is:
 
 | Where | Check |
 | ----- | ----- |
-| `any` assigned or passed to a typed variable, parameter or return | The value's tag (number, string, boolean, null, undefined) or class |
+| `any` assigned or passed to a typed variable, parameter or return | The value's kind (number, string, boolean, null, undefined, array, function, object) or class |
 | A typed function called from dynamic code | Its parameters, at a checked entry point (section 5) |
 | A read from the heap in typed code (`p.x`, `a[i]`) | The tag of the value read |
 | `x as T` | The same check as an assignment. It is no longer free. |
@@ -128,6 +128,51 @@ parameter of type `{ x: number }` checks that it is an object, and `p.x`
 checks the number when it is read.
 
 Section 7 removes the heap-read check for class fields later.
+
+#### What is checked today (step 4)
+
+The checks are **off by default**. `oitec --strict-types <command>` (or
+`OITE_STRICT_TYPES=1`) turns them on, and makes what the checker reports
+an error. They are opt-in for two reasons: a program that passes a wrong
+value through `any` runs today and would stop, and each check is a call
+into the runtime until step 5 compiles it as a compare and a branch.
+
+The checker records where a check is needed
+(`src/types/check/guards.rs`), and the compiler emits it as one
+intrinsic, `check_type(value, kinds)`, so the VM, the JIT and native
+binaries run the same check:
+
+| Where | Checked |
+| ----- | ------- |
+| A parameter with a type | On entry, after its default value is applied. Always: the caller may be dynamic code. |
+| An `any` stored in a typed variable or property, or returned from a function with a declared result | The value stored or returned |
+| `x as T`, `<T>x` | Unless the checker knows `x` is a `T` |
+| `x!` | That `x` is not `null` or `undefined` |
+| `p.x`, `a[i]`, `p?.x` read from an object or an array whose type is known | The value read, against the declared type of the property or element |
+| The result of a call | Unless the callee is a function declaration, a constant whose initialiser is a function, or a method of a string or a number: anything else can be replaced by dynamic code |
+
+A check tests the **kind** of the value: number, string, boolean, `null`,
+`undefined`, array, function, or another object. A failed check throws
+`TypeError: Expected number | null, got string` at the expression, or at
+the parameter inside the called function.
+
+Not yet, each a follow-up:
+
+- **A class type is checked as "an object".** Instances do not carry
+  their class in a form a check can test cheaply until class layouts
+  (section 7). Step 8 makes this check exact.
+- **A string literal type is checked as "a string"**, and a tuple as "an
+  array".
+- **`for (const x: T of xs)`** and compound assignment to a property
+  (`p.x += v`) are not checked.
+- **What control flow established about a property** (`if (p.x !== null)`)
+  is not trusted across a call by the run-time check, but still is by
+  the checker. Step 5 must not rely on it; neither may it rely on a
+  narrowed variable that a closure assigns.
+- **Existing code that fails with the checks on**, to fix before they
+  can be the default: `bootstrap/codegen.ot` passes a `null` register as
+  a `number`, and the `json` roll's `stringify` is called with a `null`
+  replacer, which its type does not allow.
 
 ### 4. The checker
 
@@ -304,7 +349,10 @@ Each step is one pull request, with tests on vm, jit and aot.
    nothing in the repository's Oite code or in the core rolls, and a test
    keeps it so (`existing_code_has_no_findings`). Still to do: turn the
    warnings into errors, after a release has shipped them as warnings.
-4. **Boundary checks** (section 3) on every backend.
+4. **Done, behind `--strict-types`: boundary checks** (section 3) on
+   every backend. They become the default together with errors (step 3),
+   once step 5 has made them cheap and the code listed in section 3
+   passes with them on.
 5. **Types in the IR and unboxed numbers** inside a function.
 6. **Typed entries and direct typed calls.**
 7. **Specialisation** of unannotated functions.

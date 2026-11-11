@@ -121,10 +121,16 @@ fn collect_programs(dir: &Path, out: &mut Vec<PathBuf>) {
             if !name.starts_with('_') {
                 collect_programs(&path, out);
             }
-        } else if name.ends_with(".ot") {
+        } else if name.ends_with(".ot") && !expects_type_error(&path) {
             out.push(path);
         }
     }
+}
+
+/// Whether the language test `program` is wrong on purpose: its `.err`
+/// expects a type error.
+fn expects_type_error(program: &Path) -> bool {
+    fs::read_to_string(program.with_extension("err")).is_ok_and(|e| e.contains("type error"))
 }
 
 /// The Oite code in this repository keeps its promises: the checker finds

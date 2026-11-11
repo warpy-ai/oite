@@ -241,6 +241,28 @@ impl builtins::Host for NativeHost {
         matches!(object(OtValue::from_bits(*v)), Some((_, ObjectKind::Array)))
     }
 
+    fn kind(&self, v: &u64) -> builtins::Kind {
+        use builtins::Kind;
+        let v = OtValue::from_bits(*v);
+        if v.is_number() {
+            Kind::Number
+        } else if v.is_boolean() {
+            Kind::Boolean
+        } else if v.is_undefined() {
+            Kind::Undefined
+        } else if v.is_null() {
+            Kind::Null
+        } else {
+            match object(v) {
+                Some((_, ObjectKind::String)) => Kind::String,
+                Some((_, ObjectKind::Array)) => Kind::Array,
+                Some((_, ObjectKind::Function)) => Kind::Function,
+                Some((ptr, ObjectKind::Object)) if is_class(ptr) => Kind::Function,
+                _ => Kind::Object,
+            }
+        }
+    }
+
     fn own_keys(&self, v: &u64) -> Vec<String> {
         match object(OtValue::from_bits(*v)) {
             Some((ptr, ObjectKind::Object)) => object::own(obj(ptr))

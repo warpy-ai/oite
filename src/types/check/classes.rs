@@ -74,6 +74,7 @@ impl Checker {
                 Decl::Fn(f) => {
                     let sig = self.signature(&f.function);
                     self.declare(f.ident.sym.as_ref(), Ty::Function(sig), true);
+                    self.fix_fn(f.ident.sym.as_ref());
                 }
                 Decl::Class(c) => {
                     let ty = id.map_or(Ty::Any, Ty::ClassValue);

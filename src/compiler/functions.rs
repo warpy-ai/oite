@@ -69,6 +69,18 @@ impl Codegen {
         let params = self.bind_params(pats);
         let prev_env = self.function_prologue(span, &params);
         self.apply_param_defaults(pats);
+        // A typed parameter is checked: the caller may be dynamic code.
+        for param in &params {
+            if self
+                .guards
+                .contains_key(&(param.span.lo.0, param.span.hi.0))
+            {
+                self.mark(param.span);
+                self.load_var(param);
+                self.emit_guard(param.span);
+                self.instructions.push(OpCode::Pop);
+            }
+        }
 
         match kind {
             FnKind::Ctor { derived: false, .. } => self.emit_field_inits(fields),
