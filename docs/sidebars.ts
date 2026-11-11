@@ -22,6 +22,7 @@ const sidebars: SidebarsConfig = {
     "platform-architecture",
     "performance",
     "object-model",
+    "types",
     "development-status",
     "contributing",
   ],
