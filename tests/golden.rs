@@ -44,6 +44,11 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        // macOS writes AppleDouble `._name` metadata files beside every file on
+        // non-HFS/APFS volumes; they are binary, not programs.
+        if entry.file_name().to_string_lossy().starts_with("._") {
+            continue;
+        }
         if path.is_dir() {
             collect(&path, out);
         } else if path.extension().is_some_and(|e| e == "ot") {
