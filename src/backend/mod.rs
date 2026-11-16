@@ -5,7 +5,7 @@
 //!
 //! Architecture:
 //! - `layout.rs` - Memory layout calculation for structs/arrays
-//! - `cranelift.rs` - IR to Cranelift IR translation
+//! - `cranelift/` - IR to Cranelift IR translation
 //! - `jit.rs` - JIT compilation and execution runtime
 //! - `aot.rs` - Ahead-of-time compilation pipeline (future)
 //! - `tier.rs` - Tiered compilation manager

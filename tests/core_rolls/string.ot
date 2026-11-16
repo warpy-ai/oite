@@ -1,0 +1,14 @@
+// backends: vm jit aot
+// @rolls/string, written in Oite on the intrinsics.
+import * as s from "@rolls/string";
+console.log(s.length("hello"), s.charAt("hello", 1), s.charCodeAt("A", 0), s.at("hello", -1));
+console.log(s.indexOf("banana", "an"), s.lastIndexOf("banana", "an"), s.includes("banana", "nan"));
+console.log(s.startsWith("oite", "oi"), s.endsWith("oite", "te"), s.slice("hello", 1, -1), s.substring("hello", 3, 1));
+console.log(s.toUpperCase("MiXed 1"), s.toLowerCase("MiXed 1"));
+console.log("[" + s.trim("  x y  ") + "]", "[" + s.trimStart("  x ") + "]", "[" + s.trimEnd(" x  ") + "]");
+console.log(s.padStart("7", 3, "0"), s.padEnd("ab", 5, "-"), s.repeat("ab", 3));
+console.log(s.replace("a-b-c", "-", "+"), s.replaceAll("a-b-c", "-", "+"), s.split("a,b,,c", ","));
+console.log(s.fromCharCode(72, 105), s.concat("a", "b", "c"), s.reverse("abc"), s.count("banana", "a"));
+console.log(s.capitalize("oite"), s.toTitleCase("hello big world"), s.toCamelCase("hello big world"));
+console.log(s.toSnakeCase("helloBigWorld"), s.toKebabCase("helloBigWorld"), s.truncate("hello world", 8));
+console.log(s.isEmpty(""), s.isBlank("  "), s.escapeHtml("<a href=\"x\">&</a>"));

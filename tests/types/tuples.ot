@@ -1,0 +1,22 @@
+// Tuples: an array with these elements, in order.
+let pair: [number, string] = [1, "a"];
+let n: number = pair[0];
+let s: string = pair[1];
+let wrong: string = pair[0];
+let third: number = pair[2];
+let len: number = pair.length;
+function asArray(p: [number, string]): (number | string)[] { return p; }
+function notNumbers(p: [number, string]): number[] { return p; }
+let bad: [number, string] = [true, "a"];
+function triple(p: [number, string]): [number, number, number] { return p; }
+function entries(o: { [key: string]: number }): [string, number][] {
+  let out: [string, number][] = [];
+  out.push(["a", 1]);
+  out.push([1, 2]);
+  return out;
+}
+function swap(p: [number, string]): [string, number] { return [p[1], p[0]]; }
+let rest: [number, ...string[]] = [1, "a", "b"];
+type Mapped = { [K in "a" | "b"]: number };
+let m: Mapped = { a: 1, b: 2 };
+let mBad: Mapped = { a: "x" };

@@ -1,0 +1,4 @@
+// Types the checker does not model yet are reported, and are `any`.
+type Both = { a: number } & { b: string };
+type Maybe<T> = T extends null ? never : T;
+let both: Both = { a: 1, b: 2 };

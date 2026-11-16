@@ -1,0 +1,3 @@
+// An import of a file that does not exist is a compile error at the import.
+import { x } from "./_lib/nope.ot";
+console.log(x);

@@ -1,0 +1,10 @@
+// backends: vm jit aot
+// A program that assigns Math: Math.sqrt is whatever it assigned.
+let calls = 0;
+let Math = {
+  sqrt(x) {
+    calls = calls + 1;
+    return x * 10;
+  },
+};
+console.log(Math.sqrt(4), calls);

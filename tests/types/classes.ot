@@ -1,0 +1,46 @@
+// Classes: fields, constructors, methods, inheritance and statics.
+class Point {
+  x: number;
+  y: number;
+  label?: string;
+  static origin: Point = new Point(0, 0);
+  static count: number = "none";
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+    this.x = "left";
+    this.undeclared = "anything";
+  }
+  plus(other: Point): Point { return new Point(this.x + other.x, this.y + other.y); }
+  length(): number { return this.label; }
+  get sum(): number { return this.x + this.y; }
+}
+class Point3 extends Point {
+  z: number;
+  constructor(x: number, y: number, z: number) { super(x, y); this.z = z; }
+  plus(other: Point): Point { return this; }
+}
+class Account {
+  constructor(public owner: string, private balance: number = 0) {}
+  deposit(amount: number): number { this.balance = this.balance + amount; return this.balance; }
+}
+
+let p: Point = new Point(1, 2);
+let dynamic = new Point(1, 2);
+let unchecked: string = dynamic.plus(5).sum;
+let q: Point = new Point3(1, 2, 3);
+let r: Point3 = p.plus(q);
+let s: number = p.sum;
+let t: string = p.sum;
+new Point(1);
+new Point("1", 2);
+new Point3(1, 2);
+p.plus(5);
+p.plus(q).plus(q).x = "far";
+let o: Point = Point.origin;
+let c: string = Point.count;
+let acct: Account = new Account("ann");
+acct.owner = 5;
+acct.deposit("ten");
+let named: { x: number; y: number } = new Point(1, 2);
+let wrongShape: { x: string } = new Point(1, 2);

@@ -1,0 +1,68 @@
+// backends: vm jit aot
+// Objects are allocated with room for the properties their literal
+// stores; more properties, added later or in a long literal, still work.
+function sum(o, names) {
+  let s = 0;
+  for (let i = 0; i < names.length; i++) s = s + o[names[i]];
+  return s;
+}
+let one = { a: 1 };
+let two = { a: 1, b: 2 };
+let seven = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7 };
+let twenty = {
+  p0: 0, p1: 1, p2: 2, p3: 3, p4: 4, p5: 5, p6: 6, p7: 7, p8: 8, p9: 9,
+  p10: 10, p11: 11, p12: 12, p13: 13, p14: 14, p15: 15, p16: 16, p17: 17, p18: 18, p19: 19,
+};
+console.log(one.a, two.a + two.b, seven.a + seven.g, twenty.p0 + twenty.p15 + twenty.p16 + twenty.p19);
+
+// Growing past what the literal had room for.
+one.b = 2;
+one.c = 3;
+one.d = 4;
+one.e = 5;
+two.c = 3;
+seven.h = 8;
+seven.i = 9;
+twenty.p20 = 20;
+console.log(sum(one, ["a", "b", "c", "d", "e"]), sum(two, ["a", "b", "c"]), sum(seven, ["a", "g", "h", "i"]), twenty.p20 + twenty.p19);
+console.log(Object.keys(one).length, Object.keys(two).length, Object.keys(seven).length, Object.keys(twenty).length);
+
+// The same property names on objects of different sizes, at one site.
+function getA(o) {
+  return o.a;
+}
+function setB(o, v) {
+  o.b = v;
+}
+let empty = {};
+empty.a = "late";
+let sized = [one, two, seven, empty, { a: "x", z: 0 }];
+let out = [];
+for (let i = 0; i < sized.length; i++) {
+  setB(sized[i], i);
+  out.push(getA(sized[i]) + ":" + sized[i].b);
+}
+console.log(out.join(" "));
+
+// A duplicate key and a value that reads the object being built.
+let dup = { k: 1, k: 2, m: 3 };
+console.log(dup.k, dup.m, Object.keys(dup).length);
+
+// Class instances: fields set in the constructor and after it.
+class Wide {
+  constructor() {
+    this.f1 = 1;
+    this.f2 = 2;
+    this.f3 = 3;
+    this.f4 = 4;
+    this.f5 = 5;
+    this.f6 = 6;
+  }
+  total() {
+    return this.f1 + this.f2 + this.f3 + this.f4 + this.f5 + this.f6 + (this.extra || 0);
+  }
+}
+let w1 = new Wide();
+let w2 = new Wide();
+w2.extra = 100;
+console.log(w1.total(), w2.total(), Object.keys(w1).length, Object.keys(w2).length);

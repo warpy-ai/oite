@@ -4,7 +4,7 @@
 //! tscl code calls into. It separates:
 //! - Memory allocation and GC (heap.rs)
 //! - Value representation for native interop (abi.rs)
-//! - Extern "C" stubs callable from JIT/AOT code (stubs.rs)
+//! - Extern "C" stubs callable from JIT/AOT code (stubs/)
 //!
 //! The VM interpreter continues to use JsValue/HeapObject for backwards compatibility.
 //! Native code uses OtValue (NaN-boxed) for efficient representation.
@@ -15,6 +15,8 @@ pub mod abi_version;
 pub mod r#async;
 pub mod builtins;
 pub mod heap;
+pub mod intrinsics;
+pub mod object;
 pub mod stubs;
 
 pub use abi_version::ABI_VERSION;

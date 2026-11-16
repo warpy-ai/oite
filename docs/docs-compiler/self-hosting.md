@@ -44,7 +44,7 @@ The Oite compiler (`oitec`) is now **fully self-hosting** — written entirely i
 | Bootstrap Compiler | `bootstrap/*.ot`           | Reference: parse → bytecode                          |
 | Modular Compiler   | `compiler/*.ot`            | **Complete**: parse → IR → bytecode/LLVM IR → native |
 | VM                 | `src/vm/`                  | Full bytecode execution                              |
-| JIT                | `src/backend/cranelift.rs` | Cranelift codegen                                    |
+| JIT                | `src/backend/cranelift/` | Cranelift codegen                                     |
 | AOT                | `src/backend/llvm/`        | LLVM with LTO                                        |
 
 ---
@@ -368,7 +368,7 @@ script/
 │   ├── runtime/             # Keep: ABI, heap, stubs
 │   │   ├── abi.rs
 │   │   ├── heap.rs
-│   │   └── stubs.rs
+│   │   └── stubs/
 │   └── vm/                  # Keep: for debugging/testing
 └── tests/
 ```

@@ -64,6 +64,7 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Rest parameters (`function f(a, ...rest)`) | Covered                              | Covered                           |
 | Compound assignment (`+=`, `*=`, `<<=`, ...) | Covered                            | Covered                           |
 | Objects, arrays, `obj[k]`, `.length`, `push`/`pop` | Covered                      | Covered                           |
+| Spread in array and object literals (`[...a, ..."str"]`, `{...o}`) | Covered     | Covered                           |
 | Methods on object literals (`this`)        | Covered                              | Covered                           |
 | String methods (`slice`, `split`, `trim`, `indexOf`, `padStart`, ...) | Covered   | Covered (shared implementation)   |
 | Array methods (`splice`, `join`, `indexOf`, `concat`, `shift`, ...)   | Covered   | Covered (shared implementation)   |
@@ -88,7 +89,10 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Promises (`new Promise`, `then` / `catch` / `finally`, `Promise.resolve` / `reject` / `all` / `race`) | Covered | Covered |
 | Microtask ordering, `setTimeout` / `clearTimeout`, unhandled rejections (exit 1) | Covered | Covered               |
 | Top-level `await`                          | Not supported: evaluates to its operand without waiting | Same          |
-| ES modules (`import` / `export`)           | Works, not yet covered               | Refused                           |
+| ES modules (`import` / `export`, re-exports, `import * as`, `@rolls/*`), linked at compile time | Covered | Covered                 |
+| Circular imports                           | Compile error                        | Compile error                     |
+| Intrinsics (`__intrinsic_*`, the 29 the rolls build on) | Covered (shared implementation) | Covered (same implementation) |
+| An unknown `__intrinsic_` name             | Compile error                        | Compile error                     |
 | Parameter decorators                       | Compile error                        | Compile error                     |
 | Implicit conversion through a user `valueOf` / `toString` (`"" + obj`, `${obj}`, `String(obj)`) | Covered | Covered       |
 | Template literals                          | Covered                              | Covered                           |
@@ -99,7 +103,7 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Stack overflow                             | `RangeError`                         | `RangeError` (stack-pointer check) |
 | Uncaught exceptions                        | `Uncaught TypeError: ...` and its stack trace on stderr, exit 1 | Same   |
 | String `length` / indexing                 | Counts UTF-8 bytes ([#133](https://github.com/warpy-ai/oite/issues/133))            | -                                 |
-| Type annotations                           | Parsed, not checked ([#124](https://github.com/warpy-ai/oite/issues/124))           | -                                 |
+| Type annotations                           | Checked, as warnings; `oitec check` reports errors; `--strict-types` makes them errors and checks values at run time ([Types](types.md), [#124](https://github.com/warpy-ai/oite/issues/124)) | -                                 |
 | Ownership / borrow checking                | Compile-time checks run; moves are enforced | -                          |
 
 ### Compilers

@@ -51,6 +51,30 @@ before changing the compiler, the IR or a backend.
 - Write tests for new features
 - Update documentation
 
+### File size
+
+Keep source files small: **at most about 800 lines**, one topic per file.
+
+- New code goes in a new, focused module rather than onto the end of a
+  large file.
+- A change that would push a file past the limit splits it first.
+- A split is its own pull request with no behaviour change, so the tests
+  show nothing moved by accident.
+
+These files are over the limit today and are being split, the ones a
+change touches first:
+
+| File | Lines |
+| ---- | ----: |
+| `src/vm/mod.rs` | 3,455 |
+| `src/ir/mod.rs` | 1,696 |
+| `src/stdlib/mod.rs` | 1,062 |
+| `src/main.rs` | 1,050 |
+| `src/compiler/borrow_ck.rs` | 1,025 |
+| `src/compiler/scope.rs` | 951 |
+| `src/ir/opt.rs` | 923 |
+| `src/types/mod.rs` | 813 |
+
 ## Project Structure
 
 ```

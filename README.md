@@ -39,7 +39,7 @@ console.log(fib(35)); // Compiled to native code!
 > target: the JIT and AOT backends run functions and closures, objects, arrays,
 > strings, globals, classes, exceptions and async/await, and refuse what they
 > cannot run yet (modules), which for now runs only in the VM (the debugging
-> interpreter). Type annotations are not checked yet, and memory is
+> interpreter). Type annotations are checked as warnings for now, and memory is
 > never freed. See
 > [Development Status](docs/docs/development-status.md) for what runs on which
 > backend, and [#136](https://github.com/warpy-ai/oite/issues/136) for the roadmap.
@@ -477,14 +477,14 @@ Oite/
 │   │   └── borrow_ck.rs          # Borrow checker
 │   ├── ir/
 │   │   ├── mod.rs                # SSA IR types
-│   │   ├── lower.rs              # Bytecode → IR
+│   │   ├── lower/                # Bytecode → IR
 │   │   ├── typecheck.rs          # Type inference
 │   │   ├── verify.rs             # Validation
 │   │   ├── opt.rs                # Optimizations
 │   │   └── format.rs             # IR serialization
 │   ├── backend/
 │   │   ├── mod.rs                # Backend trait
-│   │   ├── cranelift.rs          # JIT backend
+│   │   ├── cranelift/            # JIT backend
 │   │   ├── jit.rs                # JIT runtime
 │   │   ├── layout.rs             # Memory layout
 │   │   └── llvm/                 # AOT backend
@@ -492,7 +492,7 @@ Oite/
 │   │   ├── mod.rs                # Runtime module
 │   │   ├── abi.rs                # NaN-boxed values
 │   │   ├── heap.rs               # Memory allocation
-│   │   ├── stubs.rs              # FFI bridge
+│   │   ├── stubs/                # The native runtime
 │   │   └── async/
 │   │       ├── mod.rs            # Core async traits
 │   │       ├── task.rs           # Task abstraction

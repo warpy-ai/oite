@@ -1,0 +1,2 @@
+bad_syntax.ot:4:23: syntax error: Expression expected
+4 | export const broken = ;

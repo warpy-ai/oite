@@ -1,0 +1,3 @@
+// A syntax error in an imported module is reported in that module.
+import { ok } from "./_errors/bad_syntax.ot";
+console.log(ok());

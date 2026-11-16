@@ -6,7 +6,7 @@
 //! one that was not passed reads as `undefined`.
 //!
 //! Number arithmetic on values the type checker proved are numbers is
-//! inlined. Everything else calls the runtime (`src/runtime/stubs.rs`), which
+//! inlined. Everything else calls the runtime (`src/runtime/stubs/`), which
 //! is where the language's semantics live, so that both native backends agree.
 
 #![allow(clippy::manual_c_str_literals)]
@@ -15,7 +15,7 @@
 use llvm_sys::core::*;
 use llvm_sys::prelude::*;
 use llvm_sys::{LLVMIntPredicate, LLVMLinkage, LLVMRealPredicate};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char};
 
 use crate::backend::BackendError;
@@ -28,11 +28,31 @@ const TAG_BOOLEAN: u64 = 0x0001_0000_0000_0000;
 const TAG_NULL: u64 = 0x0002_0000_0000_0000;
 const TAG_UNDEFINED: u64 = 0x0003_0000_0000_0000;
 const UNDEFINED: u64 = QNAN | TAG_UNDEFINED;
-use crate::runtime::abi::EXCEPTION_BITS;
+use crate::runtime::abi::{EXCEPTION_BITS, UNBOUND_BITS};
 const FALSE: u64 = QNAN | TAG_BOOLEAN;
 const TRUE: u64 = QNAN | TAG_BOOLEAN | 1;
 
 const NONAME: *const c_char = b"\0".as_ptr() as *const c_char;
+
+mod arrays;
+mod entry;
+mod equality;
+mod fast;
+mod numeric;
+mod objects;
+mod ops;
+mod typecheck;
+
+/// A bitwise operator on 32-bit integers.
+#[derive(Clone, Copy)]
+enum IntOp {
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
+    ShrU,
+}
 
 /// LLVM code generator for AOT compilation
 pub struct LlvmCodegen {
@@ -43,8 +63,17 @@ pub struct LlvmCodegen {
     runtime: BTreeMap<String, (LLVMValueRef, LLVMTypeRef)>,
     /// Compiled functions by IR name (`main`, `func_<addr>`).
     pub functions: BTreeMap<String, LLVMValueRef>,
+    /// The fast entry (arguments in registers, see `codegen/fast.rs`) of
+    /// the functions that have one, by IR name: (function, type).
+    fast: BTreeMap<String, (LLVMValueRef, LLVMTypeRef)>,
+    /// The typed entry (the fast entry without the parameter checks) of
+    /// the functions that check a parameter, by IR name.
+    typed: BTreeMap<String, fast::TypedEntry>,
     /// Function bytecode address -> global holding its function object.
     fn_objects: BTreeMap<usize, LLVMValueRef>,
+    /// The program's global variables (every name it assigns) -> the LLVM
+    /// global holding each one's value (`UNBOUND_BITS` until assigned).
+    global_slots: BTreeMap<String, LLVMValueRef>,
     /// Interned string constants: contents -> global.
     strings: HashMap<String, LLVMValueRef>,
     /// The native function type `i64 (i64 this, ptr argv, i64 argc, i64 env)`.
@@ -89,7 +118,10 @@ impl LlvmCodegen {
                 target_triple,
                 runtime: BTreeMap::new(),
                 functions: BTreeMap::new(),
+                fast: BTreeMap::new(),
+                typed: BTreeMap::new(),
                 fn_objects: BTreeMap::new(),
+                global_slots: BTreeMap::new(),
                 strings: HashMap::new(),
                 fn_ty,
                 sites: Vec::new(),
@@ -117,6 +149,9 @@ impl LlvmCodegen {
                 let f = LLVMAddFunction(self.module, cname.as_ptr(), self.fn_ty);
                 LLVMSetLinkage(f, LLVMLinkage::LLVMInternalLinkage);
                 self.functions.insert(func.name.clone(), f);
+                if Self::takes_registers(func) {
+                    self.declare_fast(func);
+                }
 
                 if let Some(addr) = function_addr(&func.name) {
                     let gname = CString::new(format!("ot_fnobj_{}", addr)).unwrap();
@@ -124,6 +159,25 @@ impl LlvmCodegen {
                     LLVMSetInitializer(g, LLVMConstInt(i64_ty, 0, 0));
                     LLVMSetLinkage(g, LLVMLinkage::LLVMInternalLinkage);
                     self.fn_objects.insert(addr, g);
+                }
+            }
+
+            // A slot for every global the program assigns.
+            for func in &ir_module.functions {
+                for block in &func.blocks {
+                    for op in &block.ops {
+                        if let IrOp::StoreGlobal(name, _) = op
+                            && !self.global_slots.contains_key(name)
+                        {
+                            let gname =
+                                CString::new(format!("ot_global_{}", self.global_slots.len()))
+                                    .unwrap();
+                            let g = LLVMAddGlobal(self.module, i64_ty, gname.as_ptr());
+                            LLVMSetInitializer(g, LLVMConstInt(i64_ty, UNBOUND_BITS, 0));
+                            LLVMSetLinkage(g, LLVMLinkage::LLVMInternalLinkage);
+                            self.global_slots.insert(name.clone(), g);
+                        }
+                    }
                 }
             }
 
@@ -168,7 +222,10 @@ impl LlvmCodegen {
             }
 
             for func in &ir_module.functions {
-                self.compile_function(func)?;
+                self.compile_function(func, false)?;
+                if self.typed.contains_key(&func.name) {
+                    self.compile_function(func, true)?;
+                }
             }
 
             self.build_c_main()?;
@@ -179,115 +236,28 @@ impl LlvmCodegen {
         }
     }
 
-    /// `int main(int, char**)`: create the function objects, run top-level
-    /// code, flush output.
-    unsafe fn build_c_main(&mut self) -> Result<(), BackendError> {
+    /// Compile `func`. With `typed`, into its typed entry: the same code
+    /// without the checks of its parameters (`codegen/fast.rs`).
+    unsafe fn compile_function(
+        &mut self,
+        func: &IrFunction,
+        typed: bool,
+    ) -> Result<(), BackendError> {
         unsafe {
-            let ctx = self.context;
-            let i32_ty = LLVMInt32TypeInContext(ctx);
-            let i64_ty = LLVMInt64TypeInContext(ctx);
-            let ptr_ty = LLVMPointerTypeInContext(ctx, 0);
-            let mut params = [i32_ty, ptr_ty];
-            let main_ty = LLVMFunctionType(i32_ty, params.as_mut_ptr(), 2, 0);
-            let main = LLVMAddFunction(self.module, b"main\0".as_ptr() as _, main_ty);
-            let entry = LLVMAppendBasicBlockInContext(ctx, main, b"entry\0".as_ptr() as _);
-            let b = LLVMCreateBuilderInContext(ctx);
-            LLVMPositionBuilderAtEnd(b, entry);
-
-            for (addr, global) in &self.fn_objects {
-                let f = self.functions[&format!("func_{}", addr)];
-                let (mk, mk_ty) = self.runtime["ot_make_function"];
-                let mut args = [f];
-                let obj = LLVMBuildCall2(b, mk_ty, mk, args.as_mut_ptr(), 1, NONAME);
-                LLVMBuildStore(b, obj, *global);
-            }
-
-            let (init, init_ty) = self.runtime["ot_stack_init"];
-            LLVMBuildCall2(b, init_ty, init, std::ptr::null_mut(), 0, NONAME);
-            let ot_main = self.functions["main"];
-            let mut args = [
-                LLVMConstInt(i64_ty, UNDEFINED, 0),
-                LLVMConstNull(ptr_ty),
-                LLVMConstInt(i64_ty, 0, 0),
-                LLVMConstInt(i64_ty, UNDEFINED, 0),
-            ];
-            let result = LLVMBuildCall2(b, self.fn_ty, ot_main, args.as_mut_ptr(), 4, NONAME);
-            // An exception no `catch` handled: report it and exit 1.
-            let thrown = LLVMBuildICmp(
-                b,
-                LLVMIntPredicate::LLVMIntEQ,
-                result,
-                LLVMConstInt(i64_ty, EXCEPTION_BITS, 0),
-                NONAME,
-            );
-            let uncaught = LLVMAppendBasicBlockInContext(ctx, main, b"uncaught\0".as_ptr() as _);
-            let done = LLVMAppendBasicBlockInContext(ctx, main, b"done\0".as_ptr() as _);
-            LLVMBuildCondBr(b, thrown, uncaught, done);
-            LLVMPositionBuilderAtEnd(b, uncaught);
-            let (report, report_ty) = self.runtime["ot_report_uncaught"];
-            LLVMBuildCall2(b, report_ty, report, std::ptr::null_mut(), 0, NONAME);
-            LLVMBuildUnreachable(b);
-            LLVMPositionBuilderAtEnd(b, done);
-            // Promise reactions and timers queued by `main`.
-            let (event_loop, event_loop_ty) = self.runtime["ot_run_event_loop"];
-            LLVMBuildCall2(
-                b,
-                event_loop_ty,
-                event_loop,
-                std::ptr::null_mut(),
-                0,
-                NONAME,
-            );
-            let (exit, exit_ty) = self.runtime["ot_runtime_exit"];
-            LLVMBuildCall2(b, exit_ty, exit, std::ptr::null_mut(), 0, NONAME);
-            LLVMBuildRet(b, LLVMConstInt(i32_ty, 0, 0));
-            LLVMDisposeBuilder(b);
-            Ok(())
-        }
-    }
-
-    /// The runtime's `OT_STACK_LIMIT`, declared once in the module.
-    unsafe fn stack_limit_global(&mut self) -> LLVMValueRef {
-        unsafe {
-            let name = b"OT_STACK_LIMIT\0";
-            let existing = LLVMGetNamedGlobal(self.module, name.as_ptr() as _);
-            if !existing.is_null() {
-                return existing;
-            }
-            let i64_ty = LLVMInt64TypeInContext(self.context);
-            LLVMAddGlobal(self.module, i64_ty, name.as_ptr() as _)
-        }
-    }
-
-    /// Fail loudly on malformed IR instead of letting LLVM crash later.
-    unsafe fn verify(&self) -> Result<(), BackendError> {
-        unsafe {
-            let mut msg: *mut c_char = std::ptr::null_mut();
-            let failed = llvm_sys::analysis::LLVMVerifyModule(
-                self.module,
-                llvm_sys::analysis::LLVMVerifierFailureAction::LLVMReturnStatusAction,
-                &mut msg,
-            );
-            let text = if msg.is_null() {
-                String::new()
-            } else {
-                let t = CStr::from_ptr(msg).to_string_lossy().into_owned();
-                LLVMDisposeMessage(msg);
-                t
+            // The code goes into the fast entry, if the function has one.
+            let fast = match typed {
+                true => Some(self.typed[&func.name].function),
+                false => self.fast.get(&func.name).map(|(f, _)| *f),
             };
-            if failed != 0 {
-                return Err(BackendError::Llvm(format!(
-                    "internal error: generated invalid LLVM IR:\n{}",
-                    text
-                )));
-            }
-            Ok(())
-        }
-    }
-
-    unsafe fn compile_function(&mut self, func: &IrFunction) -> Result<(), BackendError> {
-        unsafe {
-            let f = self.functions[&func.name];
+            let trusted = match typed {
+                true => fast::param_checks(func).1,
+                false => Default::default(),
+            };
+            let f = fast.unwrap_or(self.functions[&func.name]);
+            let env_param = match fast {
+                Some(_) => func.params.len() as u32 + 1,
+                None => 3,
+            };
             let ctx = self.context;
             let builder = LLVMCreateBuilderInContext(ctx);
             let prologue_builder = LLVMCreateBuilderInContext(ctx);
@@ -311,17 +281,32 @@ impl LlvmCodegen {
                 blocks,
                 locals: Vec::new(),
                 types: &func.value_types,
+                object_slots: crate::ir::alloc_hints::object_slots(func),
+                literals: crate::ir::alloc_hints::literal_props(
+                    func,
+                    crate::runtime::heap::MAX_INLINE_SLOTS,
+                ),
+                literal_stores: HashMap::new(),
                 direct: HashMap::new(),
+                trusted,
                 this: LLVMGetParam(f, 0),
-                env: LLVMGetParam(f, 3),
+                env: LLVMGetParam(f, env_param),
                 function: f,
                 last_call: None,
                 exception_return: None,
-                args: (LLVMGetParam(f, 1), LLVMGetParam(f, 2)),
+                // (Not looked at by a function with a fast entry.)
+                args: match fast {
+                    Some(_) => (
+                        LLVMConstNull(LLVMPointerTypeInContext(ctx, 0)),
+                        null_i64(ctx),
+                    ),
+                    None => (LLVMGetParam(f, 1), LLVMGetParam(f, 2)),
+                },
                 frame: None,
                 site: None,
                 trace_blocks: HashMap::new(),
                 di_scope: None,
+                unwind: None,
             };
             // Debug info: the function, and where its code starts.
             let linkage = if func.name == "main" {
@@ -337,11 +322,12 @@ impl LlvmCodegen {
                 LLVMSetCurrentDebugLocation2(fx.prologue, loc);
                 fx.di_scope = Some(scope);
             }
-            fx.prologue_setup(func, f)?;
+            fx.prologue_setup(func, f, fast.is_some())?;
 
             for block in &func.blocks {
                 LLVMPositionBuilderAtEnd(fx.builder, fx.blocks[&block.id]);
                 fx.site = None;
+                fx.unwind = block.unwind;
                 for op in &block.ops {
                     fx.last_call = None;
                     fx.op(op)?;
@@ -360,7 +346,17 @@ impl LlvmCodegen {
 
             // The prologue falls through to the IR entry block, unless the
             // stack is exhausted: below `OT_STACK_LIMIT`, throw a RangeError.
-            if let Some(first) = func.blocks.first() {
+            // A function that calls nothing that can run code (no op of its
+            // own can throw, a failed type check aside) cannot be what
+            // exhausts the stack: it is not checked.
+            let leaf = func
+                .blocks
+                .iter()
+                .flat_map(|b| &b.ops)
+                .all(|op| !op.can_throw() || matches!(op, IrOp::CheckType(_, _, _)));
+            if let (true, Some(first)) = (leaf, func.blocks.first()) {
+                LLVMBuildBr(fx.prologue, fx.blocks[&first.id]);
+            } else if let Some(first) = func.blocks.first() {
                 let i64_ty = fx.i64_ty();
                 // The address of a slot in this frame stands for the stack
                 // pointer (`llvm.frameaddress` would force a frame pointer).
@@ -382,6 +378,9 @@ impl LlvmCodegen {
             }
             LLVMDisposeBuilder(fx.prologue);
             LLVMDisposeBuilder(fx.builder);
+            if fast.is_some() && !typed {
+                self.build_dynamic_entry(func);
+            }
             Ok(())
         }
     }
@@ -394,6 +393,10 @@ impl Drop for LlvmCodegen {
             LLVMContextDispose(self.context);
         }
     }
+}
+
+fn null_i64(ctx: LLVMContextRef) -> LLVMValueRef {
+    unsafe { LLVMConstInt(LLVMInt64TypeInContext(ctx), 0, 0) }
 }
 
 /// `func_123` -> 123
@@ -411,6 +414,17 @@ struct Fx<'a> {
     blocks: HashMap<BlockId, LLVMBasicBlockRef>,
     locals: Vec<LLVMValueRef>,
     types: &'a HashMap<ValueId, IrType>,
+    /// The checks of this function's parameters that its caller has
+    /// already made (the typed entry): results of `IrOp::CheckType` that
+    /// are the value itself.
+    trusted: HashSet<ValueId>,
+    /// How many properties each `NewObject` site is about to store.
+    object_slots: HashMap<ValueId, usize>,
+    /// The properties each literal site is allocated with
+    /// (`alloc_hints::literal_props`), and how many of them have been
+    /// stored so far.
+    literals: HashMap<ValueId, Vec<String>>,
+    literal_stores: HashMap<ValueId, usize>,
     /// Values known to be a specific compiled function (for direct calls),
     /// with the closure environment they carry, if any.
     direct: HashMap<ValueId, (usize, Option<ValueId>)>,
@@ -436,6 +450,8 @@ struct Fx<'a> {
     trace_blocks: HashMap<(Option<u32>, LLVMBasicBlockRef), LLVMBasicBlockRef>,
     /// This function's debug info, with `--debug`.
     di_scope: Option<super::debug::FunctionScope>,
+    /// The unwind target of the block being compiled.
+    unwind: Option<BlockId>,
 }
 
 impl Fx<'_> {
@@ -673,12 +689,12 @@ impl Fx<'_> {
         &mut self,
         func: &IrFunction,
         f: LLVMValueRef,
+        fast: bool,
     ) -> Result<(), BackendError> {
         unsafe {
             let b = self.prologue;
             let i64_ty = self.i64_ty();
-            let argv = LLVMGetParam(f, 1);
-            let argc = LLVMGetParam(f, 2);
+            let (argv, argc) = self.args;
             if func.is_async {
                 // Locals live in a heap frame that survives an `await`.
                 let (enter, enter_ty) = self.cg.runtime["ot_async_enter"];
@@ -702,6 +718,10 @@ impl Fx<'_> {
             let undef_slot = LLVMBuildAlloca(b, i64_ty, b"undef\0".as_ptr() as _);
             LLVMBuildStore(b, self.c(UNDEFINED), undef_slot);
             for i in 0..func.params.len() {
+                if fast {
+                    self.set(ValueId(i as u32), LLVMGetParam(f, i as u32 + 1));
+                    continue;
+                }
                 // argv[i] if i < argc, else undefined (branch-free).
                 let present = LLVMBuildICmp(
                     b,
@@ -753,510 +773,6 @@ impl Fx<'_> {
                     LLVMBuildLoad2(self.builder, self.i64_ty(), g, NONAME)
                 }
             })
-        }
-    }
-
-    unsafe fn num_binop(
-        &mut self,
-        dst: ValueId,
-        a: ValueId,
-        b: ValueId,
-        build: unsafe extern "C" fn(
-            LLVMBuilderRef,
-            LLVMValueRef,
-            LLVMValueRef,
-            *const c_char,
-        ) -> LLVMValueRef,
-    ) -> Result<(), BackendError> {
-        unsafe {
-            let x = self.to_f64(self.get(a)?);
-            let y = self.to_f64(self.get(b)?);
-            let r = build(self.builder, x, y, NONAME);
-            let r = self.from_f64(r);
-            self.set(dst, r);
-            Ok(())
-        }
-    }
-
-    unsafe fn rt_binop(
-        &mut self,
-        dst: ValueId,
-        name: &str,
-        a: ValueId,
-        b: ValueId,
-    ) -> Result<(), BackendError> {
-        unsafe {
-            let args = [self.get(a)?, self.get(b)?];
-            let r = self.rt(name, &args);
-            self.set(dst, r);
-            Ok(())
-        }
-    }
-
-    /// A comparison: inline when both operands are numbers, else the runtime.
-    unsafe fn compare(
-        &mut self,
-        dst: ValueId,
-        a: ValueId,
-        b: ValueId,
-        pred: LLVMRealPredicate,
-        stub: &str,
-    ) -> Result<(), BackendError> {
-        unsafe {
-            if self.is_num(a) && self.is_num(b) {
-                let x = self.to_f64(self.get(a)?);
-                let y = self.to_f64(self.get(b)?);
-                let cmp = LLVMBuildFCmp(self.builder, pred, x, y, NONAME);
-                let r = self.box_bool(cmp);
-                self.set(dst, r);
-                Ok(())
-            } else {
-                self.rt_binop(dst, stub, a, b)
-            }
-        }
-    }
-
-    /// Flip a boxed boolean.
-    unsafe fn negate(&mut self, v: LLVMValueRef) -> LLVMValueRef {
-        unsafe { LLVMBuildXor(self.builder, v, self.c(1), NONAME) }
-    }
-
-    unsafe fn op(&mut self, op: &IrOp) -> Result<(), BackendError> {
-        unsafe {
-            match op {
-                IrOp::Const(dst, lit) => {
-                    let v = self.literal(lit)?;
-                    self.set(*dst, v);
-                }
-
-                // Numbers the type checker proved: inline floating point.
-                IrOp::AddNum(d, a, b) => self.num_binop(*d, *a, *b, LLVMBuildFAdd)?,
-                IrOp::SubNum(d, a, b) => self.num_binop(*d, *a, *b, LLVMBuildFSub)?,
-                IrOp::MulNum(d, a, b) => self.num_binop(*d, *a, *b, LLVMBuildFMul)?,
-                IrOp::DivNum(d, a, b) => self.num_binop(*d, *a, *b, LLVMBuildFDiv)?,
-                IrOp::ModNum(d, a, b) => self.num_binop(*d, *a, *b, LLVMBuildFRem)?,
-                IrOp::NegNum(d, a) => {
-                    let x = self.to_f64(self.get(*a)?);
-                    let r = LLVMBuildFNeg(self.builder, x, NONAME);
-                    let r = self.from_f64(r);
-                    self.set(*d, r);
-                }
-
-                // Everything else: the runtime.
-                IrOp::AddAny(d, a, b) => self.rt_binop(*d, "ot_add_any", *a, *b)?,
-                IrOp::SubAny(d, a, b) => self.rt_binop(*d, "ot_sub_any", *a, *b)?,
-                IrOp::MulAny(d, a, b) => self.rt_binop(*d, "ot_mul_any", *a, *b)?,
-                IrOp::DivAny(d, a, b) => self.rt_binop(*d, "ot_div_any", *a, *b)?,
-                IrOp::ModAny(d, a, b) => self.rt_binop(*d, "ot_mod_any", *a, *b)?,
-                IrOp::Pow(d, a, b) => self.rt_binop(*d, "ot_pow", *a, *b)?,
-                IrOp::BitAnd(d, a, b) => self.rt_binop(*d, "ot_bit_and", *a, *b)?,
-                IrOp::BitOr(d, a, b) => self.rt_binop(*d, "ot_bit_or", *a, *b)?,
-                IrOp::Xor(d, a, b) => self.rt_binop(*d, "ot_bit_xor", *a, *b)?,
-                IrOp::Shl(d, a, b) => self.rt_binop(*d, "ot_shl", *a, *b)?,
-                IrOp::Shr(d, a, b) => self.rt_binop(*d, "ot_shr", *a, *b)?,
-                IrOp::ShrU(d, a, b) => self.rt_binop(*d, "ot_shr_u", *a, *b)?,
-                IrOp::NegAny(d, a) => {
-                    let r = self.rt("ot_neg", &[self.get(*a)?]);
-                    self.set(*d, r);
-                }
-
-                IrOp::EqStrict(d, a, b) | IrOp::NeStrict(d, a, b) => {
-                    let r = if self.is_num(*a) && self.is_num(*b) {
-                        let x = self.to_f64(self.get(*a)?);
-                        let y = self.to_f64(self.get(*b)?);
-                        let cmp = LLVMBuildFCmp(
-                            self.builder,
-                            LLVMRealPredicate::LLVMRealOEQ,
-                            x,
-                            y,
-                            NONAME,
-                        );
-                        self.box_bool(cmp)
-                    } else {
-                        self.rt("ot_eq_strict", &[self.get(*a)?, self.get(*b)?])
-                    };
-                    let r = if matches!(op, IrOp::NeStrict(..)) {
-                        self.negate(r)
-                    } else {
-                        r
-                    };
-                    self.set(*d, r);
-                }
-                IrOp::EqLoose(d, a, b) | IrOp::NeLoose(d, a, b) => {
-                    let r = self.rt("ot_eq_loose", &[self.get(*a)?, self.get(*b)?]);
-                    let r = if matches!(op, IrOp::NeLoose(..)) {
-                        self.negate(r)
-                    } else {
-                        r
-                    };
-                    self.set(*d, r);
-                }
-                IrOp::Lt(d, a, b) => {
-                    self.compare(*d, *a, *b, LLVMRealPredicate::LLVMRealOLT, "ot_lt")?
-                }
-                IrOp::LtEq(d, a, b) => {
-                    self.compare(*d, *a, *b, LLVMRealPredicate::LLVMRealOLE, "ot_lte")?
-                }
-                IrOp::Gt(d, a, b) => {
-                    self.compare(*d, *a, *b, LLVMRealPredicate::LLVMRealOGT, "ot_gt")?
-                }
-                IrOp::GtEq(d, a, b) => {
-                    self.compare(*d, *a, *b, LLVMRealPredicate::LLVMRealOGE, "ot_gte")?
-                }
-
-                IrOp::Not(d, a) => {
-                    let r = if self.is_bool(*a) {
-                        let v = self.get(*a)?;
-                        self.negate(v)
-                    } else {
-                        self.rt("ot_not", &[self.get(*a)?])
-                    };
-                    self.set(*d, r);
-                }
-                IrOp::And(d, a, b) | IrOp::Or(d, a, b) => {
-                    // a && b: a if falsy, else b.  a || b: a if truthy, else b.
-                    let t = self.truthy(*a)?;
-                    let (x, y) = (self.get(*a)?, self.get(*b)?);
-                    let r = if matches!(op, IrOp::And(..)) {
-                        LLVMBuildSelect(self.builder, t, y, x, NONAME)
-                    } else {
-                        LLVMBuildSelect(self.builder, t, x, y, NONAME)
-                    };
-                    self.set(*d, r);
-                }
-                IrOp::ToBool(d, a) => {
-                    let r = self.rt("ot_to_boolean", &[self.get(*a)?]);
-                    self.set(*d, r);
-                }
-                IrOp::ToNum(d, a) => {
-                    let r = self.rt("ot_to_number", &[self.get(*a)?]);
-                    self.set(*d, r);
-                }
-                IrOp::ToStr(d, a) => {
-                    let r = self.rt("ot_to_str", &[self.get(*a)?]);
-                    self.set(*d, r);
-                }
-                IrOp::TypeOf(d, a) => {
-                    let r = self.rt("ot_typeof", &[self.get(*a)?]);
-                    self.set(*d, r);
-                }
-
-                IrOp::LoadLocal(d, slot) => {
-                    let p = *self.locals.get(*slot as usize).ok_or_else(|| {
-                        BackendError::Llvm(format!("internal error: bad local slot {}", slot))
-                    })?;
-                    let v = LLVMBuildLoad2(self.builder, self.i64_ty(), p, NONAME);
-                    self.set(*d, v);
-                }
-                IrOp::StoreLocal(slot, v) => {
-                    let p = *self.locals.get(*slot as usize).ok_or_else(|| {
-                        BackendError::Llvm(format!("internal error: bad local slot {}", slot))
-                    })?;
-                    LLVMBuildStore(self.builder, self.get(*v)?, p);
-                }
-                IrOp::LoadGlobal(d, name) => {
-                    let (p, n) = self.string(name);
-                    let r = self.rt("ot_get_global", &[p, n]);
-                    self.set(*d, r);
-                }
-                IrOp::TypeOfGlobal(d, name) => {
-                    let (p, n) = self.string(name);
-                    let r = self.rt("ot_typeof_global", &[p, n]);
-                    self.set(*d, r);
-                }
-                IrOp::StoreGlobal(name, v) => {
-                    let (p, n) = self.string(name);
-                    let v = self.get(*v)?;
-                    self.rt("ot_set_global", &[p, n, v]);
-                }
-                IrOp::LoadEnv(d) => {
-                    let e = self.env;
-                    self.set(*d, e);
-                }
-                IrOp::LoadThis(d) => {
-                    let t = self.this;
-                    self.set(*d, t);
-                }
-
-                IrOp::Copy(d, s)
-                | IrOp::Move(d, s)
-                | IrOp::Borrow(d, s)
-                | IrOp::BorrowMut(d, s) => {
-                    let v = self.get(*s)?;
-                    self.set(*d, v);
-                    if let Some(addr) = self.direct.get(s).copied() {
-                        self.direct.insert(*d, addr);
-                    }
-                }
-
-                IrOp::NewObject(d) => {
-                    let r = self.rt("ot_alloc_object", &[]);
-                    self.set(*d, r);
-                }
-                IrOp::NewArray(d) => {
-                    let r = self.rt("ot_alloc_array", &[self.c(4)]);
-                    self.set(*d, r);
-                }
-                IrOp::GetProp(d, obj, name) => {
-                    let o = self.get(*obj)?;
-                    let (p, n) = self.string(name);
-                    let r = self.rt("ot_get_prop", &[o, p, n]);
-                    self.set(*d, r);
-                }
-                IrOp::SetProp(obj, name, v) => {
-                    let o = self.get(*obj)?;
-                    let v = self.get(*v)?;
-                    let (p, n) = self.string(name);
-                    self.rt("ot_set_prop", &[o, p, n, v]);
-                }
-                IrOp::GetPrivate(d, obj, name) => {
-                    let o = self.get(*obj)?;
-                    let (p, n) = self.string(name);
-                    let r = self.rt("ot_get_private", &[o, p, n]);
-                    self.set(*d, r);
-                }
-                IrOp::SetPrivate(obj, name, v) => {
-                    let o = self.get(*obj)?;
-                    let v = self.get(*v)?;
-                    let (p, n) = self.string(name);
-                    self.rt("ot_set_private", &[o, p, n, v]);
-                }
-                IrOp::DeleteProp(d, obj, name) => {
-                    let o = self.get(*obj)?;
-                    let (p, n) = self.string(name);
-                    let r = self.rt("ot_delete_prop", &[o, p, n]);
-                    self.set(*d, r);
-                }
-                IrOp::GetElement(d, obj, key) => self.rt_binop(*d, "ot_get_index", *obj, *key)?,
-                IrOp::SetElement(obj, key, v) => {
-                    let args = [self.get(*obj)?, self.get(*key)?, self.get(*v)?];
-                    self.rt("ot_set_index", &args);
-                }
-                IrOp::ArrayLen(d, a) => {
-                    let r = self.rt("ot_array_len", &[self.get(*a)?]);
-                    self.set(*d, r);
-                }
-                IrOp::ArrayPush(a, v) => {
-                    let args = [self.get(*a)?, self.get(*v)?];
-                    self.rt("ot_array_push", &args);
-                }
-
-                IrOp::MakeClosure(d, addr, env) => {
-                    let name = format!("func_{}", addr);
-                    let f = *self.cg.functions.get(&name).ok_or_else(|| {
-                        BackendError::Llvm(format!("internal error: no function {}", name))
-                    })?;
-                    let e = self.get(*env)?;
-                    let v = self.rt("ot_make_closure", &[f, e]);
-                    self.set(*d, v);
-                }
-                IrOp::Call(d, callee, args) => {
-                    let vals: Vec<LLVMValueRef> = args
-                        .iter()
-                        .map(|a| self.get(*a))
-                        .collect::<Result<_, _>>()?;
-                    let (argv, argc) = self.arg_array(&vals);
-                    let undefined = self.c(UNDEFINED);
-                    let target = self.direct.get(callee).copied().and_then(|(addr, env)| {
-                        self.cg
-                            .functions
-                            .get(&format!("func_{}", addr))
-                            .map(|f| (*f, env))
-                    });
-                    let r = match target {
-                        Some((f, env)) => {
-                            let env = match env {
-                                Some(e) => self.get(e)?,
-                                None => undefined,
-                            };
-                            let mut a = [undefined, argv, argc, env];
-                            let r = LLVMBuildCall2(
-                                self.builder,
-                                self.cg.fn_ty,
-                                f,
-                                a.as_mut_ptr(),
-                                4,
-                                NONAME,
-                            );
-                            self.last_call = Some(r);
-                            r
-                        }
-                        None => {
-                            let f = self.get(*callee)?;
-                            self.rt("ot_call", &[f, undefined, argv, argc])
-                        }
-                    };
-                    self.set(*d, r);
-                }
-                IrOp::Throw(v) => {
-                    let v = self.get(*v)?;
-                    self.rt("ot_throw", &[v]);
-                }
-                IrOp::Construct(d, ctor, args) => {
-                    let c = self.get(*ctor)?;
-                    let vals: Vec<LLVMValueRef> = args
-                        .iter()
-                        .map(|a| self.get(*a))
-                        .collect::<Result<_, _>>()?;
-                    let (argv, argc) = self.arg_array(&vals);
-                    let r = self.rt("ot_construct", &[c, argv, argc]);
-                    self.set(*d, r);
-                }
-                IrOp::CallSuper(d, parent, args) => {
-                    let p = self.get(*parent)?;
-                    let vals: Vec<LLVMValueRef> = args
-                        .iter()
-                        .map(|a| self.get(*a))
-                        .collect::<Result<_, _>>()?;
-                    let (argv, argc) = self.arg_array(&vals);
-                    let this = self.this;
-                    let r = self.rt("ot_call_super", &[p, this, argv, argc]);
-                    self.set(*d, r);
-                }
-                IrOp::SuperForward(d, parent) => {
-                    let p = self.get(*parent)?;
-                    let (argv, argc) = self.args;
-                    let this = self.this;
-                    let r = self.rt("ot_call_super", &[p, this, argv, argc]);
-                    self.set(*d, r);
-                }
-                IrOp::CallWithThis(d, func, this, args) => {
-                    let f = self.get(*func)?;
-                    let t = self.get(*this)?;
-                    let vals: Vec<LLVMValueRef> = args
-                        .iter()
-                        .map(|a| self.get(*a))
-                        .collect::<Result<_, _>>()?;
-                    let (argv, argc) = self.arg_array(&vals);
-                    let r = self.rt("ot_call", &[f, t, argv, argc]);
-                    self.set(*d, r);
-                }
-                IrOp::In(d, k, o) => {
-                    let args = [self.get(*k)?, self.get(*o)?];
-                    let r = self.rt("ot_in", &args);
-                    self.set(*d, r);
-                }
-                IrOp::InstanceOf(d, v, c) => {
-                    let args = [self.get(*v)?, self.get(*c)?];
-                    let r = self.rt("ot_instanceof", &args);
-                    self.set(*d, r);
-                }
-                IrOp::GetSuperProp(d, this, base, name) => {
-                    let t = self.get(*this)?;
-                    let o = self.get(*base)?;
-                    let (p, n) = self.string(name);
-                    let r = self.rt("ot_get_super_prop", &[t, o, p, n]);
-                    self.set(*d, r);
-                }
-                IrOp::TakeException(d) => {
-                    let r = self.rt("ot_take_exception", &[]);
-                    self.set(*d, r);
-                }
-                IrOp::Rethrow(thrown, v) => {
-                    let args = [self.get(*thrown)?, self.get(*v)?];
-                    self.rt("ot_rethrow", &args);
-                }
-                IrOp::Loc(n) => {
-                    self.site = (*n != crate::ir::lower::NO_SITE).then_some(*n);
-                    if let (Some(scope), Some(di)) = (&self.di_scope, self.cg.di.as_mut()) {
-                        let site = self.site.and_then(|s| self.cg.site_info.get(s as usize));
-                        let loc = di.location(scope, site);
-                        LLVMSetCurrentDebugLocation2(self.builder, loc);
-                    }
-                }
-                IrOp::RestArgs(d, n) => {
-                    let (argv, argc) = self.args;
-                    let r = self.rt("ot_rest_args", &[argv, argc, self.c(*n as u64)]);
-                    self.set(*d, r);
-                }
-                IrOp::AsyncStart(d) => {
-                    let r = self.rt("ot_async_start", &[]);
-                    self.set(*d, r);
-                }
-                IrOp::AsyncResolve(d, p, v) | IrOp::AsyncReject(d, p, v) => {
-                    let name = if matches!(op, IrOp::AsyncResolve(..)) {
-                        "ot_async_resolve"
-                    } else {
-                        "ot_async_reject"
-                    };
-                    let args = [self.get(*p)?, self.get(*v)?];
-                    let r = self.rt(name, &args);
-                    self.set(*d, r);
-                }
-                IrOp::IsResume(d) => {
-                    let resumed = LLVMBuildICmp(
-                        self.builder,
-                        LLVMIntPredicate::LLVMIntEQ,
-                        self.args.1,
-                        self.c(crate::runtime::stubs::ASYNC_RESUME_ARGC as u64),
-                        NONAME,
-                    );
-                    let r = self.box_bool(resumed);
-                    self.set(*d, r);
-                }
-                IrOp::ResumePoint(d) => {
-                    let (_, frame) = self.frame.unwrap();
-                    let r = LLVMBuildLoad2(self.builder, self.i64_ty(), frame, NONAME);
-                    self.set(*d, r);
-                }
-                IrOp::Await(v, k) => {
-                    let (frame, frame_ptr) = self.frame.unwrap();
-                    LLVMBuildStore(self.builder, self.c((*k as f64).to_bits()), frame_ptr);
-                    let code =
-                        LLVMBuildPtrToInt(self.builder, self.function, self.i64_ty(), NONAME);
-                    let args = [self.get(*v)?, frame, code, self.this, self.env];
-                    self.rt("ot_await", &args);
-                }
-                IrOp::AwaitResult(d) => {
-                    let (frame, _) = self.frame.unwrap();
-                    let r = self.rt("ot_await_result", &[frame]);
-                    self.set(*d, r);
-                }
-                IrOp::CallMethod(d, recv, name, args) => {
-                    let r = self.get(*recv)?;
-                    let vals: Vec<LLVMValueRef> = args
-                        .iter()
-                        .map(|a| self.get(*a))
-                        .collect::<Result<_, _>>()?;
-                    let (argv, argc) = self.arg_array(&vals);
-                    let (p, n) = self.string(name);
-                    let v = self.rt("ot_call_method", &[r, p, n, argv, argc]);
-                    self.set(*d, v);
-                }
-
-                other => {
-                    return Err(BackendError::UnsupportedOp(format!(
-                        "the LLVM backend does not support `{}` yet",
-                        other
-                    )));
-                }
-            }
-            Ok(())
-        }
-    }
-
-    unsafe fn terminator(&mut self, term: &Terminator) -> Result<(), BackendError> {
-        unsafe {
-            match term {
-                Terminator::Jump(t) => {
-                    LLVMBuildBr(self.builder, self.blocks[t]);
-                }
-                Terminator::Branch(cond, t, f) => {
-                    let c = self.truthy(*cond)?;
-                    LLVMBuildCondBr(self.builder, c, self.blocks[t], self.blocks[f]);
-                }
-                Terminator::Return(v) => {
-                    let r = match v {
-                        Some(v) => self.get(*v)?,
-                        None => self.c(UNDEFINED),
-                    };
-                    LLVMBuildRet(self.builder, r);
-                }
-                Terminator::Unreachable => {
-                    LLVMBuildUnreachable(self.builder);
-                }
-            }
-            Ok(())
         }
     }
 }

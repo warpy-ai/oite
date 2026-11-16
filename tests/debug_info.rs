@@ -87,7 +87,12 @@ fn release_build_has_no_debug_metadata() {
         .current_dir(&dir)
         .output()
         .expect("run oitec build --emit-llvm");
-    assert!(ir.status.success());
+    assert!(
+        ir.status.success(),
+        "oitec build --release failed:\n{}\n{}",
+        String::from_utf8_lossy(&ir.stdout),
+        String::from_utf8_lossy(&ir.stderr)
+    );
     let ll = fs::read(exe.with_extension("ll")).expect("the .ll file");
     assert!(!contains(&ll, b"!DICompileUnit("));
 }

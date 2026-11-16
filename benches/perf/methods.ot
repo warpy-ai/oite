@@ -1,0 +1,11 @@
+class Counter {
+  n: number;
+  constructor() { this.n = 0; }
+  inc(k: number) { this.n = this.n + k; }
+}
+function run(m) {
+  let c = new Counter();
+  for (let i = 0; i < m; i++) { c.inc(1); }
+  return c.n;
+}
+console.log(run(10000000));

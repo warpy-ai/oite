@@ -1,0 +1,61 @@
+// Programs the checker must accept: code with no annotations, and typed
+// code that is correct. The expected file is empty.
+function id(x) { return x; }
+let a = 1; a = "s"; a = null; a = { k: 1 }; a.k = "v"; a.other = 2;
+let s: string = id(5);
+let u: unknown = 5;
+function useUnknown(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return v.toFixed(2);
+  return "";
+}
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+let j: Json = { a: [1, "two", null, { b: true }] };
+interface Node { value: number; next: Node | null }
+function sum(n: Node | null): number {
+  let total = 0;
+  while (n !== null) { total = total + n.value; n = n.next; }
+  return total;
+}
+function first(xs: number[]): number | undefined { return xs.length > 0 ? xs[0] : undefined; }
+function orZero(x: number | undefined): number { return x ?? 0; }
+function orOne(x: number | null): number { return x || 1; }
+function len(s: string | null): number { return s ? s.length : 0; }
+function len2(s?: string): number { if (!s) return 0; return s.length; }
+function both(a: string | null, b: string | null): string { if (a !== null && b !== null) return a + b; return ""; }
+function either(a: string | null): string { if (a === null || a === "") return "none"; return a; }
+class Shape { area(): number { return 0; } }
+class Circle extends Shape { r: number; constructor(r: number) { super(); this.r = r; } area(): number { return 3.14 * this.r * this.r; } }
+let shapes: Shape[] = [new Circle(1), new Shape()];
+function describe(s: Shape): string { if (s instanceof Circle) { let r: number = s.r; return "circle " + r; } return "shape"; }
+let cb: (x: number) => number = (x) => x * 2;
+let cb2: (x: number) => void = (x: number) => x + 1;
+let names: string[] = [];
+names.push("a");
+let maybe: string | undefined;
+maybe = "set";
+let sure: string = maybe;
+function opt(o: { a?: number }): number { if (o.a !== undefined) { return o.a; } return 0; }
+let o2: { a: number; b?: string } = { a: 1 };
+let rec: { [key: string]: number } = { a: 1, b: 2 };
+let v: number = rec["a"];
+const K = 10;
+let kk: number = K;
+const fn2 = (n: number): number => n + 1;
+let r2: number = fn2(K);
+function variadic(...xs: number[]): number { return xs.length; }
+variadic(); variadic(1, 2, 3);
+function dflt(a: number, b: number = 2): number { return a + b; }
+dflt(1);
+let e: Error = new Error("x");
+let d: Date = new Date();
+let p: Promise<number> = Promise.resolve(1);
+async function af(): Promise<number> { return 1; }
+function generic<T>(x: T): T { return x; }
+let g: string = generic("s");
+let arr2: Array<string> = ["a"].concat(["b"]);
+let str: string = [1, 2].join(",");
+let n2: number = "abc".indexOf("b") + Math.max(1, 2) + parseInt("3");
+let t: "a" | "b" = "a";
+function lit(k: "a" | "b"): string { return k; }
+lit(t);

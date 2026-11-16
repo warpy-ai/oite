@@ -1,0 +1,82 @@
+// backends: vm jit aot
+//
+// Calls of a function the compiler can see: the arguments the caller
+// passes need not match the parameters the function declares.
+
+function three(a, b, c) {
+    return [a, b, c].join("|");
+}
+console.log(three(1, 2, 3));
+console.log(three(1, 2));
+console.log(three(1));
+console.log(three());
+console.log(three(1, 2, 3, 4, 5));
+
+function none() {
+    return "none";
+}
+console.log(none(), none(1, 2));
+
+function defaults(a, b = a + 1, c = "c") {
+    return a + ":" + b + ":" + c;
+}
+console.log(defaults(1), defaults(1, 5), defaults(1, undefined, "z"));
+
+function rest(first, ...others) {
+    return first + "+" + others.length;
+}
+console.log(rest(1), rest(1, 2, 3));
+
+// A closure: its environment travels with the call.
+function counter(start) {
+    let n = start;
+    function bump(by) {
+        n = n + (by === undefined ? 1 : by);
+        return n;
+    }
+    bump();
+    bump(10);
+    return bump;
+}
+console.log(counter(5)());
+
+// Recursion, direct and mutual.
+function depth(n) {
+    return n === 0 ? 0 : 1 + depth(n - 1);
+}
+function even(n) {
+    return n === 0 ? true : odd(n - 1);
+}
+function odd(n) {
+    return n === 0 ? false : even(n - 1);
+}
+console.log(depth(200), even(10), odd(7));
+
+// An exception crosses a direct call.
+function thrower(x) {
+    if (x > 1) {
+        throw new Error("too big: " + x);
+    }
+    return x;
+}
+function guarded(x) {
+    try {
+        return thrower(x);
+    } catch (e) {
+        return e.message;
+    }
+}
+console.log(guarded(1), guarded(2));
+
+// The same function called directly and as a value.
+const alias = three;
+function apply(f, x) {
+    return f(x);
+}
+console.log(alias("x"), apply(three, "y"));
+
+// Many parameters.
+function many(a, b, c, d, e, f, g, h, i, j) {
+    return a + b + c + d + e + f + g + h + i + j;
+}
+console.log(many(1, 2, 3, 4, 5, 6, 7, 8, 9, 10));

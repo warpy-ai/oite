@@ -21,11 +21,106 @@ pub trait Host {
     fn strict_equal(&self, a: &Self::Value, b: &Self::Value) -> bool;
     /// The elements, if `v` is an array.
     fn array_elements(&self, v: &Self::Value) -> Option<Vec<Self::Value>>;
+    /// Whether `v` is an array.
+    fn is_array(&self, v: &Self::Value) -> bool;
+    /// What kind of value `v` is.
+    fn kind(&self, v: &Self::Value) -> Kind;
+    /// `Object.keys(v)`: an object's own property names, an array's indices,
+    /// nothing for any other value.
+    fn own_keys(&self, v: &Self::Value) -> Vec<String>;
 
     fn make_number(&self, n: f64) -> Self::Value;
     fn make_string(&self, s: String) -> Self::Value;
     fn make_bool(&self, b: bool) -> Self::Value;
     fn undefined(&self) -> Self::Value;
+}
+
+/// What kind of value something is, as far as a type annotation can ask
+/// when the program runs (docs/docs/types.md, section 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Number,
+    String,
+    Boolean,
+    Null,
+    Undefined,
+    Array,
+    /// A function or a class.
+    Function,
+    /// Any other object.
+    Object,
+}
+
+impl Kind {
+    const ALL: [Kind; 8] = [
+        Kind::Number,
+        Kind::String,
+        Kind::Boolean,
+        Kind::Null,
+        Kind::Undefined,
+        Kind::Array,
+        Kind::Function,
+        Kind::Object,
+    ];
+
+    /// This kind in a set of kinds.
+    pub const fn bit(self) -> u32 {
+        1 << self as u32
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Number => "number",
+            Kind::String => "string",
+            Kind::Boolean => "boolean",
+            Kind::Null => "null",
+            Kind::Undefined => "undefined",
+            Kind::Array => "array",
+            Kind::Function => "function",
+            Kind::Object => "object",
+        }
+    }
+
+    /// The kinds of heap object (as a set of `1 << ObjectKind`) that are
+    /// enough, on sight, to pass a check for the set `kinds`. A plain
+    /// object is not among them unless functions pass too: an object may
+    /// be a class, which is a function.
+    pub fn heap_kinds(kinds: u32) -> u64 {
+        use super::heap::ObjectKind;
+        let has = |kind: Kind| kinds & kind.bit() != 0;
+        let mut set = 0;
+        if has(Kind::String) {
+            set |= 1 << ObjectKind::String as u64;
+        }
+        if has(Kind::Array) {
+            set |= 1 << ObjectKind::Array as u64;
+        }
+        if has(Kind::Function) {
+            set |= 1 << ObjectKind::Function as u64;
+        }
+        if has(Kind::Object) && has(Kind::Function) {
+            set |= 1 << ObjectKind::Object as u64;
+        }
+        set
+    }
+
+    /// The kinds in the set `kinds`, as an error message names them:
+    /// `number | null`.
+    pub fn names(kinds: u32) -> String {
+        // A structural object type accepts every kind of object.
+        let objects = Kind::Object.bit() | Kind::Array.bit() | Kind::Function.bit();
+        let kinds = if kinds & objects == objects {
+            kinds & !(Kind::Array.bit() | Kind::Function.bit())
+        } else {
+            kinds
+        };
+        let names: Vec<&str> = Kind::ALL
+            .iter()
+            .filter(|k| kinds & k.bit() != 0)
+            .map(|k| k.name())
+            .collect();
+        names.join(" | ")
+    }
 }
 
 /// The result of a built-in method call.
@@ -44,6 +139,13 @@ pub struct Error {
 }
 
 impl Error {
+    pub fn type_error(message: impl Into<String>) -> Self {
+        Error {
+            kind: "TypeError",
+            message: message.into(),
+        }
+    }
+
     pub fn range(message: impl Into<String>) -> Self {
         Error {
             kind: "RangeError",
@@ -58,6 +160,47 @@ impl std::fmt::Display for Error {
     }
 }
 
+/// `s.charAt(i)`, `s.charCodeAt(i)` and `s.at(i)`, without copying `s`.
+/// `ascii` says every byte of `s` is ASCII, so character `i` is byte `i`;
+/// otherwise the characters are counted. `None` for any other method.
+pub fn string_index<H: Host>(
+    h: &H,
+    s: &str,
+    ascii: bool,
+    name: &str,
+    args: &[H::Value],
+) -> Option<Result<Outcome<H::Value>, Error>> {
+    if !matches!(name, "charAt" | "charCodeAt" | "at") {
+        return None;
+    }
+    let len = if ascii { s.len() } else { s.chars().count() };
+    let i = args
+        .first()
+        .map_or(0.0, |v| integer(h.number(v).unwrap_or(f64::NAN)));
+    let i = if name == "at" && i < 0.0 {
+        i + len as f64
+    } else {
+        i
+    };
+    let c = if i >= 0.0 && i < len as f64 {
+        let i = i as usize;
+        if ascii {
+            Some(s.as_bytes()[i] as char)
+        } else {
+            s.chars().nth(i)
+        }
+    } else {
+        None
+    };
+    Some(Ok(Outcome::Value(match (name, c) {
+        ("charCodeAt", Some(c)) => h.make_number(c as u32 as f64),
+        ("charCodeAt", None) => h.make_number(f64::NAN),
+        ("charAt", c) => h.make_string(c.map(String::from).unwrap_or_default()),
+        (_, Some(c)) => h.make_string(c.to_string()),
+        _ => h.undefined(),
+    })))
+}
+
 /// `Some(result)` if `name` is a string method, `None` otherwise.
 pub fn string_method<H: Host>(
     h: &H,
@@ -65,6 +208,9 @@ pub fn string_method<H: Host>(
     name: &str,
     args: &[H::Value],
 ) -> Option<Result<Outcome<H::Value>, Error>> {
+    if let Some(result) = string_index(h, s, s.is_ascii(), name, args) {
+        return Some(result);
+    }
     let chars: Vec<char> = s.chars().collect();
     let len = chars.len();
     let arg = |i: usize| args.get(i);
@@ -464,9 +610,12 @@ pub fn math_call(name: &str, args: &[f64]) -> f64 {
         "atan" => a.atan(),
         "atan2" => a.atan2(b),
         "hypot" => args.iter().map(|x| x * x).sum::<f64>().sqrt(),
+        // NaN wins; -0 is below +0.
         "min" => args.iter().fold(f64::INFINITY, |m, &x| {
             if m.is_nan() || x.is_nan() {
                 f64::NAN
+            } else if m == x {
+                if m.is_sign_negative() { m } else { x }
             } else {
                 m.min(x)
             }
@@ -474,6 +623,8 @@ pub fn math_call(name: &str, args: &[f64]) -> f64 {
         "max" => args.iter().fold(f64::NEG_INFINITY, |m, &x| {
             if m.is_nan() || x.is_nan() {
                 f64::NAN
+            } else if m == x {
+                if m.is_sign_positive() { m } else { x }
             } else {
                 m.max(x)
             }
@@ -652,6 +803,16 @@ pub fn number_to_string(n: f64) -> String {
 /// Property names that `console.log` and `Object.keys` leave out: internal
 /// ones (`__proto__`, `%parent`), private fields (`#x`) and accessors
 /// (`getter:x`, `setter:x`).
+/// The name `Object.keys` shows for a stored property key: an accessor
+/// (`getter:x`, `setter:x`) is the property `x`; internal keys are none.
+pub fn own_key_name(key: &str) -> Option<&str> {
+    let name = key
+        .strip_prefix("getter:")
+        .or_else(|| key.strip_prefix("setter:"))
+        .unwrap_or(key);
+    (!is_hidden_key(name)).then_some(name)
+}
+
 pub fn is_hidden_key(key: &str) -> bool {
     key.starts_with("__")
         || key.starts_with('%')

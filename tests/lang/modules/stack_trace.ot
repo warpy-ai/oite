@@ -1,0 +1,8 @@
+// backends: vm jit aot
+// A stack trace names each module's own file.
+import { explode } from "./_errors/thrower.ot";
+function run(n) {
+  return explode(n);
+}
+console.log(run(1));
+run(2);

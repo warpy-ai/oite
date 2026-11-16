@@ -1,7 +1,12 @@
 // Memory representation. We will use a enum to implement ownership,
 // and we track wheter a value is "Owned" or a "reference" in the low-level representation
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::sync::{Arc, Mutex};
+
+/// An object's own properties, in insertion order (the order `Object.keys`,
+/// `for...in`, spread and `console.log` show). Remove with `shift_remove` so
+/// the remaining properties keep their order.
+pub type PropMap = IndexMap<String, JsValue>;
 
 pub type NativeFn = fn(&mut crate::vm::VM, Vec<JsValue>) -> JsValue;
 
@@ -169,7 +174,7 @@ pub struct HeapArray {
 // Update HeapObject to be an enum of different types of heap data
 #[derive(Debug, Clone)]
 pub enum HeapData {
-    Object(HashMap<String, JsValue>),
+    Object(PropMap),
     Array(Vec<JsValue>),
     /// ByteStream for building binary bytecode buffers
     ByteStream(Vec<u8>),

@@ -12,6 +12,7 @@
 //! - Bytecode (current VM format) or AST
 //! - Native backends (Cranelift, LLVM)
 
+pub mod alloc_hints;
 pub mod format;
 pub mod lower;
 pub mod opt;
@@ -88,6 +89,22 @@ pub enum IrType {
 }
 
 impl IrType {
+    /// The type of a value whose kind is in the set `kinds`
+    /// (`runtime::builtins::Kind::bit`): a single kind the IR models, or
+    /// `Any`.
+    pub fn of_kinds(kinds: u32) -> IrType {
+        use crate::runtime::builtins::Kind;
+        if kinds == Kind::Number.bit() {
+            IrType::Number
+        } else if kinds == Kind::Boolean.bit() {
+            IrType::Boolean
+        } else if kinds == Kind::String.bit() {
+            IrType::String
+        } else {
+            IrType::Any
+        }
+    }
+
     /// Check if this type is a heap-allocated reference type.
     pub fn is_heap_type(&self) -> bool {
         matches!(
@@ -560,6 +577,21 @@ pub enum IrOp {
     Call(ValueId, ValueId, Vec<ValueId>),
     /// Call method: dst = obj.method(args...)
     CallMethod(ValueId, ValueId, String, Vec<ValueId>),
+    /// Spread into an array literal: dst = target after `target.push(...src)`
+    ArraySpread(ValueId, ValueId, ValueId),
+    /// Spread into an object literal: dst = target after copying src's own
+    /// properties
+    ObjectSpread(ValueId, ValueId, ValueId),
+    /// `Math.<f>(args...)` when the program never assigns `Math`: `f` an
+    /// index into `runtime::builtins::MATH_FUNCTIONS`
+    MathCall(ValueId, u32, Vec<ValueId>),
+    /// Intrinsic: dst = __intrinsic_<name>(args...), `id` an index into
+    /// `runtime::intrinsics::INTRINSICS`
+    Intrinsic(ValueId, u32, Vec<ValueId>),
+    /// A type annotation checked when the program runs: dst = src if its
+    /// kind is in the set `kinds` (`runtime::builtins::Kind::bit`), else
+    /// a TypeError (docs/docs/types.md, section 3)
+    CheckType(ValueId, ValueId, u32),
     /// Create closure: dst = closure(func_id, env)
     MakeClosure(ValueId, u32, ValueId),
 
@@ -634,6 +666,22 @@ impl IrOp {
             self,
             IrOp::LoadGlobal(_, _)
                 | IrOp::AddAny(_, _, _)
+                // `valueOf` may throw.
+                | IrOp::SubAny(_, _, _)
+                | IrOp::MulAny(_, _, _)
+                | IrOp::DivAny(_, _, _)
+                | IrOp::ModAny(_, _, _)
+                | IrOp::Pow(_, _, _)
+                | IrOp::BitAnd(_, _, _)
+                | IrOp::BitOr(_, _, _)
+                | IrOp::Xor(_, _, _)
+                | IrOp::Shl(_, _, _)
+                | IrOp::Shr(_, _, _)
+                | IrOp::ShrU(_, _, _)
+                | IrOp::Lt(_, _, _)
+                | IrOp::LtEq(_, _, _)
+                | IrOp::Gt(_, _, _)
+                | IrOp::GtEq(_, _, _)
                 | IrOp::ToStr(_, _)
                 | IrOp::GetProp(_, _, _)
                 | IrOp::SetProp(_, _, _)
@@ -643,6 +691,11 @@ impl IrOp {
                 | IrOp::ArrayPush(_, _)
                 | IrOp::Call(_, _, _)
                 | IrOp::CallMethod(_, _, _, _)
+                | IrOp::Intrinsic(_, _, _)
+                | IrOp::CheckType(_, _, _)
+                | IrOp::MathCall(_, _, _)
+                | IrOp::ArraySpread(_, _, _)
+                | IrOp::ObjectSpread(_, _, _)
                 | IrOp::Throw(_)
                 | IrOp::Rethrow(_, _)
                 | IrOp::Construct(_, _, _)
@@ -717,6 +770,11 @@ impl IrOp {
             | IrOp::RestArgs(d, _)
             | IrOp::GetSuperProp(d, _, _, _)
             | IrOp::CallMethod(d, _, _, _)
+            | IrOp::Intrinsic(d, _, _)
+            | IrOp::CheckType(d, _, _)
+            | IrOp::MathCall(d, _, _)
+            | IrOp::ArraySpread(d, _, _)
+            | IrOp::ObjectSpread(d, _, _)
             | IrOp::MakeClosure(d, _, _)
             | IrOp::TypeCheck(d, _, _)
             | IrOp::TypeGuard(d, _, _)
@@ -858,7 +916,10 @@ impl IrOp {
             }
             IrOp::SuperForward(_, parent) => vec![*parent],
             IrOp::InstanceOf(_, v, c) | IrOp::In(_, v, c) => vec![*v, *c],
-            IrOp::AsyncResolve(_, p, v) | IrOp::AsyncReject(_, p, v) => vec![*p, *v],
+            IrOp::AsyncResolve(_, p, v)
+            | IrOp::AsyncReject(_, p, v)
+            | IrOp::ArraySpread(_, p, v)
+            | IrOp::ObjectSpread(_, p, v) => vec![*p, *v],
             IrOp::Await(v, _) => vec![*v],
             IrOp::AsyncStart(_)
             | IrOp::Loc(_)
@@ -872,7 +933,10 @@ impl IrOp {
                 uses.extend(args.iter().copied());
                 uses
             }
-            IrOp::CallMono(_, _, args) => args.clone(),
+            IrOp::CallMono(_, _, args)
+            | IrOp::Intrinsic(_, _, args)
+            | IrOp::MathCall(_, _, args) => args.clone(),
+            IrOp::CheckType(_, src, _) => vec![*src],
             IrOp::MakeClosure(_, _, env) => vec![*env],
 
             IrOp::Phi(_, entries) => entries.iter().map(|(_, v)| *v).collect(),
@@ -1436,6 +1500,28 @@ impl fmt::Display for IrOp {
                     method,
                     args_str.join(", ")
                 )
+            }
+            IrOp::ArraySpread(d, t, s) => write!(f, "{} = array.spread {}, {}", d, t, s),
+            IrOp::ObjectSpread(d, t, s) => write!(f, "{} = object.spread {}, {}", d, t, s),
+            IrOp::MathCall(d, func, args) => {
+                let args: Vec<_> = args.iter().map(|a| a.to_string()).collect();
+                let name = crate::runtime::builtins::MATH_FUNCTIONS
+                    .get(*func as usize)
+                    .copied()
+                    .unwrap_or("?");
+                write!(f, "{} = math.{}({})", d, name, args.join(", "))
+            }
+            IrOp::CheckType(d, src, kinds) => {
+                let kinds = crate::runtime::builtins::Kind::names(*kinds);
+                write!(f, "{} = check.type {}, {}", d, src, kinds)
+            }
+            IrOp::Intrinsic(d, id, args) => {
+                let args: Vec<_> = args.iter().map(|a| a.to_string()).collect();
+                let name = crate::runtime::intrinsics::INTRINSICS
+                    .get(*id as usize)
+                    .copied()
+                    .unwrap_or("?");
+                write!(f, "{} = intrinsic {}({})", d, name, args.join(", "))
             }
             IrOp::MakeClosure(d, func_id, env) => {
                 write!(f, "{} = make.closure func#{}, {}", d, func_id, env)

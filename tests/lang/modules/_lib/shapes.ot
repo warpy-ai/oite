@@ -1,0 +1,20 @@
+console.log("shapes.ot runs");
+import { increment } from "./counter.ot";
+let state = "shapes state";
+export function shapesState() {
+  return state;
+}
+export class Circle {
+  constructor(r) {
+    this.r = r;
+    increment();
+  }
+  area() {
+    return Math.round(PI_ISH * this.r * this.r);
+  }
+}
+const PI_ISH = 3.14;
+export default function describe(shape) {
+  return "a shape of area " + shape.area();
+}
+export const UNIT = { name: "cm" };

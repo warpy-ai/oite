@@ -1,0 +1,6 @@
+[roll]
+name = "@rolls/greet"
+version = "0.1.0"
+
+[dependencies]
+"@rolls/words" = "0.1"

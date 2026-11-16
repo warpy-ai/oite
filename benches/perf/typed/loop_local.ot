@@ -1,0 +1,6 @@
+function run(n: number): number {
+  let sum: number = 0;
+  for (let i: number = 0; i < n; i++) { sum = (sum + i * i) % 1000003; }
+  return sum;
+}
+console.log(run(50000000));

@@ -1,7 +1,9 @@
 // IR Types for tscl Compiler
 // IR Value and Types
 
-type IrValue = number;
+// An instruction's immediate: a constant (number or boolean), or a name
+// (a function, a method, a lifetime).
+type IrValue = number | string | boolean;
 
 enum IrType {
     NUMBER = 0,

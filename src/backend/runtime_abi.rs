@@ -1,4 +1,4 @@
-//! Signatures of the native runtime's functions (`src/runtime/stubs.rs`).
+//! Signatures of the native runtime's functions (`src/runtime/stubs/`).
 //!
 //! Both native backends declare the runtime from this one table, so a
 //! signature cannot drift between them. Each entry must match the Rust
@@ -20,6 +20,8 @@ pub const RUNTIME: &[(&str, bool, &[Ty])] = {
     use Ty::*;
     &[
         ("ot_alloc_object", true, &[]),
+        ("ot_alloc_object_sized", true, &[Len]),
+        ("ot_alloc_literal", true, &[Ptr]),
         ("ot_alloc_array", true, &[Len]),
         ("ot_alloc_string", true, &[Ptr, Len]),
         ("ot_make_function", true, &[Ptr]),
@@ -36,6 +38,15 @@ pub const RUNTIME: &[(&str, bool, &[Ty])] = {
         ("ot_set_global", true, &[Ptr, Len, Val]),
         ("ot_call", true, &[Val, Val, Ptr, Len]),
         ("ot_call_method", true, &[Val, Ptr, Len, Ptr, Len]),
+        ("ot_intrinsic", true, &[Len, Ptr, Len]),
+        ("ot_check_type", true, &[Val, Len]),
+        ("ot_register_global", false, &[Ptr, Len, Ptr]),
+        ("ot_math_call", true, &[Len, Ptr, Len]),
+        ("ot_get_prop_ic", true, &[Val, Ptr]),
+        ("ot_set_prop_ic", true, &[Val, Ptr, Val]),
+        ("ot_call_method_ic", true, &[Val, Ptr, Ptr, Len]),
+        ("ot_array_spread", true, &[Val, Val]),
+        ("ot_object_spread", true, &[Val, Val]),
         ("ot_add_any", true, &[Val, Val]),
         ("ot_sub_any", true, &[Val, Val]),
         ("ot_mul_any", true, &[Val, Val]),
@@ -66,6 +77,7 @@ pub const RUNTIME: &[(&str, bool, &[Ty])] = {
         ("ot_rethrow", true, &[Val, Val]),
         ("ot_report_uncaught", false, &[]),
         ("ot_construct", true, &[Val, Ptr, Len]),
+        ("ot_construct_ic", true, &[Val, Ptr, Len, Ptr]),
         ("ot_call_super", true, &[Val, Val, Ptr, Len]),
         ("ot_get_super_prop", true, &[Val, Val, Ptr, Len]),
         ("ot_instanceof", true, &[Val, Val]),

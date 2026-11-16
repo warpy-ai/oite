@@ -1,0 +1,11 @@
+// Building, splitting and joining text.
+function run() {
+  let lines = [];
+  for (let i = 0; i < 100000; i++) lines.push("row" + i + ",value" + (i * 7) + ",end");
+  let text = lines.join("\n");
+  let rows = text.split("\n");
+  let total = 0;
+  for (let i = 0; i < rows.length; i++) { let cols = rows[i].split(","); total = total + cols[1].length; }
+  return total + " " + text.length;
+}
+console.log(run());

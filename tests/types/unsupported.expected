@@ -1,0 +1,2 @@
+2:13: intersection types are not supported yet; the type is treated as `any`
+3:17: conditional types are not supported yet; the type is treated as `any`

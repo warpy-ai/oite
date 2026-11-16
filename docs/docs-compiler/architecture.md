@@ -503,7 +503,7 @@ script/
 │   ├── runtime/                  # KEEP: ABI, heap, stubs
 │   │   ├── abi.rs                # NaN-boxed values
 │   │   ├── heap.rs               # Memory allocation
-│   │   └── stubs.rs              # FFI bridge
+│   │   └── stubs/                # The native runtime
 │   └── vm/                       # KEEP: For debugging
 │
 ├── bootstrap/                    # ARCHIVE: Reference only

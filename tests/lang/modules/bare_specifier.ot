@@ -1,0 +1,3 @@
+// A module is a relative path or a roll.
+import fs from "fs";
+console.log(fs);

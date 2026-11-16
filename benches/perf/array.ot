@@ -1,0 +1,10 @@
+function run() {
+  let a = [];
+  for (let i = 0; i < 1000000; i++) { a.push(i); }
+  let sum = 0;
+  for (let k = 0; k < 20; k++) {
+    for (let i = 0; i < a.length; i++) { a[i] = a[i] + 1; sum = sum + a[i]; }
+  }
+  return sum;
+}
+console.log(run());

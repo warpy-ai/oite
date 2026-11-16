@@ -54,6 +54,9 @@ llvm-sys = "180"
 # JSON parsing (used by loader/compiler)
 serde_json = "1.0"
 
+# Insertion-ordered map for VM object properties
+indexmap = "2"
+
 # Random number generation (kept for potential use in runtime)
 fastrand = "2.0"
 

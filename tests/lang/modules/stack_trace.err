@@ -1,0 +1,6 @@
+Uncaught RangeError: too big: 2
+at explode (
+thrower.ot:3:11)
+at run (
+stack_trace.ot:5:10)
+stack_trace.ot:8:1

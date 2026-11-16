@@ -1,0 +1,17 @@
+// backends: vm jit aot
+// Spread in array and object literals.
+let a = [1, 2];
+let b = [0, ...a, 3, ..."hi"];
+console.log(b, b.length);
+console.log([...[]], [..."", ...a]);
+let o = { x: 1, y: { z: 2 } };
+let p = { ...o, w: 3 };
+console.log(p.x, p.y.z, p.w, p.y === o.y);
+// A later property wins; the copy is shallow.
+let q = { ...o, x: 10 };
+console.log(q.x, o.x);
+try {
+  let c = [...(5 as any)];
+} catch (e) {
+  console.log(e instanceof TypeError, e.message);
+}

@@ -1,0 +1,4 @@
+Uncaught TypeError: Expected number, got string
+    at area (
+boundary_uncaught.ot:7:30)
+boundary_uncaught.ot:13:13

@@ -64,18 +64,38 @@ impl Diagnostic {
 #[derive(Clone, Debug)]
 pub struct CompileError {
     pub diagnostics: Vec<Diagnostic>,
+    /// The file the diagnostics are in, when it is not the one being
+    /// compiled (a module it imports): (path, source).
+    pub origin: Option<(String, String)>,
 }
 
 impl CompileError {
-    pub fn single(diagnostic: Diagnostic) -> Self {
+    pub fn new(diagnostics: Vec<Diagnostic>) -> Self {
         Self {
-            diagnostics: vec![diagnostic],
+            diagnostics,
+            origin: None,
         }
+    }
+
+    pub fn single(diagnostic: Diagnostic) -> Self {
+        Self::new(vec![diagnostic])
+    }
+
+    /// The diagnostics are in `file` (with `source`).
+    pub fn in_file(mut self, file: &str, source: &str) -> Self {
+        if self.origin.is_none() {
+            self.origin = Some((file.to_string(), source.to_string()));
+        }
+        self
     }
 
     /// Each diagnostic as `file:line:col: kind: message`, with the source
     /// line and a caret under the column.
     pub fn render(&self, file: &str, source: &str) -> String {
+        let (file, source) = match &self.origin {
+            Some((f, s)) => (f.as_str(), s.as_str()),
+            None => (file, source),
+        };
         let mut out = String::new();
         for d in &self.diagnostics {
             render_one(&mut out, file, source, d.kind, &d.message, d.position);

@@ -336,7 +336,7 @@ function makeUnderline(column: number, length: number, label:string): string {
     return spaces + carets + " " + label;
 }
 
-function makeDashes(column:number, length: number, label: string): string {
+function makeDashes(column:number, length: number, label: string | undefined): string {
     let spaces = "";
     let i = 0;
     while ( i < column -1) {

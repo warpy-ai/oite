@@ -37,7 +37,7 @@ The `.out` / `.err` files define correct behaviour. No backend is the
 reference, including the VM. A backend that cannot run a construct correctly
 must fail with an error. It must never approximate.
 
-- In `src/ir/lower.rs`, an opcode the native backends do not implement returns
+- In `src/ir/lower/`, an opcode the native backends do not implement returns
   `LowerError::NotSupportedNatively`. Do not lower it to a no-op or to
   `undefined`.
 - The `// backends: vm jit aot` directive at the top of a test runs it on
@@ -63,7 +63,7 @@ must fail with an error. It must never approximate.
 
 ### 4. Every IR op is handled everywhere, or rejected everywhere
 
-Adding an `IrOp` (`src/ir/mod.rs`) means handling it in Cranelift (`src/backend/cranelift.rs`) and in LLVM (`src/backend/llvm/codegen.rs`),
+Adding an `IrOp` (`src/ir/mod.rs`) means handling it in Cranelift (`src/backend/cranelift/ops.rs`) and in LLVM (`src/backend/llvm/codegen/ops.rs`),
 or rejecting it in lowering until both can. Lowering must also not
 assume a value on the operand stack survives a jump: `spill_stack` and
 `reload_stack` carry stack values across block edges.

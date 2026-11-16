@@ -1,0 +1,12 @@
+0:0 1:0 4:6 5:10 9:36 64:2016 65:2080 200:19900
+10 60 undefined a,b,c,d,e,f
+undefined false a,b,d,e,f
+33 7 a,b,c,d,e,f,g
+again 99 100
+1 2 10 20
+base 8 true false
+15 30 n
+own base
+patched own 99
+1
+15 true undefined function

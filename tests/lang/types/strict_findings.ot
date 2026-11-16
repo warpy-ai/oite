@@ -1,0 +1,7 @@
+// flags: --strict-types
+//
+// With --strict-types what the checker finds is an error, and the
+// program does not run.
+
+console.log("not reached");
+const count: number = "three";

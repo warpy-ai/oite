@@ -1,0 +1,44 @@
+// backends: vm jit aot
+// Math functions with a machine instruction run inline in native code when
+// their arguments are numbers; anything else goes through the runtime.
+function show(x) {
+  return x === 0 && 1 / x < 0 ? "-0" : "" + x;
+}
+function unary(f, xs) {
+  let out = [];
+  for (let i = 0; i < xs.length; i++) out.push(show(f(xs[i])));
+  return out.join(" ");
+}
+let xs = [4, 2, 0.5, 2.5, -2.5, 3.7, -3.7, 0, -0, NaN, Infinity, -Infinity, 1e300];
+console.log(unary((x) => Math.sqrt(x), xs));
+console.log(unary((x) => Math.floor(x), xs));
+console.log(unary((x) => Math.ceil(x), xs));
+console.log(unary((x) => Math.trunc(x), xs));
+console.log(unary((x) => Math.abs(x), xs));
+console.log(unary((x) => Math.round(x), [0.5, 1.5, 2.5, -1.5, 2.4, -2.6, 7]));
+let pairs = [[1, 2], [-1, -2], [0, -0], [-0, 0], [NaN, 1], [1, NaN], [Infinity, -Infinity]];
+let mins = [];
+let maxs = [];
+for (let i = 0; i < pairs.length; i++) {
+  mins.push(show(Math.min(pairs[i][0], pairs[i][1])));
+  maxs.push(show(Math.max(pairs[i][0], pairs[i][1])));
+}
+console.log(mins.join(" "));
+console.log(maxs.join(" "));
+// Arguments that are not numbers, other arities, other functions.
+let o = { valueOf() { return 16; } };
+console.log(Math.sqrt("9"), Math.sqrt(o), Math.floor(true), Math.abs(null), Math.sqrt(undefined));
+console.log(Math.min(3, 1, 2), Math.max(), Math.min(), Math.max(5));
+console.log(Math.pow(2, 10), Math.sign(-3), Math.hypot(3, 4), Math.cbrt(27));
+let bad = { valueOf() { throw new RangeError("no number"); } };
+try {
+  Math.sqrt(bad);
+} catch (e) {
+  console.log(e instanceof RangeError, e.message);
+}
+// A hot loop.
+let acc = 0;
+for (let i = 1; i < 100000; i++) {
+  acc = acc + Math.floor(Math.sqrt(i)) + Math.max(i % 7, 3) - Math.abs(-1);
+}
+console.log(acc);

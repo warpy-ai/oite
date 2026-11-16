@@ -1,0 +1,5 @@
+[ 0, 1, 2, 3, 'h', 'i' ] 6
+[] [ 1, 2 ]
+1 2 3 true
+10 1
+true 5 is not iterable

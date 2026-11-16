@@ -1,0 +1,3 @@
+# Oite is not yet known to GitHub Linguist; borrow TypeScript for
+# syntax highlighting and language statistics.
+*.ot linguist-language=TypeScript

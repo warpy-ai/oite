@@ -79,7 +79,7 @@ Unified runtime primitives shared across VM/JIT/AOT backends.
 
 - `src/runtime/abi.rs` - NaN-boxed 64-bit `OtValue` ABI
 - `src/runtime/heap.rs` - Bump allocator, object layouts
-- `src/runtime/stubs.rs` - 20+ `extern "C"` stubs for native backends
+- `src/runtime/stubs/` - 20+ `extern "C"` stubs for native backends
 
 **Runtime Stubs:** `ot_alloc_object`, `ot_add_any`, `ot_get_prop`, `ot_set_prop`, `ot_call`, `ot_console_log`, etc.
 
@@ -91,7 +91,7 @@ Register-based SSA IR with type tracking and optimizations.
 
 **Key Files:**
 
-- `src/ir/lower.rs` - Bytecode → SSA lowering
+- `src/ir/lower/` - Bytecode → SSA lowering
 - `src/ir/typecheck.rs` - Flow-sensitive type inference
 - `src/ir/opt.rs` - DCE, constant folding, CSE, copy propagation
 - `src/ir/verify.rs` - IR validation + borrow checking
@@ -143,10 +143,10 @@ Full TypeScript-style language with ownership semantics.
 
 #### Type System
 
-- Type annotations: `let x: number`, `function add(a: number): number`
+- Type annotations: `let x: number`, `function add(a: number): number`,
+  checked as warnings (`oitec check` reports errors); see `docs/docs/types.md`
 - Ownership: `Ref<T>`, `MutRef<T>`, move semantics
-- Generics with monomorphization
-- Hindley-Milner inference
+- Generics: parsed; a type parameter is `any` to the checker
 
 #### Control Flow
 
@@ -570,7 +570,7 @@ oite/
 │   ├── runtime/
 │   │   ├── abi.rs                # NaN-boxed values
 │   │   ├── heap.rs               # Memory allocation
-│   │   ├── stubs.rs              # FFI bridge
+│   │   ├── stubs/                # The native runtime
 │   │   └── async/                # Core async primitives
 │   ├── vm/                       # Debug interpreter
 │   └── stdlib/                   # Minimal: console, ByteStream, fs

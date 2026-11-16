@@ -12,7 +12,7 @@ console.log("includes('xyz'):", str2.includes("xyz"));
 
 // Array.prototype.pop()
 let arr1: Array<number> = [1, 2, 3];
-let popped: number = arr1.pop();
+let popped: number | undefined = arr1.pop();
 console.log("pop() returned:", popped);
 console.log("array length after pop:", arr1.length);
 

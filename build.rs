@@ -1,7 +1,7 @@
 //! Build script: compiles the native runtime library.
 //!
 //! `oitec build` links every native executable against the Oite runtime
-//! (`src/runtime/{abi,builtins,heap,stubs}.rs`). Those files are compiled here, as a
+//! (`src/runtime/{abi,builtins,heap,intrinsics}.rs` and `src/runtime/stubs/`). Those files are compiled here, as a
 //! standalone static library rooted at `src/runtime/native_rt.rs`, and the
 //! archive is embedded into `oitec` (see `backend::llvm::runtime_lib`). Native
 //! binaries therefore need no Rust toolchain or source tree at build time.
@@ -26,7 +26,10 @@ fn main() {
         "abi.rs",
         "builtins.rs",
         "heap.rs",
-        "stubs.rs",
+        "intrinsics.rs",
+        // A directory: cargo watches every file in it.
+        "object",
+        "stubs",
     ] {
         println!(
             "cargo:rerun-if-changed={}",
@@ -45,6 +48,10 @@ fn main() {
         .arg(&target)
         .arg("-C")
         .arg("opt-level=3")
+        // One unit: the runtime's small helpers are spread over modules
+        // and must inline into each other.
+        .arg("-C")
+        .arg("codegen-units=1")
         .arg("-C")
         .arg("panic=abort")
         .arg("-C")

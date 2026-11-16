@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# install.sh - Install Oite (oitec + unroll + rolls registry config)
+# install.sh - Install Oite (oitec + unroll + the core rolls + registry config)
 # Usage: curl -fsSL https://oite.org/install | sh
 #    or: sh install.sh [--prefix DIR] [--no-modify-path]
 set -eu
@@ -174,6 +174,35 @@ WRAPPER
     info "Installed unroll to ${lib_dir}"
 }
 
+install_core_rolls() {
+    local version="$1"
+    local tmpdir
+
+    tmpdir=$(mktemp -d)
+    trap "rm -rf '$tmpdir'" EXIT
+
+    # The core rolls (@rolls/std and what it needs, @rolls/async), pinned for
+    # this release. Releases before they were bundled have none.
+    local url="https://github.com/${GITHUB_REPO}/releases/download/${version}/core-rolls.tar.gz"
+
+    info "Downloading the core rolls..."
+    if curl -fSL --progress-bar -o "${tmpdir}/core-rolls.tar.gz" "$url" 2>/dev/null \
+        && [ -s "${tmpdir}/core-rolls.tar.gz" ]; then
+        # The release owns ${PREFIX}/rolls; rolls fetched by unroll live
+        # elsewhere, so replacing it loses nothing.
+        rm -rf "${PREFIX}/rolls"
+        mkdir -p "$PREFIX"
+        tar -xzf "${tmpdir}/core-rolls.tar.gz" -C "$PREFIX"
+        info "Installed the core rolls to ${PREFIX}/rolls:"
+        sed 's/^/      /' "${PREFIX}/rolls/MANIFEST"
+    else
+        warn "This release has no bundled core rolls; unroll fetches them from the registry"
+    fi
+
+    rm -rf "$tmpdir"
+    trap - EXIT
+}
+
 configure_registry() {
     local unroll_dir="$HOME/.unroll"
     local config_file="${unroll_dir}/config.toml"
@@ -256,9 +285,18 @@ verify_install() {
 
     echo ""
     if [ -x "${bin_dir}/oitec" ]; then
-        local version
-        version=$("${bin_dir}/oitec" --version 2>/dev/null || echo "unknown")
-        info "oitec installed: ${version}"
+        # oitec must be able to start on this machine. A missing shared library
+        # makes the loader kill it (status >= 126) before it runs at all; any
+        # lower status is oitec itself answering, which is all this checks.
+        local output status=0
+        output=$("${bin_dir}/oitec" --version 2>&1) || status=$?
+        if [ "$status" -ge 126 ] || printf '%s' "$output" | grep -q -E 'Library not loaded|error while loading shared libraries|GLIBC_[0-9.]+. not found'; then
+            warn "oitec is installed at ${bin_dir}/oitec but cannot start on this machine:"
+            printf '%s\n' "$output" | sed 's/^/    /' >&2
+            warn "Please report this at https://github.com/${GITHUB_REPO}/issues"
+            return 1
+        fi
+        info "oitec installed: ${bin_dir}/oitec"
     else
         warn "oitec binary not found at ${bin_dir}/oitec"
         return 1
@@ -319,6 +357,7 @@ main() {
 
     download_oitec "$target" "$version"
     install_unroll "$version"
+    install_core_rolls "$version"
     configure_registry
     setup_path
 

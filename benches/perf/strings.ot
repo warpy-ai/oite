@@ -1,0 +1,8 @@
+function run() {
+  let parts = [];
+  for (let i = 0; i < 200000; i++) { parts.push("item" + i); }
+  let total = 0;
+  for (let i = 0; i < parts.length; i++) { total = total + parts[i].length; }
+  return total;
+}
+console.log(run());

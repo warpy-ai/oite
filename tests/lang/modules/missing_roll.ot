@@ -1,0 +1,3 @@
+// A roll that is not installed: where oitec looked, and how to point it.
+import { x } from "@rolls/nonexistent";
+console.log(x);

@@ -1,0 +1,16 @@
+499500
+literals: 3
+variables: 42
+arithmetic: 12
+dynamic ok: 3
+dynamic wrong: TypeError: Expected number, got string
+one proved, one wrong: TypeError: Expected number, got null
+missing: TypeError: Expected number, got undefined
+through a value: TypeError: Expected number, got string
+union ok: 1x2
+union wrong: TypeError: Expected string | null, got number
+default: 20
+default wrong: TypeError: Expected number, got string
+recursion: 3628800
+boolean: 3
+boolean wrong: TypeError: Expected boolean, got number

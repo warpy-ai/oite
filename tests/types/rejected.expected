@@ -1,0 +1,36 @@
+2:48: Type 'number | null' is not assignable to type 'number'.
+3:42: Type 'string | undefined' is not assignable to type 'string'.
+4:79: Type 'string' is not assignable to type 'number'.
+5:42: Type 'unknown' is not assignable to type 'number'.
+6:25: A function whose declared type is 'number' must return a value.
+8:4: Argument of type 'string' is not assignable to parameter of type 'number'.
+8:10: Expected 1 arguments, but got 0.
+8:19: Argument of type 'null' is not assignable to parameter of type 'number'.
+10:13: Type '{ x: string; }' is not assignable to type 'P'. Property 'x': type 'string' is not assignable to type 'number'.
+11:13: Type '{}' is not assignable to type 'P'. Property 'x' is missing.
+12:13: Type 'number' is not assignable to type 'P'.
+13:13: Type 'null' is not assignable to type 'P'.
+14:15: Type '({ x: number; } | { y: number; })[]' is not assignable to type 'P[]'.
+15:23: Type 'string' is not assignable to type 'number'.
+15:51: Type 'number' is not assignable to type 'string'.
+19:13: Type 'A' is not assignable to type 'B'.
+20:13: Type 'C' is not assignable to type 'A'.
+21:13: Type '{ n: number; }' is not assignable to type 'A'.
+22:13: Type 'string' is not assignable to type 'number'.
+23:34: Type '(x: number) => number' is not assignable to type '(x: number) => string'.
+24:32: Type '(a: number, b: number, c: number) => any' is not assignable to type '(x: number) => void'.
+25:18: Type 'string' is not assignable to type 'number'.
+26:19: Type 'string' is not assignable to type 'boolean'.
+28:7: Type 'string' is not assignable to type 'number'.
+30:10: Type 'number' is not assignable to type 'string'.
+31:21: Type 'string' is not assignable to type 'number'.
+32:60: Argument of type 'string' is not assignable to parameter of type 'number'.
+33:20: Type 'number' is not assignable to type 'string'.
+34:18: Type 'undefined' is not assignable to type 'number'.
+35:18: Type 'null' is not assignable to type 'string'.
+36:46: Type 'string | undefined' is not assignable to type 'string'.
+37:26: Type 'string' is not assignable to type 'number'.
+37:37: Type 'string' is not assignable to type 'number'.
+38:1: This expression is not callable. Type 'number' has no call signatures.
+39:91: Type 'number | null' is not assignable to type 'number'.
+39:122: Type 'null' is not assignable to type 'number'.

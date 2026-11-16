@@ -1,0 +1,39 @@
+// Each line here breaks a contract and must be reported.
+function f1(x: number | null): number { return x; }
+function f2(x?: string): string { return x; }
+function f3(x: string | number): number { if (typeof x === "string") { return x; } return x; }
+function f4(x: unknown): number { return x; }
+function f5(): number { return; }
+function f6(a: number): void {}
+f6("s"); f6(); f6(null);
+interface P { x: number }
+let p1: P = { x: "s" };
+let p2: P = {};
+let p3: P = 5;
+let p4: P = null;
+let p5: P[] = [{ x: 1 }, { y: 2 }];
+class A { n: number = "str"; m(): string { return this.n; } }
+class B extends A {}
+class C {}
+let a1: A = new B();
+let a2: B = new A();
+let a3: A = new C();
+let a4: A = { n: 1 };
+new A().n = "s";
+let fnv: (x: number) => string = (x: number) => x;
+let fn3: (x: number) => void = (a: number, b: number, c: number) => {};
+let nn: number = "a" + 1;
+let bb: boolean = 1 < 2 ? "y" : "n";
+let o: { a: number } = { a: 1 };
+o.a = "x";
+let arr: string[] = ["a"];
+arr[0] = 5;
+let first: number = arr[0];
+function g1(cb: (n: number) => number): number { return cb("x"); }
+let lenv: string = "abc".length;
+let x1: number = undefined;
+let x2: string = null;
+let u2: string | undefined; let x3: string = u2;
+let v1: number = 5; v1 = "s"; v1 += "t";
+5();
+function loop(n: number | null) { if (n === null) return; while (true) { let ok: number = n; n = null; let bad: number = n; } }

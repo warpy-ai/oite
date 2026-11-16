@@ -11,11 +11,22 @@
 //! will go through NativeHeap.
 
 use std::alloc::{self, Layout};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 
-/// Simple property storage using a Vec instead of HashMap to avoid hashbrown dependency.
-/// This is a tradeoff: O(n) lookup but no external dependencies.
-pub type PropertyMap = Vec<(String, u64)>;
+use super::object::shape::{self, Shape};
+
+/// The size of a huge page on the platforms Oite targets.
+const HUGE_PAGE: usize = 2 * 1024 * 1024;
+
+/// The size of a heap chunk.
+const CHUNK_SIZE: usize = 4 * HUGE_PAGE;
+
+/// Property slots stored in an object itself when its allocation site
+/// gives no better number; the rest go to `overflow`.
+pub const INLINE_SLOTS: usize = 4;
+
+/// The most slots an object stores in itself.
+pub const MAX_INLINE_SLOTS: usize = 16;
 
 /// A pointer to a heap-allocated object.
 ///
@@ -131,20 +142,36 @@ pub struct ObjectHeader {
     pub kind: ObjectKind,
     /// GC mark bit (for future mark-sweep).
     pub marked: bool,
+    /// Per-kind flags (`ObjectHeader::ASCII` for strings).
+    pub flags: u8,
+    /// For an object: how many property slots it stores in itself.
+    pub inline_slots: u8,
+    /// For a class: how many properties its instances have had at most,
+    /// so the next one is allocated with room for them (0: not known).
+    pub instance_slots: u8,
     /// Reserved for alignment and future use.
-    pub _reserved: [u8; 6],
+    pub _reserved: [u8; 3],
     /// Size of the object data (excluding header).
     pub size: u32,
 }
 
 impl ObjectHeader {
     pub const SIZE: usize = std::mem::size_of::<ObjectHeader>();
+    /// A string whose bytes are all ASCII: its characters are its bytes, so
+    /// indexing it needs no scan.
+    pub const ASCII: u8 = 1;
+    /// An object that is some object's prototype: changing its layout
+    /// invalidates cached lookups (`object::ic`).
+    pub const PROTOTYPE: u8 = 1;
 
     pub fn new(kind: ObjectKind, size: u32) -> Self {
         Self {
             kind,
             marked: false,
-            _reserved: [0; 6],
+            flags: 0,
+            inline_slots: 0,
+            instance_slots: 0,
+            _reserved: [0; 3],
             size,
         }
     }
@@ -207,17 +234,21 @@ pub struct NativeFunction {
 /// `this`, the arguments, and the function's own environment.
 pub type NativeFn = extern "C" fn(this: u64, argv: *const u64, argc: usize, env: u64) -> u64;
 
-/// A native object (key-value map).
-///
-/// For simplicity, we use a Rust HashMap internally.
-/// A production implementation would use inline slots + overflow hash.
+/// A native object (docs/docs/object-model.md). Its shape says which
+/// property is in which slot; `object::object` reads and writes them.
 #[repr(C)]
 pub struct NativeObject {
     pub header: ObjectHeader,
-    /// Pointer to the property map (Vec of key-value pairs).
-    /// We store this as a raw pointer to avoid Rust's ownership rules
-    /// in the native runtime. Uses Vec instead of HashMap to avoid hashbrown dep.
-    pub properties: *mut PropertyMap,
+    /// Slots allocated at `overflow`.
+    pub overflow_cap: u32,
+    /// The layout of the properties; null in dictionary mode.
+    pub shape: *const Shape,
+    /// The prototype: an object, or `undefined`.
+    pub proto: u64,
+    /// The slots after the inline ones; in dictionary mode, the `Dict`.
+    pub overflow: *mut u64,
+    /// The first `header.inline_slots` slots follow the object.
+    pub inline: [u64; 0],
 }
 
 // =========================================================================
@@ -235,8 +266,8 @@ pub struct HeapConfig {
 impl Default for HeapConfig {
     fn default() -> Self {
         Self {
-            young_size: 1024 * 1024,  // 1 MB
-            gc_threshold: 768 * 1024, // 75% of young_size
+            young_size: CHUNK_SIZE,
+            gc_threshold: CHUNK_SIZE / 4 * 3, // 75% of young_size
         }
     }
 }
@@ -250,13 +281,13 @@ pub struct NativeHeap {
     /// Start of the current chunk.
     young_start: std::cell::Cell<*mut u8>,
     /// Current allocation pointer (bump pointer) in the current chunk.
-    young_ptr: AtomicUsize,
+    young_ptr: Cell<usize>,
     /// End of the current chunk.
     young_end: std::cell::Cell<*mut u8>,
     /// Every chunk allocated so far, with its size, for `Drop`.
     chunks: std::cell::RefCell<Vec<(*mut u8, usize)>>,
     /// Total bytes allocated (for stats).
-    total_allocated: AtomicUsize,
+    total_allocated: Cell<usize>,
     /// Configuration.
     config: HeapConfig,
 }
@@ -280,19 +311,32 @@ impl NativeHeap {
 
         Self {
             young_start: std::cell::Cell::new(young_start),
-            young_ptr: AtomicUsize::new(young_start as usize),
+            young_ptr: Cell::new(young_start as usize),
             young_end: std::cell::Cell::new(young_end),
             chunks: std::cell::RefCell::new(vec![(young_start, config.young_size)]),
-            total_allocated: AtomicUsize::new(0),
+            total_allocated: Cell::new(0),
             config,
         }
     }
 
+    /// A chunk of `size` bytes, aligned to a huge page. On Linux the
+    /// kernel is asked to back it with huge pages: nothing is reclaimed
+    /// yet (#123), so a program that allocates touches new memory all the
+    /// time, and with 4 KB pages most of its time goes to page faults.
     fn alloc_chunk(size: usize) -> *mut u8 {
-        let layout = Layout::from_size_align(size, 8).unwrap();
+        let layout = Layout::from_size_align(size, HUGE_PAGE).unwrap();
         let chunk = unsafe { alloc::alloc(layout) };
         if chunk.is_null() {
             alloc::handle_alloc_error(layout);
+        }
+        #[cfg(target_os = "linux")]
+        unsafe {
+            unsafe extern "C" {
+                fn madvise(addr: *mut u8, len: usize, advice: i32) -> i32;
+            }
+            const MADV_HUGEPAGE: i32 = 14;
+            // Advice only: on failure the chunk has ordinary pages.
+            madvise(chunk, size, MADV_HUGEPAGE);
         }
         chunk
     }
@@ -302,11 +346,12 @@ impl NativeHeap {
     /// When the current chunk is full, a new chunk is added. Nothing is
     /// reclaimed yet (#123), so memory grows with every allocation, but an
     /// allocation never fails short of the system running out of memory.
+    #[inline]
     pub fn alloc(&self, size: usize) -> Option<HeapPtr> {
         let total_size = ObjectHeader::SIZE + size;
         let aligned_size = (total_size + 7) & !7; // 8-byte alignment
 
-        let current = self.young_ptr.load(Ordering::Relaxed);
+        let current = self.young_ptr.get();
         let mut start = current;
         if current + aligned_size > self.young_end.get() as usize {
             let chunk_size = self.config.young_size.max(aligned_size);
@@ -316,10 +361,9 @@ impl NativeHeap {
             self.young_end.set(unsafe { chunk.add(chunk_size) });
             start = chunk as usize;
         }
-        self.young_ptr
-            .store(start + aligned_size, Ordering::Relaxed);
+        self.young_ptr.set(start + aligned_size);
         self.total_allocated
-            .fetch_add(aligned_size, Ordering::Relaxed);
+            .set(self.total_allocated.get() + aligned_size);
         Some(HeapPtr::from_usize(start))
     }
 
@@ -331,6 +375,9 @@ impl NativeHeap {
         unsafe {
             let header = ptr.as_mut::<ObjectHeader>();
             *header = ObjectHeader::new(ObjectKind::String, data_size as u32);
+            if s.is_ascii() {
+                header.flags |= ObjectHeader::ASCII;
+            }
 
             let string_obj = ptr.as_mut::<NativeString>();
             string_obj.len = s.len() as u32;
@@ -345,16 +392,34 @@ impl NativeHeap {
 
     /// Allocate and initialize an empty object.
     pub fn alloc_object(&self) -> Option<HeapPtr> {
-        let data_size = std::mem::size_of::<NativeObject>() - ObjectHeader::SIZE;
+        self.alloc_object_sized(INLINE_SLOTS)
+    }
+
+    /// Allocate an empty object with room for `slots` properties in the
+    /// object itself (at most `MAX_INLINE_SLOTS`).
+    pub fn alloc_object_sized(&self, slots: usize) -> Option<HeapPtr> {
+        let slots = slots.min(MAX_INLINE_SLOTS);
+        self.alloc_object_shaped(slots, shape::empty(slots))
+    }
+
+    /// Allocate an object of the shape `shape`, which must be a shape of
+    /// objects with `slots` slots in themselves. Its properties' slots are
+    /// for the caller to fill.
+    #[inline]
+    pub fn alloc_object_shaped(&self, slots: usize, shape: *const Shape) -> Option<HeapPtr> {
+        let data_size = std::mem::size_of::<NativeObject>() + 8 * slots - ObjectHeader::SIZE;
         let ptr = self.alloc(data_size)?;
 
         unsafe {
             let header = ptr.as_mut::<ObjectHeader>();
             *header = ObjectHeader::new(ObjectKind::Object, data_size as u32);
+            header.inline_slots = slots as u8;
 
             let obj = ptr.as_mut::<NativeObject>();
-            // Allocate the PropertyMap separately (it lives outside the bump allocator)
-            obj.properties = Box::into_raw(Box::new(PropertyMap::new()));
+            obj.overflow_cap = 0;
+            obj.shape = shape;
+            obj.proto = super::abi::OtValue::undefined().to_bits();
+            obj.overflow = std::ptr::null_mut();
         }
 
         Some(ptr)
@@ -398,12 +463,12 @@ impl NativeHeap {
 
     /// Get the total bytes allocated.
     pub fn total_allocated(&self) -> usize {
-        self.total_allocated.load(Ordering::Relaxed)
+        self.total_allocated.get()
     }
 
     /// Get the bytes remaining in the current chunk.
     pub fn bytes_remaining(&self) -> usize {
-        let current = self.young_ptr.load(Ordering::Relaxed);
+        let current = self.young_ptr.get();
         self.young_end.get() as usize - current
     }
 
@@ -417,15 +482,15 @@ impl NativeHeap {
         let (first, size) = self.chunks.borrow()[0];
         self.young_start.set(first);
         self.young_end.set(unsafe { first.add(size) });
-        self.young_ptr.store(first as usize, Ordering::SeqCst);
-        self.total_allocated.store(0, Ordering::SeqCst);
+        self.young_ptr.set(first as usize);
+        self.total_allocated.set(0);
     }
 }
 
 impl Drop for NativeHeap {
     fn drop(&mut self) {
         for &(chunk, size) in self.chunks.borrow().iter() {
-            let layout = Layout::from_size_align(size, 8).unwrap();
+            let layout = Layout::from_size_align(size, HUGE_PAGE).unwrap();
             unsafe {
                 alloc::dealloc(chunk, layout);
             }
@@ -451,6 +516,37 @@ pub fn heap() -> &'static NativeHeap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The layouts native code and the runtime agree on. A change here is
+    /// an ABI change: update this test with it.
+    #[test]
+    fn object_layouts() {
+        use std::mem::{offset_of, size_of};
+        assert_eq!(size_of::<ObjectHeader>(), 12);
+        assert_eq!(offset_of!(ObjectHeader, kind), 0);
+        assert_eq!(offset_of!(ObjectHeader, flags), 2);
+        assert_eq!(offset_of!(ObjectHeader, size), 8);
+
+        assert_eq!(size_of::<NativeString>(), 16);
+        assert_eq!(offset_of!(NativeString, len), 12);
+
+        assert_eq!(size_of::<NativeArray>(), 32);
+        assert_eq!(offset_of!(NativeArray, len), 12);
+        assert_eq!(offset_of!(NativeArray, capacity), 16);
+        assert_eq!(offset_of!(NativeArray, elements), 24);
+
+        assert_eq!(size_of::<NativeFunction>(), 32);
+        assert_eq!(offset_of!(NativeFunction, code), 16);
+        assert_eq!(offset_of!(NativeFunction, env), 24);
+
+        assert_eq!(offset_of!(ObjectHeader, inline_slots), 3);
+        assert_eq!(size_of::<NativeObject>(), 40);
+        assert_eq!(offset_of!(NativeObject, overflow_cap), 12);
+        assert_eq!(offset_of!(NativeObject, shape), 16);
+        assert_eq!(offset_of!(NativeObject, proto), 24);
+        assert_eq!(offset_of!(NativeObject, overflow), 32);
+        assert_eq!(offset_of!(NativeObject, inline), 40);
+    }
 
     #[test]
     fn test_alloc_object() {

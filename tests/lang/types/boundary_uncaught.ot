@@ -1,0 +1,14 @@
+// backends: vm jit aot
+// flags: --strict-types
+//
+// A failed check is a TypeError like any other: uncaught, it stops the
+// program and says where.
+
+function area(width: number, height: number): number {
+    return width * height;
+}
+
+const input: any = { width: 3, height: "4" };
+console.log(area(input.width, input.width));
+console.log(area(input.width, input.height));
+console.log("not reached");

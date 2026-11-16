@@ -31,23 +31,13 @@ pub fn link_object_files_with_lto(
 
     let mut cmd = Command::new(&linker);
 
-    // Add LTO flags if LTO is enabled
-    if lto_mode != LtoMode::None {
-        // Pass -flto flag to linker
-        if linker.contains("clang") || linker.contains("gcc") {
-            match lto_mode {
-                LtoMode::Thin => {
-                    cmd.arg("-flto=thin");
-                }
-                LtoMode::Full => {
-                    cmd.arg("-flto");
-                }
-                LtoMode::None => {
-                    // Should not happen, but handle gracefully
-                }
-            }
-        }
-    }
+    // No `-flto` here, whatever `lto_mode` is. Link-time optimisation has
+    // already happened: `lto::run_lto` turned the program's bitcode into
+    // one native object. Passing `-flto` would only make the system
+    // linker's own LTO plugin open the inputs, and it cannot read the
+    // bitcode embedded in the runtime library's Rust objects unless its
+    // LLVM is as new as the Rust compiler's ("LLVM gold plugin has failed
+    // to create LTO module" on a machine with an older clang).
 
     // Deterministic build flags for --dist mode (Full LTO)
     if lto_mode == LtoMode::Full {

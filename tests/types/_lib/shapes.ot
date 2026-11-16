@@ -1,0 +1,14 @@
+// A module the import test uses.
+export interface Size { width: number; height: number }
+export type Unit = "px" | "em";
+export class Box {
+  size: Size;
+  constructor(width: number, height: number) { this.size = { width: width, height: height }; }
+  area(): number { return this.size.width * this.size.height; }
+}
+export function scale(box: Box, factor: number): Box {
+  return new Box(box.size.width * factor, box.size.height * factor);
+}
+export function label(n: number, unit: Unit): string { return n + unit; }
+export const LIMIT = 100;
+export let loose = 1;

@@ -132,6 +132,10 @@ pub enum OpCode {
     /// others (`function f(a, ...rest)`: `RestArgs(1)`): its caller passes
     /// `n` arguments, then an array of the rest. A no-op itself.
     RestArgs(usize),
+    /// `__intrinsic_<name>(args)`: intrinsic `id` (an index into
+    /// `runtime::intrinsics::INTRINSICS`) on `argc` arguments.
+    /// [args...] -> [result]
+    Intrinsic(u32, usize),
     /// The implicit constructor's `super(...args)`.
     /// [args..., count, parent] -> [this]
     SuperForward,

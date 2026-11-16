@@ -710,6 +710,7 @@ dependencies = [
  "cranelift-native",
  "fastrand",
  "hex",
+ "indexmap",
  "libc",
  "llvm-sys",
  "serde_json",

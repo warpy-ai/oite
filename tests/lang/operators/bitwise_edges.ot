@@ -1,0 +1,32 @@
+// backends: vm jit aot
+// Bitwise operators take ToInt32 of each operand: the integer part modulo
+// 2^32. Native code computes numbers below 2^63 inline, the rest in the
+// runtime.
+function ops(a, b) {
+  return [a & b, a | b, a ^ b, a << b, a >> b, a >>> b, ~a].join(" ");
+}
+let values = [
+  [5, 3], [-5, 3], [2147483647, 1], [2147483648, 0], [4294967296 + 7, 0],
+  [-1, 31], [-1, 32], [1, 33], [3.9, 1.9], [-3.9, 1], [-0, 5],
+  [NaN, 1], [Infinity, 1], [-Infinity, 2], [1e20, 0], [-1e20, 0],
+  [9007199254740993, 0], [1.8e19, 1], [-9.3e18, 0],
+];
+for (let i = 0; i < values.length; i++) {
+  console.log(ops(values[i][0], values[i][1]));
+}
+// Operands that are not numbers.
+let o = { valueOf() { return 12; } };
+console.log(ops("6", 3), ops(true, null), ops(undefined, 1), ops(o, 2));
+let bad = { valueOf() { throw new RangeError("no number"); } };
+try {
+  console.log(bad | 0);
+} catch (e) {
+  console.log(e instanceof RangeError, e.message);
+}
+// A hash loop: the inline path many times.
+let h = 0;
+for (let i = 0; i < 100000; i++) {
+  h = ((h << 5) - h + i) | 0;
+  h = h ^ (h >>> 13);
+}
+console.log(h);

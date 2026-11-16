@@ -167,15 +167,12 @@ fn load_core(vm: &mut VM, compiler: &mut Compiler) {
 }
 
 /// A program for native code: the core library runs first, as on the
-/// VM, then `bytecode` (just compiled from `source`). Also the stack frame
-/// of each instruction, for exception traces.
+/// VM, then `modules` (a linked program, its entry last). Also the stack
+/// frame of each instruction, for exception traces.
 fn with_core(
     compiler: &mut Compiler,
-    bytecode: Vec<vm::opcodes::OpCode>,
-    file: &str,
-    source: &str,
+    modules: Vec<compiler::modules::CompiledModule>,
 ) -> (Vec<vm::opcodes::OpCode>, ir::lower::Sites) {
-    let main_debug = std::mem::take(&mut compiler.debug_info);
     let mut program = Vec::new();
     let mut table = compiler::SourceTable::default();
     for (path, core_source) in vm::errors::CORE_LIBRARY {
@@ -192,9 +189,11 @@ fn with_core(
         table.add(offset, path, core_source, debug);
         program.extend(vm::rebase_program(part, offset));
     }
-    let offset = program.len();
-    table.add(offset, file, source, main_debug);
-    program.extend(vm::rebase_program(bytecode, offset));
+    let (code, parts) = compiler::modules::concat(modules, program.len());
+    for (offset, file, source, debug) in parts {
+        table.add(offset, &file, &source, debug);
+    }
+    program.extend(code);
     (program, ir::lower::Sites::new(table))
 }
 
@@ -229,8 +228,90 @@ fn run_binary_file(vm: &mut VM, path: &str) -> Result<(), String> {
     }
 }
 
+/// Where `@rolls/*` imports are found: the environment, and the
+/// `--roll @rolls/<name>=DIR` flags (taken out of the arguments by `main`).
+static MODULE_OPTIONS: std::sync::OnceLock<compiler::modules::ModuleOptions> =
+    std::sync::OnceLock::new();
+
+fn module_options() -> &'static compiler::modules::ModuleOptions {
+    MODULE_OPTIONS.get_or_init(compiler::modules::ModuleOptions::from_env)
+}
+
+/// Take `--roll @rolls/<name>=DIR` (or `--roll=...`) out of `args`. In run
+/// mode (`oitec file.ot ...`) the arguments after the file are the
+/// program's own, so scanning stops there.
+fn take_roll_flags(args: &mut Vec<String>) -> compiler::modules::ModuleOptions {
+    const COMMANDS: &[&str] = &["check", "ir", "jit", "bench", "build"];
+    let mut options = compiler::modules::ModuleOptions::from_env();
+    let mut i = 1;
+    while i < args.len() {
+        let spec = if args[i] == "--roll" && i + 1 < args.len() {
+            let spec = args.remove(i + 1);
+            args.remove(i);
+            spec
+        } else if let Some(spec) = args[i].strip_prefix("--roll=") {
+            let spec = spec.to_string();
+            args.remove(i);
+            spec
+        } else if args[i] == "--strict-types" {
+            args.remove(i);
+            types::set_strict(true);
+            continue;
+        } else {
+            let is_program =
+                i == 1 && !COMMANDS.contains(&args[i].as_str()) && !args[i].starts_with('-');
+            if is_program {
+                break;
+            }
+            i += 1;
+            continue;
+        };
+        if let Err(e) = options.add_roll(&spec) {
+            eprintln!("error: {e}");
+            std::process::exit(2);
+        }
+    }
+    options
+}
+
+/// Compile the program whose entry is `filename` with the modules it
+/// imports, or exit with the compile error.
+fn compile_program_or_exit(
+    compiler: &mut Compiler,
+    filename: &str,
+    source: &str,
+) -> Vec<compiler::modules::CompiledModule> {
+    match compiler.compile_program(filename, source, module_options()) {
+        Ok(modules) => {
+            print_type_warnings(compiler);
+            modules
+        }
+        Err(e) => exit_on_compile_error(filename, source, &e),
+    }
+}
+
+/// Print what the type checker found in the program's own files, as
+/// warnings. Files of the rolls it imports are not reported here. With
+/// `--strict-types` they are errors, and the program does not run.
+fn print_type_warnings(compiler: &Compiler) {
+    let strict = compiler.strict_types;
+    let mut found = false;
+    for file in compiler.warnings.iter().filter(|f| !f.dependency) {
+        eprintln!(
+            "{}",
+            file.render(if strict { "type error" } else { "warning" })
+        );
+        found = true;
+    }
+    if strict && found {
+        std::process::exit(1);
+    }
+}
+
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let mut args: Vec<String> = env::args().collect();
+    let options = take_roll_flags(&mut args);
+    let _ = MODULE_OPTIONS.set(options);
     if args.len() < 2 {
         eprintln!("Usage: {} <command> [args...]", args[0]);
         eprintln!("Commands:");
@@ -253,6 +334,11 @@ fn main() {
         eprintln!("  --emit-llvm                    Emit LLVM IR to .ll file");
         eprintln!("  --emit-obj                     Emit object file to .o file");
         eprintln!("  --verify-ir                    Validate IR and exit");
+        eprintln!();
+        eprintln!("Options for every command:");
+        eprintln!("  --roll @rolls/<name>=<dir>     Where to find a roll");
+        eprintln!("  --strict-types                 Type errors stop compilation, and values are");
+        eprintln!("                                 checked against type annotations at run time");
         return;
     }
 
@@ -389,30 +475,14 @@ fn main() {
         }
     };
 
-    // Determine syntax based on file extension
-    let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
-        let ts_syntax = TsSyntax {
-            decorators: true,
-            tsx: filename.ends_with(".tsx"),
-            ..Default::default()
-        };
-        Some(Syntax::Typescript(ts_syntax))
-    } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
-        Some(Syntax::Es(Default::default()))
-    } else {
-        // Default to TypeScript with decorators for .ot files
-        let ts_syntax = TsSyntax {
-            decorators: true,
-            ..Default::default()
-        };
-        Some(Syntax::Typescript(ts_syntax))
-    };
-
-    match compiler.compile_with_syntax(&main_source, syntax) {
-        Ok(main_bytecode) => {
+    match compiler.compile_program(filename, &main_source, module_options()) {
+        Ok(modules) => {
+            print_type_warnings(&compiler);
+            let (main_bytecode, parts) = compiler::modules::concat(modules, 0);
             let offset = vm.append_program(main_bytecode);
-            let debug = std::mem::take(&mut compiler.debug_info);
-            vm.add_debug_info(offset, filename, &main_source, debug);
+            for (start, file, source, debug) in parts {
+                vm.add_debug_info(offset + start, &file, &source, debug);
+            }
             // Update the current module path to the main script for relative imports
             vm.set_current_module_path(PathBuf::from(filename));
 
@@ -437,30 +507,9 @@ fn dump_ir(filename: &str) {
         }
     };
 
-    // Determine syntax based on file extension
-    let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
-        let ts_syntax = TsSyntax {
-            decorators: true,
-            tsx: filename.ends_with(".tsx"),
-            ..Default::default()
-        };
-        Some(Syntax::Typescript(ts_syntax))
-    } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
-        Some(Syntax::Es(Default::default()))
-    } else {
-        // Default to TypeScript with decorators for .ot files
-        let ts_syntax = TsSyntax {
-            decorators: true,
-            ..Default::default()
-        };
-        Some(Syntax::Typescript(ts_syntax))
-    };
-
     let mut compiler = Compiler::new();
-    let bytecode = match compiler.compile_with_syntax(&source, syntax) {
-        Ok(bc) => bc,
-        Err(e) => exit_on_compile_error(filename, &source, &e),
-    };
+    let modules = compile_program_or_exit(&mut compiler, filename, &source);
+    let (bytecode, _) = compiler::modules::concat(modules, 0);
 
     println!("=== Bytecode ({} instructions) ===", bytecode.len());
     for (i, op) in bytecode.iter().enumerate() {
@@ -501,30 +550,16 @@ fn check_file(filename: &str) {
         }
     };
 
-    // Determine syntax based on file extension
-    let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
-        let ts_syntax = TsSyntax {
-            decorators: true,
-            tsx: filename.ends_with(".tsx"),
-            ..Default::default()
-        };
-        Some(Syntax::Typescript(ts_syntax))
-    } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
-        Some(Syntax::Es(Default::default()))
-    } else {
-        // Default to TypeScript with decorators for .ot files
-        let ts_syntax = TsSyntax {
-            decorators: true,
-            ..Default::default()
-        };
-        Some(Syntax::Typescript(ts_syntax))
-    };
-
     let mut compiler = Compiler::new();
-    match compiler.compile_with_syntax(&source, syntax) {
+    match compiler.compile_program(filename, &source, module_options()) {
         Ok(_) => {
-            // Success - no errors
-            std::process::exit(0);
+            // `check` reports what the type checker found as errors.
+            let mut failed = false;
+            for file in compiler.warnings.iter().filter(|f| !f.dependency) {
+                eprintln!("{}", file.render("type error"));
+                failed = true;
+            }
+            std::process::exit(if failed { 1 } else { 0 });
         }
         Err(e) => exit_on_compile_error(filename, &source, &e),
     }
@@ -542,31 +577,10 @@ fn run_jit(filename: &str) {
         }
     };
 
-    // Determine syntax based on file extension
-    let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
-        let ts_syntax = TsSyntax {
-            decorators: true,
-            tsx: filename.ends_with(".tsx"),
-            ..Default::default()
-        };
-        Some(Syntax::Typescript(ts_syntax))
-    } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
-        Some(Syntax::Es(Default::default()))
-    } else {
-        // Default to TypeScript with decorators for .ot files
-        let ts_syntax = TsSyntax {
-            decorators: true,
-            ..Default::default()
-        };
-        Some(Syntax::Typescript(ts_syntax))
-    };
-
     // Compile to bytecode
     let mut compiler = Compiler::new();
-    let bytecode = match compiler.compile_with_syntax(&source, syntax) {
-        Ok(bc) => bc,
-        Err(e) => exit_on_compile_error(filename, &source, &e),
-    };
+    let modules = compile_program_or_exit(&mut compiler, filename, &source);
+    let (bytecode, sites) = with_core(&mut compiler, modules);
 
     eprintln!("=== Bytecode ({} instructions) ===", bytecode.len());
     for (i, op) in bytecode.iter().enumerate() {
@@ -574,7 +588,6 @@ fn run_jit(filename: &str) {
     }
 
     // Lower to SSA IR (using lower_module to extract all functions)
-    let (bytecode, sites) = with_core(&mut compiler, bytecode, filename, &source);
     match ir::lower::lower_module_with_sites(&bytecode, Some(sites)) {
         Ok(mut module) => {
             // Show extracted functions
@@ -925,33 +938,11 @@ fn build_file(args: &[String]) {
             }
         };
 
-        // Determine syntax
-        let syntax = if filename.ends_with(".ts") || filename.ends_with(".tsx") {
-            let ts_syntax = TsSyntax {
-                decorators: true,
-                tsx: filename.ends_with(".tsx"),
-                ..Default::default()
-            };
-            Some(Syntax::Typescript(ts_syntax))
-        } else if filename.ends_with(".js") || filename.ends_with(".jsx") {
-            Some(Syntax::Es(Default::default()))
-        } else {
-            // Default to TypeScript with decorators for .ot files
-            let ts_syntax = TsSyntax {
-                decorators: true,
-                ..Default::default()
-            };
-            Some(Syntax::Typescript(ts_syntax))
-        };
-
         // Compile to bytecode
-        let bytecode = match compiler.compile_with_syntax(&source, syntax) {
-            Ok(bc) => bc,
-            Err(e) => exit_on_compile_error(filename, &source, &e),
-        };
+        let linked = compile_program_or_exit(&mut compiler, filename, &source);
 
         // Lower to SSA IR
-        let (bytecode, sites) = with_core(&mut compiler, bytecode, filename, &source);
+        let (bytecode, sites) = with_core(&mut compiler, linked);
         // A debug build locates every op, for the debug info's line table.
         let sites = if opt_level == OptLevel::None {
             sites.every_op()

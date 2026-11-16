@@ -1,0 +1,12 @@
+// backends: vm jit aot
+// @rolls/std: the prelude, re-exporting the other core rolls.
+import * as std from "@rolls/std";
+console.log(std.typeOf([1]), std.typeOf({}), std.typeOf(null), std.typeOf("s"), std.typeOf(1));
+console.log(std.isArray([1]), std.isString("s"), std.isNumber(1), std.isObject({}), std.isObject([]));
+console.log(std.deepEquals({ a: [1, { b: 2 }] }, { a: [1, { b: 2 }] }), std.deepEquals([1, 2], [1, 3]));
+let original = { a: [1, 2] };
+let copy = std.deepClone(original);
+copy.a.push(3);
+console.log(original, copy);
+console.log(std.range(0, 4), std.trim("  x "), std.map([1, 2], (x) => x + 1), std.floor(2.7));
+console.log(std.jsonParse("[1]"), std.jsonStringify([1, "a"]));

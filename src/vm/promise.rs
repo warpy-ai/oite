@@ -7,8 +7,6 @@
 //! function's promise is returned to its caller, and a microtask resumes it
 //! once the awaited promise settles.
 
-use std::collections::HashMap;
-
 use super::value::{HeapData, HeapObject, JsValue, Promise, PromiseState, Reaction};
 use super::{ExceptionHandler, Frame, VM};
 
@@ -277,7 +275,7 @@ impl VM {
 
     /// A `resolve` (`fulfills`) or `reject` function for `p`.
     pub fn make_resolver(&mut self, p: &Promise, fulfills: bool) -> JsValue {
-        let mut props = HashMap::new();
+        let mut props = crate::vm::value::PropMap::new();
         props.insert("__resolver__".to_string(), JsValue::Promise(p.clone()));
         props.insert("__fulfills__".to_string(), JsValue::Boolean(fulfills));
         let ptr = self.heap.len();

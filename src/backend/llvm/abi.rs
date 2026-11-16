@@ -1,6 +1,6 @@
 //! Runtime ABI: declarations of the native runtime's functions.
 //!
-//! The runtime itself is Rust (`src/runtime/stubs.rs`), compiled by `build.rs`
+//! The runtime itself is Rust (`src/runtime/stubs/`), compiled by `build.rs`
 //! into a static library that every native executable links. This module only
 //! declares those functions in the LLVM module, with signatures that must
 //! match the Rust definitions exactly.

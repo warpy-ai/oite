@@ -1,0 +1,4 @@
+cycle_b.ot:1:19: error: circular import:
+cycle_a.ot ->
+cycle_b.ot ->
+cycle_a.ot

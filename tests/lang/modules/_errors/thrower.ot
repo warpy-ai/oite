@@ -1,0 +1,6 @@
+export function explode(n) {
+  if (n > 1) {
+    throw new RangeError("too big: " + n);
+  }
+  return n;
+}
