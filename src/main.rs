@@ -146,50 +146,49 @@ fn exit_on_compile_error(file: &str, source: &str, e: &compiler::CompileError) -
     std::process::exit(1);
 }
 
-/// Run the core library written in Oite (the error classes) on a fresh
-/// VM, before the prelude and the program.
+/// Run the core library written in Oite (`vm::errors::CORE_LIBRARY`) on
+/// a fresh VM, before the prelude and the program.
 fn load_core(vm: &mut VM, compiler: &mut Compiler) {
-    let bytecode = match compiler.compile(vm::errors::CORE_ERRORS) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("Failed to compile the core library: {}", e);
-            std::process::exit(1);
-        }
-    };
-    vm.load_program(bytecode);
-    let debug = std::mem::take(&mut compiler.debug_info);
-    vm.add_debug_info(
-        0,
-        vm::errors::CORE_ERRORS_PATH,
-        vm::errors::CORE_ERRORS,
-        debug,
-    );
-    vm.run_until_halt();
+    for (i, (path, source)) in vm::errors::CORE_LIBRARY.iter().enumerate() {
+        let bytecode = match compiler.compile(source) {
+            Ok(b) => b,
+            Err(e) => exit_on_compile_error(path, source, &e),
+        };
+        let offset = if i == 0 {
+            vm.load_program(bytecode);
+            0
+        } else {
+            vm.append_program(bytecode)
+        };
+        let debug = std::mem::take(&mut compiler.debug_info);
+        vm.add_debug_info(offset, path, source, debug);
+        vm.run_until_halt();
+    }
 }
 
-/// A program for native code: the core library (the error classes) runs
-/// first, as on the VM, then `modules` (a linked program, its entry last).
-/// Also the stack frame of each instruction, for exception traces.
+/// A program for native code: the core library runs first, as on the
+/// VM, then `modules` (a linked program, its entry last). Also the stack
+/// frame of each instruction, for exception traces.
 fn with_core(
     compiler: &mut Compiler,
     modules: Vec<compiler::modules::CompiledModule>,
 ) -> (Vec<vm::opcodes::OpCode>, ir::lower::Sites) {
-    let mut program = match compiler.compile(vm::errors::CORE_ERRORS) {
-        Ok(b) => b,
-        Err(e) => exit_on_compile_error(vm::errors::CORE_ERRORS_PATH, vm::errors::CORE_ERRORS, &e),
-    };
-    // It falls through into the program instead of halting.
-    if matches!(program.last(), Some(vm::opcodes::OpCode::Halt)) {
-        program.pop();
-    }
+    let mut program = Vec::new();
     let mut table = compiler::SourceTable::default();
-    let core_debug = std::mem::take(&mut compiler.debug_info);
-    table.add(
-        0,
-        vm::errors::CORE_ERRORS_PATH,
-        vm::errors::CORE_ERRORS,
-        core_debug,
-    );
+    for (path, core_source) in vm::errors::CORE_LIBRARY {
+        let mut part = match compiler.compile(core_source) {
+            Ok(b) => b,
+            Err(e) => exit_on_compile_error(path, core_source, &e),
+        };
+        // Each part falls through into the next instead of halting.
+        if matches!(part.last(), Some(vm::opcodes::OpCode::Halt)) {
+            part.pop();
+        }
+        let offset = program.len();
+        let debug = std::mem::take(&mut compiler.debug_info);
+        table.add(offset, path, core_source, debug);
+        program.extend(vm::rebase_program(part, offset));
+    }
     let (code, parts) = compiler::modules::concat(modules, program.len());
     for (offset, file, source, debug) in parts {
         table.add(offset, &file, &source, debug);

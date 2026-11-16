@@ -28,7 +28,8 @@ pub(super) fn array_index(key: &JsValue) -> Option<usize> {
     }
 }
 
-/// Whether `name` is an array method, which `CallMethod` implements.
+/// Whether `name` is an array method implemented in Rust, by `CallMethod`.
+/// The rest are on `Array.prototype` (`std/core/array.ot`).
 pub(super) fn is_array_method(name: &str) -> bool {
     matches!(
         name,
@@ -46,17 +47,6 @@ pub(super) fn is_array_method(name: &str) -> bool {
             | "reverse"
             | "fill"
             | "at"
-            | "map"
-            | "filter"
-            | "forEach"
-            | "reduce"
-            | "find"
-            | "findIndex"
-            | "some"
-            | "every"
-            | "flat"
-            | "flatMap"
-            | "sort"
     )
 }
 
@@ -77,7 +67,7 @@ impl VM {
                         // A function-typed value, so `typeof` says "function".
                         JsValue::NativeFunction(0)
                     } else {
-                        JsValue::Undefined
+                        self.array_proto_method(&name).unwrap_or(JsValue::Undefined)
                     }
                 }
                 Some(_) => self.get_prop_with_proto_chain(*ptr, &self.to_js_string(key)),
