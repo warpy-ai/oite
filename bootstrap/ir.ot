@@ -3,7 +3,7 @@
 // ============================================================================
 
 // IR Value representation (NaN-boxed 64-bit word)
-type IrValue = number;
+type IrValue = number | string | boolean;
 
 // IR Types
 enum IrType {

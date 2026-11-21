@@ -171,9 +171,13 @@ Not yet, each a follow-up:
   the checker. Step 5 must not rely on it; neither may it rely on a
   narrowed variable that a closure assigns.
 - **Existing code that fails with the checks on**, to fix before they
-  can be the default: `bootstrap/codegen.ot` passes a `null` register as
-  a `number`, and the `json` roll's `stringify` is called with a `null`
-  replacer, which its type does not allow.
+  can be the default: the `json` roll's `stringify` is called with a
+  `null` replacer, which its type does not allow. Fixed in
+  `warpy-ai/rolls#5`; it takes effect here when `ROLLS_REF`
+  (`scripts/release-pins.env`) moves to a commit that has it. The
+  bootstrap compiler passes (two annotations in `bootstrap/` were
+  wrong: a register that may be `null`, a constant that may be a string
+  or a boolean).
 
 ### 4. The checker
 
