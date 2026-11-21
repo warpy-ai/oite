@@ -285,8 +285,9 @@ native `--release`, the same source with and without `--strict-types`:
 | `loop_local` | not counted | 511 ms | 500 ms | 1,773 ms |
 
 Times are the best of 7 on a machine whose noise is about 15%; the
-instruction counts (callgrind) are exact. `fib` runs fewer instructions
-but not less time, which is not explained yet.
+instruction counts (callgrind) are exact. `fib` ran fewer instructions
+but not less time at this step; with the typed entry of step 6 it does
+both (about 260 ms typed against about 310 ms untyped for `fib(38)`).
 
 Step 5 removes the type tests around arithmetic, which lets LLVM inline
 small typed functions (`calls`). What these programs still spend their
