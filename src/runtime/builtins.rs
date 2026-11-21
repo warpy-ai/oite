@@ -181,13 +181,11 @@ pub fn char_at(s: &str, ascii: bool, i: usize) -> Option<char> {
 /// times faster on long text. The VM keeps no ASCII flag, so it checks a
 /// string on every `length`, `s[i]` and `charAt`.
 pub fn is_ascii(s: &str) -> bool {
-    let mut chunks = s.as_bytes().chunks_exact(64);
-    for chunk in &mut chunks {
-        if chunk.iter().fold(0, |acc, b| acc | b) >= 0x80 {
-            return false;
-        }
-    }
-    chunks.remainder().is_ascii()
+    let (chunks, rest) = s.as_bytes().as_chunks::<64>();
+    chunks
+        .iter()
+        .all(|chunk| chunk.iter().fold(0, |acc, b| acc | b) < 0x80)
+        && rest.is_ascii()
 }
 
 /// `s.charAt(i)`, `s.charCodeAt(i)` and `s.at(i)`, without copying `s`
