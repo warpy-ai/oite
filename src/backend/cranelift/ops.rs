@@ -316,9 +316,29 @@ impl Fx<'_> {
                     .iter()
                     .map(|a| self.get(*a))
                     .collect::<Result<_, _>>()?;
-                let (argv, argc) = self.arg_array(b, &vals);
                 let undefined = Self::c(b, UNDEFINED);
-                let target = self.direct.get(callee).copied().and_then(|(addr, env)| {
+                // A callee that is a known function: its fast entry, with
+                // the arguments in registers, if it has one.
+                let known = self.direct.get(callee).copied();
+                if let Some((addr, env)) = known
+                    && let Some(&(fast, params)) = self.fast_ids.get(&format!("func_{}", addr))
+                {
+                    let env = match env {
+                        Some(e) => self.get(e)?,
+                        None => undefined,
+                    };
+                    let mut a = vec![undefined];
+                    a.extend((0..params).map(|i| vals.get(i).copied().unwrap_or(undefined)));
+                    a.push(env);
+                    let fref = self.module.declare_func_in_func(fast, b.func);
+                    let call = b.ins().call(fref, &a);
+                    let r = b.inst_results(call)[0];
+                    self.last_call = Some(r);
+                    self.values.insert(*d, r);
+                    return Ok(());
+                }
+                let (argv, argc) = self.arg_array(b, &vals);
+                let target = known.and_then(|(addr, env)| {
                     self.func_ids
                         .get(&format!("func_{}", addr))
                         .map(|id| (*id, env))

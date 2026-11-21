@@ -303,8 +303,9 @@ compiled into that one; the dynamic entry unpacks the array and calls
 it. A call that knows which function it calls (a function declaration, a
 closure created in the same function) calls the fast entry: no argument
 array, a missing argument passed as `undefined`, an extra one dropped.
-This needs no types and no `--strict-types`. It is in the LLVM backend
-(`src/backend/llvm/codegen/fast.rs`); the JIT still passes the array.
+This needs no types and no `--strict-types`, and both backends do it
+(`src/backend/entries.rs` says which functions; `llvm/codegen/fast.rs`
+and `cranelift/mod.rs` build the entries).
 
 A function that calls nothing that can run code has no stack-overflow
 check: it cannot be what exhausts the stack.
@@ -461,8 +462,8 @@ Each step is one pull request, with tests on vm, jit and aot.
    the arguments in registers, for every direct call, typed or not, and
    behind `--strict-types` a typed entry that skips the parameter checks
    the caller has proved (see "Direct calls today" and "Typed entries" in
-   section 5). In the LLVM backend; the JIT still passes an argument
-   array.
+   section 5). The fast entry is in both backends; the typed entry is in
+   the LLVM backend.
 7. **Specialisation** of unannotated functions.
 8. **Class field layout and typed field access** (section 7), then
    direct method calls and inlining.

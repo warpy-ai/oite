@@ -75,24 +75,10 @@ pub(super) fn param_checks(func: &IrFunction) -> (Vec<Option<IrType>>, HashSet<V
     (params, results)
 }
 
-/// More parameters than this, and a function keeps only its dynamic
-/// entry.
-const MAX_REGISTER_PARAMS: usize = 8;
-
 impl LlvmCodegen {
-    /// Whether `func` can take its arguments in registers: it never looks
-    /// at the argument array itself (a rest parameter, forwarding every
-    /// argument to `super`, an async function's frame).
+    /// Whether `func` has a fast entry (`backend::entries`).
     pub(super) fn takes_registers(func: &IrFunction) -> bool {
-        if func.name == "main" || func.is_async || func.params.len() > MAX_REGISTER_PARAMS {
-            return false;
-        }
-        !func.blocks.iter().flat_map(|b| &b.ops).any(|op| {
-            matches!(
-                op,
-                IrOp::RestArgs(_, _) | IrOp::SuperForward(_, _) | IrOp::IsResume(_)
-            )
-        })
+        crate::backend::entries::takes_registers(func)
     }
 
     /// Declare the fast entry of `func`.

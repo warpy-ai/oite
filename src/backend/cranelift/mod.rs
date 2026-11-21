@@ -13,6 +13,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use std::collections::HashMap;
 
+use super::entries;
 use super::runtime_abi::RUNTIME;
 use super::{BackendConfig, BackendError};
 use crate::ir::{BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId};
@@ -83,6 +84,16 @@ impl CraneliftCodegen {
         })
     }
 
+    /// The signature of a fast entry: `(this, arg0 .. argN, env)`.
+    fn fast_sig(&self, params: usize) -> Signature {
+        let mut sig = self.module.make_signature();
+        for _ in 0..params + 2 {
+            sig.params.push(AbiParam::new(types::I64));
+        }
+        sig.returns.push(AbiParam::new(types::I64));
+        sig
+    }
+
     fn native_sig(&self) -> Signature {
         let mut sig = self.module.make_signature();
         for _ in 0..4 {
@@ -97,6 +108,9 @@ impl CraneliftCodegen {
     pub fn compile_module(&mut self, ir_module: &IrModule) -> Result<(), BackendError> {
         let sig = self.native_sig();
         let mut func_ids: HashMap<String, FuncId> = HashMap::new();
+        // The fast entry of the functions that have one, with how many
+        // parameters it takes (`backend::entries`).
+        let mut fast_ids: HashMap<String, (FuncId, usize)> = HashMap::new();
         let mut fn_objects: HashMap<usize, DataId> = HashMap::new();
 
         for func in &ir_module.functions {
@@ -105,6 +119,14 @@ impl CraneliftCodegen {
                 .declare_function(&func.name, Linkage::Local, &sig)
                 .map_err(|e| BackendError::Cranelift(format!("declare {}: {}", func.name, e)))?;
             func_ids.insert(func.name.clone(), id);
+            if entries::takes_registers(func) {
+                let fast_sig = self.fast_sig(func.params.len());
+                let fast = self
+                    .module
+                    .declare_function(&format!("{}.fast", func.name), Linkage::Local, &fast_sig)
+                    .map_err(|e| BackendError::Cranelift(format!("declare fast: {}", e)))?;
+                fast_ids.insert(func.name.clone(), (fast, func.params.len()));
+            }
             if let Some(addr) = function_addr(&func.name) {
                 let data = self
                     .module
@@ -164,14 +186,20 @@ impl CraneliftCodegen {
         let tracing = !sites.is_empty();
 
         for func in &ir_module.functions {
+            // The code goes into the fast entry, if the function has one.
+            let fast = fast_ids.get(&func.name).copied();
             self.ctx.clear();
-            self.ctx.func.signature = sig.clone();
+            self.ctx.func.signature = match fast {
+                Some((_, params)) => self.fast_sig(params),
+                None => sig.clone(),
+            };
             {
                 let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_ctx);
                 let mut fx = Fx {
                     module: &mut self.module,
                     runtime: &self.runtime,
                     func_ids: &func_ids,
+                    fast_ids: &fast_ids,
                     fn_objects: &fn_objects,
                     global_slots: &global_slots,
                     stubs: HashMap::new(),
@@ -199,18 +227,22 @@ impl CraneliftCodegen {
                     site: None,
                     trace_blocks: HashMap::new(),
                 };
-                fx.function(&mut builder, func)?;
+                fx.function(&mut builder, func, fast.is_some())?;
                 builder.seal_all_blocks();
                 builder.finalize();
             }
+            let body = fast.map_or(func_ids[&func.name], |(id, _)| id);
             self.module
-                .define_function(func_ids[&func.name], &mut self.ctx)
+                .define_function(body, &mut self.ctx)
                 .map_err(|e| {
                     BackendError::Cranelift(format!(
                         "Failed to compile function {}: {:?}",
                         func.name, e
                     ))
                 })?;
+            if let Some((fast_id, params)) = fast {
+                self.dynamic_entry(func_ids[&func.name], fast_id, params, &sig)?;
+            }
         }
 
         self.module
@@ -240,6 +272,50 @@ impl CraneliftCodegen {
         Ok(())
     }
 
+    /// The dynamic entry of a function compiled into its fast entry:
+    /// `argv[i]` if `i < argc`, else `undefined`, for each parameter.
+    fn dynamic_entry(
+        &mut self,
+        entry: FuncId,
+        fast: FuncId,
+        params: usize,
+        sig: &Signature,
+    ) -> Result<(), BackendError> {
+        self.ctx.clear();
+        self.ctx.func.signature = sig.clone();
+        {
+            let mut b = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_ctx);
+            let block = b.create_block();
+            b.append_block_params_for_function_params(block);
+            b.switch_to_block(block);
+            let p = b.block_params(block).to_vec();
+            let (this, argv, argc, env) = (p[0], p[1], p[2], p[3]);
+            let undef_slot =
+                b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+            let u = b.ins().iconst(types::I64, UNDEFINED as i64);
+            b.ins().stack_store(u, undef_slot, 0);
+            let undef_addr = b.ins().stack_addr(types::I64, undef_slot, 0);
+            let mut args = vec![this];
+            for i in 0..params {
+                let present = b.ins().icmp_imm(IntCC::UnsignedGreaterThan, argc, i as i64);
+                let at = b.ins().iadd_imm(argv, 8 * i as i64);
+                let src = b.ins().select(present, at, undef_addr);
+                args.push(b.ins().load(types::I64, MemFlags::trusted(), src, 0));
+            }
+            args.push(env);
+            let fref = self.module.declare_func_in_func(fast, b.func);
+            let call = b.ins().call(fref, &args);
+            let r = b.inst_results(call)[0];
+            b.ins().return_(&[r]);
+            b.seal_all_blocks();
+            b.finalize();
+        }
+        self.module
+            .define_function(entry, &mut self.ctx)
+            .map_err(|e| BackendError::Cranelift(format!("Failed to compile an entry: {:?}", e)))?;
+        Ok(())
+    }
+
     /// Get a compiled function by name
     pub fn get_func(&self, name: &str) -> Option<*const u8> {
         self.compiled_funcs.get(name).copied()
@@ -263,6 +339,8 @@ struct Fx<'a> {
     func_ids: &'a HashMap<String, FuncId>,
     fn_objects: &'a HashMap<usize, DataId>,
     /// The program's global variables -> their slots.
+    /// Fast entries by IR name, with their parameter count.
+    fast_ids: &'a HashMap<String, (FuncId, usize)>,
     global_slots: &'a HashMap<String, DataId>,
     stubs: HashMap<String, FuncRef>,
     values: HashMap<ValueId, Value>,
@@ -467,7 +545,14 @@ impl Fx<'_> {
         Ok(b.ins().icmp_imm(IntCC::NotEqual, t, 0))
     }
 
-    fn function(&mut self, b: &mut FunctionBuilder, func: &IrFunction) -> Result<(), BackendError> {
+    /// Compile `func`. With `fast`, as its fast entry: the parameters
+    /// arrive in registers, not in an argument array.
+    fn function(
+        &mut self,
+        b: &mut FunctionBuilder,
+        func: &IrFunction,
+        fast: bool,
+    ) -> Result<(), BackendError> {
         let prologue = b.create_block();
         b.append_block_params_for_function_params(prologue);
         for block in &func.blocks {
@@ -477,10 +562,16 @@ impl Fx<'_> {
 
         b.switch_to_block(prologue);
         let params = b.block_params(prologue).to_vec();
-        let (this, argv, argc) = (params[0], params[1], params[2]);
-        self.this = Some(this);
-        self.env = Some(params[3]);
-        self.args = Some((argv, argc));
+        self.this = Some(params[0]);
+        self.env = Some(params[params.len() - 1]);
+        // (A function with a fast entry never looks at the array.)
+        let (argv, argc) = match fast {
+            true => (params[0], params[0]),
+            false => (params[1], params[2]),
+        };
+        if !fast {
+            self.args = Some((argv, argc));
+        }
 
         if func.is_async {
             // Locals live in a heap frame that survives an `await`.
@@ -509,6 +600,10 @@ impl Fx<'_> {
         b.ins().stack_store(u, undef_slot, 0);
         let undef_addr = b.ins().stack_addr(types::I64, undef_slot, 0);
         for i in 0..func.params.len() {
+            if fast {
+                self.values.insert(ValueId(i as u32), params[i + 1]);
+                continue;
+            }
             // argv[i] if i < argc, else undefined (branch-free).
             let present = b.ins().icmp_imm(IntCC::UnsignedGreaterThan, argc, i as i64);
             let p = b.ins().iadd_imm(argv, 8 * i as i64);
