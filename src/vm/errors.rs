@@ -253,14 +253,7 @@ pub fn to_number(v: &JsValue) -> f64 {
             }
         }
         JsValue::Null => 0.0,
-        JsValue::String(s) => {
-            let t = s.trim();
-            if t.is_empty() {
-                0.0
-            } else {
-                t.parse::<f64>().unwrap_or(f64::NAN)
-            }
-        }
+        JsValue::String(s) => crate::runtime::builtins::string_to_number(s),
         _ => f64::NAN,
     }
 }

@@ -291,6 +291,16 @@ impl builtins::Host for NativeHost {
         }
     }
 
+    fn own_entries(&self, v: &u64) -> Vec<(String, u64)> {
+        match object(OtValue::from_bits(*v)) {
+            Some((ptr, ObjectKind::Object)) => visible_data(ptr)
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     fn make_number(&self, n: f64) -> u64 {
         number(n)
     }

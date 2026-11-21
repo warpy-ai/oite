@@ -60,8 +60,17 @@ pub(super) fn initial_globals() -> HashMap<String, u64> {
     let mut g = HashMap::new();
     let console = ot_alloc_object();
     let c = OtValue::from_bits(console);
-    set_property(c, "log", builtin(ot_builtin_console_log));
-    set_property(c, "error", builtin(ot_builtin_console_error));
+    // `info` and `debug` print like `log`, `warn` like `error`, as in Node.
+    let (log, error) = (
+        builtin(ot_builtin_console_log),
+        builtin(ot_builtin_console_error),
+    );
+    for name in ["log", "info", "debug"] {
+        set_property(c, name, log);
+    }
+    for name in ["error", "warn"] {
+        set_property(c, name, error);
+    }
     g.insert("console".to_string(), console);
     let object = ot_alloc_object();
     set_property(
