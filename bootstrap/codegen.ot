@@ -84,7 +84,10 @@ function codegenU32(cg: Codegen, value: number): void {
     ByteStream.writeU32(cg.stream, value);
 }
 
-function codegenF64(cg: Codegen, value: number): void {
+// The immediate of a CONST as the instruction holds it: a number, or a
+// string or boolean literal, which the stream writes as it writes any
+// value that is not a number.
+function codegenF64(cg: Codegen, value: any): void {
     ByteStream.writeF64(cg.stream, value);
 }
 
@@ -100,11 +103,12 @@ function codegenOp(cg: Codegen, op: number): void {
     codegenU8(cg, op);
 }
 
-function codegenReg(cg: Codegen, reg: number): void {
-    codegenVarint(cg, reg);
+// An instruction with no destination has `null` for it: written as register 0.
+function codegenReg(cg: Codegen, reg: number | null): void {
+    codegenVarint(cg, reg === null ? 0 : reg);
 }
 
-function codegenRegReg(cg: Codegen, op: number, reg1: number, reg2: number): void {
+function codegenRegReg(cg: Codegen, op: number, reg1: number | null, reg2: number): void {
     codegenOp(cg, op);
     codegenReg(cg, reg1);
     codegenReg(cg, reg2);

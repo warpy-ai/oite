@@ -12,6 +12,7 @@
 
 pub mod aot;
 pub mod cranelift;
+pub mod entries;
 pub mod jit;
 pub mod layout;
 pub mod llvm;

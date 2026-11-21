@@ -171,9 +171,13 @@ Not yet, each a follow-up:
   the checker. Step 5 must not rely on it; neither may it rely on a
   narrowed variable that a closure assigns.
 - **Existing code that fails with the checks on**, to fix before they
-  can be the default: `bootstrap/codegen.ot` passes a `null` register as
-  a `number`, and the `json` roll's `stringify` is called with a `null`
-  replacer, which its type does not allow.
+  can be the default: the `json` roll's `stringify` is called with a
+  `null` replacer, which its type does not allow. Fixed in
+  `warpy-ai/rolls#5`; it takes effect here when `ROLLS_REF`
+  (`scripts/release-pins.env`) moves to a commit that has it. The
+  bootstrap compiler passes (two annotations in `bootstrap/` were
+  wrong: a register that may be `null`, a constant that may be a string
+  or a boolean).
 
 ### 4. The checker
 
@@ -285,8 +289,9 @@ native `--release`, the same source with and without `--strict-types`:
 | `loop_local` | not counted | 511 ms | 500 ms | 1,773 ms |
 
 Times are the best of 7 on a machine whose noise is about 15%; the
-instruction counts (callgrind) are exact. `fib` runs fewer instructions
-but not less time, which is not explained yet.
+instruction counts (callgrind) are exact. `fib` ran fewer instructions
+but not less time at this step; with the typed entry of step 6 it does
+both (about 260 ms typed against about 310 ms untyped for `fib(38)`).
 
 Step 5 removes the type tests around arithmetic, which lets LLVM inline
 small typed functions (`calls`). What these programs still spend their
@@ -303,8 +308,9 @@ compiled into that one; the dynamic entry unpacks the array and calls
 it. A call that knows which function it calls (a function declaration, a
 closure created in the same function) calls the fast entry: no argument
 array, a missing argument passed as `undefined`, an extra one dropped.
-This needs no types and no `--strict-types`. It is in the LLVM backend
-(`src/backend/llvm/codegen/fast.rs`); the JIT still passes the array.
+This needs no types and no `--strict-types`, and both backends do it
+(`src/backend/entries.rs` says which functions; `llvm/codegen/fast.rs`
+and `cranelift/mod.rs` build the entries).
 
 A function that calls nothing that can run code has no stack-overflow
 check: it cannot be what exhausts the stack.
@@ -461,8 +467,8 @@ Each step is one pull request, with tests on vm, jit and aot.
    the arguments in registers, for every direct call, typed or not, and
    behind `--strict-types` a typed entry that skips the parameter checks
    the caller has proved (see "Direct calls today" and "Typed entries" in
-   section 5). In the LLVM backend; the JIT still passes an argument
-   array.
+   section 5). The fast entry is in both backends; the typed entry is in
+   the LLVM backend.
 7. **Specialisation** of unannotated functions.
 8. **Class field layout and typed field access** (section 7), then
    direct method calls and inlining.
