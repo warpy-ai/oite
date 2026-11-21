@@ -3,7 +3,7 @@
 //! (docs/docs/object-model.md, section 4).
 
 use super::*;
-use crate::runtime::heap::{NativeArray, ObjectKind};
+use crate::runtime::heap::{NativeArray, ObjectHeader, ObjectKind};
 use std::mem::offset_of;
 
 impl Fx<'_> {
@@ -99,8 +99,9 @@ impl Fx<'_> {
         b.block_params(join)[0]
     }
 
-    /// `o.length`: the length field of an array or a string, read here;
-    /// for anything else, the property `length` through its cache.
+    /// `o.length`: the length field of an array or an ASCII string, read
+    /// here; for anything else, the property `length` through its cache
+    /// (the runtime counts a non-ASCII string's characters).
     pub(super) fn length(&mut self, b: &mut FunctionBuilder, o: Value) -> Value {
         let flags = MemFlags::trusted();
         let ptr_blk = b.create_block();
@@ -112,7 +113,9 @@ impl Fx<'_> {
         let (is_ptr, addr) = Self::heap_pointer(b, o);
         b.ins().brif(is_ptr, ptr_blk, &[], miss_blk, &[]);
 
-        // Arrays and strings both keep their length at the same offset.
+        // Arrays and strings both keep their length at the same offset. A
+        // string's counts bytes, which are its characters only if it is
+        // ASCII.
         b.switch_to_block(ptr_blk);
         b.seal_block(ptr_blk);
         let kind = b.ins().load(types::I8, flags, addr, 0);
@@ -122,7 +125,16 @@ impl Fx<'_> {
         let is_string = b
             .ins()
             .icmp_imm(IntCC::Equal, kind, ObjectKind::String as i64);
-        let has_len = b.ins().bor(is_array, is_string);
+        let object_flags = b.ins().load(
+            types::I8,
+            flags,
+            addr,
+            offset_of!(ObjectHeader, flags) as i32,
+        );
+        let ascii = b.ins().band_imm(object_flags, ObjectHeader::ASCII as i64);
+        let ascii = b.ins().icmp_imm(IntCC::NotEqual, ascii, 0);
+        let ascii_string = b.ins().band(is_string, ascii);
+        let has_len = b.ins().bor(is_array, ascii_string);
         b.ins().brif(has_len, hit_blk, &[], miss_blk, &[]);
 
         b.switch_to_block(hit_blk);

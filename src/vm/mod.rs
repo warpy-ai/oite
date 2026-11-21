@@ -1249,7 +1249,9 @@ impl VM {
                     }
                     Some(JsValue::String(s)) => {
                         if name == "length" {
-                            self.stack.push(JsValue::Number(s.len() as f64));
+                            use crate::runtime::builtins::{char_count, is_ascii};
+                            let n = char_count(&s, is_ascii(&s));
+                            self.stack.push(JsValue::Number(n as f64));
                         } else {
                             self.stack.push(JsValue::Undefined);
                         }
