@@ -102,3 +102,15 @@ for (let k = 0; k < 2; k++) {
     console.log(e instanceof RangeError, e.message);
   }
 }
+
+// Closures over different values are different functions.
+function mk(x) {
+  return function () {
+    return x;
+  };
+}
+let f1 = mk(1);
+let f2 = mk(2);
+eq("f1 == f2", f1, f2);
+eq("f1 == f1", f1, f1);
+console.log([f1].indexOf(f2), [f1].includes(f2), [f1].indexOf(f1));

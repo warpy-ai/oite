@@ -52,3 +52,6 @@ new Money(250) == 2.5 true true false false
 new Money(250) == "2.5" true true false false
 true no primitive
 true no primitive
+f1 == f2 false false true true
+f1 == f1 true true false false
+-1 false 0
