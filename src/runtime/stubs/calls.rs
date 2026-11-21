@@ -70,6 +70,11 @@ pub extern "C" fn ot_call_method(
             arr.len = elems.len() as u32;
             return outcome(result, recv);
         }
+        // The methods written in Oite (`std/core/array.ot`), and any a
+        // program adds to `Array.prototype`.
+        if let Some(method) = array_proto_method(key) {
+            return ot_call(method, recv, argv, argc);
+        }
     }
 
     // Promise methods.

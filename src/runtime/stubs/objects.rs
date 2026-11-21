@@ -177,9 +177,11 @@ pub(super) fn get_property_atom(v: OtValue, key: Atom) -> u64 {
             if key == atom::LENGTH {
                 return number(arr.len as f64);
             }
-            match atom::name(key).parse::<usize>() {
+            let name = atom::name(key);
+            match name.parse::<usize>() {
                 Ok(i) if i < arr.len as usize => unsafe { *arr.elements.add(i) },
-                _ => undefined(),
+                Ok(_) => undefined(),
+                Err(_) => array_proto_method(name).unwrap_or_else(undefined),
             }
         }
         ObjectKind::String => {

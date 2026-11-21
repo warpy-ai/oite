@@ -38,6 +38,20 @@ pub extern "C" fn ot_register_global(key: *const u8, key_len: usize, slot: *mut 
     });
 }
 
+/// `Array.prototype[key]`, if it is a function.
+pub(super) fn array_proto_method(key: &str) -> Option<u64> {
+    let class = global("Array")?;
+    let (ptr, ObjectKind::Object) = object(OtValue::from_bits(class))? else {
+        return None;
+    };
+    let proto = lookup(ptr, "prototype")?;
+    let (proto, ObjectKind::Object) = object(OtValue::from_bits(proto))? else {
+        return None;
+    };
+    let method = lookup(proto, key)?;
+    is_function(method).then_some(method)
+}
+
 pub(super) fn builtin(code: NativeFn) -> u64 {
     ot_make_function(code as *const u8)
 }
@@ -56,6 +70,13 @@ pub(super) fn initial_globals() -> HashMap<String, u64> {
         builtin(ot_builtin_object_keys),
     );
     g.insert("Object".to_string(), object);
+    // `Array`: `isArray` here, the methods that take callbacks in
+    // `std/core/array.ot`, on `Array.prototype`.
+    let array_class = ot_alloc_object();
+    let ac = OtValue::from_bits(array_class);
+    set_property(ac, "isArray", builtin(ot_builtin_array_is_array));
+    set_property(ac, "prototype", ot_alloc_object());
+    g.insert("Array".to_string(), array_class);
     // `Math`: one built-in serves every function member; its environment
     // is the member's index in `MATH_FUNCTIONS`.
     let math = ot_alloc_object();

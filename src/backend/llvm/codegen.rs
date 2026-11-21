@@ -186,7 +186,7 @@ impl LlvmCodegen {
                     .sites
                     .iter()
                     .map(|s| s.file.as_str())
-                    .find(|f| *f != crate::vm::errors::CORE_ERRORS_PATH)
+                    .find(|f| !crate::vm::errors::is_core_path(f))
                     .unwrap_or("main.ot");
                 self.di = Some(super::debug::DebugBuilder::new(
                     self.module,

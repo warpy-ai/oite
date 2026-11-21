@@ -1,0 +1,6 @@
+Uncaught RangeError: too big: 3
+at check (
+callback_trace.ot:5:11)
+callback_trace.ot:9:34
+at map (std/core/array.ot:
+callback_trace.ot:9:23
