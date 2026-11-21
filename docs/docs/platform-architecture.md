@@ -118,6 +118,31 @@ The prelude re-exports a curated set as **free functions**:
 `map(numbers, n => n * 2)`, `trim(name)`, `sin(PI / 4)`, `jsonParse(text)`,
 plus `Result`, `Option`, `println`, `assert`, and so on.
 
+How `oitec` links it (`src/compiler/modules.rs`):
+
+- `@rolls/std` and the rolls it imports are modules of the program that
+  run before it, so their top-level code (which attaches methods to
+  `Array.prototype`) has run when the program starts.
+- In the program's own modules (the entry file and the modules it imports
+  by relative path), a name the module uses and does not declare names the
+  prelude's export of that name. A declaration or an import of the same
+  name, in any scope, shadows it. Assigning to a prelude name is a compile
+  error.
+- Rolls never get the prelude, since `@rolls/std` is made of them, and
+  neither does an entry file inside a roll (below a `roll.toml`).
+- When `@rolls/std` is not installed (no `--roll`, `OITE_ROLLS_PATH` or
+  `$OITE_HOME/rolls` has it), the program compiles without the prelude
+  and says nothing. A release always installs it, and the language tests
+  run on core alone. A prelude name such a program uses is a
+  `ReferenceError` when it runs.
+- The type checker does not see the prelude yet: its functions are `any`,
+  and its types (`Result`, `Option`) are unknown names, so annotations
+  that use them are not checked.
+- Every program compiles the prelude, about 4,000 lines of Oite. That is
+  cheap on the VM and expensive on the native backends, which compile every
+  function of it whether the program calls it or not (numbers in
+  [Development Status](development-status.md#the-preludes-cost)).
+
 ### Method calls
 
 Both styles work, with one implementation, in the rolls:
@@ -306,7 +331,7 @@ oitec build src/main.ot -o target/release/myapp --release \
 | Item | Today | Change |
 | ---- | ----- | ------ |
 | `declare function` | Ambient: no code and no binding. A call to an `__intrinsic_*` compiles to the intrinsic; an `__ffi_*` nothing provides is "not defined" when called | Bind `__ffi_*` (FFI) |
-| `import` / `export` | Linked at compile time on every backend (`modules.rs`), with `@rolls/*` found through `--roll`, the importing roll's siblings, `OITE_ROLLS_PATH` and `$OITE_HOME/rolls`; circular imports are refused | The implicit `@rolls/std` prelude and `--no-std`, with the intrinsics |
+| `import` / `export` | Linked at compile time on every backend (`modules.rs`), with `@rolls/*` found through `--roll`, the importing roll's siblings, `OITE_ROLLS_PATH` and `$OITE_HOME/rolls`; circular imports are refused. `@rolls/std` is linked into every program as the prelude, unless `--no-std` or it is not installed ("The prelude") | Compile only the prelude functions a program uses, on the native backends |
 | Intrinsics | All 29, on every backend (`runtime/intrinsics.rs`) | Machine instructions for the math ones |
 | Spread (`[...a]`, `{...o}`) | On every backend | — |
 | FFI | Only `__ffi_fetch` (and `__ffi_getenv`, which no roll uses), as VM globals | Calling convention, `oite-runtime` crate, symbol binding on every backend |
@@ -359,7 +384,7 @@ oitec build src/main.ot -o target/release/myapp --release \
 1. **Modules in core** (done): `import`/`export` linked at compile time on
    every backend, and `@rolls/*` resolution.
 2. **Intrinsics:** the 29 above (done, with spread on every backend), the
-   implicit `@rolls/std` prelude and `--no-std`, then move `Math`,
+   implicit `@rolls/std` prelude and `--no-std` (done), then move `Math`,
    `Date.now` and the number methods out of core. CI runs the core rolls
    from `warpy-ai/rolls` (at `ROLLS_REF`) on all three backends.
 3. **FFI:** the calling convention, `oite-runtime`, and symbol binding;

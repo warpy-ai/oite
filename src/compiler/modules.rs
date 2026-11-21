@@ -16,11 +16,22 @@
 //!   `--roll @rolls/<name>=DIR`, a sibling of the importing roll (rolls in
 //!   one checkout find each other), each directory of `OITE_ROLLS_PATH`, and
 //!   `$OITE_HOME/rolls` (the rolls bundled with oitec).
+//!
+//! The prelude: `@rolls/std` is linked into every program, ahead of it, so
+//! its top-level code (which attaches methods to `Array.prototype`) runs
+//! first, and its exports are in scope in the program's own modules (the
+//! entry and the modules it reaches by relative path) as if they were
+//! globals: a name a module uses but does not declare, anywhere, names the
+//! prelude's export of that name. Whatever the module declares or imports
+//! shadows it. Rolls never get the prelude (`@rolls/std` is made of
+//! them), nor does an entry file inside a roll (a directory with a
+//! `roll.toml`). `--no-std` turns it off, and a program compiles without
+//! it, as before, when `@rolls/std` is not installed.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use swc_common::{Span, Spanned};
+use swc_common::{DUMMY_SP, Span, Spanned};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{Syntax, TsSyntax};
 
@@ -42,6 +53,10 @@ pub struct ModuleLink {
     /// the type has in the module it is declared in. For the type checker;
     /// a type has no code.
     pub type_imports: HashMap<String, String>,
+    /// The prelude: `@rolls/std`'s exports, export name -> global name,
+    /// for the names the module uses without declaring them. Empty in a
+    /// roll and with `--no-std`.
+    pub prelude: HashMap<String, String>,
 }
 
 /// Where `@rolls/*` modules are found.
@@ -51,6 +66,8 @@ pub struct ModuleOptions {
     pub rolls: HashMap<String, PathBuf>,
     /// Directories holding rolls as `<name>/src/mod.ot`, searched in order.
     pub search: Vec<PathBuf>,
+    /// `--no-std`: no implicit `@rolls/std`.
+    pub no_std: bool,
 }
 
 impl ModuleOptions {
@@ -70,6 +87,7 @@ impl ModuleOptions {
         Self {
             rolls: HashMap::new(),
             search,
+            no_std: false,
         }
     }
 
@@ -120,6 +138,9 @@ struct Module_ {
     prefix: String,
     /// What each `import`/`export ... from` names, resolved to a module.
     deps: HashMap<String, usize>,
+    /// Part of a roll: imported as `@rolls/<name>`, or by relative path
+    /// from a roll. It does not get the prelude.
+    roll: bool,
 }
 
 /// Where an export comes from.
@@ -141,9 +162,10 @@ struct Linker<'a> {
 
 impl Compiler {
     /// Compile the program whose entry module is `entry` (with `source`),
-    /// with every module it imports. The modules come back in the order
-    /// they run: dependencies first, `entry` last. A program that imports
-    /// nothing is one module, compiled as `compile_with_syntax` would.
+    /// with the prelude and every module it imports. The modules come back
+    /// in the order they run: the prelude's first, `entry` last. A program
+    /// that imports nothing and has no prelude is one module, compiled as
+    /// `compile_with_syntax` would.
     pub fn compile_program(
         &mut self,
         entry: &str,
@@ -151,8 +173,35 @@ impl Compiler {
         options: &ModuleOptions,
     ) -> Result<Vec<CompiledModule>, CompileError> {
         let parsed = parse(source, Some(syntax_for(entry)))?;
-        if module_requests(&parsed.program).is_empty() {
-            let code = self.compile_parsed(&parsed, None)?;
+        let entry_path = std::fs::canonicalize(entry).unwrap_or_else(|_| PathBuf::from(entry));
+        let roll = entry_path
+            .ancestors()
+            .skip(1)
+            .any(|dir| dir.join("roll.toml").is_file());
+        let mut linker = Linker {
+            options,
+            modules: Vec::new(),
+            by_path: HashMap::new(),
+            order: Vec::new(),
+        };
+        linker.modules.push(Module_ {
+            path: entry_path.clone(),
+            file: entry.to_string(),
+            source: source.to_string(),
+            parsed,
+            prefix: String::new(),
+            deps: HashMap::new(),
+            roll,
+        });
+        linker.by_path.insert(entry_path, 0);
+        let std_module = if options.no_std || roll {
+            None
+        } else {
+            linker.load_prelude()?
+        };
+
+        if std_module.is_none() && module_requests(&linker.modules[0].parsed.program).is_empty() {
+            let code = self.compile_parsed(&linker.modules[0].parsed, None)?;
             self.warnings.clear();
             self.keep_warnings(entry, source, false);
             return Ok(vec![CompiledModule {
@@ -163,32 +212,19 @@ impl Compiler {
             }]);
         }
 
-        let mut linker = Linker {
-            options,
-            modules: Vec::new(),
-            by_path: HashMap::new(),
-            order: Vec::new(),
-        };
-        let entry_path = std::fs::canonicalize(entry).unwrap_or_else(|_| PathBuf::from(entry));
-        linker.modules.push(Module_ {
-            path: entry_path.clone(),
-            file: entry.to_string(),
-            source: source.to_string(),
-            parsed,
-            prefix: String::new(),
-            deps: HashMap::new(),
-        });
-        linker.by_path.insert(entry_path, 0);
         linker.visit(0, &mut Vec::new())?;
-
         let exports = linker.export_tables()?;
+        let prelude = std_module.map(|m| exports[m].clone()).unwrap_or_default();
         let mut compiled = Vec::new();
         self.warnings.clear();
         self.type_world = Default::default();
         let program_dir = linker.modules[0].path.parent().map(Path::to_path_buf);
         for &m in &linker.order {
-            let link = linker.link_for(m, &exports)?;
+            let mut link = linker.link_for(m, &exports)?;
             let module = &linker.modules[m];
+            if !module.roll {
+                link.prelude = prelude.clone();
+            }
             let code = self
                 .compile_parsed(&module.parsed, Some(link))
                 .map_err(|e| e.in_file(&module.file, &module.source))?;
@@ -265,6 +301,25 @@ impl Linker<'_> {
         .in_file(&module.file, &module.source)
     }
 
+    /// Load `@rolls/std` and what it imports, first in the order, so it
+    /// runs before the program. `None` when it is not installed; an error
+    /// when `--roll @rolls/std=DIR` names a directory without it.
+    fn load_prelude(&mut self) -> Result<Option<usize>, CompileError> {
+        const STD: &str = "@rolls/std";
+        let path = match self.resolve(0, STD) {
+            Ok(path) => path,
+            Err(e) if self.options.rolls.contains_key(STD) => {
+                return Err(self.error(0, DUMMY_SP, e));
+            }
+            Err(_) => return Ok(None),
+        };
+        let std = self.load(0, DUMMY_SP, STD, path)?;
+        // With the entry on the stack: a prelude that imports the entry
+        // is a circular import.
+        self.visit(std, &mut vec![0])?;
+        Ok(Some(std))
+    }
+
     /// Load the modules `m` imports, depth first, and append `m` to the
     /// order after them. `stack` is the chain of modules being loaded.
     fn visit(&mut self, m: usize, stack: &mut Vec<usize>) -> Result<(), CompileError> {
@@ -319,7 +374,8 @@ impl Linker<'_> {
         // A syntax error is reported in the module itself.
         let parsed =
             parse(&source, Some(syntax_for(&file))).map_err(|e| e.in_file(&file, &source))?;
-        let prefix = if spec.starts_with("@rolls/") {
+        let roll = spec.starts_with("@rolls/");
+        let prefix = if roll {
             format!("{spec}::")
         } else {
             format!("{}::", self.display_name(&path))
@@ -332,6 +388,7 @@ impl Linker<'_> {
             parsed,
             prefix,
             deps: HashMap::new(),
+            roll: roll || self.modules[m].roll,
         });
         self.by_path.insert(path, id);
         Ok(id)
@@ -562,6 +619,7 @@ impl Linker<'_> {
             imports: self.imports_of(m, tables)?,
             namespaces: HashMap::new(),
             type_imports: HashMap::new(),
+            prelude: HashMap::new(),
         };
         if let Program::Module(ast) = &module.parsed.program {
             for item in &ast.body {

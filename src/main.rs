@@ -230,7 +230,8 @@ fn run_binary_file(vm: &mut VM, path: &str) -> Result<(), String> {
 }
 
 /// Where `@rolls/*` imports are found: the environment, and the
-/// `--roll @rolls/<name>=DIR` flags (taken out of the arguments by `main`).
+/// `--roll @rolls/<name>=DIR` flags (taken out of the arguments by `main`),
+/// and whether `--no-std` turned the prelude off.
 static MODULE_OPTIONS: std::sync::OnceLock<compiler::modules::ModuleOptions> =
     std::sync::OnceLock::new();
 
@@ -238,9 +239,9 @@ fn module_options() -> &'static compiler::modules::ModuleOptions {
     MODULE_OPTIONS.get_or_init(compiler::modules::ModuleOptions::from_env)
 }
 
-/// Take `--roll @rolls/<name>=DIR` (or `--roll=...`) out of `args`. In run
-/// mode (`oitec file.ot ...`) the arguments after the file are the
-/// program's own, so scanning stops there.
+/// Take `--roll @rolls/<name>=DIR` (or `--roll=...`), `--no-std` and
+/// `--strict-types` out of `args`. In run mode (`oitec file.ot ...`) the
+/// arguments after the file are the program's own, so scanning stops there.
 fn take_roll_flags(args: &mut Vec<String>) -> compiler::modules::ModuleOptions {
     const COMMANDS: &[&str] = &["check", "ir", "jit", "bench", "build"];
     let mut options = compiler::modules::ModuleOptions::from_env();
@@ -257,6 +258,10 @@ fn take_roll_flags(args: &mut Vec<String>) -> compiler::modules::ModuleOptions {
         } else if args[i] == "--strict-types" {
             args.remove(i);
             types::set_strict(true);
+            continue;
+        } else if args[i] == "--no-std" {
+            args.remove(i);
+            options.no_std = true;
             continue;
         } else {
             let is_program =
@@ -338,6 +343,7 @@ fn main() {
         eprintln!();
         eprintln!("Options for every command:");
         eprintln!("  --roll @rolls/<name>=<dir>     Where to find a roll");
+        eprintln!("  --no-std                       Do not import @rolls/std (the prelude)");
         eprintln!("  --strict-types                 Type errors stop compilation, and values are");
         eprintln!("                                 checked against type annotations at run time");
         return;

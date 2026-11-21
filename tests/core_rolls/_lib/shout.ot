@@ -1,0 +1,4 @@
+// A module the program imports by relative path: it has the prelude too.
+export function shout(s) {
+  return toUpperCase(trim(s)) + "!";
+}

@@ -145,6 +145,9 @@ pub struct ScopeInfo {
     /// its declarations and the references to them. In a module that is
     /// linked with others they get the module's prefix.
     module_level: HashSet<SpanKey>,
+    /// Identifiers (by span) that no declaration binds: globals, or the
+    /// prelude's exports.
+    free: HashSet<SpanKey>,
 }
 
 impl ScopeInfo {
@@ -171,6 +174,11 @@ impl ScopeInfo {
     /// module (rather than a local, or a global it does not declare).
     pub fn is_module_level(&self, span: Span) -> bool {
         self.module_level.contains(&key(span))
+    }
+
+    /// Whether the identifier at `span` names nothing the program declares.
+    pub fn is_free(&self, span: Span) -> bool {
+        self.free.contains(&key(span))
     }
 
     /// Whether top-level code (outside any function) uses `%scope`.
@@ -407,17 +415,20 @@ impl Resolver {
             .map(|(i, o)| (i, self.lookup(o.scope, &o.name)))
             .collect();
         let mut module_level = HashSet::new();
+        let mut free = HashSet::new();
         for &(i, b) in &resolved {
-            if let Some(b) = b {
-                let binding_scope = self.bindings[b].scope;
-                if self.scopes[binding_scope].kind == Kind::Global {
-                    module_level.insert(self.occurrences[i].span);
-                    continue;
-                }
-                let occ_func = self.scopes[self.occurrences[i].scope].func;
-                if occ_func != self.scopes[binding_scope].func {
-                    self.bindings[b].captured = true;
-                }
+            let Some(b) = b else {
+                free.insert(self.occurrences[i].span);
+                continue;
+            };
+            let binding_scope = self.bindings[b].scope;
+            if self.scopes[binding_scope].kind == Kind::Global {
+                module_level.insert(self.occurrences[i].span);
+                continue;
+            }
+            let occ_func = self.scopes[self.occurrences[i].scope].func;
+            if occ_func != self.scopes[binding_scope].func {
+                self.bindings[b].captured = true;
             }
         }
 
@@ -425,6 +436,7 @@ impl Resolver {
         let mut env_scope = vec![false; self.scopes.len()];
         let mut info = ScopeInfo {
             module_level,
+            free,
             ..ScopeInfo::default()
         };
         for b in &self.bindings {

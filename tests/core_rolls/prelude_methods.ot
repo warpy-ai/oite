@@ -1,0 +1,12 @@
+// backends: vm jit aot
+// The prelude attaches @rolls/array's functions to Array.prototype before
+// the program runs: array methods work with no import.
+const xs = [3, 1, 4, 1, 5];
+console.log(xs.map((x) => x * 2).filter((x) => x > 4).reduce((a, x) => a + x, 0));
+console.log(xs.map((x, i) => x + i), xs.find((x) => x > 3), xs.some((x) => x > 4), xs.every((x) => x > 0));
+console.log([[1, 2], [3]].flat(), xs.toSorted((a, b) => a - b), xs);
+let seen = 0;
+xs.forEach((x) => {
+  seen += x;
+});
+console.log(seen, xs.map((x) => "" + x).reduce((a, s) => a + s, ""));

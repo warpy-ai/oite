@@ -27,12 +27,15 @@
 //!
 //! Directories whose name starts with `_` hold modules the tests import
 //! (`modules/_lib/`), not tests. `@rolls/<name>` imports resolve to the
-//! fixture rolls in `modules/_rolls/` (`OITE_ROLLS_PATH`).
+//! fixture rolls in `modules/_rolls/` (`OITE_ROLLS_PATH`). The fixtures
+//! have no `@rolls/std`, so these programs run on core alone, without the
+//! prelude.
 //!
-//! `tests/core_rolls/` holds programs that use the real core rolls. They run
-//! when `OITE_CORE_ROLLS` names a checkout of `warpy-ai/rolls` (CI checks it
-//! out at `ROLLS_REF` in `scripts/release-pins.env`), and are skipped
-//! otherwise.
+//! `tests/core_rolls/` holds programs that use the real core rolls, with
+//! `@rolls/std` as their prelude (`// flags: --no-std` turns it off). They
+//! run when `OITE_CORE_ROLLS` names a checkout of `warpy-ai/rolls` (CI
+//! checks it out at `ROLLS_REF` in `scripts/release-pins.env`), and are
+//! skipped otherwise.
 
 use std::fs;
 use std::path::{Path, PathBuf};

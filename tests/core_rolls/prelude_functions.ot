@@ -1,0 +1,13 @@
+// backends: vm jit aot
+// The prelude: @rolls/std's exports are in scope with no import, in the
+// program and in the modules it imports by relative path.
+import { shout } from "./_lib/shout.ot";
+const xs = [3, 1, 4, 1, 5];
+console.log(map(xs, (x) => x * 2), filter(xs, (x) => x > 2), reduce(xs, (a, x) => a + x, 0));
+console.log("[" + trim("  hi  ") + "]", toUpperCase("oite"), padStart("7", 3, "0"));
+console.log(floor(PI), max(2, 9, 4), sum(xs), range(0, 3), jsonStringify({ a: [1] }));
+console.log(shout("  hey "), typeof map, typeof trim);
+function twice(list) {
+  return map(list, (x) => x * 2);
+}
+console.log(twice([1, 2]));
