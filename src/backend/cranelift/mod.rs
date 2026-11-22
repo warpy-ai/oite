@@ -16,7 +16,9 @@ use std::collections::HashMap;
 use super::entries;
 use super::runtime_abi::RUNTIME;
 use super::{BackendConfig, BackendError};
-use crate::ir::{BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId};
+use crate::ir::{
+    BlockId, IrFunction, IrModule, IrOp, IrType, Literal, SpreadCallee, Terminator, ValueId,
+};
 use crate::runtime::abi::{EXCEPTION_BITS, UNBOUND_BITS};
 
 const QNAN: u64 = 0x7FFC_0000_0000_0000;

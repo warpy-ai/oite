@@ -188,6 +188,7 @@ fn serialize_op(output: &mut String, op: &IrOp) {
         | IrOp::CallSuper(_, _, _)
         | IrOp::SuperForward(_, _)
         | IrOp::CallWithThis(_, _, _, _)
+        | IrOp::SpreadCall(_, _, _)
         | IrOp::InstanceOf(_, _, _)
         | IrOp::In(_, _, _)
         | IrOp::AsyncStart(_)
