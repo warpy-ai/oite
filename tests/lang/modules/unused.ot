@@ -1,0 +1,15 @@
+// backends: vm jit aot
+// A roll's top-level declarations the program does not use make no code.
+// @rolls/parts' `unused` and `Unused` would stop the native backends; the
+// program imports `unused` but never names it again.
+import byDefault, { used, unused, registry } from "@rolls/parts";
+import * as parts from "@rolls/parts";
+import * as words from "@rolls/words";
+
+console.log(used(20));
+console.log(parts.viaNamespace());
+console.log(byDefault());
+console.log(registry.length, registry[0]());
+// A namespace used as a value: every export stays.
+const { capitalize } = words;
+console.log(capitalize("namespace as a value"));

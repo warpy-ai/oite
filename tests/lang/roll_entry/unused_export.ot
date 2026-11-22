@@ -1,0 +1,8 @@
+// A roll's own file is the whole program when it is the entry (as in the
+// roll's `oitec check`): an export nothing calls is compiled, and an error
+// in it is reported.
+import { one } from "./_lib/one.ot";
+export function* unused() {
+  yield one;
+}
+console.log(one);

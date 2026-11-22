@@ -4,10 +4,21 @@ use super::*;
 
 impl Codegen {
     pub fn generate(&mut self, module: &Module) -> Vec<OpCode> {
+        // The items of a roll that the program does not use make no code
+        // (`reach.rs`).
+        let unused = self
+            .link
+            .as_mut()
+            .map(|link| std::mem::take(&mut link.unused))
+            .unwrap_or_default();
+        let body: Vec<&ModuleItem> = module
+            .body
+            .iter()
+            .filter(|item| !unused.contains(&scope::key(item.span())))
+            .collect();
         self.top_level_prologue();
         self.namespace_imports();
-        let top_stmts: Vec<Stmt> = module
-            .body
+        let top_stmts: Vec<Stmt> = body
             .iter()
             .filter_map(|item| match item {
                 ModuleItem::Stmt(s) => Some(s.clone()),
@@ -21,7 +32,7 @@ impl Codegen {
             self.instructions.push(OpCode::Push(JsValue::Undefined));
             self.store_var(&ident, true);
         }
-        for item in &module.body {
+        for item in &body {
             match item {
                 ModuleItem::Stmt(Stmt::Decl(Decl::Fn(f))) => self.hoist_fn(f),
                 ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl {
@@ -31,7 +42,7 @@ impl Codegen {
                 _ => {}
             }
         }
-        for item in &module.body {
+        for item in body {
             match item {
                 ModuleItem::Stmt(stmt) => {
                     self.gen_stmt(stmt);

@@ -11,6 +11,7 @@ mod env;
 mod expr;
 mod functions;
 pub mod modules;
+mod reach;
 pub mod scope;
 mod stmt;
 use crate::compiler::borrow_ck::BorrowChecker;
