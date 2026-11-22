@@ -3437,6 +3437,25 @@ impl crate::runtime::builtins::Host for VmHost<'_> {
         }
     }
 
+    fn own_entries(&self, v: &JsValue) -> Vec<(String, JsValue)> {
+        let JsValue::Object(ptr) = v else {
+            return Vec::new();
+        };
+        match self.0.get(*ptr) {
+            Some(HeapObject {
+                data: HeapData::Object(props),
+            }) => props
+                .iter()
+                .filter(|(k, v)| {
+                    !crate::runtime::builtins::is_hidden_key(k)
+                        && !matches!(v, JsValue::Accessor(_, _))
+                })
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     fn make_number(&self, n: f64) -> JsValue {
         JsValue::Number(n)
     }
