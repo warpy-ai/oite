@@ -340,7 +340,6 @@ impl Codegen {
                             to_undefined.extend(self.emit_jumps_if_nullish());
                         }
                         self.instructions.push(OpCode::Let(tmp.clone()));
-                        let argc = call.args.len();
                         match (self.member_key(&member.prop), &member.prop) {
                             (Some(name), _) => {
                                 if chain.optional {
@@ -349,11 +348,9 @@ impl Codegen {
                                     to_undefined.extend(self.emit_jumps_if_nullish());
                                     self.instructions.push(OpCode::Pop);
                                 }
-                                for arg in &call.args {
-                                    self.gen_expr(&arg.expr);
-                                }
+                                let argc = self.gen_args(&call.args);
                                 self.instructions.push(OpCode::Load(tmp));
-                                self.instructions.push(OpCode::CallMethod(name, argc));
+                                self.emit_call(CallKind::Method(name), argc);
                             }
                             (None, MemberProp::Computed(computed)) => {
                                 // `o[k]`, read once, is called with `this = o`.
@@ -365,12 +362,10 @@ impl Codegen {
                                 }
                                 let func = format!("%optfn{}", self.instructions.len());
                                 self.instructions.push(OpCode::Let(func.clone()));
-                                for arg in &call.args {
-                                    self.gen_expr(&arg.expr);
-                                }
+                                let argc = self.gen_args(&call.args);
                                 self.instructions.push(OpCode::Load(func));
                                 self.instructions.push(OpCode::Load(tmp));
-                                self.instructions.push(OpCode::CallWithThis(argc));
+                                self.emit_call(CallKind::WithThis, argc);
                             }
                             (None, _) => unreachable!("only a computed member has no key"),
                         }
@@ -381,11 +376,9 @@ impl Codegen {
                             to_undefined.extend(self.emit_jumps_if_nullish());
                         }
                         self.instructions.push(OpCode::Let(tmp.clone()));
-                        for arg in &call.args {
-                            self.gen_expr(&arg.expr);
-                        }
+                        let argc = self.gen_args(&call.args);
                         self.instructions.push(OpCode::Load(tmp));
-                        self.instructions.push(OpCode::Call(call.args.len()));
+                        self.emit_call(CallKind::Plain, argc);
                     }
                 }
             }

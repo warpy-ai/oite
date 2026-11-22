@@ -1,4 +1,4 @@
-use crate::vm::opcodes::OpCode;
+use crate::vm::opcodes::{CallKind, OpCode};
 use std::collections::HashMap;
 use swc_ecma_ast::*;
 mod bindings;

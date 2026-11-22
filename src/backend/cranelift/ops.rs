@@ -407,6 +407,29 @@ impl Fx<'_> {
                 let r = self.rt_v(b, "ot_call", &[f, t, argv, argc]);
                 self.values.insert(*d, r);
             }
+            IrOp::SpreadCall(d, callee, args) => {
+                let a = self.get(*args)?;
+                let r = match callee {
+                    SpreadCallee::Function(func, this) => {
+                        let (f, t) = (self.get(*func)?, self.get(*this)?);
+                        self.rt_v(b, "ot_call_spread", &[f, t, a])
+                    }
+                    SpreadCallee::Method(recv, name) => {
+                        let r = self.get(*recv)?;
+                        let (p, n) = self.name(b, name);
+                        self.rt_v(b, "ot_call_method_spread", &[r, p, n, a])
+                    }
+                    SpreadCallee::Construct(ctor) => {
+                        let c = self.get(*ctor)?;
+                        self.rt_v(b, "ot_construct_spread", &[c, a])
+                    }
+                    SpreadCallee::Super(parent) => {
+                        let (p, this) = (self.get(*parent)?, self.this.unwrap());
+                        self.rt_v(b, "ot_call_super_spread", &[p, this, a])
+                    }
+                };
+                self.values.insert(*d, r);
+            }
             IrOp::InstanceOf(d, v, c) => self.rt_binop(b, *d, "ot_instanceof", *v, *c)?,
             IrOp::In(d, k, o) => self.rt_binop(b, *d, "ot_in", *k, *o)?,
             IrOp::GetSuperProp(d, this, base, name) => {

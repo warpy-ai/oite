@@ -237,6 +237,7 @@ impl<'a> TypeChecker<'a> {
             | IrOp::CallSuper(dst, _, _)
             | IrOp::SuperForward(dst, _)
             | IrOp::CallWithThis(dst, _, _, _)
+            | IrOp::SpreadCall(dst, _, _)
             | IrOp::GetSuperProp(dst, _, _, _) => {
                 self.set_type(*dst, IrType::Any);
             }

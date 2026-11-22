@@ -43,6 +43,41 @@ impl Codegen {
         self.instructions.push(OpCode::Intrinsic(check, 2));
     }
 
+    /// Push a call's arguments: each on its own, `Some(count)`; or, if one
+    /// is a spread (`f(a, ...xs)`), one array of them all, `None`.
+    pub(super) fn gen_args(&mut self, args: &[ExprOrSpread]) -> Option<usize> {
+        if args.iter().any(|arg| arg.spread.is_some()) {
+            self.gen_spread_array(args.iter());
+            return None;
+        }
+        for arg in args {
+            self.gen_expr(&arg.expr);
+        }
+        Some(args.len())
+    }
+
+    /// `[a, ...xs]`: a new array, each element pushed or spread into it.
+    fn gen_spread_array<'a>(&mut self, elems: impl Iterator<Item = &'a ExprOrSpread>) {
+        self.instructions.push(OpCode::NewArray(0));
+        for elem in elems {
+            self.gen_expr(&elem.expr);
+            self.instructions.push(if elem.spread.is_some() {
+                OpCode::ArraySpread
+            } else {
+                OpCode::ArrayPush
+            });
+        }
+    }
+
+    /// The call `kind`, after its operands and the arguments `gen_args`
+    /// pushed (`argc` its result).
+    pub(super) fn emit_call(&mut self, kind: CallKind, argc: Option<usize>) {
+        self.instructions.push(match argc {
+            Some(argc) => kind.with_argc(argc),
+            None => OpCode::SpreadCall(kind),
+        });
+    }
+
     pub(super) fn gen_expr_inner(&mut self, expr: &Expr) {
         match expr {
             Expr::Fn(fn_expr) => {
@@ -226,18 +261,7 @@ impl Codegen {
                     .any(|elem| elem.as_ref().is_some_and(|e| e.spread.is_some()));
 
                 if has_spread {
-                    // Use dynamic approach: create empty array, then push/spread each element
-                    self.instructions.push(OpCode::NewArray(0));
-                    for expr_or_spread in arr_lit.elems.iter().flatten() {
-                        self.gen_expr(&expr_or_spread.expr);
-                        if expr_or_spread.spread.is_some() {
-                            // Spread: Stack is [array, source_array]
-                            self.instructions.push(OpCode::ArraySpread);
-                        } else {
-                            // Regular element: Stack is [array, value]
-                            self.instructions.push(OpCode::ArrayPush);
-                        }
-                    }
+                    self.gen_spread_array(arr_lit.elems.iter().flatten());
                 } else {
                     // Use static approach: create array with known size
                     let size = arr_lit.elems.len();
@@ -264,20 +288,17 @@ impl Codegen {
                 if let Callee::Expr(callee_expr) = &call_expr.callee
                     && let Expr::Member(member) = callee_expr.as_ref()
                 {
-                    for arg in &call_expr.args {
-                        self.gen_expr(&arg.expr);
-                    }
+                    let argc = self.gen_args(&call_expr.args);
                     self.gen_expr(&member.obj);
-                    let argc = call_expr.args.len();
                     match (self.member_key(&member.prop), &member.prop) {
-                        (Some(key), _) => self.instructions.push(OpCode::CallMethod(key, argc)),
+                        (Some(key), _) => self.emit_call(CallKind::Method(key), argc),
                         (None, MemberProp::Computed(computed)) => {
                             // [args..., obj] -> [args..., obj[k], obj]
                             self.instructions.push(OpCode::Dup);
                             self.gen_expr(&computed.expr);
                             self.instructions.push(OpCode::GetPropComputed);
                             self.instructions.push(OpCode::Swap);
-                            self.instructions.push(OpCode::CallWithThis(argc));
+                            self.emit_call(CallKind::WithThis, argc);
                         }
                         (None, _) => unreachable!("only a computed member has no key"),
                     }
@@ -287,24 +308,18 @@ impl Codegen {
                 if let Callee::Expr(callee_expr) = &call_expr.callee
                     && let Expr::SuperProp(sp) = callee_expr.as_ref()
                 {
-                    for arg in &call_expr.args {
-                        self.gen_expr(&arg.expr);
-                    }
+                    let argc = self.gen_args(&call_expr.args);
                     self.gen_super_prop(sp);
                     self.instructions.push(OpCode::LoadThis);
-                    self.instructions
-                        .push(OpCode::CallWithThis(call_expr.args.len()));
+                    self.emit_call(CallKind::WithThis, argc);
                     return;
                 }
                 // `super(args)`: the parent constructor runs on `this`; then
                 // this class's instance fields are initialized.
                 if let Callee::Super(sup) = &call_expr.callee {
-                    for arg in &call_expr.args {
-                        self.gen_expr(&arg.expr);
-                    }
+                    let argc = self.gen_args(&call_expr.args);
                     self.load_var(&scope::super_ident(sup.span));
-                    self.instructions
-                        .push(OpCode::CallSuper(call_expr.args.len()));
+                    self.emit_call(CallKind::Super, argc);
                     if let Some(fields) = self.class_fields.clone() {
                         self.emit_field_inits(&fields);
                     }
@@ -342,16 +357,13 @@ impl Codegen {
                     return;
                 }
 
-                let arg_count = call_expr.args.len();
-                for arg in &call_expr.args {
-                    self.gen_expr(&arg.expr);
-                }
+                let argc = self.gen_args(&call_expr.args);
                 match &call_expr.callee {
                     Callee::Expr(expr) => self.gen_expr(expr),
                     Callee::Super(_) => unreachable!("handled above"),
                     Callee::Import(_) => self.unsupported("dynamic `import()`"),
                 }
-                self.instructions.push(OpCode::Call(arg_count));
+                self.emit_call(CallKind::Plain, argc);
             }
             Expr::Assign(assign_expr) if assign_expr.op != AssignOp::Assign => {
                 self.gen_compound_assign(assign_expr);
@@ -522,20 +534,9 @@ impl Codegen {
                 // and its `Dup` that nothing consumed, so two stale objects
                 // were left behind by every `new`, displacing the
                 // arguments of an enclosing call.)
-
-                // 1. Push arguments
-                let arg_count = new_expr.args.as_ref().map(|a| a.len()).unwrap_or(0);
-                if let Some(args) = &new_expr.args {
-                    for arg in args {
-                        self.gen_expr(&arg.expr);
-                    }
-                }
-
-                // 2. Push the constructor function
+                let argc = self.gen_args(new_expr.args.as_deref().unwrap_or_default());
                 self.gen_expr(&new_expr.callee);
-
-                // 3. Call with construct semantics
-                self.instructions.push(OpCode::Construct(arg_count));
+                self.emit_call(CallKind::Construct, argc);
             }
             Expr::Paren(paren_expr) => {
                 // Parenthesized expression: just evaluate the inner expression
