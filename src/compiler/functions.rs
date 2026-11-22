@@ -285,12 +285,20 @@ impl Codegen {
             .unwrap_or_else(|| format!("#{}", name))
     }
 
-    /// The property name of `obj.name` or `obj.#name`.
+    /// The property name of `obj.name`, `obj.#name` or `obj["name"]`. A
+    /// numeric string such as `obj["0"]` has none: it may be an array index.
     pub(super) fn member_key(&self, prop: &MemberProp) -> Option<String> {
         match prop {
             MemberProp::Ident(id) => Some(id.sym.to_string()),
             MemberProp::PrivateName(p) => Some(self.private_key(&p.name)),
-            MemberProp::Computed(_) => None,
+            MemberProp::Computed(c) => match c.expr.as_ref() {
+                Expr::Lit(Lit::Str(s)) => s
+                    .value
+                    .as_str()
+                    .filter(|name| name.parse::<f64>().is_err())
+                    .map(str::to_string),
+                _ => None,
+            },
         }
     }
 
