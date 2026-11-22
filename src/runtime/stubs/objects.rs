@@ -124,7 +124,9 @@ pub(super) fn visible_data(ptr: HeapPtr) -> Vec<(&'static str, u64)> {
         .into_iter()
         .filter(|(_, flags, _)| flags & ACCESSOR == 0)
         .map(|(a, _, v)| (atom::info(a), v))
-        .filter(|(info, _)| !info.hidden)
+        .filter(|(info, v)| {
+            !info.hidden && !builtins::is_constructor_link(&calls::NativeHost, info.name, v)
+        })
         .map(|(info, v)| (info.name, v))
         .collect()
 }

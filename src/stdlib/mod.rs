@@ -8,7 +8,7 @@
 //! will be provided by Rolls packages in the future.
 
 use crate::runtime::builtins::{
-    InspectOptions, Receiver, format_number, is_function_key, is_hidden_key,
+    InspectOptions, Receiver, format_number, is_constructor_link, is_function_key, is_hidden_key,
 };
 use crate::runtime::collection::{self, Yields};
 use crate::vm::VM;
@@ -201,7 +201,12 @@ fn inspect_inner(
                     }
                 }
                 HeapData::Object(props) => {
-                    let keys: Vec<&String> = props.keys().filter(|k| !is_hidden_key(k)).collect();
+                    let host = crate::vm::VmHost(&vm.heap);
+                    let keys: Vec<&String> = props
+                        .iter()
+                        .filter(|(k, v)| !is_hidden_key(k) && !is_constructor_link(&host, k, v))
+                        .map(|(k, _)| k)
+                        .collect();
                     if keys.is_empty() {
                         "{}".to_string()
                     } else if too_deep {
@@ -731,21 +736,23 @@ fn json_stringify_value(vm: &VM, value: &JsValue, indent: usize, pretty: bool) -
                         }
                     }
                     HeapData::Object(props) => {
-                        if props.is_empty() {
+                        let host = crate::vm::VmHost(&vm.heap);
+                        let items: Vec<String> = props
+                            .iter()
+                            .filter(|(k, v)| !is_constructor_link(&host, k, v))
+                            .map(|(k, v)| {
+                                format!(
+                                    "{}\"{}\":{}{}",
+                                    next_indent,
+                                    k,
+                                    space,
+                                    json_stringify_value(vm, v, indent + 1, pretty)
+                                )
+                            })
+                            .collect();
+                        if items.is_empty() {
                             "{}".to_string()
                         } else {
-                            let items: Vec<String> = props
-                                .iter()
-                                .map(|(k, v)| {
-                                    format!(
-                                        "{}\"{}\":{}{}",
-                                        next_indent,
-                                        k,
-                                        space,
-                                        json_stringify_value(vm, v, indent + 1, pretty)
-                                    )
-                                })
-                                .collect();
                             format!(
                                 "{{{}{}{}{}}}",
                                 newline,

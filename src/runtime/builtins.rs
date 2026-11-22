@@ -1007,6 +1007,13 @@ pub fn is_function_key(key: &str) -> bool {
     matches!(key, "name" | "length" | "prototype" | "constructor")
 }
 
+/// A prototype's `constructor`, the function or class it belongs to: not
+/// enumerable, so whatever lists an object's properties leaves it out. A
+/// `constructor` that holds anything but a function is listed.
+pub fn is_constructor_link<H: Host>(h: &H, key: &str, value: &H::Value) -> bool {
+    key == "constructor" && h.kind(value) == Kind::Function
+}
+
 /// The `length` of a bound function: its target's, less the arguments
 /// `bind` gave it.
 pub fn bound_length(target_length: f64, bound_args: usize) -> f64 {

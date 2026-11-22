@@ -1897,7 +1897,13 @@ impl VM {
                                 Ok(v) => source_props.push((name.to_string(), v)),
                                 Err(e) => return self.throw_exception(e),
                             }
-                        } else if !crate::runtime::builtins::is_hidden_key(&key) {
+                        } else if !crate::runtime::builtins::is_hidden_key(&key)
+                            && !crate::runtime::builtins::is_constructor_link(
+                                &VmHost(&self.heap),
+                                &key,
+                                &value,
+                            )
+                        {
                             source_props.push((key, value));
                         }
                     }
@@ -3223,6 +3229,7 @@ impl crate::runtime::builtins::Host for VmHost<'_> {
                 for k in props.keys() {
                     if let Some(name) = crate::runtime::builtins::own_key_name(k)
                         && !(class && crate::runtime::builtins::is_function_key(name))
+                        && !crate::runtime::builtins::is_constructor_link(self, k, &props[k])
                         && !names.iter().any(|n| n == name)
                     {
                         names.push(name.to_string());
@@ -3248,6 +3255,7 @@ impl crate::runtime::builtins::Host for VmHost<'_> {
                 .iter()
                 .filter(|(k, v)| {
                     !crate::runtime::builtins::is_hidden_key(k)
+                        && !crate::runtime::builtins::is_constructor_link(self, k, v)
                         && !matches!(v, JsValue::Accessor(_, _))
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))

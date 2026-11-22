@@ -371,9 +371,13 @@ impl builtins::Host for NativeHost {
                 let class = is_class(ptr);
                 object::own(obj(ptr))
                     .into_iter()
-                    .map(|(a, _, _)| atom::info(a))
-                    .filter(|info| !(info.hidden || class && builtins::is_function_key(info.name)))
-                    .map(|info| info.name.to_string())
+                    .map(|(a, _, v)| (atom::info(a), v))
+                    .filter(|(info, v)| {
+                        !(info.hidden
+                            || class && builtins::is_function_key(info.name)
+                            || builtins::is_constructor_link(self, info.name, v))
+                    })
+                    .map(|(info, _)| info.name.to_string())
                     .collect()
             }
             Some((ptr, ObjectKind::Function)) => function_entries(ptr)
