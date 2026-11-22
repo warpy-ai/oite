@@ -545,9 +545,16 @@ fn setup_array(vm: &mut VM) {
         ))
     }
     let is_array_idx = vm.register_native(is_array);
+    // The methods built into the runtime, so `Array.prototype.push` is
+    // `[].push`.
+    use crate::runtime::builtins::{Method, Receiver};
+    let builtins = Receiver::Array.methods().iter().map(|name| {
+        let m = Method::find(Receiver::Array, name).expect("a listed method");
+        (name.to_string(), JsValue::BuiltinMethod(m))
+    });
     let proto = vm.heap.len();
     vm.heap.push(HeapObject {
-        data: HeapData::Object(crate::vm::value::PropMap::new()),
+        data: HeapData::Object(builtins.collect()),
     });
     let mut props = crate::vm::value::PropMap::new();
     props.insert("isArray".to_string(), JsValue::NativeFunction(is_array_idx));

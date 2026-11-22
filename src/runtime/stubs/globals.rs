@@ -70,12 +70,17 @@ pub(super) fn initial_globals() -> HashMap<String, u64> {
         builtin(ot_builtin_object_keys),
     );
     g.insert("Object".to_string(), object);
-    // `Array`: `isArray` here, the methods that take callbacks in
-    // `std/core/array.ot`, on `Array.prototype`.
+    // `Array`: `isArray` here; on `Array.prototype`, the methods built into
+    // the runtime, and the ones that take callbacks (`std/core/array.ot`).
     let array_class = ot_alloc_object();
     let ac = OtValue::from_bits(array_class);
     set_property(ac, "isArray", builtin(ot_builtin_array_is_array));
-    set_property(ac, "prototype", ot_alloc_object());
+    let proto = ot_alloc_object();
+    for name in builtins::Receiver::Array.methods() {
+        let method = builtin_method(builtins::Receiver::Array, name).expect("a listed method");
+        set_property(OtValue::from_bits(proto), name, method);
+    }
+    set_property(ac, "prototype", proto);
     g.insert("Array".to_string(), array_class);
     // `Math`: one built-in serves every function member; its environment
     // is the member's index in `MATH_FUNCTIONS`.

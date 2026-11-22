@@ -2,6 +2,7 @@
 //! the shared built-in methods use (`NativeHost`).
 
 use super::*;
+use builtins::{Method, Receiver};
 
 // =========================================================================
 // Calls
@@ -35,60 +36,24 @@ pub extern "C" fn ot_call_method(
     let r = OtValue::from_bits(recv);
     let key_atom = unsafe { atom::static_atom(key, key_len) };
     let key = unsafe { name(key, key_len) };
+    let a = unsafe { args(argv, argc) };
 
-    // Built-in array methods.
-    if let Some((ptr, ObjectKind::Array)) = object(r) {
-        let arr = array(ptr);
-        let a = unsafe { args(argv, argc) };
-        match key {
-            "push" => {
-                let mut len = arr.len as usize;
-                for &v in a {
-                    len = array_push(arr, v);
-                }
-                return number(len as f64);
-            }
-            "pop" => {
-                if arr.len == 0 {
-                    return undefined();
-                }
-                arr.len -= 1;
-                return unsafe { *arr.elements.add(arr.len as usize) };
-            }
-            _ => {}
-        }
-        // Every other array method is shared with the VM. It works on a
-        // copy of the elements, which is written back afterwards.
-        let mut elems: Vec<u64> = (0..arr.len as usize)
-            .map(|i| unsafe { *arr.elements.add(i) })
-            .collect();
-        if let Some(result) = builtins::array_method(&NativeHost, &mut elems, key, a) {
-            array_reserve(arr, elems.len());
-            for (i, v) in elems.iter().enumerate() {
-                unsafe { *arr.elements.add(i) = *v };
-            }
-            arr.len = elems.len() as u32;
-            return outcome(result, recv);
-        }
-        // The methods written in Oite (`std/core/array.ot`), and any a
-        // program adds to `Array.prototype`.
-        if let Some(method) = array_proto_method(key) {
-            return ot_call(method, recv, argv, argc);
-        }
+    if let Some(result) = run_builtin(recv, key, a) {
+        return result;
     }
 
-    // Promise methods.
-    if let Some(id) = promise_id(recv)
-        && let Some(result) = promise_method(id, key, unsafe { args(argv, argc) })
+    // The array methods written in Oite (`std/core/array.ot`), and any a
+    // program adds to `Array.prototype`.
+    if let Some((_, ObjectKind::Array)) = object(r)
+        && let Some(method) = array_proto_method(key)
     {
-        return result;
+        return ot_call(method, recv, argv, argc);
     }
 
     // `f.call(thisArg, ...args)`, `f.apply(thisArg, array)`
     if let Some((_, ObjectKind::Function)) = object(r)
         && (key == "call" || key == "apply")
     {
-        let a = unsafe { args(argv, argc) };
         let this = a.first().copied().unwrap_or_else(undefined);
         if key == "call" {
             let rest = if a.is_empty() { a } else { &a[1..] };
@@ -106,27 +71,6 @@ pub extern "C" fn ot_call_method(
         return ot_call(recv, this, list.as_ptr(), list.len());
     }
 
-    // Number methods, shared with the VM.
-    if r.is_number() {
-        let a = unsafe { args(argv, argc) };
-        if let Some(result) = builtins::number_method(&NativeHost, r.as_number_unchecked(), key, a)
-        {
-            return outcome(result, recv);
-        }
-    }
-
-    // String methods, shared with the VM.
-    if let Some(s) = as_str(r) {
-        let a = unsafe { args(argv, argc) };
-        // Indexing: an ASCII string's flag saves scanning it.
-        if let Some(result) = builtins::string_index(&NativeHost, s, is_ascii(r), key, a) {
-            return outcome(result, recv);
-        }
-        if let Some(result) = builtins::string_method(&NativeHost, s, key, a) {
-            return outcome(result, recv);
-        }
-    }
-
     let method = get_property_atom(r, key_atom);
     if method == EXCEPTION_BITS {
         return method;
@@ -138,6 +82,118 @@ pub extern "C" fn ot_call_method(
         "TypeError",
         &format!("{}.{} is not a function", inspect(r), key),
     )
+}
+
+/// `recv.key(...a)` when `key` is a built-in method of `recv`, the same
+/// code the VM runs (`builtins`); `None` when it is not one.
+fn run_builtin(recv: u64, key: &str, a: &[u64]) -> Option<u64> {
+    let r = OtValue::from_bits(recv);
+    if let Some((ptr, ObjectKind::Array)) = object(r) {
+        let arr = array(ptr);
+        match key {
+            "push" => {
+                let mut len = arr.len as usize;
+                for &v in a {
+                    len = array_push(arr, v);
+                }
+                return Some(number(len as f64));
+            }
+            "pop" => {
+                if arr.len == 0 {
+                    return Some(undefined());
+                }
+                arr.len -= 1;
+                return Some(unsafe { *arr.elements.add(arr.len as usize) });
+            }
+            _ => {}
+        }
+        // The others work on a copy of the elements, written back after.
+        let mut elems: Vec<u64> = (0..arr.len as usize)
+            .map(|i| unsafe { *arr.elements.add(i) })
+            .collect();
+        let result = builtins::array_method(&NativeHost, &mut elems, key, a)?;
+        array_reserve(arr, elems.len());
+        for (i, v) in elems.iter().enumerate() {
+            unsafe { *arr.elements.add(i) = *v };
+        }
+        arr.len = elems.len() as u32;
+        return Some(outcome(result, recv));
+    }
+    if let Some(id) = promise_id(recv) {
+        return promise_method(id, key, a);
+    }
+    if r.is_number() {
+        let result = builtins::number_method(&NativeHost, r.as_number_unchecked(), key, a)?;
+        return Some(outcome(result, recv));
+    }
+    let s = as_str(r)?;
+    // Indexing: an ASCII string's flag saves scanning it.
+    let result = builtins::string_index(&NativeHost, s, is_ascii(r), key, a)
+        .or_else(|| builtins::string_method(&NativeHost, s, key, a))?;
+    Some(outcome(result, recv))
+}
+
+/// The kind of value `v` is, if it has built-in methods. (`Map` and `Set`
+/// do not exist in native code.)
+pub(super) fn receiver_of(v: u64) -> Option<Receiver> {
+    let r = OtValue::from_bits(v);
+    if r.is_number() {
+        return Some(Receiver::Number);
+    }
+    match object(r)? {
+        (_, ObjectKind::String) => Some(Receiver::String),
+        (_, ObjectKind::Array) => Some(Receiver::Array),
+        (_, ObjectKind::Object) if promise_id(v).is_some() => Some(Receiver::Promise),
+        _ => None,
+    }
+}
+
+thread_local! {
+    /// The function value of each built-in method, made when first read,
+    /// so that `s.trim === t.trim`.
+    static METHOD_VALUES: RefCell<HashMap<Method, u64>> = RefCell::new(HashMap::new());
+}
+
+/// The built-in method `name` of `receiver` as a function value, if it
+/// has one.
+pub(super) fn builtin_method(receiver: Receiver, name: &str) -> Option<u64> {
+    let m = Method::find(receiver, name)?;
+    Some(METHOD_VALUES.with(|values| {
+        *values.borrow_mut().entry(m).or_insert_with(|| {
+            ot_make_closure(ot_builtin_method as *const u8, number(m.to_bits() as f64))
+        })
+    }))
+}
+
+/// Whether the function at `ptr` is a built-in method (`builtin_method`),
+/// which is not a constructor.
+pub(super) fn is_builtin_method(ptr: HeapPtr) -> bool {
+    unsafe { ptr.as_ref::<NativeFunction>() }.code == ot_builtin_method as *const u8
+}
+
+/// A built-in method called as a function value (`const trim = s.trim;
+/// trim.call(t)`); `env` is the method (`Method::to_bits`). A `this` of
+/// another kind is a TypeError, except that a string method converts it to
+/// a string, as JavaScript does.
+pub extern "C" fn ot_builtin_method(this: u64, argv: *const u64, argc: usize, env: u64) -> u64 {
+    let bits = OtValue::from_bits(env).as_number_unchecked() as u32;
+    let m = Method::from_bits(bits).expect("a built-in method's environment");
+    let v = OtValue::from_bits(this);
+    let nullish = v.is_null() || v.is_undefined();
+    let mut this = this;
+    if receiver_of(this) != Some(m.receiver()) {
+        if m.receiver() != Receiver::String || nullish {
+            let shown = builtins::receiver_shown(&NativeHost, &this);
+            let e = m.receiver_error(nullish, &shown);
+            return throw_error(e.kind, &e.message);
+        }
+        this = ot_to_str(this);
+        if this == EXCEPTION_BITS {
+            return this;
+        }
+    }
+    let a = unsafe { args(argv, argc) };
+    run_builtin(this, m.name(), a).expect("a listed method is implemented")
 }
 
 /// `__intrinsic_<name>(args)`: intrinsic `id`, as on every backend

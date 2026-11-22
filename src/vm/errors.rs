@@ -192,7 +192,9 @@ impl VM {
             JsValue::Boolean(b) => b.to_string(),
             JsValue::Null => "null".to_string(),
             JsValue::Undefined => "undefined".to_string(),
-            JsValue::Function { .. } | JsValue::NativeFunction(_) => "function".to_string(),
+            JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::BuiltinMethod(_) => {
+                "function".to_string()
+            }
             JsValue::Object(ptr) => match self.heap.get(*ptr).map(|o| &o.data) {
                 Some(HeapData::Array(items)) if depth < 100 => items
                     .iter()

@@ -124,6 +124,163 @@ impl Kind {
     }
 }
 
+/// A kind of value whose methods are built into the runtime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Receiver {
+    String,
+    Array,
+    Number,
+    Promise,
+    Map,
+    Set,
+}
+
+impl Receiver {
+    /// The names of its built-in methods: the ones `string_method`,
+    /// `array_method` and `number_method` answer, and the promise, `Map` and
+    /// `Set` methods of each backend. A name listed here must be one of
+    /// them: reading it off a value gives a function that calls it.
+    pub fn methods(self) -> &'static [&'static str] {
+        match self {
+            Receiver::String => &[
+                "at",
+                "charAt",
+                "charCodeAt",
+                "concat",
+                "endsWith",
+                "includes",
+                "indexOf",
+                "lastIndexOf",
+                "padEnd",
+                "padStart",
+                "repeat",
+                "replace",
+                "replaceAll",
+                "slice",
+                "split",
+                "startsWith",
+                "substring",
+                "toLowerCase",
+                "toString",
+                "toUpperCase",
+                "trim",
+                "trimEnd",
+                "trimLeft",
+                "trimRight",
+                "trimStart",
+                "valueOf",
+            ],
+            Receiver::Array => &[
+                "at",
+                "concat",
+                "fill",
+                "includes",
+                "indexOf",
+                "join",
+                "lastIndexOf",
+                "pop",
+                "push",
+                "reverse",
+                "shift",
+                "slice",
+                "splice",
+                "toString",
+                "unshift",
+            ],
+            Receiver::Number => &["toFixed", "toString", "valueOf"],
+            Receiver::Promise => &["catch", "finally", "then"],
+            Receiver::Map => &["clear", "delete", "get", "has", "set"],
+            Receiver::Set => &["add", "clear", "delete", "has"],
+        }
+    }
+
+    /// The global that owns its methods: `String` for `String.prototype`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Receiver::String => "String",
+            Receiver::Array => "Array",
+            Receiver::Number => "Number",
+            Receiver::Promise => "Promise",
+            Receiver::Map => "Map",
+            Receiver::Set => "Set",
+        }
+    }
+
+    const ALL: [Receiver; 6] = [
+        Receiver::String,
+        Receiver::Array,
+        Receiver::Number,
+        Receiver::Promise,
+        Receiver::Map,
+        Receiver::Set,
+    ];
+}
+
+/// A built-in method as a value: `"a".trim`, `[].push`. The same method
+/// (`String.prototype.trim`) is always the same value, whichever value it
+/// was read from. Calling it with a `this` of its receiver kind does what
+/// calling the method on that value does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Method {
+    receiver: Receiver,
+    /// Its position in `receiver.methods()`.
+    index: u8,
+}
+
+impl Method {
+    /// The built-in method `name` of `receiver`, if it has one.
+    pub fn find(receiver: Receiver, name: &str) -> Option<Method> {
+        let index = receiver.methods().iter().position(|m| *m == name)?;
+        Some(Method {
+            receiver,
+            index: index as u8,
+        })
+    }
+
+    pub fn receiver(self) -> Receiver {
+        self.receiver
+    }
+
+    pub fn name(self) -> &'static str {
+        self.receiver.methods()[self.index as usize]
+    }
+
+    /// The method as a number, for native code to keep in a function's
+    /// environment; `from_bits` reverses it.
+    pub fn to_bits(self) -> u32 {
+        ((self.receiver as u32) << 8) | self.index as u32
+    }
+
+    pub fn from_bits(bits: u32) -> Option<Method> {
+        let receiver = *Receiver::ALL.get((bits >> 8) as usize)?;
+        let index = (bits & 0xff) as u8;
+        ((index as usize) < receiver.methods().len()).then_some(Method { receiver, index })
+    }
+
+    /// The TypeError for calling the method with a `this` it cannot work
+    /// on, as Node words it. `nullish`: `this` is null or undefined;
+    /// `shown`: `this` as the message shows it (`receiver_shown`).
+    pub fn receiver_error(self, nullish: bool, shown: &str) -> Error {
+        let name = format!("{}.prototype.{}", self.receiver.name(), self.name());
+        Error::type_error(match self.receiver {
+            Receiver::String if nullish => format!("{name} called on null or undefined"),
+            Receiver::Array if nullish => "Cannot convert undefined or null to object".to_string(),
+            Receiver::Number => format!("{name} requires that 'this' be a Number"),
+            _ => format!("Method {name} called on incompatible receiver {shown}"),
+        })
+    }
+}
+
+/// `v` as an incompatible-receiver error shows it: a primitive as its
+/// string, an object by its kind.
+pub fn receiver_shown<H: Host>(h: &H, v: &H::Value) -> String {
+    match h.kind(v) {
+        Kind::Array => "[object Array]".to_string(),
+        Kind::Object | Kind::Function => "#<Object>".to_string(),
+        _ => h.to_string(v),
+    }
+}
+
 /// The result of a built-in method call.
 pub enum Outcome<V> {
     Value(V),

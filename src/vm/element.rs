@@ -29,63 +29,57 @@ pub(super) fn array_index(key: &JsValue) -> Option<usize> {
     }
 }
 
-/// Whether `name` is an array method implemented in Rust, by `CallMethod`.
-/// The rest are on `Array.prototype` (`std/core/array.ot`).
-pub(super) fn is_array_method(name: &str) -> bool {
-    matches!(
-        name,
-        "push"
-            | "pop"
-            | "shift"
-            | "unshift"
-            | "splice"
-            | "slice"
-            | "concat"
-            | "join"
-            | "indexOf"
-            | "lastIndexOf"
-            | "includes"
-            | "reverse"
-            | "fill"
-            | "at"
-    )
-}
-
 impl VM {
     /// `target[key]`. `undefined` for a missing element or property, and
     /// for a target that has none (the caller rejects null and undefined).
     pub(super) fn get_element(&self, target: &JsValue, key: &JsValue) -> JsValue {
-        match target {
-            JsValue::Object(ptr) => match self.heap.get(*ptr).map(|o| &o.data) {
-                Some(HeapData::Array(arr)) => {
-                    if let Some(i) = array_index(key) {
+        if let Some(i) = array_index(key) {
+            match target {
+                JsValue::Object(ptr) => {
+                    if let Some(HeapData::Array(arr)) = self.heap.get(*ptr).map(|o| &o.data) {
                         return arr.get(i).cloned().unwrap_or(JsValue::Undefined);
                     }
-                    let name = self.to_js_string(key);
-                    if name == "length" {
-                        JsValue::Number(arr.len() as f64)
-                    } else if is_array_method(&name) {
-                        // A function-typed value, so `typeof` says "function".
-                        JsValue::NativeFunction(0)
-                    } else {
-                        self.array_proto_method(&name).unwrap_or(JsValue::Undefined)
-                    }
                 }
-                Some(_) => self.get_prop_with_proto_chain(*ptr, &self.to_js_string(key)),
+                JsValue::String(s) => {
+                    return char_at(s, is_ascii(s), i)
+                        .map_or(JsValue::Undefined, |c| JsValue::String(c.to_string()));
+                }
+                _ => {}
+            }
+        }
+        self.get_named(target, &self.to_js_string(key))
+    }
+
+    /// `target[name]` for a name that is not an element index: a plain
+    /// object's property, found along its prototype chain (`GetProp` calls
+    /// getters first), `length` and `size`, and built-in methods (as
+    /// values: `"a".trim`).
+    pub(super) fn get_named(&self, target: &JsValue, name: &str) -> JsValue {
+        let data = match target {
+            JsValue::Object(ptr) => match self.heap.get(*ptr) {
+                Some(o) => Some(&o.data),
+                None => return JsValue::Undefined,
+            },
+            _ => None,
+        };
+        let size = |n: usize| JsValue::Number(n as f64);
+        match (target, data) {
+            (JsValue::Object(ptr), Some(HeapData::Object(_))) => {
+                self.get_prop_with_proto_chain(*ptr, name)
+            }
+            (_, Some(HeapData::Array(arr))) if name == "length" => size(arr.len()),
+            (_, Some(HeapData::ByteStream(bytes))) if name == "length" => size(bytes.len()),
+            (_, Some(HeapData::Map(map))) if name == "size" => size(map.len()),
+            (_, Some(HeapData::Set(set))) if name == "size" => size(set.len()),
+            (JsValue::String(s), _) if name == "length" => size(char_count(s, is_ascii(s))),
+            _ => match self.builtin_method(target, name) {
+                Some(method) => method,
+                // The methods written in Oite (`std/core/array.ot`).
+                None if matches!(data, Some(HeapData::Array(_))) => {
+                    self.array_proto_method(name).unwrap_or(JsValue::Undefined)
+                }
                 None => JsValue::Undefined,
             },
-            JsValue::String(s) => {
-                let ascii = is_ascii(s);
-                match array_index(key) {
-                    Some(i) => char_at(s, ascii, i)
-                        .map_or(JsValue::Undefined, |c| JsValue::String(c.to_string())),
-                    None if self.to_js_string(key) == "length" => {
-                        JsValue::Number(char_count(s, ascii) as f64)
-                    }
-                    None => JsValue::Undefined,
-                }
-            }
-            _ => JsValue::Undefined,
         }
     }
 

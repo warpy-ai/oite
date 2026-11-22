@@ -687,7 +687,9 @@ impl Lowerer {
             JsValue::Undefined => (Literal::Undefined, IrType::Any),
             JsValue::Object(_) => (Literal::Null, IrType::Object),
             JsValue::Function { address, .. } => (Literal::Function(*address), IrType::Function),
-            JsValue::NativeFunction(_) => (Literal::Null, IrType::Function),
+            JsValue::NativeFunction(_) | JsValue::BuiltinMethod(_) => {
+                (Literal::Null, IrType::Function)
+            }
             JsValue::Accessor(_, _) => (Literal::Null, IrType::Any),
             JsValue::Promise(_) => (Literal::Null, IrType::Any),
         }
