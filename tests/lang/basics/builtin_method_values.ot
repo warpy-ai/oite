@@ -1,0 +1,87 @@
+// backends: vm jit aot
+// Built-in methods are values: read one off a string, an array, a number
+// or a promise, keep it, and call it with the `this` you give it. Held to
+// Node's output.
+
+function show(f) {
+  try {
+    console.log(f());
+  } catch (e) {
+    console.log(e.name + ": " + e.message);
+  }
+}
+
+// Reading a method gives a function, the same one from every value.
+const s = "  Hello  ";
+console.log(typeof s.trim, typeof "a".toUpperCase, typeof [].push, typeof (1.5).toFixed);
+console.log(s.trim === "x".trim, [].push === [1, 2].push, s.trim === s.toUpperCase);
+console.log(typeof s.nope, typeof [].nope, typeof (1).nope);
+if (s.padStart && [].indexOf) {
+  console.log("methods are truthy");
+}
+
+// Kept in a variable, called with call and apply.
+const up = "abc".toUpperCase;
+console.log(up.call("xyz"), up.apply("q", []));
+const pad = s.padStart;
+console.log(pad.call("7", 3, "0"), pad.apply("7", [4, "-"]));
+
+// Read with a key known only when the program runs.
+const names = ["toUpperCase", "trim", "charAt"];
+for (const k of names) {
+  console.log(k, "[" + s[k].call(" ok ", 1) + "]");
+}
+
+// Kept in an array or an object.
+const fns = [s.trim, s.toLowerCase];
+console.log(fns[0].call(" a "), fns[1].call("B"));
+const o = { shout: "x".toUpperCase, toString() { return "obj"; } };
+console.log(o.shout());
+
+// Arrays: push.apply appends a list; the methods mutate the `this` given.
+const arr = [1, 2];
+arr.push.apply(arr, [3, 4, 5]);
+console.log(arr.join(","));
+const slice = arr.slice;
+console.log(slice.call(arr, 1, 3).join("+"));
+const join = [].join;
+console.log(join.call([1, 2, 3], "-"));
+const pop = arr.pop;
+console.log(pop.call(arr), arr.length);
+console.log(Array.prototype.push === arr.push, typeof Array.prototype.map);
+Array.prototype.push.call(arr, 6);
+console.log(arr.join(","));
+const reverse = arr.reverse;
+console.log(reverse.call(arr) === arr, arr.join(","));
+console.log([[1, 2], [3]].map((a) => slice.call(a, 1).length).join(","));
+
+// Numbers.
+const fixed = (0).toFixed;
+console.log(fixed.call(3.14159, 2), (255).toString.call(255, 16));
+
+// A string method converts any other `this` to a string.
+console.log("".trim.call(42), "".toUpperCase.call(true), up.call(o));
+
+// A method needs a `this` it can work on.
+show(() => up());
+show(() => up.call(null));
+show(() => s.trim.call(undefined));
+show(() => arr.push.call(undefined, 1));
+show(() => fixed.call("x"));
+show(() => fixed());
+try {
+  new s.trim();
+} catch (e) {
+  console.log("not a constructor:", e.name);
+}
+
+// Promises.
+const p = Promise.resolve(7);
+const then = p.then;
+console.log(typeof then, then === Promise.resolve(1).then);
+show(() => then.call(5, () => {}));
+then.call(p, (v) => console.log("then", v));
+const c = p.catch;
+c.call(Promise.reject(new Error("boom")), (e) => console.log("caught", e.message));
+p.finally.call(p, () => console.log("finally"));
+console.log("sync done");
