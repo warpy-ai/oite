@@ -1,0 +1,55 @@
+// backends: vm jit aot
+// A number, a string, a boolean, null and undefined cannot be changed, so
+// a second name for one cannot be told from a copy: assigning it does not
+// move it, however it was made.
+let sum = 1 + 2;
+let sum2 = sum;
+console.log(sum, sum2);
+
+let s = "x";
+let t = s;
+console.log(s, t);
+
+let name = "oite";
+let greeting = `hi ${name}`;
+let greeting2 = greeting;
+console.log(greeting, greeting2);
+
+function five() {
+  return 5;
+}
+let c = five();
+let d = c;
+console.log(c, d);
+
+function label(): string {
+  return "label";
+}
+let n: number = five();
+let m = n;
+let l: string = label();
+let k = l;
+console.log(n, m, l, k);
+
+let none = null;
+let none2 = none;
+let missing = undefined;
+let missing2 = missing;
+let big = sum > 2;
+let big2 = big;
+console.log(none, none2, missing, missing2, big, big2);
+
+// A call result of unknown type may be an object, but nothing says so:
+// it does not move either.
+function box() {
+  return { v: 1 };
+}
+let b1 = box();
+let b2 = b1;
+console.log(b1.v, b2.v, b1 === b2);
+
+// An async closure takes the objects it names, but not a string.
+let msg = "hi";
+let later = async () => msg;
+console.log(msg);
+later().then((v) => console.log(v, msg));

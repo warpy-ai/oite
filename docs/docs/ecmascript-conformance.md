@@ -166,6 +166,37 @@ console.log(c()); // 2
 
 Closures work as expected — captured variables are owned by the closure.
 
+### 5. Strings Count Characters, Not UTF-16 Code Units
+
+An Oite string is a sequence of Unicode scalar values (code points other
+than surrogates), stored as UTF-8. `length`, `s[i]`, and every index a
+string method takes or returns count those characters, on every backend.
+
+```javascript
+"héllo".length;       // 5, as in JavaScript
+"日本語"[1];           // "本", as in JavaScript
+"😀".length;          // 1 (JavaScript: 2)
+"a😀b"[2];            // "b" (JavaScript: "\ude00", half a surrogate pair)
+"a😀b".charCodeAt(1); // 128512 (JavaScript: 55357)
+```
+
+JavaScript counts UTF-16 code units. For text in the Basic Multilingual
+Plane (Latin, Greek, Cyrillic, CJK, and most other scripts) a character is
+one code unit, so the results match JavaScript. They differ only for astral
+characters, such as emoji, which JavaScript counts as two code units (a
+surrogate pair) and Oite counts as one character. `for...of` and spread
+iterate code points in JavaScript too, so they agree in every case.
+
+`<` and `>` order strings by code point. JavaScript orders them by UTF-16
+code unit, which differs only when an astral character is compared with
+one in U+E000 to U+FFFF.
+
+**Rationale:** Counting UTF-16 code units over UTF-8 storage would need a
+second encoding or an index for every string, and would expose surrogate
+halves that are not characters. Native code reads an ASCII string's length
+and characters directly. Indexing a non-ASCII string walks it from the
+start.
+
 ## Built-in Object Support
 
 Oite implements JavaScript built-in objects incrementally:

@@ -259,20 +259,28 @@ impl Codegen {
                 }
             }
             Expr::Call(call_expr) => {
-                // `obj.name(args)`: a method call with `this = obj`. Only for
-                // an identifier property: for `obj[k](args)` this used to
-                // emit the arguments and object, then fall through and emit
-                // them again, leaving junk on the stack.
+                // `obj.name(args)`, `obj["name"](args)`, `obj[k](args)`: a
+                // method call with `this = obj`.
                 if let Callee::Expr(callee_expr) = &call_expr.callee
                     && let Expr::Member(member) = callee_expr.as_ref()
-                    && let Some(key) = self.member_key(&member.prop)
                 {
                     for arg in &call_expr.args {
                         self.gen_expr(&arg.expr);
                     }
                     self.gen_expr(&member.obj);
-                    self.instructions
-                        .push(OpCode::CallMethod(key, call_expr.args.len()));
+                    let argc = call_expr.args.len();
+                    match (self.member_key(&member.prop), &member.prop) {
+                        (Some(key), _) => self.instructions.push(OpCode::CallMethod(key, argc)),
+                        (None, MemberProp::Computed(computed)) => {
+                            // [args..., obj] -> [args..., obj[k], obj]
+                            self.instructions.push(OpCode::Dup);
+                            self.gen_expr(&computed.expr);
+                            self.instructions.push(OpCode::GetPropComputed);
+                            self.instructions.push(OpCode::Swap);
+                            self.instructions.push(OpCode::CallWithThis(argc));
+                        }
+                        (None, _) => unreachable!("only a computed member has no key"),
+                    }
                     return;
                 }
                 // `super.name(args)`: the parent's method, with this `this`.

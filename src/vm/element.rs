@@ -6,6 +6,7 @@
 //! the key's string form. So `a[-1]` and `a[1.5]` are not elements, and on
 //! a plain object `o[7]` and `o["7"]` are the same property.
 
+use crate::runtime::builtins::{char_at, char_count, is_ascii};
 use crate::vm::VM;
 use crate::vm::value::{HeapData, JsValue};
 
@@ -29,7 +30,7 @@ pub(super) fn array_index(key: &JsValue) -> Option<usize> {
 }
 
 /// Whether `name` is an array method implemented in Rust, by `CallMethod`.
-/// The rest are on `Array.prototype` (`std/core/array.ot`).
+/// Others are looked up on `Array.prototype`.
 pub(super) fn is_array_method(name: &str) -> bool {
     matches!(
         name,
@@ -73,10 +74,17 @@ impl VM {
                 Some(_) => self.get_prop_with_proto_chain(*ptr, &self.to_js_string(key)),
                 None => JsValue::Undefined,
             },
-            JsValue::String(s) => match array_index(key) {
-                Some(i) => string_char(s, i),
-                None => JsValue::Undefined,
-            },
+            JsValue::String(s) => {
+                let ascii = is_ascii(s);
+                match array_index(key) {
+                    Some(i) => char_at(s, ascii, i)
+                        .map_or(JsValue::Undefined, |c| JsValue::String(c.to_string())),
+                    None if self.to_js_string(key) == "length" => {
+                        JsValue::Number(char_count(s, ascii) as f64)
+                    }
+                    None => JsValue::Undefined,
+                }
+            }
             _ => JsValue::Undefined,
         }
     }
@@ -135,18 +143,5 @@ impl VM {
             arr.resize(n as usize, JsValue::Undefined);
         }
         Ok(())
-    }
-}
-
-/// The character of `s` at `i`, as a string.
-fn string_char(s: &str, i: usize) -> JsValue {
-    match s.as_bytes().get(i) {
-        // ASCII: the common case, no need to walk the string.
-        Some(b) if *b < 128 => JsValue::String((*b as char).to_string()),
-        Some(_) => s
-            .chars()
-            .nth(i)
-            .map_or(JsValue::Undefined, |c| JsValue::String(c.to_string())),
-        None => JsValue::Undefined,
     }
 }

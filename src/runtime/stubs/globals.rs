@@ -79,12 +79,14 @@ pub(super) fn initial_globals() -> HashMap<String, u64> {
         builtin(ot_builtin_object_keys),
     );
     g.insert("Object".to_string(), object);
-    // `Array`: `isArray` here, the methods that take callbacks in
-    // `std/core/array.ot`, on `Array.prototype`.
+    // `Array`: its `prototype` holds the array methods core does not
+    // implement, which the prelude (`@rolls/std`) or a program adds.
     let array_class = ot_alloc_object();
-    let ac = OtValue::from_bits(array_class);
-    set_property(ac, "isArray", builtin(ot_builtin_array_is_array));
-    set_property(ac, "prototype", ot_alloc_object());
+    set_property(
+        OtValue::from_bits(array_class),
+        "prototype",
+        ot_alloc_object(),
+    );
     g.insert("Array".to_string(), array_class);
     // `Math`: one built-in serves every function member; its environment
     // is the member's index in `MATH_FUNCTIONS`.
