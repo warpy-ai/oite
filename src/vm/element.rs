@@ -30,7 +30,7 @@ pub(super) fn array_index(key: &JsValue) -> Option<usize> {
 }
 
 /// Whether `name` is an array method implemented in Rust, by `CallMethod`.
-/// The rest are on `Array.prototype` (`std/core/array.ot`).
+/// Others are looked up on `Array.prototype`.
 pub(super) fn is_array_method(name: &str) -> bool {
     matches!(
         name,

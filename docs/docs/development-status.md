@@ -68,7 +68,8 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Methods on object literals (`this`)        | Covered                              | Covered                           |
 | String methods (`slice`, `split`, `trim`, `indexOf`, `padStart`, ...) | Covered   | Covered (shared implementation)   |
 | Array methods (`splice`, `join`, `indexOf`, `concat`, `shift`, ...)   | Covered   | Covered (shared implementation)   |
-| Callback methods (`map`, `filter`, `forEach`, `reduce`, `find`, `some`, `every`, `flat`, `flatMap`, `sort`, ...), `Array.isArray` / `from` / `of` | Covered (`std/core/array.ot`) | Covered (same code, compiled in) |
+| Callback methods (`map`, `filter`, `forEach`, `reduce`) | Not built in; `@rolls/array` has them as functions | Same |
+| Array methods added to `Array.prototype`   | Covered                              | Covered                           |
 | `if`, `while`, `for`, `do..while`, `?:`    | Covered                              | Covered                           |
 | `break` / `continue`, with or without labels | Covered                            | Covered                           |
 | `switch`, labeled blocks                   | Covered                              | Covered                           |

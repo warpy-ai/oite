@@ -2234,9 +2234,7 @@ impl VM {
                             if result.is_some() {
                                 self.heap[ptr].data = HeapData::Array(elems);
                             } else if let Some(method) = self.array_proto_method(&name) {
-                                // The methods written in Oite
-                                // (`std/core/array.ot`), and any a program
-                                // adds to `Array.prototype`.
+                                // The methods added to `Array.prototype`.
                                 return self.call_as_method(method, JsValue::Object(ptr), args);
                             }
                             return self.finish_builtin(result, JsValue::Object(ptr), &name);
