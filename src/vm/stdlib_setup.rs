@@ -550,25 +550,14 @@ fn setup_math_date(vm: &mut VM) {
     globals.insert("Date".into(), JsValue::Object(date_ptr));
 }
 
-/// `setTimeout(callback, ms)` and `clearTimeout(id)`.
-/// `Array`: `isArray` here, the methods that take callbacks in
-/// `std/core/array.ot`, on `Array.prototype`.
+/// `Array`: its `prototype` holds the methods built into the runtime, and
+/// the ones core does not implement, which the prelude (`@rolls/std`) or a
+/// program adds.
 fn setup_array(vm: &mut VM) {
-    fn is_array(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
-        JsValue::Boolean(matches!(
-            args.first(),
-            Some(JsValue::Object(ptr)) if matches!(
-                vm.heap.get(*ptr).map(|o| &o.data),
-                Some(HeapData::Array(_))
-            )
-        ))
-    }
-    let is_array_idx = vm.register_native(is_array);
     // The methods built into the runtime, so `Array.prototype.push` is
     // `[].push`.
     let proto = builtin_prototype(vm, crate::runtime::builtins::Receiver::Array);
     let mut props = crate::vm::value::PropMap::new();
-    props.insert("isArray".to_string(), JsValue::NativeFunction(is_array_idx));
     props.insert("prototype".to_string(), proto);
     let class = vm.heap.len();
     vm.heap.push(HeapObject {
@@ -579,6 +568,7 @@ fn setup_array(vm: &mut VM) {
         .insert("Array".into(), JsValue::Object(class));
 }
 
+/// `setTimeout(callback, ms)` and `clearTimeout(id)`.
 fn setup_timers(vm: &mut VM) {
     fn set_timeout(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
         let callback = args.first().cloned().unwrap_or(JsValue::Undefined);

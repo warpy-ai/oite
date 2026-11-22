@@ -952,6 +952,15 @@ impl VM {
         ExecResult::ContinueNoIpInc
     }
 
+    /// Call the object `ptr` as the current instruction, if it is a
+    /// function: a `new Promise`'s `resolve` or `reject`. `None`: it is not
+    /// one.
+    fn call_object(&mut self, ptr: usize, args: Vec<JsValue>) -> Option<ExecResult> {
+        self.resolver_of(ptr)?;
+        let result = self.call_value(&JsValue::Object(ptr), JsValue::Undefined, args);
+        Some(self.finish_call(result))
+    }
+
     /// Push a call's result and continue, or throw what it threw.
     fn finish_call(&mut self, result: Result<JsValue, JsValue>) -> ExecResult {
         match result {
@@ -1368,15 +1377,12 @@ impl VM {
                     JsValue::BoundFunction(_) => {
                         return self.call_as_method(callee, JsValue::Undefined, args);
                     }
-                    JsValue::Object(ptr) if self.resolver_of(ptr).is_some() => {
-                        // `resolve(v)` / `reject(e)` of a `new Promise`
-                        let callee = JsValue::Object(ptr);
-                        match self.call_value(&callee, JsValue::Undefined, args) {
-                            Ok(v) => self.stack.push(v),
-                            Err(e) => return self.throw_exception(e),
-                        }
-                    }
                     other => {
+                        if let JsValue::Object(ptr) = other
+                            && let Some(result) = self.call_object(ptr, args)
+                        {
+                            return result;
+                        }
                         let shown = crate::stdlib::inspect(self, &other);
                         return self.throw_error("TypeError", format!("{shown} is not a function"));
                     }
@@ -2194,9 +2200,7 @@ impl VM {
                             if result.is_none()
                                 && let Some(method) = self.array_proto_method(&name)
                             {
-                                // The methods written in Oite
-                                // (`std/core/array.ot`), and any a program
-                                // adds to `Array.prototype`.
+                                // The methods added to `Array.prototype`.
                                 return self.call_as_method(method, JsValue::Object(ptr), args);
                             }
                             return self.finish_builtin(result, JsValue::Object(ptr), &name);
@@ -2285,6 +2289,11 @@ impl VM {
                         {
                             let args = self.pop_args(arg_count);
                             return self.call_as_method(method, JsValue::Object(ptr), args);
+                        } else if let JsValue::Object(method) = method {
+                            let args = self.pop_args(arg_count);
+                            if let Some(result) = self.call_object(method, args) {
+                                return result;
+                            }
                         }
                         let shown = crate::stdlib::inspect(self, &JsValue::Object(ptr));
                         return self
@@ -2617,6 +2626,11 @@ impl VM {
                     },
                     f @ JsValue::BoundFunction(_) => return self.call_as_method(f, this, args),
                     other => {
+                        if let JsValue::Object(ptr) = other
+                            && let Some(result) = self.call_object(ptr, args)
+                        {
+                            return result;
+                        }
                         let shown = crate::stdlib::inspect(self, &other);
                         return self.throw_error("TypeError", format!("{shown} is not a function"));
                     }

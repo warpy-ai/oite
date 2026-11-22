@@ -4,6 +4,16 @@
 // the number of parameters before the first default or rest one. Held to
 // Node's output.
 
+// Core has no callback methods (they come from `@rolls/array`); this
+// test adds the ones it uses, as the prelude does.
+Array.prototype.map = function (f) {
+  const out = [];
+  for (let i = 0; i < this.length; i++) {
+    out.push(f(this[i], i, this));
+  }
+  return out;
+};
+
 function decl(a, b, c) {}
 const expr = function (a) {};
 const named = function inner(a, b) {};

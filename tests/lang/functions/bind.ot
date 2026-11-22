@@ -3,6 +3,21 @@
 // bound `this` and the bound arguments first; `new` on it constructs the
 // target. Held to Node's output.
 
+// Core has no callback methods (they come from `@rolls/array`); this
+// test adds the ones it uses, as the prelude does.
+Array.prototype.map = function (f) {
+  const out = [];
+  for (let i = 0; i < this.length; i++) {
+    out.push(f(this[i], i, this));
+  }
+  return out;
+};
+Array.prototype.forEach = function (f) {
+  for (let i = 0; i < this.length; i++) {
+    f(this[i], i, this);
+  }
+};
+
 function greet(greeting, punct) {
   return greeting + ", " + this.name + punct;
 }

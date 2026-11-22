@@ -68,7 +68,8 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Methods on object literals (`this`)        | Covered                              | Covered                           |
 | String methods (`slice`, `split`, `trim`, `indexOf`, `padStart`, ...) | Covered   | Covered (shared implementation)   |
 | Array methods (`splice`, `join`, `indexOf`, `concat`, `shift`, ...)   | Covered   | Covered (shared implementation)   |
-| Callback methods (`map`, `filter`, `forEach`, `reduce`, `find`, `some`, `every`, `flat`, `flatMap`, `sort`, ...), `Array.isArray` / `from` / `of` | Covered (`std/core/array.ot`) | Covered (same code, compiled in) |
+| Callback methods (`map`, `filter`, `forEach`, `reduce`) | Not built in; `@rolls/array` has them as functions | Same |
+| Array methods added to `Array.prototype`   | Covered                              | Covered                           |
 | Built-in methods as values (`const trim = s.trim`, `trim.call(t)`, `arr.push.apply(arr, xs)`, `Array.prototype.push`, `String.prototype.trim`) | Covered | Covered (same implementation) |
 | Functions as objects (`f.x = 1`, `Object.keys(f)`, `f.name`, `f.length`, `F.prototype`, `f.bind(this, ...args)`) | Covered | Covered |
 | `Map` / `Set` (`get`, `set`, `has`, `delete`, `clear`, `add`, `size`) | Covered | Not supported: `Map is not defined` |

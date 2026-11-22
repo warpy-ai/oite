@@ -3,6 +3,16 @@
 // built-in methods of strings and numbers: the same values read off a
 // string or a number. Held to Node's output.
 
+// Core has no callback methods (they come from `@rolls/array`); this
+// test adds the ones it uses, as the prelude does.
+Array.prototype.map = function (f) {
+  const out = [];
+  for (let i = 0; i < this.length; i++) {
+    out.push(f(this[i], i, this));
+  }
+  return out;
+};
+
 console.log(typeof String, typeof Number, typeof String.prototype, typeof Number.prototype);
 console.log(String.prototype.trim === "x".trim, Number.prototype.toFixed === (1).toFixed);
 console.log(Array.prototype.push === [].push, String.prototype.trim === String.prototype.trimEnd);
