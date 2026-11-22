@@ -211,15 +211,48 @@ Array.prototype.push === [].push; // true
 trim();                           // TypeError, as in JavaScript
 ```
 
-Three differences remain:
+`Array.prototype`, `String.prototype` and `Number.prototype` hold the same
+method values. Two differences remain:
 
 - An array method needs an array as `this`.
-  `Array.prototype.join.call("abc", "-")` is a TypeError; JavaScript gives
+  `Array.prototype.join.call("abc", "-")` is a TypeError. JavaScript gives
   `"a-b-c"`.
-- Only `Array.prototype` holds its built-in methods. Read a string,
-  number, promise, `Map` or `Set` method off a value of that kind, not off
-  `String.prototype` and the like.
-- Functions have no `bind`.
+- A string or a number does not look its methods up on `String.prototype`
+  or `Number.prototype`. A method a program adds there (`String.prototype.shout
+  = ...`) is reachable through `String.prototype` and `call`, not as
+  `"a".shout()`.
+
+### 7. Functions Are Objects
+
+A function holds the properties a program gives it, and has `name`,
+`length`, `call`, `apply` and `bind`, on every backend.
+
+```javascript
+function counter() { return ++counter.calls; }
+counter.calls = 0;
+Object.keys(counter);              // ["calls"]
+counter.name;                      // "counter"
+((a, b = 1, c) => a).length;       // 1
+counter.bind(null).name;           // "bound counter"
+function P(x) { this.x = x; }
+P.prototype.get = function () { return this.x; };
+new P(1).get();                    // 1
+```
+
+A plain `function` has a `prototype`, made the first time it is read.
+`new P()` inherits it, and `instanceof P` checks it. Arrows, methods and
+async functions have none. `new` on a bound function constructs its target
+with the bound arguments first.
+
+Three differences remain:
+
+- A function expression that captures no variables is one function, not a
+  new one each time it is evaluated. `===` already says so, and its
+  properties are shared too: `function make() { return function () {}; }`
+  gives the same function, with the same properties, on every call.
+- `name` and `length` cannot be changed, and `delete` does not remove them.
+- Built-in functions other than methods (`console.log`, `Math.max`) have
+  no `name`, and every built-in function has a `length` of 0.
 
 ## Built-in Object Support
 
