@@ -45,9 +45,9 @@ impl Codegen {
         self.instructions.clone()
     }
 
-    /// `import * as ns from "m"` in a linked module: `ns` is an object of
-    /// `m`'s exports, made before the module's code runs (imports are
-    /// hoisted).
+    /// `import * as ns from "m"` in a linked module, where the code uses
+    /// `ns` as a value: `ns` is an object of `m`'s exports, made before the
+    /// module's code runs (imports are hoisted).
     pub(super) fn namespace_imports(&mut self) {
         let Some(link) = &self.link else {
             return;
@@ -55,6 +55,7 @@ impl Codegen {
         let mut namespaces: Vec<(String, Vec<(String, String)>)> = link
             .namespaces
             .iter()
+            .filter(|(k, _)| self.namespace_objects.contains(*k))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         namespaces.sort();
@@ -78,6 +79,24 @@ impl Codegen {
             self.instructions
                 .push(OpCode::Let(format!("{prefix}{local}")));
         }
+    }
+
+    /// `ns.x`, where `ns` is the module's `import * as ns`: the global
+    /// name of the export `x`, which the code uses directly. `None` if `x`
+    /// is not an export.
+    pub(super) fn namespace_member(&self, member: &MemberExpr) -> Option<String> {
+        let link = self.link.as_ref()?;
+        let (Expr::Ident(ns), MemberProp::Ident(prop)) = (member.obj.as_ref(), &member.prop) else {
+            return None;
+        };
+        if !self.scopes.is_module_level(ns.span) {
+            return None;
+        }
+        let members = link.namespaces.get(&*ns.sym)?;
+        let i = members
+            .binary_search_by(|(name, _)| name.as_str().cmp(&prop.sym))
+            .ok()?;
+        Some(members[i].1.clone())
     }
 
     /// An `import` / `export` in a linked module (`modules.rs`). Imports and
