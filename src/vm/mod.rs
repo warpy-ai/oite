@@ -281,7 +281,7 @@ pub struct VM {
     pub unhandled_rejections: Vec<Promise>,
     /// The object holding each function's own properties, made when the
     /// first one is set (see `functions.rs`).
-    pub fn_props: HashMap<functions::FunctionId, usize>,
+    pub fn_props: functions::FunctionProps,
 }
 
 impl Default for VM {
@@ -339,7 +339,7 @@ impl VM {
             promise_alls: HashMap::new(),
             next_async_id: 0,
             unhandled_rejections: Vec::new(),
-            fn_props: HashMap::new(),
+            fn_props: Default::default(),
         }
     }
 
