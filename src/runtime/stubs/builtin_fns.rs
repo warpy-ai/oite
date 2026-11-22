@@ -64,6 +64,19 @@ pub extern "C" fn ot_builtin_string(_this: u64, argv: *const u64, argc: usize, _
     new_string(&value_to_string(v))
 }
 
+/// `Number(v)`: an object with its own `valueOf` / `toString` converts
+/// through it.
+pub extern "C" fn ot_builtin_number(_this: u64, argv: *const u64, argc: usize, _env: u64) -> u64 {
+    let Some(v) = unsafe { args(argv, argc) }.first() else {
+        return number(0.0);
+    };
+    match to_primitive(OtValue::from_bits(*v), false) {
+        Ok(Some(p)) => number(to_number(p)),
+        Ok(None) => number(to_number(OtValue::from_bits(*v))),
+        Err(e) => e,
+    }
+}
+
 /// `String(v)`, as in a template literal.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_to_str(v: u64) -> u64 {

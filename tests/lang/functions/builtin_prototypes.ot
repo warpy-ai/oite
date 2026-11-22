@@ -1,0 +1,30 @@
+// backends: vm jit aot
+// `String` and `Number` are functions whose `prototype` holds the
+// built-in methods of strings and numbers: the same values read off a
+// string or a number. Held to Node's output.
+
+console.log(typeof String, typeof Number, typeof String.prototype, typeof Number.prototype);
+console.log(String.prototype.trim === "x".trim, Number.prototype.toFixed === (1).toFixed);
+console.log(Array.prototype.push === [].push, String.prototype.trim === String.prototype.trimEnd);
+console.log("trim" in String.prototype, "nope" in String.prototype, String.prototype.nope);
+
+// Called with the `this` they are given.
+console.log(String.prototype.toUpperCase.call("abc"), Number.prototype.toFixed.call(3.14159, 2));
+console.log([" a ", " b "].map((s) => String.prototype.trim.call(s)).join("|"));
+const names = ["toUpperCase", "trim"];
+for (const m of names) {
+  console.log(m, "[" + String.prototype[m].call("  hi  ") + "]");
+}
+const slice = String.prototype.slice.bind("bound string");
+console.log(slice(6), slice.name);
+
+// Conversions.
+console.log(String(12), String(true), String(null), Number("42") + 1, Number(" 7 "));
+console.log(Number(true), Number(false), Number(null), Number(""), Number(), Number("x"));
+console.log(Number({ valueOf: () => 5 }) * 2, String({ toString: () => "obj" }));
+
+// A program can add to them.
+String.prototype.shout = function () {
+  return this.toUpperCase() + "!";
+};
+console.log(typeof String.prototype.shout, String.prototype.shout.call("hey"));

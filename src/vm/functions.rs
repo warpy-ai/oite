@@ -156,7 +156,7 @@ impl VM {
 
     /// `f[name] = value`. `name` and `length` cannot be written (outside
     /// strict mode the write is ignored).
-    pub(super) fn set_function_property(&mut self, f: &JsValue, name: &str, value: JsValue) {
+    pub(crate) fn set_function_property(&mut self, f: &JsValue, name: &str, value: JsValue) {
         if matches!(name, "name" | "length") {
             return;
         }

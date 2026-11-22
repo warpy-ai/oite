@@ -3,7 +3,8 @@
 //! Sets up only essential globals needed for language operation:
 //! - console (log, error)
 //! - ByteStream (binary serialization)
-//! - String.fromCharCode
+//! - String (`String(v)`, `String.fromCharCode`, `String.prototype`)
+//! - Number (`Number(v)`, `Number.prototype`)
 //! - require (module loading)
 //! - fs (minimal file I/O for bootstrap compiler)
 
@@ -14,6 +15,7 @@ pub fn setup_stdlib(vm: &mut VM) {
     setup_console(vm);
     setup_bytestream(vm);
     setup_string(vm);
+    setup_number(vm);
     setup_fs(vm);
     setup_json(vm);
     setup_globals(vm);
@@ -170,39 +172,56 @@ fn setup_bytestream(vm: &mut VM) {
         .insert("ByteStream".into(), JsValue::Object(byte_stream_ptr));
 }
 
+/// An object holding the built-in methods of `receiver`, for
+/// `String.prototype`, `Number.prototype` and `Array.prototype`: the
+/// same values `"a".trim`, `(1).toFixed` and `[].push` are.
+fn builtin_prototype(vm: &mut VM, receiver: crate::runtime::builtins::Receiver) -> JsValue {
+    use crate::runtime::builtins::Method;
+    let methods = receiver.methods().iter().map(|name| {
+        let m = Method::find(receiver, name).expect("a listed method");
+        (name.to_string(), JsValue::BuiltinMethod(m))
+    });
+    let proto = vm.heap.len();
+    vm.heap.push(HeapObject {
+        data: HeapData::Object(methods.collect()),
+    });
+    JsValue::Object(proto)
+}
+
+/// `String(v)`, `String.fromCharCode(...)` and `String.prototype`.
 fn setup_string(vm: &mut VM) {
+    use crate::runtime::builtins::Receiver;
     use crate::stdlib::{native_string_constructor, native_string_from_char_code};
 
-    // Register the String constructor as a callable function
-    let string_constructor_idx = vm.register_native(native_string_constructor);
-    let string_from_char_code_idx = vm.register_native(native_string_from_char_code);
+    let string = JsValue::NativeFunction(vm.register_native(native_string_constructor));
+    let from_char_code = JsValue::NativeFunction(vm.register_native(native_string_from_char_code));
+    vm.set_function_property(&string, "fromCharCode", from_char_code);
+    let proto = builtin_prototype(vm, Receiver::String);
+    vm.set_function_property(&string, "prototype", proto);
+    vm.call_stack[0].locals.insert("String".into(), string);
+}
 
-    // Create String as an object with methods
-    let string_ptr = vm.heap.len();
-    let mut string_props = crate::vm::value::PropMap::new();
-    string_props.insert(
-        "fromCharCode".to_string(),
-        JsValue::NativeFunction(string_from_char_code_idx),
-    );
-    // Store the constructor function for when String is called
-    string_props.insert(
-        "__call__".to_string(),
-        JsValue::NativeFunction(string_constructor_idx),
-    );
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(string_props),
-    });
-
-    // Store the String object in globals
-    vm.call_stack[0]
-        .locals
-        .insert("String".into(), JsValue::Object(string_ptr));
-
-    // Also register a direct String function for calling String(value)
-    vm.call_stack[0].locals.insert(
-        "__String__".into(),
-        JsValue::NativeFunction(string_constructor_idx),
-    );
+/// `Number(v)` and `Number.prototype`.
+fn setup_number(vm: &mut VM) {
+    use crate::runtime::builtins::Receiver;
+    fn number(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
+        let Some(v) = args.first() else {
+            return JsValue::Number(0.0);
+        };
+        // An object with its own `valueOf` / `toString` converts through it.
+        let v = match vm.to_primitive(v, false) {
+            Ok(p) => p.unwrap_or_else(|| v.clone()),
+            Err(e) => {
+                vm.native_throw = Some(e);
+                return JsValue::Undefined;
+            }
+        };
+        JsValue::Number(crate::vm::errors::to_number(&v))
+    }
+    let number = JsValue::NativeFunction(vm.register_native(number));
+    let proto = builtin_prototype(vm, Receiver::Number);
+    vm.set_function_property(&number, "prototype", proto);
+    vm.call_stack[0].locals.insert("Number".into(), number);
 }
 
 fn setup_fs(vm: &mut VM) {
@@ -547,18 +566,10 @@ fn setup_array(vm: &mut VM) {
     let is_array_idx = vm.register_native(is_array);
     // The methods built into the runtime, so `Array.prototype.push` is
     // `[].push`.
-    use crate::runtime::builtins::{Method, Receiver};
-    let builtins = Receiver::Array.methods().iter().map(|name| {
-        let m = Method::find(Receiver::Array, name).expect("a listed method");
-        (name.to_string(), JsValue::BuiltinMethod(m))
-    });
-    let proto = vm.heap.len();
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(builtins.collect()),
-    });
+    let proto = builtin_prototype(vm, crate::runtime::builtins::Receiver::Array);
     let mut props = crate::vm::value::PropMap::new();
     props.insert("isArray".to_string(), JsValue::NativeFunction(is_array_idx));
-    props.insert("prototype".to_string(), JsValue::Object(proto));
+    props.insert("prototype".to_string(), proto);
     let class = vm.heap.len();
     vm.heap.push(HeapObject {
         data: HeapData::Object(props),

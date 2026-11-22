@@ -1376,50 +1376,6 @@ impl VM {
                             Err(e) => return self.throw_exception(e),
                         }
                     }
-                    JsValue::Object(ptr) => {
-                        // Check if object has a __call__ property (callable object like String)
-                        if let Some(HeapObject {
-                            data: HeapData::Object(props),
-                        }) = self.heap.get(ptr)
-                        {
-                            if let Some(JsValue::NativeFunction(idx)) = props.get("__call__") {
-                                let idx = *idx;
-                                let func = self.native_functions[idx];
-                                let result = func(self, args);
-                                if let Some(e) = self.native_throw.take() {
-                                    return self.throw_exception(e);
-                                }
-                                self.stack.push(result);
-                            } else if let Some(JsValue::Function { address, env }) =
-                                props.get("__call__")
-                            {
-                                let address = *address;
-                                let env = *env;
-                                self.push_call_args(&args, address);
-                                let frame = Frame {
-                                    return_address: self.ip + 1,
-                                    locals: HashMap::new(),
-                                    indexed_locals: Vec::new(),
-                                    this_context: JsValue::Object(ptr),
-                                    new_target: None,
-                                    super_called: false,
-                                    resume_ip: None,
-                                    env,
-                                };
-                                self.call_stack.push(frame);
-                                self.ip = address;
-                                return ExecResult::ContinueNoIpInc;
-                            } else {
-                                let shown = crate::stdlib::inspect(self, &JsValue::Object(ptr));
-                                return self.throw_error(
-                                    "TypeError",
-                                    format!("{shown} is not a function"),
-                                );
-                            }
-                        } else {
-                            panic!("Object reference invalid: Object({})", ptr);
-                        }
-                    }
                     other => {
                         let shown = crate::stdlib::inspect(self, &other);
                         return self.throw_error("TypeError", format!("{shown} is not a function"));
