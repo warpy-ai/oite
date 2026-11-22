@@ -19,7 +19,7 @@ console.log(n);
 /// Measured on Apple Silicon: 50 MB, of which 14 MB is `oitec` running
 /// `console.log(1)` and the rest is up to 100,000 dead objects (about
 /// 360 bytes each) between two collections. Without the collector the
-/// loop peaks at 1,049 MB. 128 MiB leaves 2.5x headroom for other
+/// loop peaks at 1,052 MB. 128 MiB leaves 2.5x headroom for other
 /// allocators and platforms, and is an eighth of the uncollected peak.
 const PEAK_LIMIT: u64 = 128 << 20;
 

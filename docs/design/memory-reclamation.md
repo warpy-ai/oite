@@ -6,7 +6,7 @@ Goal: a long-running Oite program must not grow memory forever ([#123](https://g
 
 ## Where memory goes today
 
-- **VM heap.** `VM::heap` is a `Vec<HeapObject>`. A reference is a slot index: `JsValue::Object(usize)`, or the `env` of a `JsValue::Function`. `HeapData` is an object, array, byte stream, `Map` or `Set`. Strings are Rust `String`s and promises are `Arc`s, so Rust frees both. Before phase 1, nothing removed a slot, and the #123 loop peaked at 1,049 MB for 3 million objects (about 350 bytes each).
+- **VM heap.** `VM::heap` is a `Vec<HeapObject>`. A reference is a slot index: `JsValue::Object(usize)`, or the `env` of a `JsValue::Function`. `HeapData` is an object, array, byte stream, `Map` or `Set`. Strings are Rust `String`s and promises are `Arc`s, so Rust frees both. Before phase 1, nothing removed a slot, and the #123 loop peaked at 1,052 MB for 3 million objects (about 350 bytes each).
 - **Native heap.** `NativeHeap` (`src/runtime/heap.rs`) bump-allocates in chunks and never frees. Values are NaN-boxed `u64`s. `ObjectHeader.marked` exists, but nothing reads it. Array elements, overflow slots and dictionaries are separate `malloc` buffers. Async frames are leaked with `Box::leak` (`stubs/async_fns.rs`), and the `PROMISES` table never shrinks (`stubs/promises.rs`). Compiled code allocates only through runtime stubs, never inline. Exceptions are return codes, so there is no unwinding.
 - **Per object in the #123 loop.** About 350 bytes on the VM and 56 bytes on AOT (a `NativeObject` with two inline slots).
 
