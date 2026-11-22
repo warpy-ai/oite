@@ -42,6 +42,16 @@ pub(super) fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> 
         ObjectKind::String => quote(unsafe { ptr.as_ref::<NativeString>().as_str() }),
         ObjectKind::Function => "[Function]".to_string(),
         ObjectKind::ByteStream => "ByteStream".to_string(),
+        ObjectKind::Map | ObjectKind::Set | ObjectKind::Iterator => {
+            let addr = ptr.as_usize();
+            if seen.contains(&addr) {
+                return "[Circular]".to_string();
+            }
+            seen.push(addr);
+            let out = collection_summary(v.to_bits(), depth, seen);
+            seen.pop();
+            out
+        }
         ObjectKind::Array | ObjectKind::Object => {
             let addr = ptr.as_usize();
             if seen.contains(&addr) {

@@ -272,16 +272,19 @@ Array.prototype.toReversed = function toReversed() {
   return this.slice().reverse();
 };
 
-// `Array.from(arrayLike, mapFn)`: an array, a string or anything with a
-// `length`; `Array.of(...items)`.
+// `Array.from(items, mapFn)`: an array, a string, a `Map`, a `Set`, an
+// iterator, or anything with a `length` (`for...of` walks each);
+// `Array.of(...items)`.
 Array.from = function from(items, mapFn, thisArg) {
   if (mapFn !== undefined && typeof mapFn !== "function") {
     throw new TypeError(String(mapFn) + " is not a function");
   }
   const out = [];
-  const len = items === null || items === undefined ? 0 : items.length;
-  for (let i = 0; i < len; i++) {
-    const value = items[i];
+  if (items === null || items === undefined) {
+    return out;
+  }
+  let i = 0;
+  for (const value of items) {
     if (mapFn === undefined) {
       out.push(value);
     } else if (thisArg === undefined) {
@@ -289,6 +292,7 @@ Array.from = function from(items, mapFn, thisArg) {
     } else {
       out.push(mapFn.call(thisArg, value, i));
     }
+    i++;
   }
   return out;
 };

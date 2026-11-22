@@ -114,6 +114,13 @@ impl Lowerer {
                 self.push(dst);
             }
 
+            OpCode::GetIterator => {
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::GetIterator(dst, a));
+                self.push(dst);
+            }
+
             OpCode::TypeOf => {
                 let a = self.pop()?;
                 let dst = self.alloc_value(IrType::String);

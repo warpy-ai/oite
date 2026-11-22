@@ -522,6 +522,7 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
         | IrOp::ToBool(_, a)
         | IrOp::ToNum(_, a)
         | IrOp::ToStr(_, a)
+        | IrOp::GetIterator(_, a)
         | IrOp::Copy(_, a)
         | IrOp::ArrayLen(_, a)
         | IrOp::TypeCheck(_, a, _)

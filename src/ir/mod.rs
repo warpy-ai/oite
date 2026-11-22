@@ -606,6 +606,8 @@ pub enum IrOp {
     ToNum(ValueId, ValueId),
     /// `String(v)`: an object's own `toString` converts it (may throw).
     ToStr(ValueId, ValueId),
+    /// What a `for...of` loop walks `val` with (`OpCode::GetIterator`).
+    GetIterator(ValueId, ValueId),
     /// TypeOf operator: dst = typeof(val) as string
     TypeOf(ValueId, ValueId),
     /// Delete property: dst = delete obj.prop (returns bool)
@@ -683,6 +685,7 @@ impl IrOp {
                 | IrOp::Gt(_, _, _)
                 | IrOp::GtEq(_, _, _)
                 | IrOp::ToStr(_, _)
+                | IrOp::GetIterator(_, _)
                 | IrOp::GetProp(_, _, _)
                 | IrOp::SetProp(_, _, _)
                 | IrOp::GetElement(_, _, _)
@@ -781,6 +784,7 @@ impl IrOp {
             | IrOp::ToBool(d, _)
             | IrOp::ToNum(d, _)
             | IrOp::ToStr(d, _)
+            | IrOp::GetIterator(d, _)
             | IrOp::Phi(d, _)
             | IrOp::Copy(d, _)
             | IrOp::LoadThis(d)
@@ -862,6 +866,7 @@ impl IrOp {
             | IrOp::ToBool(_, a)
             | IrOp::ToNum(_, a)
             | IrOp::ToStr(_, a)
+            | IrOp::GetIterator(_, a)
             | IrOp::Copy(_, a)
             | IrOp::ArrayLen(_, a)
             | IrOp::TypeCheck(_, a, _)
@@ -1531,6 +1536,7 @@ impl fmt::Display for IrOp {
             IrOp::ToBool(d, v) => write!(f, "{} = to.bool {}", d, v),
             IrOp::ToNum(d, v) => write!(f, "{} = to.num {}", d, v),
             IrOp::ToStr(d, v) => write!(f, "{} = to.str {}", d, v),
+            IrOp::GetIterator(d, v) => write!(f, "{} = get.iterator {}", d, v),
             IrOp::Phi(d, entries) => {
                 let entries_str: Vec<_> = entries
                     .iter()

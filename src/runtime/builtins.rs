@@ -1,4 +1,5 @@
 //! Built-in string and array methods, shared by the VM and native code.
+//! `Map` and `Set` are in `collection`.
 //!
 //! Each method is implemented once, generically over the value
 //! representation: the VM plugs in `JsValue`, the native runtime plugs in
@@ -29,6 +30,11 @@ pub trait Host {
     /// `Object.keys(v)`: an object's own property names, an array's indices,
     /// nothing for any other value.
     fn own_keys(&self, v: &Self::Value) -> Vec<String>;
+    /// A number that two `===` values share, for a value that is neither a
+    /// number nor a string: what a `Map` hashes such a key by.
+    fn identity(&self, v: &Self::Value) -> u64;
+    /// The kind of value `v` is, if it has built-in methods.
+    fn receiver(&self, v: &Self::Value) -> Option<Receiver>;
 
     fn make_number(&self, n: f64) -> Self::Value;
     fn make_string(&self, s: String) -> Self::Value;
@@ -133,6 +139,9 @@ pub enum Receiver {
     Promise,
     Map,
     Set,
+    /// `m.keys()`, `m.entries()`, ...
+    MapIterator,
+    SetIterator,
 }
 
 impl Receiver {
@@ -189,12 +198,18 @@ impl Receiver {
             ],
             Receiver::Number => &["toFixed", "toString", "valueOf"],
             Receiver::Promise => &["catch", "finally", "then"],
-            Receiver::Map => &["clear", "delete", "get", "has", "set"],
-            Receiver::Set => &["add", "clear", "delete", "has"],
+            Receiver::Map => &[
+                "clear", "delete", "entries", "forEach", "get", "has", "keys", "set", "values",
+            ],
+            Receiver::Set => &[
+                "add", "clear", "delete", "entries", "forEach", "has", "keys", "values",
+            ],
+            Receiver::MapIterator | Receiver::SetIterator => &["next"],
         }
     }
 
-    /// The global that owns its methods: `String` for `String.prototype`.
+    /// The name its methods go by: `String` for `String.prototype.trim`,
+    /// `Map Iterator` for `Map Iterator.prototype.next`.
     pub fn name(self) -> &'static str {
         match self {
             Receiver::String => "String",
@@ -203,16 +218,20 @@ impl Receiver {
             Receiver::Promise => "Promise",
             Receiver::Map => "Map",
             Receiver::Set => "Set",
+            Receiver::MapIterator => "Map Iterator",
+            Receiver::SetIterator => "Set Iterator",
         }
     }
 
-    const ALL: [Receiver; 6] = [
+    const ALL: [Receiver; 8] = [
         Receiver::String,
         Receiver::Array,
         Receiver::Number,
         Receiver::Promise,
         Receiver::Map,
         Receiver::Set,
+        Receiver::MapIterator,
+        Receiver::SetIterator,
     ];
 }
 
@@ -274,6 +293,12 @@ impl Method {
 /// `v` as an incompatible-receiver error shows it: a primitive as its
 /// string, an object by its kind.
 pub fn receiver_shown<H: Host>(h: &H, v: &H::Value) -> String {
+    if let Some(
+        r @ (Receiver::Map | Receiver::Set | Receiver::MapIterator | Receiver::SetIterator),
+    ) = h.receiver(v)
+    {
+        return format!("#<{}>", r.name());
+    }
     match h.kind(v) {
         Kind::Array => "[object Array]".to_string(),
         Kind::Object | Kind::Function => "#<Object>".to_string(),

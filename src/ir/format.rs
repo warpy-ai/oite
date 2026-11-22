@@ -223,6 +223,7 @@ fn serialize_op(output: &mut String, op: &IrOp) {
         IrOp::ToBool(d, v) => output.push_str(&format!("{} = to.bool {}", d, v)),
         IrOp::ToNum(d, v) => output.push_str(&format!("{} = to.num {}", d, v)),
         IrOp::ToStr(d, v) => output.push_str(&format!("{} = to.str {}", d, v)),
+        IrOp::GetIterator(d, v) => output.push_str(&format!("{} = get.iterator {}", d, v)),
         IrOp::Phi(d, entries) => {
             let entries_str: Vec<String> = entries
                 .iter()

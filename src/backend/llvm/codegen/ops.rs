@@ -125,6 +125,10 @@ impl Fx<'_> {
                     let r = self.rt("ot_to_str", &[self.get(*a)?]);
                     self.set(*d, r);
                 }
+                IrOp::GetIterator(d, a) => {
+                    let r = self.rt("ot_get_iterator", &[self.get(*a)?]);
+                    self.set(*d, r);
+                }
                 IrOp::TypeOf(d, a) => {
                     let r = self.rt("ot_typeof", &[self.get(*a)?]);
                     self.set(*d, r);
