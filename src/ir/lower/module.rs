@@ -20,6 +20,8 @@ pub struct ExtractedFunction {
     pub self_reference_var: Option<String>,
     /// Whether the function has a self-reference.
     pub has_self_ref: bool,
+    /// Its `name`, `length` and whether it has a `prototype`.
+    pub info: Option<crate::vm::opcodes::FunctionInfo>,
 }
 
 /// Lower an entire bytecode module to SSA IR.
@@ -98,6 +100,9 @@ pub fn lower_module_with_sites(
     // Store function address mappings in the module
     for (i, func_info) in extracted_funcs.iter().enumerate() {
         module.function_addrs.insert(func_info.address, i);
+        if let Some(info) = &func_info.info {
+            module.function_info.insert(func_info.address, info.clone());
+        }
     }
 
     Ok(module)
@@ -185,10 +190,13 @@ pub(super) fn extract_functions(instructions: &[OpCode]) -> Vec<ExtractedFunctio
         };
         if let Some((address, has_env)) = found {
             let address = &address;
-            // The compiler emits `Jump(end)` immediately before every function
-            // body, so the body is exactly `address..end`. Fall back to the
-            // heuristic only if that pattern is missing.
-            let end = match address.checked_sub(1).map(|i| &instructions[i]) {
+            // The compiler emits `Jump(end)` before every function body,
+            // then the body's `FunctionInfo`, so the body is exactly
+            // `address..end`. Fall back to the heuristic only if that
+            // pattern is missing.
+            let info = crate::vm::opcodes::function_info(instructions, *address);
+            let jump = address.checked_sub(if info.is_some() { 2 } else { 1 });
+            let end = match jump.map(|i| &instructions[i]) {
                 Some(OpCode::Jump(end)) if *end > *address => Some(end - 1),
                 _ => find_function_end(*address, instructions),
             };
@@ -214,6 +222,7 @@ pub(super) fn extract_functions(instructions: &[OpCode]) -> Vec<ExtractedFunctio
                 functions.push(ExtractedFunction {
                     address: *address,
                     end_address: end_addr,
+                    info: info.cloned(),
                     has_env,
                     param_count,
                     param_names,

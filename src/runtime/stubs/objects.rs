@@ -189,6 +189,7 @@ pub(super) fn get_property_atom(v: OtValue, key: Atom) -> u64 {
                     .unwrap_or_else(undefined),
             }
         }
+        ObjectKind::Function => get_function_property(ptr, key),
         ObjectKind::String => {
             let s = unsafe { ptr.as_ref::<NativeString>().as_str() };
             let ascii = is_ascii(v);
@@ -282,6 +283,7 @@ pub(super) fn set_property_atom(v: OtValue, key: Atom, value: u64) -> u64 {
                 array_set(arr, i, value);
             }
         }
+        Some((ptr, ObjectKind::Function)) => set_function_property(ptr, key, value),
         Some(_) => {}
         None => {
             if v.is_null() || v.is_undefined() {
@@ -450,12 +452,16 @@ pub extern "C" fn ot_set_index(obj: u64, key: u64, value: u64) -> u64 {
 /// `delete obj.key`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_delete_prop(obj: u64, key: *const u8, key_len: usize) -> u64 {
-    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(obj)) {
-        let key = unsafe { atom::static_atom(key, key_len) };
-        let o = self::obj(ptr);
-        if object::remove_own(o, key) {
-            layout_changed(o);
+    let key = unsafe { atom::static_atom(key, key_len) };
+    match object(OtValue::from_bits(obj)) {
+        Some((ptr, ObjectKind::Object)) => {
+            let o = self::obj(ptr);
+            if object::remove_own(o, key) {
+                layout_changed(o);
+            }
         }
+        Some((ptr, ObjectKind::Function)) => delete_function_property(ptr, key),
+        _ => {}
     }
     boolean(true)
 }

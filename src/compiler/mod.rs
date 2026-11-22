@@ -381,7 +381,10 @@ struct ClassField {
 /// what runs before the body.
 #[derive(Clone, Copy, PartialEq)]
 enum FnKind {
-    Plain,
+    /// A function or an arrow; `prototype`: a `function`, which has one.
+    Plain {
+        prototype: bool,
+    },
     Method {
         is_static: bool,
     },
@@ -435,8 +438,8 @@ pub struct Codegen {
     mark_span: Span,
     /// Function bodies and their names, for stack traces.
     pub functions: Vec<FunctionRange>,
-    /// The name of the next function body (`function f`, `let f = () =>`,
-    /// `C.method`).
+    /// The `name` of the next function body (`function f`, `let f = () =>`,
+    /// `{ f() {} }`, the method `f` of a class).
     next_fn_name: Option<String>,
     /// The class whose members are being compiled.
     class_name: Option<String>,

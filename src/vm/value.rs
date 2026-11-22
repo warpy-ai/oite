@@ -29,6 +29,8 @@ pub enum JsValue {
     /// A built-in method read off a value (`"a".trim`): a function that
     /// calls it with the `this` it is given.
     BuiltinMethod(crate::runtime::builtins::Method),
+    /// `f.bind(...)`: the `HeapData::Bound` at this index.
+    BoundFunction(usize),
     Null,
     Undefined,
     /// Accessor descriptor for getters/setters
@@ -57,6 +59,7 @@ impl PartialEq for JsValue {
             ) => a == b && ae == be,
             (JsValue::NativeFunction(a), JsValue::NativeFunction(b)) => a == b,
             (JsValue::BuiltinMethod(a), JsValue::BuiltinMethod(b)) => a == b,
+            (JsValue::BoundFunction(a), JsValue::BoundFunction(b)) => a == b,
             (JsValue::Null, JsValue::Null) => true,
             (JsValue::Undefined, JsValue::Undefined) => true,
             (JsValue::Accessor(a_get, a_set), JsValue::Accessor(b_get, b_set)) => {
@@ -186,4 +189,15 @@ pub enum HeapData {
     Map(Vec<(JsValue, JsValue)>),
     /// Set - ordered unique values
     Set(Vec<JsValue>),
+    /// A bound function (`JsValue::BoundFunction`).
+    Bound(Box<BoundFunction>),
+}
+
+/// `target.bind(this, ...args)`: calling it calls `target` with `this`
+/// and `args` before the arguments it is given.
+#[derive(Debug, Clone)]
+pub struct BoundFunction {
+    pub target: JsValue,
+    pub this: JsValue,
+    pub args: Vec<JsValue>,
 }

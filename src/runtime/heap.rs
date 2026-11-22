@@ -228,6 +228,9 @@ pub struct NativeFunction {
     pub code: *const u8,
     /// The closure's environment (an object value), or `undefined`.
     pub env: u64,
+    /// The function's own properties (an object), made when the first
+    /// one is set; `undefined` until then.
+    pub props: u64,
 }
 
 /// Signature of every function callable through a `NativeFunction`:
@@ -457,6 +460,7 @@ impl NativeHeap {
             let f = ptr.as_mut::<NativeFunction>();
             f.code = code;
             f.env = env;
+            f.props = super::abi::OtValue::undefined().to_bits();
         }
         Some(ptr)
     }
@@ -535,9 +539,10 @@ mod tests {
         assert_eq!(offset_of!(NativeArray, capacity), 16);
         assert_eq!(offset_of!(NativeArray, elements), 24);
 
-        assert_eq!(size_of::<NativeFunction>(), 32);
+        assert_eq!(size_of::<NativeFunction>(), 40);
         assert_eq!(offset_of!(NativeFunction, code), 16);
         assert_eq!(offset_of!(NativeFunction, env), 24);
+        assert_eq!(offset_of!(NativeFunction, props), 32);
 
         assert_eq!(offset_of!(ObjectHeader, inline_slots), 3);
         assert_eq!(size_of::<NativeObject>(), 40);

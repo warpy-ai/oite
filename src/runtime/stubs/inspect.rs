@@ -34,13 +34,52 @@ pub(super) fn quote(s: &str) -> String {
     )
 }
 
+/// `key: value, ...`, as `console.log` shows an object's properties.
+fn show_entries(entries: Vec<(&str, u64)>, depth: usize, seen: &mut Vec<usize>) -> String {
+    let parts: Vec<String> = entries
+        .into_iter()
+        .map(|(k, bits)| {
+            let key = if is_identifier(k) {
+                k.to_string()
+            } else {
+                quote(k)
+            };
+            let val = inspect_inner(OtValue::from_bits(bits), depth + 1, seen);
+            format!("{}: {}", key, val)
+        })
+        .collect();
+    parts.join(", ")
+}
+
+/// A function or a class, `summary`, then its own properties: `[Function:
+/// f] { x: 1 }`.
+fn with_entries(
+    summary: String,
+    entries: Vec<(&str, u64)>,
+    depth: usize,
+    seen: &mut Vec<usize>,
+) -> String {
+    if entries.is_empty() || depth > INSPECT_DEPTH {
+        return summary;
+    }
+    format!("{summary} {{ {} }}", show_entries(entries, depth, seen))
+}
+
 pub(super) fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> String {
     let Some((ptr, kind)) = object(v) else {
         return value_to_string(v);
     };
     match kind {
         ObjectKind::String => quote(unsafe { ptr.as_ref::<NativeString>().as_str() }),
-        ObjectKind::Function => "[Function]".to_string(),
+        ObjectKind::Function => {
+            let name = function_name(ptr);
+            let summary = if name.is_empty() {
+                "[Function (anonymous)]".to_string()
+            } else {
+                format!("[Function: {name}]")
+            };
+            with_entries(summary, function_entries(ptr), depth, seen)
+        }
         ObjectKind::ByteStream => "ByteStream".to_string(),
         ObjectKind::Array | ObjectKind::Object => {
             let addr = ptr.as_usize();
@@ -67,7 +106,9 @@ pub(super) fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> 
             } else if let Some(id) = promise_id(v.to_bits()) {
                 promise_summary(id, depth, seen)
             } else if is_class(ptr) {
-                class_summary(ptr)
+                let mut statics = visible_data(ptr);
+                statics.retain(|(k, _)| !builtins::is_function_key(k));
+                with_entries(class_summary(ptr), statics, depth, seen)
             } else if is_error(ptr) {
                 // `TypeError: message`, then any other own properties.
                 let summary = error_summary(ptr);
@@ -92,19 +133,7 @@ pub(super) fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> 
                 } else if too_deep {
                     "[Object]".to_string()
                 } else {
-                    let parts: Vec<String> = keys
-                        .into_iter()
-                        .map(|(k, bits)| {
-                            let key = if is_identifier(k) {
-                                k.to_string()
-                            } else {
-                                quote(k)
-                            };
-                            let val = inspect_inner(OtValue::from_bits(bits), depth + 1, seen);
-                            format!("{}: {}", key, val)
-                        })
-                        .collect();
-                    format!("{{ {} }}", parts.join(", "))
+                    format!("{{ {} }}", show_entries(keys, depth, seen))
                 }
             };
             seen.pop();

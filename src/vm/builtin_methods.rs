@@ -23,6 +23,10 @@ impl VM {
             JsValue::String(_) => Some(Receiver::String),
             JsValue::Number(_) => Some(Receiver::Number),
             JsValue::Promise(_) => Some(Receiver::Promise),
+            JsValue::Function { .. }
+            | JsValue::NativeFunction(_)
+            | JsValue::BuiltinMethod(_)
+            | JsValue::BoundFunction(_) => Some(Receiver::Function),
             JsValue::Object(ptr) => match self.heap.get(*ptr).map(|o| &o.data) {
                 Some(HeapData::Array(_)) => Some(Receiver::Array),
                 Some(HeapData::Map(_)) => Some(Receiver::Map),
@@ -89,6 +93,7 @@ impl VM {
             }
             (Receiver::Map, JsValue::Object(ptr)) => self.map_method(*ptr, name, &args),
             (Receiver::Set, JsValue::Object(ptr)) => self.set_method(*ptr, name, &args),
+            (Receiver::Function, f) => return Some(self.function_method(f, name, args)),
             _ => None,
         }?;
         Some(self.outcome(result, this.clone()))
@@ -257,6 +262,7 @@ mod tests {
         vm.heap.push(HeapObject {
             data: HeapData::Set(Vec::new()),
         });
+        let function = vm.register_native(|_, _| JsValue::Undefined);
         let receivers = [
             JsValue::String("abc".to_string()),
             JsValue::Object(array),
@@ -264,6 +270,7 @@ mod tests {
             JsValue::Promise(Promise::new()),
             JsValue::Object(map),
             JsValue::Object(set),
+            JsValue::NativeFunction(function),
         ];
         for this in receivers {
             let receiver = vm.receiver_of(&this).unwrap();

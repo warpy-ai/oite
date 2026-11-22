@@ -1310,6 +1310,9 @@ pub struct IrModule {
     next_mono_id: u32,
     /// Mapping from bytecode address to function index (for extracted functions).
     pub function_addrs: HashMap<usize, usize>,
+    /// What each function is (`name`, `length`, `prototype`), by bytecode
+    /// address; native code registers it at program start.
+    pub function_info: HashMap<usize, crate::vm::opcodes::FunctionInfo>,
     /// Bytecode address of user-defined main() function, if any.
     pub user_main_addr: Option<usize>,
 }
@@ -1337,6 +1340,7 @@ impl IrModule {
             mono_cache: HashMap::new(),
             next_mono_id: 0,
             function_addrs: HashMap::new(),
+            function_info: HashMap::new(),
             user_main_addr: None,
         }
     }

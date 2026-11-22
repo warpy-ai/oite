@@ -7,11 +7,8 @@ impl Codegen {
     pub(super) fn gen_var_decl(&mut self, var_decl: &VarDecl) {
         for decl in &var_decl.decls {
             if let Some(init) = &decl.init {
-                // `let f = () => ...`: the function is named `f`.
-                if let (Pat::Ident(id), Expr::Arrow(_) | Expr::Fn(FnExpr { ident: None, .. })) =
-                    (&decl.name, init.as_ref())
-                {
-                    self.next_fn_name = Some(id.id.sym.to_string());
+                if let Pat::Ident(id) = &decl.name {
+                    self.name_function(&id.id.sym, init);
                 }
                 self.gen_expr(init);
                 self.gen_pattern_binding(&decl.name);
@@ -21,6 +18,14 @@ impl Codegen {
                 self.instructions.push(OpCode::Push(JsValue::Undefined));
                 self.gen_pattern_binding(&decl.name);
             }
+        }
+    }
+
+    /// `f = () => ...`, `let f = function () {}`, `{ f: () => ... }`: an
+    /// anonymous function defined as `name` is named `name`.
+    pub(super) fn name_function(&mut self, name: &str, value: &Expr) {
+        if matches!(value, Expr::Arrow(_) | Expr::Fn(FnExpr { ident: None, .. })) {
+            self.next_fn_name = Some(name.to_string());
         }
     }
 

@@ -261,12 +261,22 @@ impl CraneliftCodegen {
             crate::runtime::stubs::ot_register_global(name.as_ptr(), name.len(), slot as *mut u64);
         }
 
-        // Create the function objects that `Literal::Function` loads.
+        // Create the function objects that `Literal::Function` loads, and
+        // tell the runtime what each function is (`name`, `length`).
         for (addr, data) in &fn_objects {
             let code = self.compiled_funcs[&format!("func_{}", addr)];
             let (slot, _) = self.module.get_finalized_data(*data);
             let obj = crate::runtime::stubs::ot_make_function(code);
             unsafe { (slot as *mut u64).write(obj) };
+            if let Some(info) = ir_module.function_info.get(addr) {
+                crate::runtime::stubs::ot_register_function(
+                    code,
+                    info.name.as_ptr(),
+                    info.name.len(),
+                    info.length,
+                    info.prototype as usize,
+                );
+            }
         }
 
         Ok(())

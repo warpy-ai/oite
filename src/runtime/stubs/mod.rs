@@ -33,6 +33,7 @@ mod calls;
 mod classes;
 mod exceptions;
 mod fs;
+mod functions;
 mod globals;
 mod inspect;
 mod objects;
@@ -49,6 +50,7 @@ pub use exceptions::*;
 // Not in the runtime ABI table: nothing in `oitec` itself calls these.
 #[allow(unused_imports)]
 pub use fs::*;
+pub use functions::*;
 pub use globals::*;
 pub use inspect::*;
 pub use objects::*;

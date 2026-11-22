@@ -468,6 +468,8 @@ impl Lowerer {
                 self.emit(IrOp::CallSuper(dst, parent, args));
                 self.push(dst);
             }
+            // Never runs: it describes the function body after it.
+            OpCode::FunctionInfo(_) => {}
             OpCode::RestArgs(n) => {
                 // The arguments from the `n`th on, as an array; the first
                 // `Let` binds it.
@@ -687,7 +689,7 @@ impl Lowerer {
             JsValue::Undefined => (Literal::Undefined, IrType::Any),
             JsValue::Object(_) => (Literal::Null, IrType::Object),
             JsValue::Function { address, .. } => (Literal::Function(*address), IrType::Function),
-            JsValue::NativeFunction(_) | JsValue::BuiltinMethod(_) => {
+            JsValue::NativeFunction(_) | JsValue::BuiltinMethod(_) | JsValue::BoundFunction(_) => {
                 (Literal::Null, IrType::Function)
             }
             JsValue::Accessor(_, _) => (Literal::Null, IrType::Any),

@@ -55,6 +55,6 @@ console.log("".trim.name, [].push.name, (1).toFixed.name);
 
 // Code that describes functions reads both.
 function describe(f) {
-  return (f.name || "anonymous") + "/" + f.length;
+  return (f.name === "" ? "anonymous" : f.name) + "/" + f.length;
 }
 console.log([decl, arrow, () => {}, obj.method].map(describe).join(" "));

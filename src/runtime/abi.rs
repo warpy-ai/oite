@@ -390,7 +390,9 @@ mod vm_interop {
                 JsValue::NativeFunction(idx) => {
                     Self::pointer(HeapPtr::from_usize(*idx | 0x8000_0000_0000))
                 }
-                JsValue::Accessor(_, _) | JsValue::BuiltinMethod(_) => Self::undefined(),
+                JsValue::Accessor(_, _) | JsValue::BuiltinMethod(_) | JsValue::BoundFunction(_) => {
+                    Self::undefined()
+                }
                 JsValue::Promise(_) => Self::undefined(),
             }
         }

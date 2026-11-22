@@ -83,6 +83,11 @@ fn construct_class(
 /// `new ctor(...args)`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_construct(ctor: u64, argv: *const u64, argc: usize) -> u64 {
+    // A bound function: its target, with the bound arguments first (the
+    // bound `this` is not used).
+    if let Some((target, all)) = unbind_for_new(ctor, unsafe { args(argv, argc) }) {
+        return ot_construct(target, all.as_ptr(), all.len());
+    }
     if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(ctor))
         && is_class(ptr)
         && let Some(code) = lookup_atom(ptr, atom::CONSTRUCTOR)
@@ -100,9 +105,15 @@ pub extern "C" fn ot_construct(ctor: u64, argv: *const u64, argc: usize) -> u64 
         return construct_promise(executor);
     }
     let this = ot_alloc_object();
-    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(ctor))
-        && let Some(proto) = lookup_atom(ptr, atom::PROTOTYPE)
-    {
+    let proto = match object(OtValue::from_bits(ctor)) {
+        Some((ptr, ObjectKind::Object)) => lookup_atom(ptr, atom::PROTOTYPE),
+        // A function: the instance inherits `F.prototype`.
+        Some((ptr, ObjectKind::Function)) if !is_builtin_method(ptr) => {
+            Some(function_prototype(ptr)).filter(|p| *p != undefined())
+        }
+        _ => None,
+    };
+    if let Some(proto) = proto {
         set_property(OtValue::from_bits(this), "__proto__", proto);
     }
     match run_constructor(ctor, this, argv, argc) {
@@ -254,6 +265,7 @@ pub extern "C" fn ot_in(key: u64, obj: u64) -> u64 {
                     .parse::<usize>()
                     .is_ok_and(|i| i < array(ptr).len as usize),
         ),
+        Some((ptr, ObjectKind::Function)) => boolean(function_has(ptr, &key)),
         _ => throw_error(
             "TypeError",
             &format!(
@@ -266,7 +278,7 @@ pub extern "C" fn ot_in(key: u64, obj: u64) -> u64 {
 }
 
 /// `value instanceof ctor`: whether `ctor.prototype` is on `value`'s
-/// prototype chain. (A plain function counts as matching, as on the VM.)
+/// prototype chain (a bound function's target's).
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_instanceof(value: u64, ctor: u64) -> u64 {
     // `x instanceof Object` holds for every object.
@@ -276,7 +288,7 @@ pub extern "C" fn ot_instanceof(value: u64, ctor: u64) -> u64 {
         );
     }
     let proto = match object(OtValue::from_bits(ctor)) {
-        Some((_, ObjectKind::Function)) => return boolean(true),
+        Some((ptr, ObjectKind::Function)) => made_prototype(ptr),
         Some((ptr, ObjectKind::Object)) => lookup_atom(ptr, atom::PROTOTYPE),
         _ => None,
     };

@@ -133,6 +133,8 @@ pub enum Receiver {
     Promise,
     Map,
     Set,
+    /// Functions, bound functions and built-in methods.
+    Function,
 }
 
 impl Receiver {
@@ -191,6 +193,7 @@ impl Receiver {
             Receiver::Promise => &["catch", "finally", "then"],
             Receiver::Map => &["clear", "delete", "get", "has", "set"],
             Receiver::Set => &["add", "clear", "delete", "has"],
+            Receiver::Function => &["apply", "bind", "call"],
         }
     }
 
@@ -203,16 +206,18 @@ impl Receiver {
             Receiver::Promise => "Promise",
             Receiver::Map => "Map",
             Receiver::Set => "Set",
+            Receiver::Function => "Function",
         }
     }
 
-    const ALL: [Receiver; 6] = [
+    const ALL: [Receiver; 7] = [
         Receiver::String,
         Receiver::Array,
         Receiver::Number,
         Receiver::Promise,
         Receiver::Map,
         Receiver::Set,
+        Receiver::Function,
     ];
 }
 
@@ -965,6 +970,19 @@ pub fn own_key_name(key: &str) -> Option<&str> {
         .or_else(|| key.strip_prefix("setter:"))
         .unwrap_or(key);
     (!is_hidden_key(name)).then_some(name)
+}
+
+/// A property of every function and class that `Object.keys` and
+/// `console.log` leave out of theirs (it is not enumerable): `name`,
+/// `length`, `prototype`, and a class's `constructor` (its code).
+pub fn is_function_key(key: &str) -> bool {
+    matches!(key, "name" | "length" | "prototype" | "constructor")
+}
+
+/// The `length` of a bound function: its target's, less the arguments
+/// `bind` gave it.
+pub fn bound_length(target_length: f64, bound_args: usize) -> f64 {
+    (target_length - bound_args as f64).max(0.0)
 }
 
 pub fn is_hidden_key(key: &str) -> bool {
