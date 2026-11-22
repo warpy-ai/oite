@@ -70,7 +70,10 @@ fn with_entries(
     if entries.is_empty() || depth > opts.depth {
         return summary;
     }
-    format!("{summary} {{ {} }}", show_entries(entries, depth, opts, seen))
+    format!(
+        "{summary} {{ {} }}",
+        show_entries(entries, depth, opts, seen)
+    )
 }
 
 pub(super) fn inspect_inner(
