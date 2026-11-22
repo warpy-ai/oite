@@ -1,0 +1,33 @@
+x is 5
+1.5|true|null|undefined|-0
+42 NaN 1 0 NaN -0
+5 0 NaN 31
+42 -7 31 NaN
+3.25 0.5 NaN -Infinity
+[ 1, [Array] ]
+{ a: [Object] }
+{ a: { b: { c: [Object] } } }
+[ 1, [ 2, [length]: 1 ], [length]: 2 ]
+[ [length]: 0 ]
+'s' 3
+{"a":[1,"two\n\"q\"",null],"c":true,"d":null}
+"s" 1 undefined null
+[null,null]
+ styled 
+100%% done
+50% of it
+only and %s
+a b 3 { k: 1 }
+%x y
+trailing %
+trailing % 1
+5 %s x
+%d 7
+% 1
+%s a
+%s
+ 1
+-0 [ -0 ]
+[Circular]
+info 1
+debug { d: 1 }

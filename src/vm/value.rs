@@ -38,6 +38,20 @@ pub enum JsValue {
     Promise(Promise),
 }
 
+impl JsValue {
+    /// ToBoolean is false: `false`, `0`, `-0`, `NaN`, `""`, `null`,
+    /// `undefined`. Every other value, objects included, is truthy.
+    pub fn is_falsy(&self) -> bool {
+        match self {
+            JsValue::Boolean(b) => !b,
+            JsValue::Number(n) => *n == 0.0 || n.is_nan(),
+            JsValue::String(s) => s.is_empty(),
+            JsValue::Null | JsValue::Undefined => true,
+            _ => false,
+        }
+    }
+}
+
 impl PartialEq for JsValue {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
