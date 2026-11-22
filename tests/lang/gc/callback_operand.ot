@@ -1,0 +1,12 @@
+// While `a.valueOf()` runs for `a + b`, the right operand lives only in a
+// Rust local, and the callback allocates. Collecting inside the callback
+// would free the operand; the VM waits until the callback returns.
+// (`golden_gc_stress` runs this with a collection after every allocation.)
+let a = { valueOf() { let t = { x: 1 }; let u = [t, { y: 2 }]; return u.length - 1; } };
+let n = 0;
+for (let i = 0; i < 50; i++) {
+  n = n + (a + { v: 2, valueOf() { return this.v; } });
+}
+console.log(n);
+let r = a + { v: 2, valueOf() { return this.v; } };
+console.log(typeof r, r);

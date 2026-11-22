@@ -1,0 +1,85 @@
+// Values reachable only through closures, class prototypes, promises, a
+// suspended async function, Map, Set and timers survive collections.
+// `churn` makes more garbage than the 100,000 objects between collections.
+function churn() {
+  for (let i = 0; i < 150000; i++) {
+    let o = { i: i };
+  }
+}
+
+// Captured variables live only in the closure's environment object.
+function counter() {
+  let count = 0;
+  let log = [];
+  return () => {
+    count = count + 1;
+    log.push({ n: count });
+    return log.length + " calls, last " + log[log.length - 1].n;
+  };
+}
+let next = counter();
+next();
+let fns = [];
+for (let i = 0; i < 3; i++) {
+  let box = { i: i };
+  fns.push(() => box.i * 10);
+}
+
+// Methods live on the prototype; an instance reaches it through its class.
+class Shape {
+  constructor(name) {
+    this.name = name;
+  }
+  describe() {
+    return this.name + " of area " + this.area();
+  }
+}
+class Square extends Shape {
+  constructor(side) {
+    super("square");
+    this.side = side;
+  }
+  area() {
+    return this.side * this.side;
+  }
+}
+let sq = new Square(3);
+
+// A pending promise, its resolver and its handler.
+let resolveLater;
+let pending = new Promise((resolve) => {
+  resolveLater = resolve;
+});
+let payload = { text: "payload" };
+pending.then((v) => console.log("then:", v.text, payload.text));
+
+// An async function suspended at an `await` keeps its frame.
+async function waiter() {
+  let mine = { k: "kept" };
+  let got = await pending;
+  console.log("async:", mine.k, got.text);
+}
+waiter();
+
+// Object keys and values in a Map, objects in a Set.
+let m = new Map();
+let key = { id: 1 };
+m.set(key, { v: "map value" });
+m.set("list", [{ a: 1 }, { a: 2 }]);
+let s = new Set();
+s.add({ v: "set member" });
+
+// A timer's callback and what it captures.
+let late = { msg: "timer" };
+setTimeout(() => console.log("timeout:", late.msg), 0);
+
+churn();
+
+console.log(next());
+console.log(fns[0](), fns[1](), fns[2]());
+console.log(sq.describe());
+console.log(m.get(key).v, m.get("list")[1].a, m.size);
+console.log(s);
+resolveLater({ text: "resolved" });
+churn();
+console.log(next());

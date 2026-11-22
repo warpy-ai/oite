@@ -243,10 +243,7 @@ impl VM {
     }
 
     pub(crate) fn alloc_array(&mut self, items: Vec<JsValue>) -> JsValue {
-        let ptr = self.heap.len();
-        self.heap.push(HeapObject {
-            data: HeapData::Array(items),
-        });
+        let ptr = self.gc_alloc(HeapData::Array(items));
         JsValue::Object(ptr)
     }
 
@@ -278,10 +275,7 @@ impl VM {
         let mut props = crate::vm::value::PropMap::new();
         props.insert("__resolver__".to_string(), JsValue::Promise(p.clone()));
         props.insert("__fulfills__".to_string(), JsValue::Boolean(fulfills));
-        let ptr = self.heap.len();
-        self.heap.push(HeapObject {
-            data: HeapData::Object(props),
-        });
+        let ptr = self.gc_alloc(HeapData::Object(props));
         JsValue::Object(ptr)
     }
 

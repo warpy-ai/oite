@@ -3,6 +3,7 @@ pub const MAX_CALL_STACK_DEPTH: usize = 1000;
 
 pub mod element;
 pub mod errors;
+mod gc;
 pub mod module_cache;
 pub mod opcodes;
 pub mod promise;
@@ -277,6 +278,7 @@ pub struct VM {
     pub next_async_id: usize,
     /// Rejected promises nothing reacted to (yet).
     pub unhandled_rejections: Vec<Promise>,
+    gc: gc::Gc,
 }
 
 impl Default for VM {
@@ -334,6 +336,7 @@ impl VM {
             promise_alls: HashMap::new(),
             next_async_id: 0,
             unhandled_rejections: Vec::new(),
+            gc: gc::Gc::from_env(),
         }
     }
 
@@ -477,6 +480,8 @@ impl VM {
 
         // Execute only the module's bytecode, not the entire program
         // We run until we hit the module's Halt or reach the end of module bytecode
+        // `saved_stack` is out of the collector's sight meanwhile (gc.rs).
+        self.gc.depth += 1;
         loop {
             if self.ip >= end_offset {
                 break;
@@ -496,6 +501,7 @@ impl VM {
                 break;
             }
         }
+        self.gc.depth -= 1;
 
         self.ip = saved_ip;
         self.current_module_path = saved_module_path;
@@ -789,7 +795,10 @@ impl VM {
     }
 
     fn run_until_return_sentinel(&mut self) {
-        // Runs until the current frame returns to usize::MAX.
+        // Runs until the current frame returns to usize::MAX. The caller
+        // holds values the collector cannot see, so nothing is collected
+        // meanwhile (gc.rs).
+        self.gc.depth += 1;
         loop {
             if self.ip >= self.program.len() {
                 break;
@@ -801,6 +810,7 @@ impl VM {
                 break;
             }
         }
+        self.gc.depth -= 1;
     }
 
     pub fn run_until_halt(&mut self) {
@@ -894,10 +904,7 @@ impl VM {
             Some(Ok(Outcome::Value(v))) => self.stack.push(v),
             Some(Ok(Outcome::This)) => self.stack.push(receiver),
             Some(Ok(Outcome::NewArray(elems))) => {
-                let ptr = self.heap.len();
-                self.heap.push(HeapObject {
-                    data: HeapData::Array(elems),
-                });
+                let ptr = self.gc_alloc(HeapData::Array(elems));
                 self.stack.push(JsValue::Object(ptr));
             }
             Some(Err(e)) => return self.throw_error(e.kind, e.message),
@@ -1025,10 +1032,7 @@ impl VM {
                         .push(args.get(i).cloned().unwrap_or(JsValue::Undefined));
                 }
                 let rest = args.get(n..).unwrap_or(&[]).to_vec();
-                let ptr = self.heap.len();
-                self.heap.push(HeapObject {
-                    data: HeapData::Array(rest),
-                });
+                let ptr = self.gc_alloc(HeapData::Array(rest));
                 self.stack.push(JsValue::Object(ptr));
                 return;
             }
@@ -1049,13 +1053,11 @@ impl VM {
         if self.ip >= self.program.len() {
             return ExecResult::Stop;
         }
+        self.gc_safe_point();
         let op = self.program[self.ip].clone();
         match op {
             OpCode::NewObject => {
-                let ptr = self.heap.len();
-                self.heap.push(HeapObject {
-                    data: HeapData::Object(PropMap::new()),
-                });
+                let ptr = self.gc_alloc(HeapData::Object(PropMap::new()));
                 self.stack.push(JsValue::Object(ptr));
             }
 
@@ -1065,10 +1067,7 @@ impl VM {
                     .stack
                     .pop()
                     .expect("NewObjectWithProto: missing prototype");
-                let ptr = self.heap.len();
-                self.heap.push(HeapObject {
-                    data: HeapData::Object(PropMap::new()),
-                });
+                let ptr = self.gc_alloc(HeapData::Object(PropMap::new()));
 
                 // Set the prototype
                 if let JsValue::Object(proto_ptr) = proto
@@ -1828,11 +1827,8 @@ impl VM {
             }
 
             OpCode::NewArray(size) => {
-                let ptr = self.heap.len();
                 let elements = vec![JsValue::Undefined; size];
-                self.heap.push(HeapObject {
-                    data: HeapData::Array(elements),
-                });
+                let ptr = self.gc_alloc(HeapData::Array(elements));
                 self.stack.push(JsValue::Object(ptr));
             }
 
@@ -2041,11 +2037,8 @@ impl VM {
                 };
 
                 // Create new object with prototype
-                let this_ptr = self.heap.len();
+                let this_ptr = self.gc_alloc(HeapData::Object(PropMap::new()));
                 let this_obj = JsValue::Object(this_ptr);
-                self.heap.push(HeapObject {
-                    data: HeapData::Object(PropMap::new()),
-                });
 
                 // Set prototype if we have one
                 if let Some(proto_val) = prototype
@@ -2102,18 +2095,12 @@ impl VM {
 
                     if constructor_type == "Map" {
                         // Handle Map construction: new Map() or new Map(iterable)
-                        let map_ptr = self.heap.len();
-                        self.heap.push(HeapObject {
-                            data: HeapData::Map(Vec::new()),
-                        });
+                        let map_ptr = self.gc_alloc(HeapData::Map(Vec::new()));
                         // If an iterable is passed, we'd need to iterate it - for now just create empty
                         self.stack.push(JsValue::Object(map_ptr));
                     } else if constructor_type == "Set" {
                         // Handle Set construction: new Set() or new Set(iterable)
-                        let set_ptr = self.heap.len();
-                        self.heap.push(HeapObject {
-                            data: HeapData::Set(Vec::new()),
-                        });
+                        let set_ptr = self.gc_alloc(HeapData::Set(Vec::new()));
                         // If an iterable is passed, we'd need to iterate it - for now just create empty
                         self.stack.push(JsValue::Object(set_ptr));
                     } else if constructor_type == "Promise" {
@@ -3124,10 +3111,7 @@ impl VM {
                                     }
                                 }
                             }
-                            let namespace_ptr = self.heap.len();
-                            self.heap.push(HeapObject {
-                                data: HeapData::Object(namespace_props),
-                            });
+                            let namespace_ptr = self.gc_alloc(HeapData::Object(namespace_props));
                             let cached_module = CachedModule {
                                 path: canonical_path.clone(),
                                 source,

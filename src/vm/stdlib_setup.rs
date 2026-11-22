@@ -88,10 +88,7 @@ fn setup_promise(vm: &mut VM) {
     props.insert("reject".to_string(), JsValue::NativeFunction(reject_idx));
     props.insert("all".to_string(), JsValue::NativeFunction(all_idx));
     props.insert("race".to_string(), JsValue::NativeFunction(race_idx));
-    let ptr = vm.heap.len();
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(props),
-    });
+    let ptr = vm.gc_alloc(HeapData::Object(props));
     vm.call_stack[0]
         .locals
         .insert("Promise".into(), JsValue::Object(ptr));
@@ -100,13 +97,10 @@ fn setup_promise(vm: &mut VM) {
 fn setup_console(vm: &mut VM) {
     let log_idx = vm.register_native(crate::stdlib::native_log);
     let error_idx = vm.register_native(crate::stdlib::native_error);
-    let console_ptr = vm.heap.len();
     let mut console_props = crate::vm::value::PropMap::new();
     console_props.insert("log".to_string(), JsValue::NativeFunction(log_idx));
     console_props.insert("error".to_string(), JsValue::NativeFunction(error_idx));
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(console_props),
-    });
+    let console_ptr = vm.gc_alloc(HeapData::Object(console_props));
     vm.call_stack[0]
         .locals
         .insert("console".into(), JsValue::Object(console_ptr));
@@ -129,7 +123,6 @@ fn setup_bytestream(vm: &mut VM) {
     let stream_length_idx = vm.register_native(native_byte_stream_length);
     let to_array_idx = vm.register_native(native_byte_stream_to_array);
 
-    let byte_stream_ptr = vm.heap.len();
     let mut byte_stream_props = crate::vm::value::PropMap::new();
     byte_stream_props.insert(
         "create".to_string(),
@@ -161,9 +154,7 @@ fn setup_bytestream(vm: &mut VM) {
         JsValue::NativeFunction(stream_length_idx),
     );
     byte_stream_props.insert("toArray".to_string(), JsValue::NativeFunction(to_array_idx));
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(byte_stream_props),
-    });
+    let byte_stream_ptr = vm.gc_alloc(HeapData::Object(byte_stream_props));
 
     vm.call_stack[0]
         .locals
@@ -178,7 +169,6 @@ fn setup_string(vm: &mut VM) {
     let string_from_char_code_idx = vm.register_native(native_string_from_char_code);
 
     // Create String as an object with methods
-    let string_ptr = vm.heap.len();
     let mut string_props = crate::vm::value::PropMap::new();
     string_props.insert(
         "fromCharCode".to_string(),
@@ -189,9 +179,7 @@ fn setup_string(vm: &mut VM) {
         "__call__".to_string(),
         JsValue::NativeFunction(string_constructor_idx),
     );
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(string_props),
-    });
+    let string_ptr = vm.gc_alloc(HeapData::Object(string_props));
 
     // Store the String object in globals
     vm.call_stack[0]
@@ -219,7 +207,6 @@ fn setup_fs(vm: &mut VM) {
     let fs_readdir_sync_idx = vm.register_native(native_readdir_sync);
     let fs_stat_sync_idx = vm.register_native(native_stat_sync);
 
-    let fs_ptr = vm.heap.len();
     let mut fs_props = crate::vm::value::PropMap::new();
     fs_props.insert(
         "readFileSync".to_string(),
@@ -249,9 +236,7 @@ fn setup_fs(vm: &mut VM) {
         "statSync".to_string(),
         JsValue::NativeFunction(fs_stat_sync_idx),
     );
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(fs_props),
-    });
+    let fs_ptr = vm.gc_alloc(HeapData::Object(fs_props));
 
     // Also add fs to global scope for direct access (fs.existsSync, fs.readFileSync, etc.)
     vm.call_stack[0]
@@ -267,16 +252,13 @@ fn setup_json(vm: &mut VM) {
     let stringify_idx = vm.register_native(native_json_stringify);
     let parse_idx = vm.register_native(native_json_parse);
 
-    let json_ptr = vm.heap.len();
     let mut json_props = crate::vm::value::PropMap::new();
     json_props.insert(
         "stringify".to_string(),
         JsValue::NativeFunction(stringify_idx),
     );
     json_props.insert("parse".to_string(), JsValue::NativeFunction(parse_idx));
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(json_props),
-    });
+    let json_ptr = vm.gc_alloc(HeapData::Object(json_props));
 
     vm.call_stack[0]
         .locals
@@ -295,25 +277,19 @@ fn setup_globals(vm: &mut VM) {
 
 fn setup_map_set(vm: &mut VM) {
     // Create Map constructor object
-    let map_ptr = vm.heap.len();
     let mut map_props = crate::vm::value::PropMap::new();
     // Mark this as a Map constructor for detection in Construct opcode
     map_props.insert("__type__".to_string(), JsValue::String("Map".to_string()));
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(map_props),
-    });
+    let map_ptr = vm.gc_alloc(HeapData::Object(map_props));
     vm.call_stack[0]
         .locals
         .insert("Map".into(), JsValue::Object(map_ptr));
 
     // Create Set constructor object
-    let set_ptr = vm.heap.len();
     let mut set_props = crate::vm::value::PropMap::new();
     // Mark this as a Set constructor for detection in Construct opcode
     set_props.insert("__type__".to_string(), JsValue::String("Set".to_string()));
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(set_props),
-    });
+    let set_ptr = vm.gc_alloc(HeapData::Object(set_props));
     vm.call_stack[0]
         .locals
         .insert("Set".into(), JsValue::Object(set_ptr));
@@ -326,10 +302,7 @@ pub fn set_script_args(vm: &mut VM, args: Vec<String>) {
     let js_args: Vec<JsValue> = args.into_iter().map(JsValue::String).collect();
 
     // Create array on heap (arrays are stored as Object pointing to HeapData::Array)
-    let array_ptr = vm.heap.len();
-    vm.heap.push(HeapObject {
-        data: HeapData::Array(js_args),
-    });
+    let array_ptr = vm.gc_alloc(HeapData::Array(js_args));
 
     // Set __args__ global (arrays use JsValue::Object pointing to array heap data)
     vm.call_stack[0]
@@ -364,16 +337,12 @@ fn setup_process(vm: &mut VM) {
     let stdout_write_idx = vm.register_native(native_stdout_write);
 
     // Create process.env object with get/set methods
-    let env_ptr = vm.heap.len();
     let mut env_props = crate::vm::value::PropMap::new();
     env_props.insert("get".to_string(), JsValue::NativeFunction(getenv_idx));
     env_props.insert("set".to_string(), JsValue::NativeFunction(setenv_idx));
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(env_props),
-    });
+    let env_ptr = vm.gc_alloc(HeapData::Object(env_props));
 
     // Create process.stdin object
-    let stdin_ptr = vm.heap.len();
     let mut stdin_props = crate::vm::value::PropMap::new();
     stdin_props.insert(
         "readLine".to_string(),
@@ -383,29 +352,20 @@ fn setup_process(vm: &mut VM) {
         "readBytes".to_string(),
         JsValue::NativeFunction(stdin_read_bytes_idx),
     );
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(stdin_props),
-    });
+    let stdin_ptr = vm.gc_alloc(HeapData::Object(stdin_props));
 
     // Create process.stdout object
-    let stdout_ptr = vm.heap.len();
     let mut stdout_props = crate::vm::value::PropMap::new();
     stdout_props.insert(
         "write".to_string(),
         JsValue::NativeFunction(stdout_write_idx),
     );
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(stdout_props),
-    });
+    let stdout_ptr = vm.gc_alloc(HeapData::Object(stdout_props));
 
     // Create empty argv array (will be populated by set_script_args)
-    let argv_ptr = vm.heap.len();
-    vm.heap.push(HeapObject {
-        data: HeapData::Array(Vec::new()),
-    });
+    let argv_ptr = vm.gc_alloc(HeapData::Array(Vec::new()));
 
     // Create process object
-    let process_ptr = vm.heap.len();
     let mut process_props = crate::vm::value::PropMap::new();
     process_props.insert("env".to_string(), JsValue::Object(env_ptr));
     process_props.insert("stdin".to_string(), JsValue::Object(stdin_ptr));
@@ -415,9 +375,7 @@ fn setup_process(vm: &mut VM) {
     process_props.insert("chdir".to_string(), JsValue::NativeFunction(chdir_idx));
     process_props.insert("exit".to_string(), JsValue::NativeFunction(exit_idx));
     process_props.insert("exec".to_string(), JsValue::NativeFunction(exec_idx));
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(process_props),
-    });
+    let process_ptr = vm.gc_alloc(HeapData::Object(process_props));
 
     // Add process to global scope
     vm.call_stack[0]
@@ -452,12 +410,9 @@ fn setup_object(vm: &mut VM) {
     let keys_idx = vm.register_native(native_object_keys);
 
     // Create Object global with keys method
-    let object_ptr = vm.heap.len();
     let mut object_props = crate::vm::value::PropMap::new();
     object_props.insert("keys".to_string(), JsValue::NativeFunction(keys_idx));
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(object_props),
-    });
+    let object_ptr = vm.gc_alloc(HeapData::Object(object_props));
 
     vm.call_stack[0]
         .locals
@@ -513,18 +468,12 @@ fn setup_math_date(vm: &mut VM) {
     for (name, value) in MATH_CONSTANTS {
         math.insert(name.to_string(), JsValue::Number(*value));
     }
-    let math_ptr = vm.heap.len();
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(math),
-    });
+    let math_ptr = vm.gc_alloc(HeapData::Object(math));
 
     let now_idx = vm.register_native(|_vm, _args| JsValue::Number(date_now()));
     let mut date = crate::vm::value::PropMap::new();
     date.insert("now".to_string(), JsValue::NativeFunction(now_idx));
-    let date_ptr = vm.heap.len();
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(date),
-    });
+    let date_ptr = vm.gc_alloc(HeapData::Object(date));
 
     let globals = &mut vm.call_stack[0].locals;
     globals.insert("Math".into(), JsValue::Object(math_ptr));
@@ -545,17 +494,11 @@ fn setup_array(vm: &mut VM) {
         ))
     }
     let is_array_idx = vm.register_native(is_array);
-    let proto = vm.heap.len();
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(crate::vm::value::PropMap::new()),
-    });
+    let proto = vm.gc_alloc(HeapData::Object(crate::vm::value::PropMap::new()));
     let mut props = crate::vm::value::PropMap::new();
     props.insert("isArray".to_string(), JsValue::NativeFunction(is_array_idx));
     props.insert("prototype".to_string(), JsValue::Object(proto));
-    let class = vm.heap.len();
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(props),
-    });
+    let class = vm.gc_alloc(HeapData::Object(props));
     vm.call_stack[0]
         .locals
         .insert("Array".into(), JsValue::Object(class));

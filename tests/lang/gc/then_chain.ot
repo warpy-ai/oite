@@ -1,0 +1,18 @@
+// While a `.then` handler runs, the promise it resolves lives only in a
+// Rust local, and that promise's reaction holds the next handler. The
+// handler allocates; collecting inside it would free `box`, which only the
+// next handler's environment reaches.
+// (`golden_gc_stress` runs this with a collection after every allocation.)
+function make() {
+  let box = { x: 40 };
+  return (v) => console.log(v + box.x);
+}
+Promise.resolve(1)
+  .then((v) => {
+    let junk = [];
+    for (let i = 0; i < 50; i++) {
+      junk.push({ i: i });
+    }
+    return v + 1;
+  })
+  .then(make());

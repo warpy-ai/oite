@@ -25,6 +25,10 @@
 //!
 //! Set `OITE_GOLDEN_FILTER=substr` to run only matching files.
 //!
+//! `golden_gc_stress` runs the VM programs again with `OITE_GC_STRESS` set:
+//! the collector runs after every allocation, so a value it fails to keep
+//! alive is freed while still in use and the output changes.
+//!
 //! Directories whose name starts with `_` hold modules the tests import
 //! (`modules/_lib/`), not tests. `@rolls/<name>` imports resolve to the
 //! fixture rolls in `modules/_rolls/` (`OITE_ROLLS_PATH`).
@@ -128,9 +132,13 @@ fn run(
     scratch: &Path,
     rolls: &Path,
     flags: &[String],
+    gc_stress: bool,
 ) -> Result<Output, String> {
     let oitec = || {
         let mut cmd = oitec(rolls);
+        if gc_stress {
+            cmd.env("OITE_GC_STRESS", "1");
+        }
         cmd.args(flags);
         cmd
     };
@@ -171,16 +179,20 @@ fn run(
     }
 }
 
-fn check(file: &Path, scratch: &Path, rolls: &Path) -> Result<(), String> {
+fn check(file: &Path, scratch: &Path, rolls: &Path, gc_stress: bool) -> Result<(), String> {
     let source = fs::read_to_string(file).map_err(|e| e.to_string())?;
     let out_path = file.with_extension("out");
     let err_path = file.with_extension("err");
-    let bless = std::env::var_os("OITE_BLESS").is_some();
+    let bless = std::env::var_os("OITE_BLESS").is_some() && !gc_stress;
 
     let flags = flags(&source);
-    for backend in backends(&source) {
-        let output =
-            run(backend, file, scratch, rolls, &flags).map_err(|e| format!("[{backend:?}] {e}"))?;
+    // The collector is the VM's: the native backends do not read the flag.
+    let backends = backends(&source)
+        .into_iter()
+        .filter(|&b| !gc_stress || b == Backend::Vm);
+    for backend in backends {
+        let output = run(backend, file, scratch, rolls, &flags, gc_stress)
+            .map_err(|e| format!("[{backend:?}] {e}"))?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -227,7 +239,7 @@ fn check(file: &Path, scratch: &Path, rolls: &Path) -> Result<(), String> {
 }
 
 /// Run every program under `root`, with `@rolls/*` found in `rolls`.
-fn run_suite(root: &Path, rolls: &Path, scratch_name: &str) {
+fn run_suite(root: &Path, rolls: &Path, scratch_name: &str, gc_stress: bool) {
     let mut files = Vec::new();
     collect(root, &mut files);
     files.sort();
@@ -249,7 +261,7 @@ fn run_suite(root: &Path, rolls: &Path, scratch_name: &str) {
             continue;
         }
         ran += 1;
-        if let Err(msg) = check(file, &scratch, rolls) {
+        if let Err(msg) = check(file, &scratch, rolls, gc_stress) {
             failures.push(format!("=== {rel}\n{msg}"));
         }
     }
@@ -272,6 +284,18 @@ fn golden() {
         &manifest.join("tests/lang"),
         &manifest.join("tests/lang/modules/_rolls"),
         "golden",
+        false,
+    );
+}
+
+#[test]
+fn golden_gc_stress() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    run_suite(
+        &manifest.join("tests/lang"),
+        &manifest.join("tests/lang/modules/_rolls"),
+        "golden_gc_stress",
+        true,
     );
 }
 
@@ -287,5 +311,6 @@ fn core_rolls() {
         &manifest.join("tests/core_rolls"),
         Path::new(&rolls),
         "core_rolls",
+        false,
     );
 }

@@ -1,0 +1,61 @@
+// Each value below is reachable through one root only when the next
+// allocation happens. `golden_gc_stress` collects after every allocation,
+// so a root the collector misses frees the value before it is read.
+
+// The environment of the running closure: the call popped the closure,
+// and its rest array triggers a collection before the body runs.
+function outer() {
+  let box = { v: "frame env" };
+  return (...rest) => box.v + " " + rest.length;
+}
+console.log(outer()(1, 2));
+
+// An exception waiting for its `finally` block to finish.
+function rethrows() {
+  try {
+    throw { v: "pending exception" };
+  } finally {
+    let junk = [{}, {}];
+  }
+}
+try {
+  rethrows();
+} catch (e) {
+  console.log(e.v);
+}
+
+// A built-in module after its global name is reassigned.
+fs = undefined;
+let junk1 = [{}, {}];
+console.log(typeof require("fs").existsSync);
+
+// A queued microtask's handler.
+let settled = Promise.resolve(0);
+function queue() {
+  let box = { v: "microtask" };
+  settled.then(() => console.log(box.v));
+}
+queue();
+let junk2 = [{}, {}];
+
+// A pending promise's reaction.
+let resolvePending;
+let pending = new Promise((resolve) => {
+  resolvePending = resolve;
+});
+function attach() {
+  let box = { v: "reaction" };
+  pending.then(() => console.log(box.v));
+}
+attach();
+let junk3 = [{}, {}];
+
+// A settled promise's value.
+function settle() {
+  return Promise.resolve({ v: "promise value" });
+}
+let held = settle();
+let junk4 = [{}, {}];
+held.then((x) => console.log(x.v));
+
+resolvePending(0);

@@ -1,0 +1,9 @@
+// A rejection nothing handles keeps its reason until it is reported at
+// exit, while the program allocates. (`golden_gc_stress` runs this with
+// a collection after every allocation.)
+function fail() {
+  Promise.reject({ code: "E_KEPT" });
+}
+fail();
+let junk = [{}, {}];
+console.log("still running");

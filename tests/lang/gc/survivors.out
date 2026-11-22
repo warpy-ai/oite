@@ -1,0 +1,9 @@
+2 calls, last 2
+0 10 20
+square of area 9
+map value 2 2
+Set(1) { { v: 'set member' } }
+3 calls, last 3
+then: resolved payload
+async: kept resolved
+timeout: timer

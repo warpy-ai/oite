@@ -59,10 +59,7 @@ impl VM {
         let mut props = crate::vm::value::PropMap::new();
         props.insert("message".to_string(), JsValue::String(message));
         props.insert("__proto__".to_string(), JsValue::Object(proto));
-        let ptr = self.heap.len();
-        self.heap.push(HeapObject {
-            data: HeapData::Object(props),
-        });
+        let ptr = self.gc_alloc(HeapData::Object(props));
         JsValue::Object(ptr)
     }
 

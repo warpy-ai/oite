@@ -295,28 +295,19 @@ pub fn native_readdir_sync(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
                         files.push(JsValue::String(name.to_string()));
                     }
                 }
-                let arr_ptr = vm.heap.len();
-                vm.heap.push(HeapObject {
-                    data: HeapData::Array(files),
-                });
+                let arr_ptr = vm.gc_alloc(HeapData::Array(files));
                 JsValue::Object(arr_ptr)
             }
             Err(e) => {
                 eprintln!("Error reading directory '{}': {}", path, e);
                 // Return empty array on error
-                let arr_ptr = vm.heap.len();
-                vm.heap.push(HeapObject {
-                    data: HeapData::Array(Vec::new()),
-                });
+                let arr_ptr = vm.gc_alloc(HeapData::Array(Vec::new()));
                 JsValue::Object(arr_ptr)
             }
         }
     } else {
         // Return empty array if no path provided
-        let arr_ptr = vm.heap.len();
-        vm.heap.push(HeapObject {
-            data: HeapData::Array(Vec::new()),
-        });
+        let arr_ptr = vm.gc_alloc(HeapData::Array(Vec::new()));
         JsValue::Object(arr_ptr)
     }
 }
@@ -354,10 +345,7 @@ pub fn native_stat_sync(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
                 stat_props.insert("isFile".to_string(), JsValue::NativeFunction(is_file_fn));
                 stat_props.insert("size".to_string(), JsValue::Number(metadata.len() as f64));
 
-                let stat_ptr = vm.heap.len();
-                vm.heap.push(HeapObject {
-                    data: HeapData::Object(stat_props),
-                });
+                let stat_ptr = vm.gc_alloc(HeapData::Object(stat_props));
                 JsValue::Object(stat_ptr)
             }
             Err(_) => JsValue::Null,
@@ -395,10 +383,7 @@ pub fn native_write_binary_file(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
 // ============================================================================
 
 pub fn native_create_byte_stream(vm: &mut VM, _args: Vec<JsValue>) -> JsValue {
-    let ptr = vm.heap.len();
-    vm.heap.push(HeapObject {
-        data: HeapData::ByteStream(Vec::new()),
-    });
+    let ptr = vm.gc_alloc(HeapData::ByteStream(Vec::new()));
     JsValue::Object(ptr)
 }
 
@@ -529,10 +514,7 @@ pub fn native_byte_stream_to_array(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
         }) = vm.heap.get(*ptr)
     {
         let array: Vec<JsValue> = bytes.iter().map(|b| JsValue::Number(*b as f64)).collect();
-        let arr_ptr = vm.heap.len();
-        vm.heap.push(HeapObject {
-            data: HeapData::Array(array),
-        });
+        let arr_ptr = vm.gc_alloc(HeapData::Array(array));
         return JsValue::Object(arr_ptr);
     }
     JsValue::Undefined
@@ -816,10 +798,7 @@ pub fn native_exec(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
             response.insert("stdout".to_string(), JsValue::String(stdout));
             response.insert("stderr".to_string(), JsValue::String(stderr));
 
-            let response_ptr = vm.heap.len();
-            vm.heap.push(HeapObject {
-                data: HeapData::Object(response),
-            });
+            let response_ptr = vm.gc_alloc(HeapData::Object(response));
             JsValue::Object(response_ptr)
         }
         Err(e) => create_exec_error(vm, &format!("exec failed: {}", e)),
@@ -832,10 +811,7 @@ fn create_exec_error(vm: &mut VM, message: &str) -> JsValue {
     response.insert("stdout".to_string(), JsValue::String("".to_string()));
     response.insert("stderr".to_string(), JsValue::String(message.to_string()));
 
-    let response_ptr = vm.heap.len();
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(response),
-    });
+    let response_ptr = vm.gc_alloc(HeapData::Object(response));
     JsValue::Object(response_ptr)
 }
 
@@ -948,10 +924,7 @@ fn create_fetch_response(
     _redirected: bool,
 ) -> JsValue {
     // Create headers object
-    let headers_ptr = vm.heap.len();
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(headers),
-    });
+    let headers_ptr = vm.gc_alloc(HeapData::Object(headers));
 
     // Create response object
     let mut response = crate::vm::value::PropMap::new();
@@ -968,10 +941,7 @@ fn create_fetch_response(
     response.insert("body".to_string(), JsValue::String(body.to_string()));
     response.insert("error".to_string(), JsValue::Undefined);
 
-    let response_ptr = vm.heap.len();
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(response),
-    });
+    let response_ptr = vm.gc_alloc(HeapData::Object(response));
     JsValue::Object(response_ptr)
 }
 
@@ -983,10 +953,7 @@ fn create_fetch_error(vm: &mut VM, message: &str) -> JsValue {
     response.insert("body".to_string(), JsValue::String("".to_string()));
     response.insert("error".to_string(), JsValue::String(message.to_string()));
 
-    let response_ptr = vm.heap.len();
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(response),
-    });
+    let response_ptr = vm.gc_alloc(HeapData::Object(response));
     JsValue::Object(response_ptr)
 }
 
@@ -1054,9 +1021,6 @@ pub fn native_object_keys(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
         .into_iter()
         .map(JsValue::String)
         .collect();
-    let arr_ptr = vm.heap.len();
-    vm.heap.push(HeapObject {
-        data: HeapData::Array(keys),
-    });
+    let arr_ptr = vm.gc_alloc(HeapData::Array(keys));
     JsValue::Object(arr_ptr)
 }
