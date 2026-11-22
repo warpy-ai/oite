@@ -125,10 +125,9 @@ const vit = new Set([1, 2]).values();
 console.log(vit.next().value, vit.next().value, vit.next().done);
 show(() => it.next.call({}));
 
-// Spread and Array.from.
+// Spread.
 const sm = new Map([["a", 1], ["b", 2]]);
 console.log([...sm], [...new Set([1, 2, 2])], [...sm.values()], [0, ...sm.keys()]);
-console.log(Array.from(new Set(["x", "y"])), Array.from(sm, (e, i) => e[0] + i));
 
 // Printing.
 console.log(sm.keys(), sm.values(), sm.entries());

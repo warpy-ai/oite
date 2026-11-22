@@ -123,21 +123,6 @@ pub extern "C" fn ot_builtin_date_now(
     number(builtins::date_now())
 }
 
-/// `Array.isArray(value)`.
-pub extern "C" fn ot_builtin_array_is_array(
-    _this: u64,
-    argv: *const u64,
-    argc: usize,
-    _env: u64,
-) -> u64 {
-    let a = unsafe { args(argv, argc) };
-    let is_array = a
-        .first()
-        .and_then(|v| object(OtValue::from_bits(*v)))
-        .is_some_and(|(_, kind)| matches!(kind, ObjectKind::Array));
-    boolean(is_array)
-}
-
 /// `Object.keys(obj)`: own property names, in insertion order. (`for...in`
 /// compiles to this.)
 pub extern "C" fn ot_builtin_object_keys(

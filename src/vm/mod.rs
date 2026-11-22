@@ -940,6 +940,36 @@ impl VM {
         ExecResult::ContinueNoIpInc
     }
 
+    /// Call the object `ptr` as the current instruction, if it is a
+    /// function: a `new Promise`'s `resolve` or `reject`, or an object with a
+    /// `__call__` (`String`). `None`: it is not one.
+    fn call_object(&mut self, ptr: usize, args: Vec<JsValue>) -> Option<ExecResult> {
+        if self.resolver_of(ptr).is_some() {
+            let result = self.call_value(&JsValue::Object(ptr), JsValue::Undefined, args);
+            return Some(self.finish_call(result));
+        }
+        let call = match self.heap.get(ptr) {
+            Some(HeapObject {
+                data: HeapData::Object(props),
+            }) => props.get("__call__").cloned(),
+            _ => None,
+        };
+        match call? {
+            JsValue::NativeFunction(idx) => {
+                let result = self.native_functions[idx](self, args);
+                let result = match self.native_throw.take() {
+                    Some(e) => Err(e),
+                    None => Ok(result),
+                };
+                Some(self.finish_call(result))
+            }
+            method @ JsValue::Function { .. } => {
+                Some(self.call_as_method(method, JsValue::Object(ptr), args))
+            }
+            _ => None,
+        }
+    }
+
     /// Push a call's result and continue, or throw what it threw.
     fn finish_call(&mut self, result: Result<JsValue, JsValue>) -> ExecResult {
         match result {
@@ -1339,59 +1369,12 @@ impl VM {
                             Err(e) => return self.throw_exception(e),
                         }
                     }
-                    JsValue::Object(ptr) if self.resolver_of(ptr).is_some() => {
-                        // `resolve(v)` / `reject(e)` of a `new Promise`
-                        let callee = JsValue::Object(ptr);
-                        match self.call_value(&callee, JsValue::Undefined, args) {
-                            Ok(v) => self.stack.push(v),
-                            Err(e) => return self.throw_exception(e),
-                        }
-                    }
-                    JsValue::Object(ptr) => {
-                        // Check if object has a __call__ property (callable object like String)
-                        if let Some(HeapObject {
-                            data: HeapData::Object(props),
-                        }) = self.heap.get(ptr)
-                        {
-                            if let Some(JsValue::NativeFunction(idx)) = props.get("__call__") {
-                                let idx = *idx;
-                                let func = self.native_functions[idx];
-                                let result = func(self, args);
-                                if let Some(e) = self.native_throw.take() {
-                                    return self.throw_exception(e);
-                                }
-                                self.stack.push(result);
-                            } else if let Some(JsValue::Function { address, env }) =
-                                props.get("__call__")
-                            {
-                                let address = *address;
-                                let env = *env;
-                                self.push_call_args(&args, address);
-                                let frame = Frame {
-                                    return_address: self.ip + 1,
-                                    locals: HashMap::new(),
-                                    indexed_locals: Vec::new(),
-                                    this_context: JsValue::Object(ptr),
-                                    new_target: None,
-                                    super_called: false,
-                                    resume_ip: None,
-                                    env,
-                                };
-                                self.call_stack.push(frame);
-                                self.ip = address;
-                                return ExecResult::ContinueNoIpInc;
-                            } else {
-                                let shown = crate::stdlib::inspect(self, &JsValue::Object(ptr));
-                                return self.throw_error(
-                                    "TypeError",
-                                    format!("{shown} is not a function"),
-                                );
-                            }
-                        } else {
-                            panic!("Object reference invalid: Object({})", ptr);
-                        }
-                    }
                     other => {
+                        if let JsValue::Object(ptr) = other
+                            && let Some(result) = self.call_object(ptr, args)
+                        {
+                            return result;
+                        }
                         let shown = crate::stdlib::inspect(self, &other);
                         return self.throw_error("TypeError", format!("{shown} is not a function"));
                     }
@@ -2172,9 +2155,7 @@ impl VM {
                             if result.is_none()
                                 && let Some(method) = self.array_proto_method(&name)
                             {
-                                // The methods written in Oite
-                                // (`std/core/array.ot`), and any a program
-                                // adds to `Array.prototype`.
+                                // The methods added to `Array.prototype`.
                                 return self.call_as_method(method, JsValue::Object(ptr), args);
                             }
                             return self.finish_builtin(result, JsValue::Object(ptr), &name);
@@ -2263,6 +2244,11 @@ impl VM {
                             let args = self.pop_args(arg_count);
                             let result = self.call_builtin(m, JsValue::Object(ptr), args);
                             return self.finish_call(result);
+                        } else if let JsValue::Object(method) = method {
+                            let args = self.pop_args(arg_count);
+                            if let Some(result) = self.call_object(method, args) {
+                                return result;
+                            }
                         }
                         let shown = crate::stdlib::inspect(self, &JsValue::Object(ptr));
                         return self
@@ -2596,6 +2582,11 @@ impl VM {
                         Err(e) => return self.throw_exception(e),
                     },
                     other => {
+                        if let JsValue::Object(ptr) = other
+                            && let Some(result) = self.call_object(ptr, args)
+                        {
+                            return result;
+                        }
                         let shown = crate::stdlib::inspect(self, &other);
                         return self.throw_error("TypeError", format!("{shown} is not a function"));
                     }

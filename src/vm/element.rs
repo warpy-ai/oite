@@ -78,7 +78,7 @@ impl VM {
             (JsValue::String(s), _) if name == "length" => size(char_count(s, is_ascii(s))),
             _ => match self.builtin_method(target, name) {
                 Some(method) => method,
-                // The methods written in Oite (`std/core/array.ot`).
+                // The methods added to `Array.prototype`.
                 None if matches!(data, Some(HeapData::Array(_))) => {
                     self.array_proto_method(name).unwrap_or(JsValue::Undefined)
                 }

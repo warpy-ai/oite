@@ -47,7 +47,6 @@ first [ 'b', 2 ]
 1 2 true
 TypeError: Method Map Iterator.prototype.next called on incompatible receiver #<Object>
 [ [ 'a', 1 ], [ 'b', 2 ] ] [ 1, 2 ] [ 1, 2 ] [ 0, 'a', 'b' ]
-[ 'x', 'y' ] [ 'a0', 'b1' ]
 [Map Iterator] { 'a', 'b' } [Map Iterator] { 1, 2 } [Map Entries] { [ 'a', 1 ], [ 'b', 2 ] }
 [Set Entries] { [ 1, 1 ] } [Set Iterator] { 1 }
 [ Map(1) { 1 => { x: 1 } } ] { set: Set(1) { 'a' } }

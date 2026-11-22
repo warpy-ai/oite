@@ -42,8 +42,7 @@ pub extern "C" fn ot_call_method(
         return result;
     }
 
-    // The array methods written in Oite (`std/core/array.ot`), and any a
-    // program adds to `Array.prototype`.
+    // The array methods added to `Array.prototype`.
     if let Some((_, ObjectKind::Array)) = object(r)
         && let Some(method) = array_proto_method(key)
     {

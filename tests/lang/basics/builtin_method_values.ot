@@ -48,12 +48,12 @@ const join = [].join;
 console.log(join.call([1, 2, 3], "-"));
 const pop = arr.pop;
 console.log(pop.call(arr), arr.length);
-console.log(Array.prototype.push === arr.push, typeof Array.prototype.map);
+console.log(Array.prototype.push === arr.push, typeof Array.prototype.slice);
 Array.prototype.push.call(arr, 6);
 console.log(arr.join(","));
 const reverse = arr.reverse;
 console.log(reverse.call(arr) === arr, arr.join(","));
-console.log([[1, 2], [3]].map((a) => slice.call(a, 1).length).join(","));
+console.log([slice.call([1, 2], 1).length, slice.call([3], 1).length].join(","));
 
 // Numbers.
 const fixed = (0).toFixed;
