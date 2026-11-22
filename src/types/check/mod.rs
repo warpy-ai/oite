@@ -110,6 +110,8 @@ pub struct Checker {
     /// The member expression checked last is a property of a string, a
     /// number or a boolean: a method the language provides.
     built_in_member: bool,
+    /// Variables declared with an object type, by the span of the name.
+    objects: HashSet<Span>,
 }
 
 /// What the checker knows about the modules of a program checked so
@@ -130,6 +132,9 @@ pub struct Checked {
     pub guards: Guards,
     /// The values whose kind is proved: nothing to check.
     pub facts: Guards,
+    /// Variables declared with an object type, by the span of the name:
+    /// the move check moves their values.
+    pub objects: HashSet<Span>,
 }
 
 /// Check a program. With
@@ -149,6 +154,7 @@ pub fn check_program(
         guards: Guards::new(),
         facts: Guards::new(),
         built_in_member: false,
+        objects: HashSet::new(),
     };
     match program {
         Program::Module(module) => {
@@ -193,6 +199,7 @@ pub fn check_program(
         diags,
         guards: checker.guards,
         facts: checker.facts,
+        objects: checker.objects,
     }
 }
 

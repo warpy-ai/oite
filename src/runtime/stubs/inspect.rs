@@ -1,13 +1,11 @@
 //! How values are printed: `console.log` formatting.
 
 use super::*;
+use builtins::InspectOptions;
 
 // =========================================================================
 // Console
 // =========================================================================
-
-/// Nesting depth beyond which objects print as `[Object]` / `[Array]`.
-pub(super) const INSPECT_DEPTH: usize = 2;
 
 /// Human-readable rendering of a value, in the style of Node's
 /// `util.inspect`. Must stay identical to `stdlib::inspect` in the VM, so
@@ -15,8 +13,12 @@ pub(super) const INSPECT_DEPTH: usize = 2;
 /// `{ x: 1, y: 's' }`, `[Circular]`. Object keys are in insertion
 /// order, and keys starting with `__` are internal and hidden.
 pub fn inspect(v: OtValue) -> String {
+    inspect_with(v, InspectOptions::DEFAULT)
+}
+
+pub(super) fn inspect_with(v: OtValue, opts: InspectOptions) -> String {
     let mut seen = Vec::new();
-    inspect_inner(v, 0, &mut seen)
+    inspect_inner(v, 0, opts, &mut seen)
 }
 
 pub(super) fn is_identifier(key: &str) -> bool {
@@ -35,7 +37,12 @@ pub(super) fn quote(s: &str) -> String {
 }
 
 /// `key: value, ...`, as `console.log` shows an object's properties.
-fn show_entries(entries: Vec<(&str, u64)>, depth: usize, seen: &mut Vec<usize>) -> String {
+fn show_entries(
+    entries: Vec<(&str, u64)>,
+    depth: usize,
+    opts: InspectOptions,
+    seen: &mut Vec<usize>,
+) -> String {
     let parts: Vec<String> = entries
         .into_iter()
         .map(|(k, bits)| {
@@ -44,7 +51,7 @@ fn show_entries(entries: Vec<(&str, u64)>, depth: usize, seen: &mut Vec<usize>) 
             } else {
                 quote(k)
             };
-            let val = inspect_inner(OtValue::from_bits(bits), depth + 1, seen);
+            let val = inspect_inner(OtValue::from_bits(bits), depth + 1, opts, seen);
             format!("{}: {}", key, val)
         })
         .collect();
@@ -57,17 +64,26 @@ fn with_entries(
     summary: String,
     entries: Vec<(&str, u64)>,
     depth: usize,
+    opts: InspectOptions,
     seen: &mut Vec<usize>,
 ) -> String {
-    if entries.is_empty() || depth > INSPECT_DEPTH {
+    if entries.is_empty() || depth > opts.depth {
         return summary;
     }
-    format!("{summary} {{ {} }}", show_entries(entries, depth, seen))
+    format!("{summary} {{ {} }}", show_entries(entries, depth, opts, seen))
 }
 
-pub(super) fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> String {
+pub(super) fn inspect_inner(
+    v: OtValue,
+    depth: usize,
+    opts: InspectOptions,
+    seen: &mut Vec<usize>,
+) -> String {
     let Some((ptr, kind)) = object(v) else {
-        return value_to_string(v);
+        return match v.as_number() {
+            Some(n) => builtins::format_number(n),
+            None => value_to_string(v),
+        };
     };
     match kind {
         ObjectKind::String => quote(unsafe { ptr.as_ref::<NativeString>().as_str() }),
@@ -78,7 +94,7 @@ pub(super) fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> 
             } else {
                 format!("[Function: {name}]")
             };
-            with_entries(summary, function_entries(ptr), depth, seen)
+            with_entries(summary, function_entries(ptr), depth, opts, seen)
         }
         ObjectKind::ByteStream => "ByteStream".to_string(),
         ObjectKind::Array | ObjectKind::Object => {
@@ -86,29 +102,32 @@ pub(super) fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> 
             if seen.contains(&addr) {
                 return "[Circular]".to_string();
             }
-            let too_deep = depth > INSPECT_DEPTH;
+            let too_deep = depth > opts.depth;
             seen.push(addr);
             let out = if kind == ObjectKind::Array {
                 let arr = array(ptr);
-                if arr.len == 0 {
+                if arr.len == 0 && !opts.show_hidden {
                     "[]".to_string()
                 } else if too_deep {
                     "[Array]".to_string()
                 } else {
-                    let parts: Vec<String> = (0..arr.len as usize)
+                    let mut parts: Vec<String> = (0..arr.len as usize)
                         .map(|i| {
                             let e = OtValue::from_bits(unsafe { *arr.elements.add(i) });
-                            inspect_inner(e, depth + 1, seen)
+                            inspect_inner(e, depth + 1, opts, seen)
                         })
                         .collect();
+                    if opts.show_hidden {
+                        parts.push(format!("[length]: {}", arr.len));
+                    }
                     format!("[ {} ]", parts.join(", "))
                 }
             } else if let Some(id) = promise_id(v.to_bits()) {
-                promise_summary(id, depth, seen)
+                promise_summary(id, depth, opts, seen)
             } else if is_class(ptr) {
                 let mut statics = visible_data(ptr);
                 statics.retain(|(k, _)| !builtins::is_function_key(k));
-                with_entries(class_summary(ptr), statics, depth, seen)
+                with_entries(class_summary(ptr), statics, depth, opts, seen)
             } else if is_error(ptr) {
                 // `TypeError: message`, then any other own properties.
                 let summary = error_summary(ptr);
@@ -120,7 +139,8 @@ pub(super) fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> 
                     let parts: Vec<String> = keys
                         .into_iter()
                         .map(|(k, bits)| {
-                            let val = inspect_inner(OtValue::from_bits(bits), depth + 1, seen);
+                            let val =
+                                inspect_inner(OtValue::from_bits(bits), depth + 1, opts, seen);
                             format!("{}: {}", k, val)
                         })
                         .collect();
@@ -133,7 +153,7 @@ pub(super) fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> 
                 } else if too_deep {
                     "[Object]".to_string()
                 } else {
-                    format!("{{ {} }}", show_entries(keys, depth, seen))
+                    format!("{{ {} }}", show_entries(keys, depth, opts, seen))
                 }
             };
             seen.pop();
@@ -142,16 +162,9 @@ pub(super) fn inspect_inner(v: OtValue, depth: usize, seen: &mut Vec<usize>) -> 
     }
 }
 
-/// `console.log` arguments joined by a space; top-level strings print raw.
+/// The line `console.log(...args)` prints (`builtins::format_log`).
 pub(super) fn format_log_args(a: &[u64]) -> String {
-    a.iter()
-        .map(|&bits| {
-            let v = OtValue::from_bits(bits);
-            match as_str(v) {
-                Some(s) => s.to_string(),
-                None => inspect(v),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    builtins::format_log(&NativeHost, a, |&v, opts| {
+        inspect_with(OtValue::from_bits(v), opts)
+    })
 }

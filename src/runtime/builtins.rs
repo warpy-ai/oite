@@ -1,4 +1,5 @@
-//! Built-in string and array methods, shared by the VM and native code.
+//! Built-in string and array methods, and `console.log`'s formatting,
+//! shared by the VM and native code.
 //!
 //! Each method is implemented once, generically over the value
 //! representation: the VM plugs in `JsValue`, the native runtime plugs in
@@ -29,6 +30,9 @@ pub trait Host {
     /// `Object.keys(v)`: an object's own property names, an array's indices,
     /// nothing for any other value.
     fn own_keys(&self, v: &Self::Value) -> Vec<String>;
+    /// An object's own visible data properties, in order (what
+    /// `JSON.stringify` writes); nothing for any other value.
+    fn own_entries(&self, v: &Self::Value) -> Vec<(String, Self::Value)>;
 
     fn make_number(&self, n: f64) -> Self::Value;
     fn make_string(&self, s: String) -> Self::Value;
@@ -991,4 +995,239 @@ pub fn is_hidden_key(key: &str) -> bool {
         || key.starts_with('#')
         || key.starts_with("getter:")
         || key.starts_with("setter:")
+}
+
+/// How `console.log` renders a value that is not printed as text: the
+/// `util.inspect` options it uses.
+#[derive(Clone, Copy)]
+pub struct InspectOptions {
+    /// Nesting depth beyond which objects print as `[Object]` / `[Array]`.
+    pub depth: usize,
+    /// `%o`: also show an array's `[length]`.
+    pub show_hidden: bool,
+}
+
+impl InspectOptions {
+    pub const DEFAULT: Self = InspectOptions {
+        depth: 2,
+        show_hidden: false,
+    };
+}
+
+/// The line `console.log(...args)` prints, as Node's `util.format` builds
+/// it. In a leading string with more arguments after it, `%s %d %i %f %j %o
+/// %O %c` each take the next argument and `%%` is `%`; a specifier with no
+/// argument left stays as written. The remaining arguments follow, joined
+/// by a space: strings as they are, anything else through `inspect`.
+pub fn format_log<H: Host>(
+    h: &H,
+    args: &[H::Value],
+    inspect: impl Fn(&H::Value, InspectOptions) -> String,
+) -> String {
+    let mut out = String::new();
+    let mut rest = args;
+    let mut sep = "";
+    if let [first, tail @ ..] = args
+        && !tail.is_empty()
+        && let Some(text) = h.string(first)
+    {
+        rest = tail;
+        let b = text.as_bytes();
+        let (mut last, mut i) = (0, 0);
+        while i + 1 < b.len() {
+            if b[i] != b'%' {
+                i += 1;
+                continue;
+            }
+            let spec = b[i + 1];
+            let piece = match rest.first() {
+                _ if spec == b'%' => Some("%".to_string()),
+                Some(v) => substitute(h, spec, v, &inspect),
+                None => None,
+            };
+            if let Some(piece) = piece {
+                out.push_str(&text[last..i]);
+                out.push_str(&piece);
+                last = i + 2;
+                if spec != b'%' {
+                    rest = &rest[1..];
+                }
+            }
+            i += 2;
+        }
+        out.push_str(&text[last..]);
+        sep = " ";
+    }
+    for v in rest {
+        out.push_str(sep);
+        match h.string(v) {
+            Some(s) => out.push_str(s),
+            None => out.push_str(&inspect(v, InspectOptions::DEFAULT)),
+        }
+        sep = " ";
+    }
+    out
+}
+
+/// What `%<spec>` turns `v` into; `None` if `spec` is not a specifier.
+fn substitute<H: Host>(
+    h: &H,
+    spec: u8,
+    v: &H::Value,
+    inspect: &impl Fn(&H::Value, InspectOptions) -> String,
+) -> Option<String> {
+    let shallow = InspectOptions {
+        depth: 0,
+        ..InspectOptions::DEFAULT
+    };
+    let hidden = InspectOptions {
+        depth: 4,
+        show_hidden: true,
+    };
+    Some(match spec {
+        b's' => match h.kind(v) {
+            Kind::Number => format_number(to_number(h, v)),
+            Kind::Array | Kind::Object => inspect(v, shallow),
+            _ => h.to_string(v),
+        },
+        b'd' => format_number(to_number(h, v)),
+        b'i' => format_number(super::intrinsics::parse_int(&h.to_string(v), 0.0)),
+        b'f' => format_number(super::intrinsics::parse_float(&h.to_string(v))),
+        b'j' => match json(h, v, &mut Vec::new()) {
+            Ok(Some(s)) => s,
+            Ok(None) => "undefined".to_string(),
+            Err(Circular) => "[Circular]".to_string(),
+        },
+        b'o' => inspect(v, hidden),
+        b'O' => inspect(v, InspectOptions::DEFAULT),
+        b'c' => String::new(),
+        _ => return None,
+    })
+}
+
+/// A number as `console.log` shows it: like `String(n)`, but `-0` keeps
+/// its sign.
+pub fn format_number(n: f64) -> String {
+    if n == 0.0 && n.is_sign_negative() {
+        "-0".to_string()
+    } else {
+        number_to_string(n)
+    }
+}
+
+/// `Number(v)`, for a value with no `valueOf` of its own.
+fn to_number<H: Host>(h: &H, v: &H::Value) -> f64 {
+    match h.kind(v) {
+        Kind::Number => h.number(v).unwrap_or(f64::NAN),
+        Kind::Boolean => (h.to_string(v) == "true") as u8 as f64,
+        Kind::Null => 0.0,
+        Kind::Undefined | Kind::Function => f64::NAN,
+        Kind::String | Kind::Array | Kind::Object => string_to_number(&h.to_string(v)),
+    }
+}
+
+/// JavaScript `StringToNumber`: `"  42 "` is 42, `""` is 0, `"0x1F"` is
+/// 31, and `"4x"` is NaN.
+pub fn string_to_number(s: &str) -> f64 {
+    let t = s.trim_matches(super::intrinsics::is_js_space);
+    if t.is_empty() {
+        return 0.0;
+    }
+    for (prefix, radix) in [
+        ("0x", 16),
+        ("0X", 16),
+        ("0o", 8),
+        ("0O", 8),
+        ("0b", 2),
+        ("0B", 2),
+    ] {
+        if let Some(digits) = t.strip_prefix(prefix) {
+            return digits
+                .chars()
+                .try_fold(0.0, |n, c| {
+                    Some(n * radix as f64 + c.to_digit(radix)? as f64)
+                })
+                .filter(|_| !digits.is_empty())
+                .unwrap_or(f64::NAN);
+        }
+    }
+    let unsigned = t.strip_prefix(['+', '-']).unwrap_or(t);
+    if unsigned == "Infinity" {
+        return if t.starts_with('-') {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        };
+    }
+    // Rust's parser also takes `inf` and `nan`, which JavaScript does not.
+    let decimal = |c: u8| c.is_ascii_digit() || matches!(c, b'.' | b'e' | b'E' | b'+' | b'-');
+    if unsigned.bytes().all(decimal) {
+        t.parse().unwrap_or(f64::NAN)
+    } else {
+        f64::NAN
+    }
+}
+
+/// `JSON.stringify` met a value that contains itself.
+struct Circular;
+
+/// `JSON.stringify(v)`, for `%j`; `None` where it gives `undefined`.
+fn json<H: Host>(
+    h: &H,
+    v: &H::Value,
+    seen: &mut Vec<H::Value>,
+) -> Result<Option<String>, Circular> {
+    Ok(Some(match h.kind(v) {
+        Kind::Undefined | Kind::Function => return Ok(None),
+        Kind::Null => "null".to_string(),
+        Kind::Boolean => h.to_string(v),
+        Kind::Number => match h.number(v) {
+            Some(n) if n.is_finite() => number_to_string(n),
+            _ => "null".to_string(),
+        },
+        Kind::String => json_quote(h.string(v).unwrap_or_default()),
+        Kind::Array | Kind::Object => {
+            if seen.iter().any(|s| h.strict_equal(s, v)) {
+                return Err(Circular);
+            }
+            seen.push(v.clone());
+            let out = if let Some(items) = h.array_elements(v) {
+                let mut parts = Vec::with_capacity(items.len());
+                for item in &items {
+                    parts.push(json(h, item, seen)?.unwrap_or_else(|| "null".to_string()));
+                }
+                format!("[{}]", parts.join(","))
+            } else {
+                let mut parts = Vec::new();
+                for (key, item) in h.own_entries(v) {
+                    if let Some(s) = json(h, &item, seen)? {
+                        parts.push(format!("{}:{}", json_quote(&key), s));
+                    }
+                }
+                format!("{{{}}}", parts.join(","))
+            };
+            seen.pop();
+            out
+        }
+    }))
+}
+
+fn json_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }

@@ -1,0 +1,8 @@
+// backends: vm jit aot
+// #54: warn and error write to stderr (streams.stderr), log, info and debug
+// to stdout.
+console.log("out %d", 1);
+console.warn("warn %s", "w", { k: 1 });
+console.error("error", 2);
+console.info("info");
+console.debug("debug %j", [1]);

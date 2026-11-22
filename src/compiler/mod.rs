@@ -108,8 +108,13 @@ impl Compiler {
         let (cm, fm, program) = (&parsed.cm, &parsed.fm, &parsed.program);
         let position = |span: Span| position(cm, span);
 
+        // The move check reads the annotations the type checker resolved.
+        let checked =
+            crate::types::check::check_program(program, &mut self.type_world, link.as_ref());
+
         self.borrow_checker.error_span = None;
         self.borrow_checker.error_note = None;
+        self.borrow_checker.declared_objects = checked.objects;
         self.borrow_checker.enter_scope(); // Script vars at depth 1, globals at 0
 
         let result = match program {
@@ -153,8 +158,6 @@ impl Compiler {
             return Err(CompileError::single(d));
         }
 
-        let checked =
-            crate::types::check::check_program(program, &mut self.type_world, link.as_ref());
         self.type_diagnostics = checked
             .diags
             .into_iter()

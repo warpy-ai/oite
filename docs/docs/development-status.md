@@ -101,7 +101,7 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Implicit conversion through a user `valueOf` / `toString` (`"" + obj`, `${obj}`, `String(obj)`) | Covered | Covered       |
 | Template literals                          | Covered                              | Covered                           |
 | `Math`, `Date.now()`, number `toString` / `toFixed` | Covered                      | Covered (shared implementation)   |
-| `console.log` formatting                   | Covered                              | Covered (same formatter)          |
+| `console.log` / `info` / `debug` (stdout), `error` / `warn` (stderr), Node's `%s %d %i %f %j %o %O %c %%` substitution | Covered | Covered (same formatter) |
 | Generators, regex, tagged templates        | Compile error                        | Compile error                     |
 | Runtime errors (`null.x`, unbound names, calling a non-function, ...) | Thrown as `TypeError` / `ReferenceError` / `RangeError`, catchable | Same                       |
 | Stack overflow                             | `RangeError`                         | `RangeError` (stack-pointer check) |

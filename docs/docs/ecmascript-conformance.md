@@ -262,7 +262,7 @@ Oite implements JavaScript built-in objects incrementally:
 
 | Object    | Methods                                                                       |
 | --------- | ----------------------------------------------------------------------------- |
-| `console` | `log`, `error`, `warn`                                                        |
+| `console` | `log`, `info`, `debug` (stdout); `error`, `warn` (stderr); `%s %d %i %f %j %o %O %c %%` in a leading string, as Node's `util.format` |
 | `Array`   | `push`, `pop`, `map`, `filter`, `reduce`, `forEach`, `find`, `join`, `length` |
 | `String`  | `length`, `charAt`, `fromCharCode`, concatenation                             |
 | `Object`  | Literal syntax, property access, computed properties                          |
