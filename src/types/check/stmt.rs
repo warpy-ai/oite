@@ -318,6 +318,9 @@ impl Checker {
                 match &id.type_ann {
                     Some(ann) => {
                         let declared = self.resolve(&ann.type_ann);
+                        if self.is_object(&declared) {
+                            self.objects.insert(id.id.span);
+                        }
                         let found = d.init.as_ref().map(|init| {
                             let found = self.expr(init);
                             self.check_assignable(&found, &declared, init.span());
@@ -365,6 +368,21 @@ impl Checker {
         let is_union = matches!(self.expand(declared), Ty::Union(_));
         if is_union && !found.is_dynamic() && self.assignable(found, declared) {
             self.narrow(name, found.clone());
+        }
+    }
+
+    /// Whether every value of type `ty` is an object: an array, a
+    /// function, a class or an instance of one included.
+    fn is_object(&self, ty: &Ty) -> bool {
+        match self.expand(ty) {
+            Ty::Array(_)
+            | Ty::Tuple(_)
+            | Ty::Object(_)
+            | Ty::Named(_)
+            | Ty::ClassValue(_)
+            | Ty::Function(_) => true,
+            Ty::Union(members) => members.iter().all(|m| self.is_object(m)),
+            _ => false,
         }
     }
 }
