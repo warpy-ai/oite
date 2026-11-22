@@ -1541,14 +1541,7 @@ impl VM {
 
             OpCode::Not => {
                 let val = self.stack.pop().unwrap_or(JsValue::Undefined);
-                let is_falsy = match val {
-                    JsValue::Boolean(b) => !b,
-                    JsValue::Number(n) => n == 0.0 || n.is_nan(),
-                    JsValue::Null | JsValue::Undefined => true,
-                    JsValue::String(ref s) => s.is_empty(),
-                    _ => false,
-                };
-                self.stack.push(JsValue::Boolean(is_falsy));
+                self.stack.push(JsValue::Boolean(val.is_falsy()));
             }
 
             OpCode::Neg => {
@@ -1670,13 +1663,7 @@ impl VM {
 
             OpCode::JumpIfFalse(target) => {
                 let condition = self.stack.pop().unwrap_or(JsValue::Undefined);
-                let is_falsy = match condition {
-                    JsValue::Boolean(b) => !b,
-                    JsValue::Number(n) => n == 0.0,
-                    JsValue::Null | JsValue::Undefined => true,
-                    _ => false,
-                };
-                if is_falsy {
+                if condition.is_falsy() {
                     self.ip = target;
                     return ExecResult::ContinueNoIpInc;
                 }
