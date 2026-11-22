@@ -186,14 +186,14 @@ pub(super) fn get_property_atom(v: OtValue, key: Atom) -> u64 {
         }
         ObjectKind::String => {
             let s = unsafe { ptr.as_ref::<NativeString>().as_str() };
+            let ascii = is_ascii(v);
             if key == atom::LENGTH {
-                // Byte length, matching the VM until the string model is
-                // decided (#133).
-                return number(s.len() as f64);
+                return number(builtins::char_count(s, ascii) as f64);
             }
-            match atom::name(key).parse::<usize>() {
-                Ok(i) if i < s.len() => new_string(&s[i..i + 1]),
-                _ => undefined(),
+            let i = atom::name(key).parse::<usize>().ok();
+            match i.and_then(|i| builtins::char_at(s, ascii, i)) {
+                Some(c) => new_string(c.encode_utf8(&mut [0; 4])),
+                None => undefined(),
             }
         }
         _ => undefined(),

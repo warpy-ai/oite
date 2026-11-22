@@ -1,0 +1,36 @@
+// backends: vm jit aot
+// Strings count Unicode scalar values on every backend (#133). For text
+// without astral characters JavaScript counts the same, so this output is
+// Node's. string_astral.ot covers where the two differ.
+let s = "héllo";
+let cjk = "日本語";
+let built = "ab" + "é" + "日";
+console.log(s.length, cjk.length, built.length, "".length, s["length"]);
+console.log(s[0], s[1], s[4], cjk[2], built[3], s["1"]);
+console.log(s[5], cjk[3], s[-1], s[1.5]);
+console.log(s.charAt(1), s.charAt(5) === "", s.charCodeAt(1), cjk.charCodeAt(0), s.at(-1));
+console.log(s.slice(1, 3), cjk.slice(1), s.substring(4, 1), cjk.slice(-2, -1));
+console.log(s.indexOf("l"), s.lastIndexOf("l"), cjk.indexOf("語"), s.includes("él"));
+console.log(s.split(""), cjk.split("本"), "日".padStart(3, "é"));
+
+let chars = [];
+for (const c of "aé日") {
+  chars.push(c);
+}
+console.log(chars, chars.length, [..."é日"]);
+
+// An index loop visits each character once.
+let reversed = "";
+for (let i = 0; i < cjk.length; i++) {
+  reversed = cjk[i] + reversed;
+}
+console.log(reversed);
+
+const [first, second] = "é1";
+console.log(first, second);
+
+// Longer than 64 bytes, with the non-ASCII character in the first 64 or
+// after them.
+let late = "a".repeat(70) + "é" + "b";
+let early = "é" + "a".repeat(70);
+console.log(late.length, late[70], late[71], early.length, early[0], early[70]);

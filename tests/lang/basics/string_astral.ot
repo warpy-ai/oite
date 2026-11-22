@@ -1,0 +1,19 @@
+// backends: vm jit aot
+// Astral characters (outside the Basic Multilingual Plane). Oite counts
+// Unicode scalar values (#133), so "😀" is one character. JavaScript counts
+// UTF-16 code units, where it is two (a surrogate pair): Node prints 2 for
+// "😀".length and reads half a pair at each of its indices. So this expected
+// output is written by hand, not taken from Node. for...of and spread agree
+// with Node, which iterates code points.
+let e = "a😀b";
+console.log(e.length, "😀".length, "😀😀".length);
+console.log(e[0], e[1], e[2], e[3]);
+console.log(e.charAt(1), e.charCodeAt(1), e.at(-2), e.at(-1));
+console.log(e.slice(1, 2), e.slice(2), e.indexOf("b"), e.indexOf("😀"), e.lastIndexOf("😀"));
+console.log(e.split(""), e.split("😀"), "😀".padStart(3, "-"));
+
+let n = 0;
+for (const c of e) {
+  n++;
+}
+console.log(n, [...e]);
