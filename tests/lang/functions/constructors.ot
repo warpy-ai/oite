@@ -1,0 +1,64 @@
+// backends: vm jit aot
+// A plain function is a constructor: `new F()` makes an object whose
+// prototype is `F.prototype`, which a program adds methods to or replaces.
+// Arrows have no prototype. Held to Node's output.
+
+function Person(name) {
+  this.name = name;
+}
+Person.prototype.greet = function () {
+  return "I am " + this.name;
+};
+const ann = new Person("Ann");
+console.log(ann.greet(), Object.keys(ann), ann.constructor === Person);
+console.log(ann instanceof Person, typeof Person.prototype, Object.keys(Person));
+console.log("prototype" in Person, Person.prototype === Person.prototype);
+
+function Other() {}
+console.log(ann instanceof Other, {} instanceof Person);
+
+// Methods on the prototype are shared; an own property shadows one.
+const ben = new Person("Ben");
+console.log(ann.greet === ben.greet, ben.greet());
+ben.greet = () => "shadowed";
+console.log(ben.greet(), ann.greet());
+
+// Replacing the prototype.
+function Shape() {}
+Shape.prototype = {
+  area() {
+    return 0;
+  },
+  kind: "shape",
+};
+const sh = new Shape();
+console.log(sh.area(), sh.kind, sh instanceof Shape);
+
+// A prototype chain built by hand.
+function Animal(name) {
+  this.name = name;
+}
+Animal.prototype.speak = function () {
+  return this.name + " makes a sound";
+};
+function Dog(name) {
+  Animal.call(this, name);
+}
+Dog.prototype.__proto__ = Animal.prototype;
+Dog.prototype.bark = function () {
+  return this.name + " barks";
+};
+const d = new Dog("Rex");
+console.log(d.speak(), d.bark(), d instanceof Dog, d instanceof Animal);
+
+// A constructor that returns an object gives that object.
+function Factory() {
+  this.ignored = true;
+  return { made: true };
+}
+console.log(new Factory().made, new Factory().ignored);
+
+// Arrows and methods have no prototype.
+const arrow = () => {};
+const o = { m() {} };
+console.log(arrow.prototype, "prototype" in arrow, o.m.prototype);

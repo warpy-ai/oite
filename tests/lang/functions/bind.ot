@@ -1,0 +1,96 @@
+// backends: vm jit aot
+// `Function.prototype.bind`: a bound function calls its target with the
+// bound `this` and the bound arguments first; `new` on it constructs the
+// target. Held to Node's output.
+
+function greet(greeting, punct) {
+  return greeting + ", " + this.name + punct;
+}
+const alice = { name: "Alice" };
+const bob = { name: "Bob" };
+
+// `this` and leading arguments.
+const hi = greet.bind(alice, "Hi");
+console.log(hi("!"), hi("?"));
+console.log(typeof hi, hi.name, hi.length, greet.length);
+const full = greet.bind(alice, "Hey", "...");
+console.log(full(), full("ignored"), full.length);
+
+// The bound `this` wins over call, apply, a method call and a second bind.
+console.log(hi.call(bob, "."), hi.apply(bob, [";"]));
+const holder = { name: "Holder", hi };
+console.log(holder.hi("#"));
+console.log(hi.bind(bob)("+"), hi.bind(bob).name);
+
+// Partial application, and a bound function bound again.
+function add3(a, b, c) {
+  return a + b + c;
+}
+const add1 = add3.bind(null, 1);
+const add12 = add1.bind(null, 2);
+console.log(add1(2, 3), add12(3), add12(10), add1.length, add12.length);
+console.log(add1.name, add12.name);
+console.log(add3.bind()(1, 2, 3), add3.bind(null, 1, 2, 3, 4).length);
+
+// Binding methods to their instance.
+class Button {
+  constructor(label) {
+    this.label = label;
+    this.onClick = this.onClick.bind(this);
+  }
+  onClick() {
+    return "clicked " + this.label;
+  }
+}
+const btn = new Button("OK");
+const handler = btn.onClick;
+console.log(handler(), btn.onClick(), [1, 2].map(btn.onClick).join(" | "));
+
+// As callbacks.
+const scale = function (factor, x) {
+  return x * factor;
+};
+console.log([1, 2, 3].map(scale.bind(null, 10)).join(","));
+const tally = {
+  total: 0,
+  add(x) {
+    this.total += x;
+  },
+};
+[1, 2, 3].forEach(tally.add.bind(tally));
+console.log(tally.total);
+
+// `new` on a bound function constructs the target, with the bound
+// arguments first; the bound `this` is ignored.
+function Pt(x, y) {
+  this.x = x;
+  this.y = y;
+}
+const AtOne = Pt.bind(alice, 1);
+const p = new AtOne(2);
+console.log(p.x, p.y, alice.x, p instanceof Pt, p instanceof AtOne);
+
+// Built-in methods bind too.
+const s = "  pad  ";
+const trimS = s.trim.bind(s);
+console.log("[" + trimS() + "]", "x".toUpperCase.bind("abc")(), trimS.name);
+const arr = [];
+const pushArr = [].push.bind(arr, 0);
+console.log(pushArr(1), pushArr(2, 3), arr.join(","));
+const fix2 = (0).toFixed.bind(3.14159, 2);
+console.log(fix2());
+
+// Each bind makes a new function, which holds properties of its own.
+console.log(greet.bind(alice) === greet.bind(alice), hi === hi);
+hi.meta = 1;
+console.log(hi.meta, Object.keys(hi), greet.meta);
+console.log(hi);
+
+// A bound function called later.
+Promise.resolve("later").then(greet.bind(bob, "Then")).then((v) => console.log(v));
+setTimeout(
+  function (x) {
+    console.log("timer", this.name, x);
+  }.bind(alice, "arg"),
+  0
+);

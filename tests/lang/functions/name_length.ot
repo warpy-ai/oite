@@ -1,0 +1,60 @@
+// backends: vm jit aot
+// `name` and `length`: a function's name comes from its declaration, or
+// from the variable, property or method it is defined as; its length is
+// the number of parameters before the first default or rest one. Held to
+// Node's output.
+
+function decl(a, b, c) {}
+const expr = function (a) {};
+const named = function inner(a, b) {};
+const arrow = (x, y) => x;
+let later;
+later = function () {};
+const obj = {
+  method(a) {},
+  prop: function (a, b) {},
+  arrowProp: () => {},
+};
+class K {
+  constructor(a, b) {}
+  m(x) {}
+  static s() {}
+  #p() {}
+  privateName() {
+    return this.#p.name;
+  }
+}
+function defaults(a, b = 1, c) {}
+function rest(a, ...more) {}
+function lastDefault(a, b, c = 0) {}
+
+console.log(decl.name, decl.length);
+console.log(expr.name, expr.length);
+console.log(named.name, named.length);
+console.log(arrow.name, arrow.length);
+console.log(later.name, later.length);
+console.log(obj.method.name, obj.method.length, obj.prop.name, obj.prop.length, obj.arrowProp.name);
+const k = new K();
+console.log(K.name, K.length, k.m.name, k.m.length, K.s.name, k.privateName());
+console.log(defaults.length, rest.length, lastDefault.length);
+console.log((function () {}).name === "", (() => {}).name === "", [() => {}][0].name === "");
+console.log(typeof decl.name, typeof decl.length);
+
+// Neither can be assigned (outside strict mode the write is ignored), and
+// neither is listed.
+decl.name = "other";
+decl.length = 9;
+console.log(decl.name, decl.length, Object.keys(decl), "length" in decl);
+
+// A name is the name a function was given, not the variable holding it.
+const alias = decl;
+console.log(alias.name, alias === decl);
+
+// Built-in methods are named too.
+console.log("".trim.name, [].push.name, (1).toFixed.name);
+
+// Code that describes functions reads both.
+function describe(f) {
+  return (f.name || "anonymous") + "/" + f.length;
+}
+console.log([decl, arrow, () => {}, obj.method].map(describe).join(" "));

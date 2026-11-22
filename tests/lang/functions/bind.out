@@ -1,0 +1,21 @@
+Hi, Alice! Hi, Alice?
+function bound greet 1 2
+Hey, Alice... Hey, Alice... 0
+Hi, Alice. Hi, Alice;
+Hi, Alice#
+Hi, Alice+ bound bound greet
+6 6 13 2 1
+bound add3 bound bound add3
+6 0
+clicked OK clicked OK clicked OK | clicked OK
+10,20,30
+6
+1 2 undefined true true
+[pad] ABC bound trim
+2 5 0,1,0,2,3
+3.14
+false true
+1 [ 'meta' ] undefined
+[Function: bound greet] { meta: 1 }
+Then, Boblater
+timer Alice arg
