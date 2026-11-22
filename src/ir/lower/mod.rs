@@ -7,8 +7,10 @@
 //! 3. Convert stack operations to explicit value assignments
 //! 4. Insert phi nodes at CFG merge points
 
-use crate::ir::{BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId};
-use crate::vm::opcodes::OpCode;
+use crate::ir::{
+    BlockId, IrFunction, IrModule, IrOp, IrType, Literal, SpreadCallee, Terminator, ValueId,
+};
+use crate::vm::opcodes::{CallKind, OpCode};
 use crate::vm::value::JsValue;
 use std::collections::{HashMap, HashSet};
 

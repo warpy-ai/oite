@@ -514,6 +514,9 @@ pub enum IrOp {
     SuperForward(ValueId, ValueId),
     /// `f(args)` with an explicit `this`: (dst, f, this, args).
     CallWithThis(ValueId, ValueId, ValueId, Vec<ValueId>),
+    /// A call with a spread argument: (dst, callee, args), the callee
+    /// called with the elements of the array `args`.
+    SpreadCall(ValueId, SpreadCallee, ValueId),
     /// `value instanceof ctor`
     InstanceOf(ValueId, ValueId, ValueId),
     /// `key in obj`: (dst, key, obj).
@@ -658,6 +661,19 @@ pub enum IrOp {
     Clone(ValueId, ValueId),
 }
 
+/// What an `IrOp::SpreadCall` calls.
+#[derive(Debug, Clone)]
+pub enum SpreadCallee {
+    /// A function, with `this`: (f, this).
+    Function(ValueId, ValueId),
+    /// `obj.name(...)`: (obj, name).
+    Method(ValueId, String),
+    /// `new ctor(...)`.
+    Construct(ValueId),
+    /// `super(...)`: the parent class's constructor on this `this`.
+    Super(ValueId),
+}
+
 impl IrOp {
     /// Whether the op can throw, so native code checks its result for an
     /// exception in flight.
@@ -702,6 +718,7 @@ impl IrOp {
                 | IrOp::CallSuper(_, _, _)
                 | IrOp::SuperForward(_, _)
                 | IrOp::CallWithThis(_, _, _, _)
+                | IrOp::SpreadCall(_, _, _)
                 | IrOp::InstanceOf(_, _, _)
                 | IrOp::In(_, _, _)
                 | IrOp::AwaitResult(_)
@@ -759,6 +776,7 @@ impl IrOp {
             | IrOp::CallSuper(d, _, _)
             | IrOp::SuperForward(d, _)
             | IrOp::CallWithThis(d, _, _, _)
+            | IrOp::SpreadCall(d, _, _)
             | IrOp::InstanceOf(d, _, _)
             | IrOp::In(d, _, _)
             | IrOp::AsyncStart(d)
@@ -914,6 +932,12 @@ impl IrOp {
                 uses.extend(args.iter().copied());
                 uses
             }
+            IrOp::SpreadCall(_, callee, args) => match callee {
+                SpreadCallee::Function(func, this) => vec![*func, *this, *args],
+                SpreadCallee::Method(func, _)
+                | SpreadCallee::Construct(func)
+                | SpreadCallee::Super(func) => vec![*func, *args],
+            },
             IrOp::SuperForward(_, parent) => vec![*parent],
             IrOp::InstanceOf(_, v, c) | IrOp::In(_, v, c) => vec![*v, *c],
             IrOp::AsyncResolve(_, p, v)
@@ -1476,6 +1500,18 @@ impl fmt::Display for IrOp {
                     args_str.join(", ")
                 )
             }
+            IrOp::SpreadCall(d, callee, args) => match callee {
+                SpreadCallee::Function(func, this) => {
+                    write!(f, "{} = call {}[this={}](...{})", d, func, this, args)
+                }
+                SpreadCallee::Method(obj, name) => {
+                    write!(f, "{} = call.method {}.{}(...{})", d, obj, name, args)
+                }
+                SpreadCallee::Construct(func) => write!(f, "{} = new {}(...{})", d, func, args),
+                SpreadCallee::Super(parent) => {
+                    write!(f, "{} = call.super {}(...{})", d, parent, args)
+                }
+            },
             IrOp::InstanceOf(d, v, c) => write!(f, "{} = instanceof {}, {}", d, v, c),
             IrOp::In(d, k, o) => write!(f, "{} = in {}, {}", d, k, o),
             IrOp::AsyncStart(d) => write!(f, "{} = async.start", d),

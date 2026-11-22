@@ -65,6 +65,7 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Compound assignment (`+=`, `*=`, `<<=`, ...) | Covered                            | Covered                           |
 | Objects, arrays, `obj[k]`, `.length`, `push`/`pop` | Covered                      | Covered                           |
 | Spread in array and object literals (`[...a, ..."str"]`, `{...o}`) | Covered     | Covered                           |
+| Spread in call arguments (`f(...a)`, `o.m(0, ...a)`, `new C(...a)`, `super(...a)`) | Covered | Covered               |
 | Methods on object literals (`this`)        | Covered                              | Covered                           |
 | String methods (`slice`, `split`, `trim`, `indexOf`, `padStart`, ...) | Covered   | Covered (shared implementation)   |
 | Array methods (`splice`, `join`, `indexOf`, `concat`, `shift`, ...)   | Covered   | Covered (shared implementation)   |

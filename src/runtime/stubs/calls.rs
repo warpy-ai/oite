@@ -140,6 +140,48 @@ pub extern "C" fn ot_call_method(
     )
 }
 
+/// The arguments of a call with a spread (`f(a, ...xs)`): the elements of
+/// the array the caller collected them in.
+fn spread_args(args: u64) -> Vec<u64> {
+    use builtins::Host;
+    NativeHost
+        .array_elements(&args)
+        .expect("a spread call's arguments are an array")
+}
+
+/// `f(...args)` with the given `this`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_call_spread(func: u64, this: u64, args: u64) -> u64 {
+    let a = spread_args(args);
+    ot_call(func, this, a.as_ptr(), a.len())
+}
+
+/// `recv.name(...args)`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_call_method_spread(
+    recv: u64,
+    key: *const u8,
+    key_len: usize,
+    args: u64,
+) -> u64 {
+    let a = spread_args(args);
+    ot_call_method(recv, key, key_len, a.as_ptr(), a.len())
+}
+
+/// `new ctor(...args)`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_construct_spread(ctor: u64, args: u64) -> u64 {
+    let a = spread_args(args);
+    ot_construct(ctor, a.as_ptr(), a.len())
+}
+
+/// `super(...args)` on `this`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_call_super_spread(parent: u64, this: u64, args: u64) -> u64 {
+    let a = spread_args(args);
+    ot_call_super(parent, this, a.as_ptr(), a.len())
+}
+
 /// `__intrinsic_<name>(args)`: intrinsic `id`, as on every backend
 /// (`runtime::intrinsics`).
 #[unsafe(no_mangle)]

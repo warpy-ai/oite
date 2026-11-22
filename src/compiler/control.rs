@@ -347,12 +347,9 @@ impl Codegen {
                             to_undefined.extend(self.emit_jumps_if_nullish());
                             self.instructions.push(OpCode::Pop);
                         }
-                        for arg in &call.args {
-                            self.gen_expr(&arg.expr);
-                        }
+                        let argc = self.gen_args(&call.args);
                         self.instructions.push(OpCode::Load(tmp));
-                        self.instructions
-                            .push(OpCode::CallMethod(name, call.args.len()));
+                        self.emit_call(CallKind::Method(name), argc);
                     }
                     _ => {
                         self.gen_opt_chain_object(&call.callee, to_undefined);
@@ -360,11 +357,9 @@ impl Codegen {
                             to_undefined.extend(self.emit_jumps_if_nullish());
                         }
                         self.instructions.push(OpCode::Let(tmp.clone()));
-                        for arg in &call.args {
-                            self.gen_expr(&arg.expr);
-                        }
+                        let argc = self.gen_args(&call.args);
                         self.instructions.push(OpCode::Load(tmp));
-                        self.instructions.push(OpCode::Call(call.args.len()));
+                        self.emit_call(CallKind::Plain, argc);
                     }
                 }
             }
