@@ -1,0 +1,103 @@
+// backends: vm jit aot
+// Every evaluation of a function expression or an arrow makes a new
+// function: `===` tells two apart, and each has its own properties, even
+// when both come from the same code and capture nothing, or capture the
+// same variables. A declaration is one function, however often it is
+// read or called. Held to Node's output.
+
+// The same code, capturing nothing, made twice.
+const fs = [];
+for (let i = 0; i < 2; i++) {
+  fs.push(function () {
+    return 1;
+  });
+}
+fs[0].tag = "first";
+console.log(fs[0] === fs[1], fs[0].tag, fs[1].tag);
+
+function mk() {
+  return () => 1;
+}
+const a = mk();
+const b = mk();
+a.tag = "a";
+console.log(a === b, a.tag, b.tag, a() + b());
+
+// Bound to a name inside a loop.
+const named = [];
+for (let i = 0; i < 2; i++) {
+  const f = function () {};
+  f.i = i;
+  named.push(f);
+}
+console.log(named[0] === named[1], named[0].i, named[1].i);
+
+// Declared inside a function: a new one for each call.
+function outer() {
+  function inner() {
+    return 2;
+  }
+  const arrow = () => 3;
+  return [inner, arrow];
+}
+const p = outer();
+const q = outer();
+p[0].x = 1;
+p[1].x = 1;
+console.log(p[0] === q[0], p[1] === q[1], q[0].x, q[1].x, p[0]() + q[1]());
+
+// Declared inside a function and only called there.
+function sum(n) {
+  function step(x) {
+    return x + 1;
+  }
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    total = step(total);
+  }
+  return total;
+}
+console.log(sum(3), sum(4));
+
+// The same variables captured.
+function shared() {
+  let n = 0;
+  const out = [];
+  for (let k = 0; k < 2; k++) {
+    out.push(() => ++n);
+  }
+  return out;
+}
+const s = shared();
+s[0].tag = 1;
+console.log(s[0] === s[1], s[1].tag, s[0](), s[1]());
+
+// Each has its own prototype.
+const ctors = [];
+for (let i = 0; i < 2; i++) {
+  ctors.push(function () {});
+}
+console.log(ctors[0].prototype === ctors[1].prototype, new ctors[0]() instanceof ctors[1]);
+
+// As Map and Set keys, and in indexOf.
+const m = new Map();
+m.set(fs[0], "zero");
+m.set(fs[1], "one");
+console.log(m.size, m.get(fs[0]), m.get(fs[1]), fs.indexOf(fs[1]), new Set([a, b, a]).size);
+
+// A declaration is the same function at every read and every call.
+function decl() {
+  return decl;
+}
+decl.count = 0;
+for (let i = 0; i < 3; i++) {
+  decl().count++;
+}
+const alias = decl;
+console.log(decl() === decl, alias === decl, decl.count, alias.count);
+
+function fib(n) {
+  return n < 2 ? n : fib(n - 1) + fib(n - 2);
+}
+fib.memo = "kept";
+console.log(fib(15), fib.memo, fib === fib);
