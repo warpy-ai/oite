@@ -1,0 +1,13 @@
+// backends: vm jit aot
+const o = {
+  base: 10,
+  add(a, b, c) { return this.base + a + b + c; },
+};
+const xs = [1, 2, 3];
+const k = "add";
+console.log(o["add"](...xs));
+console.log(o[k](...xs));
+console.log(o[k](0, ...[5, 6]));
+console.log(o?.[k](...xs));
+const none = null;
+console.log(none?.[k](...xs));
