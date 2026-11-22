@@ -12,6 +12,16 @@ impl Lowerer {
                 self.push(dst);
             }
 
+            // A function not made once (`made_once`) is a new function
+            // each time its expression runs; this one captures nothing.
+            OpCode::Push(JsValue::Function { address, .. }) if !self.names.made_once(*address) => {
+                let env = self.alloc_value(IrType::Any);
+                self.emit(IrOp::Const(env, Literal::Undefined));
+                let dst = self.alloc_value(IrType::Function);
+                self.emit(IrOp::MakeClosure(dst, *address as u32, env));
+                self.push(dst);
+            }
+
             OpCode::Push(value) => {
                 let (lit, ty) = self.jsvalue_to_literal(value);
                 let dst = self.alloc_value(ty);

@@ -24,6 +24,10 @@ pub enum JsValue {
     Function {
         address: usize,
         env: Option<usize>, // Points to HeapObject with captured variables
+        /// Which function this is, what `===` compares: each time a
+        /// function expression runs it makes a new one
+        /// (`VM::make_function`). 0 in bytecode, before anything has run.
+        id: usize,
     },
     NativeFunction(usize),
     /// A built-in method read off a value (`"a".trim`): a function that
@@ -65,12 +69,14 @@ impl PartialEq for JsValue {
                 JsValue::Function {
                     address: a,
                     env: ae,
+                    id: ai,
                 },
                 JsValue::Function {
                     address: b,
                     env: be,
+                    id: bi,
                 },
-            ) => a == b && ae == be,
+            ) => ai == bi && a == b && ae == be,
             (JsValue::NativeFunction(a), JsValue::NativeFunction(b)) => a == b,
             (JsValue::BuiltinMethod(a), JsValue::BuiltinMethod(b)) => a == b,
             (JsValue::BoundFunction(a), JsValue::BoundFunction(b)) => a == b,

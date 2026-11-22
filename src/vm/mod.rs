@@ -284,6 +284,8 @@ pub struct VM {
     /// The object holding each function's own properties, made when the
     /// first one is set (see `functions.rs`).
     pub fn_props: functions::FunctionProps,
+    /// The `id` of the function value made last (`make_function`).
+    pub last_function_id: usize,
 }
 
 impl Default for VM {
@@ -342,6 +344,7 @@ impl VM {
             next_async_id: 0,
             unhandled_rejections: Vec::new(),
             fn_props: Default::default(),
+            last_function_id: 0,
         }
     }
 
@@ -648,11 +651,7 @@ impl VM {
         crate::vm::property::get_prop_with_proto_chain(self, obj_ptr, name)
     }
 
-    pub fn find_setter_with_proto_chain(
-        &self,
-        obj_ptr: usize,
-        name: &str,
-    ) -> Option<(usize, Option<usize>)> {
+    pub fn find_setter_with_proto_chain(&self, obj_ptr: usize, name: &str) -> Option<JsValue> {
         crate::vm::property::find_setter_with_proto_chain(self, obj_ptr, name)
     }
 
@@ -674,7 +673,7 @@ impl VM {
         args: Vec<JsValue>,
     ) -> Result<JsValue, JsValue> {
         let (address, env) = match f {
-            JsValue::Function { address, env } => (*address, *env),
+            JsValue::Function { address, env, .. } => (*address, *env),
             JsValue::NativeFunction(idx) => {
                 let func = self.native_functions[*idx];
                 let result = func(self, args);
@@ -928,7 +927,7 @@ impl VM {
     /// Call the function `method` with `this` and `args`, as the current
     /// instruction (it continues after the call).
     fn call_as_method(&mut self, method: JsValue, this: JsValue, args: Vec<JsValue>) -> ExecResult {
-        let JsValue::Function { address, env } = method else {
+        let JsValue::Function { address, env, .. } = method else {
             if let JsValue::BoundFunction(_) = method {
                 let (f, this, args) = self.unbind(method, this, args);
                 return self.call_as_method(f, this, args);
@@ -1000,7 +999,7 @@ impl VM {
             },
             _ => JsValue::Undefined,
         };
-        let JsValue::Function { address, env } = ctor_fn else {
+        let JsValue::Function { address, env, .. } = ctor_fn else {
             return self.throw_error(
                 "TypeError",
                 "Super constructor is not a constructor".to_string(),
@@ -1145,12 +1144,9 @@ impl VM {
                 let target = self.stack.pop().unwrap();
                 if let JsValue::Object(ptr) = target {
                     // Check for setter in prototype chain
-                    let setter_addr_and_env = self.find_setter_with_proto_chain(ptr, &name);
-
-                    if let Some((address, env)) = setter_addr_and_env {
+                    if let Some(setter) = self.find_setter_with_proto_chain(ptr, &name) {
                         // Run to completion: a setter's result is discarded
                         // (left on the stack, it shifted every later value).
-                        let setter = JsValue::Function { address, env };
                         if let Err(e) = self.call_sync(&setter, JsValue::Object(ptr), vec![value]) {
                             return self.throw_exception(e);
                         }
@@ -1242,7 +1238,7 @@ impl VM {
                         let getter_name = format!("getter:{}", name);
                         let val = self.get_prop_with_proto_chain(ptr, &getter_name);
 
-                        if let JsValue::Function { address, env } = val {
+                        if let JsValue::Function { address, env, .. } = val {
                             let this_context = JsValue::Object(ptr);
                             // No arguments: a getter's parameters are
                             // undefined (without this, they popped the
@@ -1286,6 +1282,10 @@ impl VM {
                 }
             }
 
+            OpCode::Push(JsValue::Function { address, env, .. }) => {
+                let f = self.make_function(address, env);
+                self.stack.push(f);
+            }
             OpCode::Push(v) => self.stack.push(v),
 
             OpCode::Let(name) => {
@@ -1365,7 +1365,7 @@ impl VM {
                 args.reverse();
 
                 match callee {
-                    JsValue::Function { address, env } => {
+                    JsValue::Function { address, env, .. } => {
                         // Record function call for tiered compilation
                         self.record_function_call(address);
 
@@ -1930,10 +1930,8 @@ impl VM {
                 // This is the "lifting" operation that moves stack variables to the heap.
                 let env_ptr = self.stack.pop().expect("Missing environment object");
                 if let JsValue::Object(ptr) = env_ptr {
-                    self.stack.push(JsValue::Function {
-                        address,
-                        env: Some(ptr),
-                    });
+                    let f = self.make_function(address, Some(ptr));
+                    self.stack.push(f);
                 } else {
                     panic!("MakeClosure expects an Object pointer on stack");
                 }
@@ -1961,7 +1959,7 @@ impl VM {
 
                 // Extract the actual constructor function and prototype
                 let (address, env, prototype, new_target_val) = match &constructor_val {
-                    JsValue::Function { address, env } => {
+                    JsValue::Function { address, env, .. } => {
                         // For a plain function, new.target is the function
                         // itself, and the instance inherits `F.prototype`.
                         let proto = self.function_prototype(&constructor_val);
@@ -1976,7 +1974,7 @@ impl VM {
                             let ctor = props.get("constructor").cloned();
                             let proto = props.get("prototype").cloned();
                             match ctor {
-                                Some(JsValue::Function { address, env }) => {
+                                Some(JsValue::Function { address, env, .. }) => {
                                     // In ES6 JavaScript, new.target is the class itself (the constructor function)
                                     // The class wrapper has a 'constructor' property pointing to the constructor
                                     // So we need to use the wrapper as new-target, not the extracted constructor
@@ -2262,7 +2260,7 @@ impl VM {
                             // Increment IP before returning since we return early
                             self.ip += 1;
                             return ExecResult::Continue;
-                        } else if let JsValue::Function { address, env } = method {
+                        } else if let JsValue::Function { address, env, .. } = method {
                             // Stack overflow protection
                             if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
                                 return self
@@ -2577,7 +2575,7 @@ impl VM {
                     return ExecResult::Continue;
                 };
                 let getter = self.get_prop_with_proto_chain(ptr, &format!("getter:{}", name));
-                if let JsValue::Function { address, env } = getter {
+                if let JsValue::Function { address, env, .. } = getter {
                     self.push_call_args(&[], address);
                     self.call_stack.push(Frame {
                         return_address: self.ip + 1,
@@ -2604,7 +2602,7 @@ impl VM {
                 let callee = self.stack.pop().unwrap_or(JsValue::Undefined);
                 let args = self.pop_args(arg_count);
                 match callee {
-                    JsValue::Function { address, env } => {
+                    JsValue::Function { address, env, .. } => {
                         if self.call_stack.len() >= MAX_CALL_STACK_DEPTH {
                             return self
                                 .throw_error("RangeError", "Maximum call stack size exceeded");
@@ -3116,10 +3114,7 @@ impl crate::runtime::builtins::Host for VmHost<'_> {
     }
 
     fn strict_equal(&self, a: &JsValue, b: &JsValue) -> bool {
-        match (a, b) {
-            (JsValue::Function { address: x, .. }, JsValue::Function { address: y, .. }) => x == y,
-            _ => a == b,
-        }
+        a == b
     }
 
     fn array_elements(&self, v: &JsValue) -> Option<Vec<JsValue>> {
@@ -3173,14 +3168,14 @@ impl crate::runtime::builtins::Host for VmHost<'_> {
     }
 
     fn identity(&self, v: &JsValue) -> u64 {
-        // Consistent with `strict_equal`: a function is its address.
+        // Consistent with `strict_equal`.
         match v {
             JsValue::Boolean(b) => *b as u64,
             JsValue::Null => 2,
             JsValue::Undefined => 3,
             // Both index the heap, so no two share one.
             JsValue::Object(ptr) | JsValue::BoundFunction(ptr) => (*ptr as u64) << 3 | 4,
-            JsValue::Function { address, .. } => (*address as u64) << 3 | 5,
+            JsValue::Function { id, .. } => (*id as u64) << 3 | 5,
             JsValue::NativeFunction(idx) => (*idx as u64) << 3 | 6,
             JsValue::BuiltinMethod(m) => (m.to_bits() as u64) << 3 | 7,
             JsValue::Promise(p) => std::sync::Arc::as_ptr(&p.state) as u64,
@@ -3295,10 +3290,13 @@ pub fn rebase_program(bytecode: Vec<OpCode>, offset: usize) -> Vec<OpCode> {
             OpCode::Jump(addr) => OpCode::Jump(addr + offset),
             OpCode::JumpIfFalse(addr) => OpCode::JumpIfFalse(addr + offset),
             OpCode::MakeClosure(addr) => OpCode::MakeClosure(addr + offset),
-            OpCode::Push(JsValue::Function { address, env }) => OpCode::Push(JsValue::Function {
-                address: address + offset,
-                env,
-            }),
+            OpCode::Push(JsValue::Function { address, env, id }) => {
+                OpCode::Push(JsValue::Function {
+                    address: address + offset,
+                    env,
+                    id,
+                })
+            }
             // 0 means "none".
             OpCode::SetupTry {
                 catch_addr,

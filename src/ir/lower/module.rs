@@ -184,7 +184,7 @@ pub(super) fn extract_functions(instructions: &[OpCode]) -> Vec<ExtractedFunctio
 
     for (i, op) in instructions.iter().enumerate() {
         let found = match op {
-            OpCode::Push(JsValue::Function { address, env }) => Some((*address, env.is_some())),
+            OpCode::Push(JsValue::Function { address, env, .. }) => Some((*address, env.is_some())),
             OpCode::MakeClosure(address) => Some((*address, true)),
             _ => None,
         };

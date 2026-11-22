@@ -2,10 +2,12 @@
 //! `name`, `length` and `prototype`, `call`, `apply` and `bind`, and the
 //! bound functions `bind` makes.
 //!
-//! A function value is its code and environment (`JsValue::Function`), not
-//! a heap object, so a function's own properties are kept in an object of
-//! their own (`VM::fn_props`), made when the first one is set. They are
-//! found by what `===` compares, so every copy of a function sees them.
+//! A function value is its code, its environment and an `id`
+//! (`JsValue::Function`), not a heap object, so a function's own
+//! properties are kept in an object of their own (`VM::fn_props`), made
+//! when the first one is set. They are found by what `===` compares, so
+//! every copy of a function sees them, and a function made by another run
+//! of the same expression does not.
 
 use crate::runtime::builtins::{self, Method, Receiver};
 use crate::vm::VM;
@@ -17,8 +19,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 /// Each function's own properties (`VM::fn_props`). It is looked up on
 /// every property read and method call on a function, `f.call(...)`
 /// included, so it hashes with a multiply per word instead of SipHash: its
-/// keys are the program's own addresses and indices, which no input
-/// chooses.
+/// keys are ids and indices the VM hands out, which no input chooses.
 pub type FunctionProps = HashMap<FunctionId, usize, BuildHasherDefault<IdHasher>>;
 
 #[derive(Default)]
@@ -47,7 +48,7 @@ impl Hasher for IdHasher {
 /// Which function a function value is: what `===` compares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FunctionId {
-    Code { address: usize, env: Option<usize> },
+    Code(usize),
     Native(usize),
     Builtin(Method),
     Bound(usize),
@@ -57,10 +58,7 @@ impl FunctionId {
     /// The function `v` is, if it is one.
     pub fn of(v: &JsValue) -> Option<FunctionId> {
         Some(match v {
-            JsValue::Function { address, env } => FunctionId::Code {
-                address: *address,
-                env: *env,
-            },
+            JsValue::Function { id, .. } => FunctionId::Code(*id),
             JsValue::NativeFunction(i) => FunctionId::Native(*i),
             JsValue::BuiltinMethod(m) => FunctionId::Builtin(*m),
             JsValue::BoundFunction(p) => FunctionId::Bound(*p),
@@ -70,6 +68,17 @@ impl FunctionId {
 }
 
 impl VM {
+    /// A new function: the code at `address`, with the environment `env`.
+    /// What a function expression (or declaration) makes each time it runs.
+    pub(super) fn make_function(&mut self, address: usize, env: Option<usize>) -> JsValue {
+        self.last_function_id += 1;
+        JsValue::Function {
+            address,
+            env,
+            id: self.last_function_id,
+        }
+    }
+
     /// A new heap object holding `data`.
     pub(super) fn alloc(&mut self, data: HeapData) -> usize {
         let ptr = self.heap.len();
