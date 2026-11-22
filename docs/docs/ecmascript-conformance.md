@@ -221,6 +221,29 @@ Three differences remain:
   `String.prototype` and the like.
 - Functions have no `bind`.
 
+### 7. Map and Set
+
+`Map` and `Set` behave as in JavaScript on every backend: keys compare by
+SameValueZero (`NaN` finds `NaN`, `-0` is `0`, objects by identity),
+entries keep insertion order, and iteration is live (`for...of`,
+`forEach`, `keys`, `values`, `entries`): an entry added during it is
+visited, one deleted before its turn is not. Lookups are hashed.
+
+```javascript
+const m = new Map([["a", 1]]);
+for (const [key, value] of m) {} // key "a", value 1
+[...new Set([1, 1, 2])];          // [1, 2]
+```
+
+Differences:
+
+- There is no `Map.prototype` or `Set.prototype`, and `Set`'s `keys` and
+  `values` are two functions. On the VM, `typeof Map` is `"object"`.
+- `new Map(items)` takes `[key, value]` arrays; any other object is a
+  TypeError.
+- `for...of` over an object that is not iterable walks it as an
+  array-like instead of throwing a TypeError.
+
 ## Built-in Object Support
 
 Oite implements JavaScript built-in objects incrementally:
@@ -234,6 +257,8 @@ Oite implements JavaScript built-in objects incrementally:
 | `String`  | `length`, `charAt`, `fromCharCode`, concatenation                             |
 | `Object`  | Literal syntax, property access, computed properties                          |
 | `Promise` | `resolve`, `reject`, `then`, `catch`, `finally`                               |
+| `Map`     | `new Map(iterable)`, `get`, `set`, `has`, `delete`, `clear`, `size`, `forEach`, `keys`, `values`, `entries`, `for...of` |
+| `Set`     | `new Set(iterable)`, `add`, `has`, `delete`, `clear`, `size`, `forEach`, `keys`, `values`, `entries`, `for...of` |
 | `JSON`    | `parse`, `stringify`                                                          |
 
 ### Planned (via Rolls ecosystem)
@@ -243,7 +268,6 @@ Oite implements JavaScript built-in objects incrementally:
 | `Math`       | `@rolls/math`        | Planned |
 | `Date`       | `@rolls/date`        | Planned |
 | `RegExp`     | `@rolls/regex`       | Planned |
-| `Map`, `Set` | `@rolls/collections` | Planned |
 | `Buffer`     | `@rolls/buffer`      | Planned |
 | `crypto`     | `@rolls/crypto`      | Planned |
 
