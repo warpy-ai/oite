@@ -1,0 +1,114 @@
+// backends: vm jit aot
+// Spread in call arguments: every call form passes the elements, not the
+// array, as its arguments.
+
+function add(a, b) {
+  return a + b;
+}
+function show(a, b, c) {
+  return [a, b, c].join("|");
+}
+const xs = [1, 2];
+console.log(add(...[1, 2]), add(...xs));
+
+// Mixed with other arguments, several spreads, strings, empty arrays.
+console.log(show(0, ...xs), show(...xs, 9), show(0, ...xs, 9));
+console.log(show(...[1], ...[], ...[2, 3]));
+console.log(show(..."ab"), show("x", ..."yz"));
+console.log(show(...[]), add(...[]));
+// More elements than parameters: the extra ones are dropped.
+console.log(show(...[1, 2, 3, 4, 5]));
+
+// Rest parameters.
+function rest(first, ...others) {
+  return first + ":" + others.length + ":" + others.join(",");
+}
+const all = (...r) => r.length;
+console.log(rest(...[1, 2, 3]), rest(0, ...xs), rest(...[]));
+console.log(all(...xs, ...xs), all(...[]));
+
+// Arguments evaluated once, in order.
+let log = [];
+function item(v) {
+  log.push(v);
+  return v;
+}
+console.log(show(item("a"), ...[item("b"), item("c")]), log.join(""));
+
+// Method calls keep `this`.
+const counter = {
+  n: 10,
+  add(a, b) {
+    return this.n + a + b;
+  },
+};
+console.log(counter.add(...xs));
+// A computed callee. (Its `this` is not tested here: on its own a call
+// through a computed member does not pass one yet.)
+const fns = { add, show };
+const key = "add";
+console.log(fns[key](...xs), fns["sh" + "ow"](...xs, 3));
+
+// Optional calls.
+const nothing = null;
+const maybe = { m: null };
+console.log(add?.(...xs), counter.add?.(...xs), counter?.add(...xs));
+console.log(nothing?.(...xs), maybe.m?.(...xs), nothing?.m(...xs));
+
+// `new` and `super`.
+class Point {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+  sum(...more) {
+    return this.x + this.y + more.length;
+  }
+}
+class Point3 extends Point {
+  constructor(...coords) {
+    super(...coords);
+    this.z = coords[2];
+  }
+  sum(...more) {
+    return super.sum(...more) + this.z;
+  }
+}
+const p = new Point(...[3, 4]);
+console.log(p.x, p.y, p.sum(...xs));
+const p3 = new Point3(...[1, 2, 3]);
+console.log(p3.x, p3.y, p3.z, p3.sum(...[0, 0, 0]));
+console.log(new Error(...["boom"]).message);
+
+// Built-in functions and methods.
+const nums = [3, 9, 1];
+console.log(Math.max(...nums), Math.min(...nums, 0), Math.max(...[]));
+const arr = [1];
+console.log(arr.push(...[2, 3]), arr.push(...[]), arr);
+console.log("a".concat(...["b", "c"]), String(...[42]));
+console.log(...["log", "spread"], ...[1, 2]);
+console.log(...[]);
+
+// A closure, an async function, `apply` beside a spread.
+let seen = 0;
+const bump = (...by) => (seen += by.length);
+bump(...xs, ...xs);
+console.log(seen, add.apply(null, xs));
+async function later(a, b) {
+  return a * b;
+}
+later(...[6, 7]).then((v) => console.log("async", v));
+
+// Recursion through spread calls.
+function total(...values) {
+  if (values.length === 0) return 0;
+  return values[0] + total(...values.slice(1));
+}
+console.log(total(...[1, 2, 3, 4]));
+
+// Spreading something that is not iterable throws a TypeError.
+try {
+  add(...5);
+} catch (e) {
+  console.log(e instanceof TypeError);
+}

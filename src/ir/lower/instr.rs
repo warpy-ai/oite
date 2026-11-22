@@ -506,6 +506,28 @@ impl Lowerer {
                 self.emit(IrOp::CallWithThis(dst, func, this, args));
                 self.push(dst);
             }
+            OpCode::SpreadCall(kind) => {
+                // [args array, operands...]
+                let callee = match kind {
+                    CallKind::Plain => {
+                        let func = self.pop()?;
+                        let this = self.alloc_value(IrType::Any);
+                        self.emit(IrOp::Const(this, Literal::Undefined));
+                        SpreadCallee::Function(func, this)
+                    }
+                    CallKind::WithThis => {
+                        let this = self.pop()?;
+                        SpreadCallee::Function(self.pop()?, this)
+                    }
+                    CallKind::Method(name) => SpreadCallee::Method(self.pop()?, name.clone()),
+                    CallKind::Construct => SpreadCallee::Construct(self.pop()?),
+                    CallKind::Super => SpreadCallee::Super(self.pop()?),
+                };
+                let args = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::SpreadCall(dst, callee, args));
+                self.push(dst);
+            }
             OpCode::GetPrivate(key) => {
                 let obj = self.pop()?;
                 let dst = self.alloc_value(IrType::Any);
