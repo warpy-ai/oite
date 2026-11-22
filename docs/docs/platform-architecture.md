@@ -138,9 +138,15 @@ How `oitec` links it (`src/compiler/modules.rs`):
 - The type checker does not see the prelude yet: its functions are `any`,
   and its types (`Result`, `Option`) are unknown names, so annotations
   that use them are not checked.
-- Every program compiles the prelude, about 4,000 lines of Oite. That is
-  cheap on the VM and expensive on the native backends, which compile every
-  function of it whether the program calls it or not (numbers in
+- Every program parses and type-checks the prelude, about 4,000 lines of
+  Oite, but only what it uses makes code (`src/compiler/reach.rs`): a
+  roll's top-level declaration that nothing the program runs names is left
+  out, on every backend. A roll's top-level code that does something when
+  it runs stays, with what it names: std's `Array.prototype` methods and
+  the `@rolls/array` functions they call are in every program. `ns.x`,
+  with `ns` a namespace import, is the export `x` itself; the namespace
+  object is made only for a module that uses `ns` as a value, and then
+  keeps every export (numbers in
   [Development Status](development-status.md#the-preludes-cost)).
 
 ### Method calls
@@ -331,7 +337,7 @@ oitec build src/main.ot -o target/release/myapp --release \
 | Item | Today | Change |
 | ---- | ----- | ------ |
 | `declare function` | Ambient: no code and no binding. A call to an `__intrinsic_*` compiles to the intrinsic; an `__ffi_*` nothing provides is "not defined" when called | Bind `__ffi_*` (FFI) |
-| `import` / `export` | Linked at compile time on every backend (`modules.rs`), with `@rolls/*` found through `--roll`, the importing roll's siblings, `OITE_ROLLS_PATH` and `$OITE_HOME/rolls`; circular imports are refused. `@rolls/std` is linked into every program as the prelude, unless `--no-std` or it is not installed ("The prelude") | Compile only the prelude functions a program uses, on the native backends |
+| `import` / `export` | Linked at compile time on every backend (`modules.rs`), with `@rolls/*` found through `--roll`, the importing roll's siblings, `OITE_ROLLS_PATH` and `$OITE_HOME/rolls`; circular imports are refused. `@rolls/std` is linked into every program as the prelude, unless `--no-std` or it is not installed ("The prelude"); of a roll, only the declarations the program uses make code | Leave out the `Array.prototype` methods a program never calls |
 | Intrinsics | All 29, on every backend (`runtime/intrinsics.rs`) | Machine instructions for the math ones |
 | Spread (`[...a]`, `{...o}`) | On every backend | — |
 | FFI | Only `__ffi_fetch` (and `__ffi_getenv`, which no roll uses), as VM globals | Calling convention, `oite-runtime` crate, symbol binding on every backend |
