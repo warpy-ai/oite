@@ -584,6 +584,9 @@ mod tests {
         fn own_keys(&self, _: &V) -> Vec<String> {
             Vec::new()
         }
+        fn own_entries(&self, _: &V) -> Vec<(String, V)> {
+            Vec::new()
+        }
         fn identity(&self, _: &V) -> u64 {
             0
         }
@@ -673,6 +676,9 @@ mod tests {
                 Kind::Object
             }
             fn own_keys(&self, _: &V) -> Vec<String> {
+                Vec::new()
+            }
+            fn own_entries(&self, _: &V) -> Vec<(String, V)> {
                 Vec::new()
             }
             fn identity(&self, _: &V) -> u64 {

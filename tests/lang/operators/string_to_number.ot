@@ -1,0 +1,5 @@
+// backends: vm jit aot
+// A string operand of arithmetic converts as JavaScript's StringToNumber:
+// hex, octal and binary prefixes, surrounding space, and no `inf` or `nan`.
+console.log("0x1F" * 1, "0o17" * 1, "0b101" * 1, " 7 " * 1, "" * 1);
+console.log("-Infinity" * 1, "inf" * 1, "nan" * 1, "1e3" * 1, "4x" * 1);

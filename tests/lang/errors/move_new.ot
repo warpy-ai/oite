@@ -1,0 +1,10 @@
+// What `new` makes is an object: assigning it moves it.
+class Point {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+}
+let p = new Point(1);
+let q = p;
+console.log(p.x);

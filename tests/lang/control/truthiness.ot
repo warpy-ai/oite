@@ -1,0 +1,21 @@
+// backends: vm jit aot
+// ToBoolean in every condition position, held to Node's output.
+const values = [false, 0, NaN, "", null, undefined, true, 1, -1, "0", "false", " ", [], {}, Infinity];
+for (const v of values) {
+  let branch = "falsy";
+  if (v) {
+    branch = "truthy";
+  }
+  const ternary = v ? "truthy" : "falsy";
+  let loops = 0;
+  while (v) {
+    loops++;
+    break;
+  }
+  console.log(String(v), branch, ternary, loops, !v, !!v, v || "or", v && "and");
+}
+let n = 0;
+for (let s = "abc"; s; s = s.slice(1)) {
+  n++;
+}
+console.log(n);

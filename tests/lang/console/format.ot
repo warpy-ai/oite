@@ -1,0 +1,39 @@
+// backends: vm jit aot
+// #54: a leading string's %-specifiers take the next arguments, as in Node's
+// util.format. Expected output is Node's.
+console.log("%s is %d", "x", 5);
+console.log("%s|%s|%s|%s|%s", 1.5, true, null, undefined, -0);
+console.log("%d %d %d %d %d %d", "42", "4x", true, null, undefined, -0);
+console.log("%d %d %d %d", [5], [], {}, "0x1F");
+console.log("%i %i %i %i", 42.9, "-7.8px", "0x1F", "abc");
+console.log("%f %f %f %f", "3.25abc", ".5", "x", "-Infinity");
+console.log("%s", [1, [2, [3]]]);
+console.log("%s", { a: { b: 1 } });
+console.log("%O", { a: { b: { c: { d: 1 } } } });
+console.log("%o", [1, [2]]);
+console.log("%o", []);
+console.log("%o %o", "s", 3);
+console.log("%j", { a: [1, "two\n\"q\"", null], b: undefined, c: true, d: 1 / 0 });
+console.log("%j %j %j %j", "s", 1, undefined, null);
+console.log("%j", [undefined, function () {}]);
+console.log("%c styled %c", "color: red", "x");
+console.log("100%% done");
+console.log("%d%% of %s", 50, "it");
+console.log("%s and %s", "only");
+console.log("%s", "a", "b", 3, { k: 1 });
+console.log("%x %s", "y");
+console.log("trailing %");
+console.log("trailing %", 1);
+console.log(5, "%s", "x");
+console.log("%s", "%d", 7);
+console.log("%", 1);
+console.log("%%s %s", "a");
+console.log("%s");
+console.log("", 1);
+console.log(-0, [-0]);
+class Loop {
+  constructor() { this.name = "c"; this.self = this; }
+}
+console.log("%j", new Loop());
+console.info("info %d", 1);
+console.debug("debug", { d: 1 });

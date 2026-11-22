@@ -102,8 +102,13 @@ fn setup_console(vm: &mut VM) {
     let error_idx = vm.register_native(crate::stdlib::native_error);
     let console_ptr = vm.heap.len();
     let mut console_props = crate::vm::value::PropMap::new();
-    console_props.insert("log".to_string(), JsValue::NativeFunction(log_idx));
-    console_props.insert("error".to_string(), JsValue::NativeFunction(error_idx));
+    // `info` and `debug` print like `log`, `warn` like `error`, as in Node.
+    for name in ["log", "info", "debug"] {
+        console_props.insert(name.to_string(), JsValue::NativeFunction(log_idx));
+    }
+    for name in ["error", "warn"] {
+        console_props.insert(name.to_string(), JsValue::NativeFunction(error_idx));
+    }
     vm.heap.push(HeapObject {
         data: HeapData::Object(console_props),
     });

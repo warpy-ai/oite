@@ -7,7 +7,7 @@
 //! Full standard library functionality (fs, path, json, math, date, etc.)
 //! will be provided by Rolls packages in the future.
 
-use crate::runtime::builtins::{Receiver, is_hidden_key};
+use crate::runtime::builtins::{InspectOptions, Receiver, format_number, is_hidden_key};
 use crate::runtime::collection::{self, Yields};
 use crate::vm::VM;
 use crate::vm::value::{HeapData, HeapObject, JsValue};
@@ -26,16 +26,11 @@ pub fn native_error(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     JsValue::Undefined
 }
 
-/// Join `console.log` arguments with a space. Top-level strings print raw;
-/// everything else goes through `inspect`.
+/// The line `console.log(...args)` prints (`builtins::format_log`).
 fn format_log_args(vm: &VM, args: &[JsValue]) -> String {
-    args.iter()
-        .map(|arg| match arg {
-            JsValue::String(s) => s.clone(),
-            other => inspect(vm, other),
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    crate::runtime::builtins::format_log(&crate::vm::VmHost(&vm.heap), args, |v, opts| {
+        inspect_with(vm, v, opts)
+    })
 }
 
 /// Convert a number to its string form, as JavaScript does: `NaN`,
@@ -46,17 +41,18 @@ pub fn number_to_string(n: impl std::borrow::Borrow<f64>) -> String {
     crate::runtime::builtins::number_to_string(*n.borrow())
 }
 
-/// Nesting depth beyond which objects print as `[Object]` / `[Array]`.
-const INSPECT_DEPTH: usize = 2;
-
 /// Human-readable rendering of a value, in the style of Node's
 /// `util.inspect`: `[ 1, 2, 3 ]`, `{ x: 1, y: 's' }`, `[Circular]`.
 ///
 /// Object keys are printed in insertion order. Keys starting with `__`
 /// are internal (`__proto__`, `__type__`) and are not shown.
 pub fn inspect(vm: &VM, value: &JsValue) -> String {
+    inspect_with(vm, value, InspectOptions::DEFAULT)
+}
+
+pub fn inspect_with(vm: &VM, value: &JsValue, opts: InspectOptions) -> String {
     let mut seen = Vec::new();
-    inspect_inner(vm, value, 0, &mut seen)
+    inspect_inner(vm, value, 0, opts, &mut seen)
 }
 
 fn is_identifier(key: &str) -> bool {
@@ -74,10 +70,16 @@ fn quote(s: &str) -> String {
     )
 }
 
-fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) -> String {
+fn inspect_inner(
+    vm: &VM,
+    value: &JsValue,
+    depth: usize,
+    opts: InspectOptions,
+    seen: &mut Vec<usize>,
+) -> String {
     match value {
         JsValue::String(s) => quote(s),
-        JsValue::Number(n) => number_to_string(n),
+        JsValue::Number(n) => format_number(*n),
         JsValue::Boolean(b) => b.to_string(),
         JsValue::Null => "null".to_string(),
         JsValue::Undefined => "undefined".to_string(),
@@ -88,7 +90,7 @@ fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) 
             crate::vm::value::PromiseState::Pending => "Promise { <pending> }".to_string(),
             state => {
                 let v = p.get_value().unwrap_or(JsValue::Undefined);
-                let shown = inspect_inner(vm, &v, depth + 1, seen);
+                let shown = inspect_inner(vm, &v, depth + 1, opts, seen);
                 if state == crate::vm::value::PromiseState::Rejected {
                     format!("Promise {{ <rejected> {} }}", shown)
                 } else {
@@ -104,16 +106,19 @@ fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) 
             if seen.contains(ptr) {
                 return "[Circular]".to_string();
             }
-            let too_deep = depth > INSPECT_DEPTH;
+            let too_deep = depth > opts.depth;
             seen.push(*ptr);
             let out = match data {
-                HeapData::Array(items) if items.is_empty() => "[]".to_string(),
+                HeapData::Array(items) if items.is_empty() && !opts.show_hidden => "[]".to_string(),
                 HeapData::Array(_) if too_deep => "[Array]".to_string(),
                 HeapData::Array(items) => {
-                    let parts: Vec<String> = items
+                    let mut parts: Vec<String> = items
                         .iter()
-                        .map(|v| inspect_inner(vm, v, depth + 1, seen))
+                        .map(|v| inspect_inner(vm, v, depth + 1, opts, seen))
                         .collect();
+                    if opts.show_hidden {
+                        parts.push(format!("[length]: {}", items.len()));
+                    }
                     format!("[ {} ]", parts.join(", "))
                 }
                 HeapData::Object(_) if vm.is_class(*ptr) => vm.class_summary(*ptr),
@@ -130,7 +135,11 @@ fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) 
                         let parts: Vec<String> = keys
                             .into_iter()
                             .map(|k| {
-                                format!("{}: {}", k, inspect_inner(vm, &props[k], depth + 1, seen))
+                                format!(
+                                    "{}: {}",
+                                    k,
+                                    inspect_inner(vm, &props[k], depth + 1, opts, seen)
+                                )
                             })
                             .collect();
                         format!("{} {{ {} }}", summary, parts.join(", "))
@@ -154,7 +163,7 @@ fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) 
                                 format!(
                                     "{}: {}",
                                     key,
-                                    inspect_inner(vm, &props[k], depth + 1, seen)
+                                    inspect_inner(vm, &props[k], depth + 1, opts, seen)
                                 )
                             })
                             .collect();
@@ -177,8 +186,8 @@ fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) 
                         .map(|(k, v)| {
                             format!(
                                 "{} => {}",
-                                inspect_inner(vm, k, depth + 1, seen),
-                                inspect_inner(vm, v, depth + 1, seen)
+                                inspect_inner(vm, k, depth + 1, opts, seen),
+                                inspect_inner(vm, v, depth + 1, opts, seen)
                             )
                         })
                         .collect();
@@ -187,7 +196,7 @@ fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) 
                 HeapData::Set(table) => {
                     let parts: Vec<String> = table
                         .iter()
-                        .map(|(v, _)| inspect_inner(vm, v, depth + 1, seen))
+                        .map(|(v, _)| inspect_inner(vm, v, depth + 1, opts, seen))
                         .collect();
                     collection::summary(Receiver::Set, &parts)
                 }
@@ -197,12 +206,12 @@ fn inspect_inner(vm: &VM, value: &JsValue, depth: usize, seen: &mut Vec<usize>) 
                         let parts: Vec<String> = table
                             .rest(it.cursor)
                             .map(|(k, v)| match it.yields {
-                                Yields::Keys => inspect_inner(vm, k, depth + 1, seen),
-                                Yields::Values => inspect_inner(vm, v, depth + 1, seen),
+                                Yields::Keys => inspect_inner(vm, k, depth + 1, opts, seen),
+                                Yields::Values => inspect_inner(vm, v, depth + 1, opts, seen),
                                 Yields::Entries => format!(
                                     "[ {}, {} ]",
-                                    inspect_inner(vm, k, depth + 2, seen),
-                                    inspect_inner(vm, v, depth + 2, seen)
+                                    inspect_inner(vm, k, depth + 2, opts, seen),
+                                    inspect_inner(vm, v, depth + 2, opts, seen)
                                 ),
                             })
                             .collect();

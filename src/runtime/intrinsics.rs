@@ -187,12 +187,12 @@ fn to_int32(n: f64) -> i32 {
 
 /// JavaScript's white space and line terminators, which `parseInt` and
 /// `parseFloat` skip.
-fn is_js_space(c: char) -> bool {
+pub(super) fn is_js_space(c: char) -> bool {
     c.is_whitespace() || c == '\u{FEFF}'
 }
 
 /// `parseInt(text, radix)`.
-fn parse_int(text: &str, radix: f64) -> f64 {
+pub(super) fn parse_int(text: &str, radix: f64) -> f64 {
     let s = text.trim_start_matches(is_js_space);
     let (negative, s) = match s.as_bytes().first() {
         Some(b'-') => (true, &s[1..]),
@@ -234,7 +234,7 @@ fn parse_int(text: &str, radix: f64) -> f64 {
 }
 
 /// `parseFloat(text)`: the longest prefix that is a decimal number.
-fn parse_float(text: &str) -> f64 {
+pub(super) fn parse_float(text: &str) -> f64 {
     let s = text.trim_start_matches(is_js_space);
     let b = s.as_bytes();
     let mut i = 0;

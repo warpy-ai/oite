@@ -1,0 +1,2 @@
+move_declared_object.ot:11:13: borrow error: Cannot borrow moved variable 'a'
+move_declared_object.ot:10:9: note: value moved here

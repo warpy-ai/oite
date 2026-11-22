@@ -246,12 +246,17 @@ pub(super) fn collection_property(v: u64, key: Atom) -> u64 {
 }
 
 /// How `console.log` shows a `Map`, a `Set` or an iterator.
-pub(super) fn collection_summary(v: u64, depth: usize, seen: &mut Vec<usize>) -> String {
+pub(super) fn collection_summary(
+    v: u64,
+    depth: usize,
+    opts: builtins::InspectOptions,
+    seen: &mut Vec<usize>,
+) -> String {
     let show = |x: u64, depth: usize, seen: &mut Vec<usize>| {
-        inspect_inner(OtValue::from_bits(x), depth, seen)
+        inspect_inner(OtValue::from_bits(x), depth, opts, seen)
     };
     if let Some((table, collection)) = collection_of(v) {
-        if depth > INSPECT_DEPTH {
+        if depth > opts.depth {
             return format!("[{}]", collection.name());
         }
         let parts: Vec<String> = table

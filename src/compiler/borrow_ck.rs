@@ -66,16 +66,17 @@ impl VarInfo {
 
     fn kind_from_type(ty: &Type) -> VarKind {
         match ty {
-            Type::Number | Type::Boolean | Type::Void => VarKind::Primitive,
             Type::Ref(_) => VarKind::Borrow,
             Type::MutRef(_) => VarKind::BorrowMut,
-            Type::String
-            | Type::Array(_)
+            Type::Array(_)
             | Type::Object(_)
             | Type::Function(_)
             | Type::Struct(_)
             | Type::Enum(_) => VarKind::Heap,
-            Type::Any => VarKind::Heap, // Conservative: treat any as heap
+            // A number, a string, a boolean, null and undefined cannot be
+            // changed, so a second name for one cannot be told from a
+            // copy. A value of unknown type (`any`) may be one of them,
+            // and moving it would reject valid JavaScript.
             _ => VarKind::Primitive,
         }
     }
@@ -106,6 +107,9 @@ pub struct BorrowChecker {
     /// variable was moved), for the diagnostic.
     pub error_span: Option<swc_common::Span>,
     pub error_note: Option<(String, swc_common::Span)>,
+    /// Variables declared with an object type, by the span of the name,
+    /// as the type checker resolved their annotations.
+    pub declared_objects: HashSet<swc_common::Span>,
 }
 
 impl Default for BorrowChecker {
@@ -126,6 +130,7 @@ impl BorrowChecker {
             cur_span: swc_common::DUMMY_SP,
             error_span: None,
             error_note: None,
+            declared_objects: HashSet::new(),
         }
     }
 
@@ -140,6 +145,7 @@ impl BorrowChecker {
             cur_span: swc_common::DUMMY_SP,
             error_span: None,
             error_note: None,
+            declared_objects: HashSet::new(),
         }
     }
 
@@ -319,10 +325,9 @@ impl BorrowChecker {
 
     fn determine_type(&self, decl: &VarDeclarator) -> Type {
         if let Pat::Ident(ident) = &decl.name
-            && let Some(_ann) = &ident.type_ann
+            && self.declared_objects.contains(&ident.id.span)
         {
-            // Would convert TsType to Type here if we had the converter
-            // For now, infer from initializer
+            return Type::Object(crate::types::ObjectType::default());
         }
 
         if let Some(init) = &decl.init {
@@ -338,8 +343,8 @@ impl BorrowChecker {
             Expr::Lit(Lit::Str(_)) => Type::String,
             Expr::Lit(Lit::Bool(_)) => Type::Boolean,
             Expr::Array(_) => Type::Array(Box::new(Type::Any)),
-            Expr::Object(_) => Type::Object(crate::types::ObjectType::default()),
-            Expr::Arrow(_) | Expr::Fn(_) => {
+            Expr::Object(_) | Expr::New(_) => Type::Object(crate::types::ObjectType::default()),
+            Expr::Arrow(_) | Expr::Fn(_) | Expr::Class(_) => {
                 Type::Function(Box::new(crate::types::FunctionType::new(vec![], Type::Any)))
             }
             Expr::Ident(id) => {
