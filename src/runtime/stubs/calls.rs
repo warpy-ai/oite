@@ -328,7 +328,7 @@ impl builtins::Host for NativeHost {
                 object::own(obj(ptr))
                     .into_iter()
                     .map(|(a, _, _)| atom::info(a))
-                    .filter(|info| !info.hidden && !(class && builtins::is_function_key(info.name)))
+                    .filter(|info| !(info.hidden || class && builtins::is_function_key(info.name)))
                     .map(|info| info.name.to_string())
                     .collect()
             }
