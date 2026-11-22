@@ -1,0 +1,59 @@
+2 3 2 undefined
+Map(2) { 'a' => 3, 'b' => 2 }
+Map(2) { 'a' => 3, 'b' => 2 } Map(2) { 'a' => 3, 'b' => 2 } Map(0) {}
+3 Set(3) { 3, 1, 2 }
+Set(4) { 'h', 'e', 'l', 'o' } Set(3) { 3, 1, 2 } Set(2) { 'a', 'b' } Set(0) {}
+0 0
+true true false 3
+true false 2 Map(2) { 'a' => 3, 'c' => 4 }
+true 4 true true Set(3) { 1, 2, 4 }
+TypeError number
+0 0 Map(0) {} Set(0) {}
+nan nan zero zero string zero
+obj undefined arr undefined fn
+null undef true undefined
+undefined 1 10
+Set(3) { NaN, 0, '0' }
+[ 'x', 'z', 'y' ] [ 10, 3, 20 ]
+ctx x 10 true
+ctx z 3 true
+ctx y 20 true
+p p 2
+q q 2
+TypeError: undefined is not a function
+entry x 10
+entry z 3
+entry y 20
+value 7
+value 8
+key x
+key z
+key y
+pair [ 'x', 10 ]
+pair [ 'z', 3 ]
+pair [ 'y', 20 ]
+visit 1
+visit 3
+visit 4
+[ 1, 2, 3, 4, 5 ]
+forEach a
+forEach c
+forEach d
+cleared 1
+cleared 9
+{ value: [ 'a', 1 ], done: false } [Map Entries] { [ 'b', 2 ], [ 'c', 3 ] }
+first [ 'b', 2 ]
+{ value: [ 'c', 3 ], done: false } { value: undefined, done: true } [Map Entries] {  }
+1 2 true
+TypeError: Method Map Iterator.prototype.next called on incompatible receiver #<Object>
+[ [ 'a', 1 ], [ 'b', 2 ] ] [ 1, 2 ] [ 1, 2 ] [ 0, 'a', 'b' ]
+[Map Iterator] { 'a', 'b' } [Map Iterator] { 1, 2 } [Map Entries] { [ 'a', 1 ], [ 'b', 2 ] }
+[Set Entries] { [ 1, 1 ] } [Set Iterator] { 1 }
+[ Map(1) { 1 => { x: 1 } } ] { set: Set(1) { 'a' } }
+Map(1) { { a: 1 } => [ 1, 2 ] }
+[object Map] [object Set] object
+true false true false
+TypeError: Constructor Map requires 'new'
+TypeError: Iterator value 1 is not an entry object
+TypeError: Method Map.prototype.get called on incompatible receiver #<Set>
+TypeError: Method Set.prototype.add called on incompatible receiver #<Map>

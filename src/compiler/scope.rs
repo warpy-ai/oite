@@ -890,7 +890,7 @@ pub fn var_declared(stmts: &[Stmt]) -> Vec<Ident> {
     c.0
 }
 
-fn pattern_idents(pat: &Pat) -> Vec<Ident> {
+pub(super) fn pattern_idents(pat: &Pat) -> Vec<Ident> {
     let mut out = Vec::new();
     collect_idents(pat, &mut out);
     out

@@ -71,7 +71,7 @@ impl FunctionId {
 
 impl VM {
     /// A new heap object holding `data`.
-    fn alloc(&mut self, data: HeapData) -> usize {
+    pub(super) fn alloc(&mut self, data: HeapData) -> usize {
         let ptr = self.heap.len();
         self.heap.push(HeapObject { data });
         ptr

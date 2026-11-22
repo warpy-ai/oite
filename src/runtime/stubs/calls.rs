@@ -106,6 +106,13 @@ fn run_builtin(recv: u64, key: &str, a: &[u64]) -> Option<u64> {
     if let Some(id) = promise_id(recv) {
         return promise_method(id, key, a);
     }
+    match receiver_of(recv) {
+        Some(Receiver::Map | Receiver::Set) => return collection_method(recv, key, a),
+        Some(Receiver::MapIterator | Receiver::SetIterator) => {
+            return (key == "next").then(|| iterator_next(recv));
+        }
+        _ => {}
+    }
     if r.is_number() {
         let result = builtins::number_method(&NativeHost, r.as_number_unchecked(), key, a)?;
         return Some(outcome(result, recv));
@@ -117,8 +124,7 @@ fn run_builtin(recv: u64, key: &str, a: &[u64]) -> Option<u64> {
     Some(outcome(result, recv))
 }
 
-/// The kind of value `v` is, if it has built-in methods. (`Map` and `Set`
-/// do not exist in native code.)
+/// The kind of value `v` is, if it has built-in methods.
 pub(super) fn receiver_of(v: u64) -> Option<Receiver> {
     let r = OtValue::from_bits(v);
     if r.is_number() {
@@ -129,6 +135,9 @@ pub(super) fn receiver_of(v: u64) -> Option<Receiver> {
         (_, ObjectKind::Array) => Some(Receiver::Array),
         (_, ObjectKind::Object) if promise_id(v).is_some() => Some(Receiver::Promise),
         (_, ObjectKind::Function) => Some(Receiver::Function),
+        (_, ObjectKind::Map) => Some(Receiver::Map),
+        (_, ObjectKind::Set) => Some(Receiver::Set),
+        (_, ObjectKind::Iterator) => iterator_receiver(v),
         _ => None,
     }
 }
@@ -241,21 +250,15 @@ pub extern "C" fn ot_check_type(value: u64, kinds: usize) -> u64 {
     outcome(super::super::intrinsics::call(&NativeHost, id, &args), 0)
 }
 
-/// `[..., ...source]`: append `source`'s elements (an array's, or a
-/// string's characters) to the array `target`; `target`.
+/// `[..., ...source]`: append what `source` iterates (`iterate`) to the
+/// array `target`; `target`.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_array_spread(target: u64, source: u64) -> u64 {
-    use builtins::Host;
     let Some((tptr, ObjectKind::Array)) = object(OtValue::from_bits(target)) else {
         return target;
     };
-    let src = OtValue::from_bits(source);
-    let items: Vec<u64> = if let Some(s) = as_str(src) {
-        s.chars().map(|c| new_string(&c.to_string())).collect()
-    } else if let Some(elems) = NativeHost.array_elements(&source) {
-        elems
-    } else {
-        return throw_error("TypeError", &format!("{} is not iterable", inspect(src)));
+    let Some(items) = iterate(source) else {
+        return not_iterable(source);
     };
     for v in items {
         array_push(array(tptr), v);
@@ -380,6 +383,14 @@ impl builtins::Host for NativeHost {
             Some((ptr, ObjectKind::Array)) => (0..array(ptr).len).map(|i| i.to_string()).collect(),
             _ => Vec::new(),
         }
+    }
+
+    fn identity(&self, v: &u64) -> u64 {
+        *v
+    }
+
+    fn receiver(&self, v: &u64) -> Option<Receiver> {
+        receiver_of(*v)
     }
 
     fn own_entries(&self, v: &u64) -> Vec<(String, u64)> {

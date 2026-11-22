@@ -1,7 +1,6 @@
-// backends: vm
+// backends: vm jit aot
 // Map and Set methods are values, as the other built-in methods are
-// (builtin_method_values.ot). The VM only: native code has no Map or Set
-// yet. Held to Node's output.
+// (builtin_method_values.ot). Held to Node's output.
 
 function show(f) {
   try {

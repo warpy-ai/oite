@@ -266,6 +266,7 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         IrOp::ToBool(_, _) => CompileStrategy::StubCall(stubs::TO_BOOLEAN),
         IrOp::ToNum(_, _) => CompileStrategy::StubCall(stubs::TO_NUMBER),
         IrOp::ToStr(_, _) => CompileStrategy::StubCall(stubs::TO_NUMBER),
+        IrOp::GetIterator(_, _) => CompileStrategy::StubCall(stubs::CALL),
 
         // SSA operations
         IrOp::Phi(_, _) => CompileStrategy::NoOp, // Handled by register allocation

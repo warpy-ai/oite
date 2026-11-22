@@ -202,6 +202,9 @@ pub(super) fn get_property_atom(v: OtValue, key: Atom) -> u64 {
                 None => builtin_method(Receiver::String, atom::name(key)).unwrap_or_else(undefined),
             }
         }
+        ObjectKind::Map | ObjectKind::Set | ObjectKind::Iterator => {
+            collection_property(v.to_bits(), key)
+        }
         _ => undefined(),
     }
 }
@@ -433,6 +436,11 @@ pub extern "C" fn ot_get_index(obj: u64, key: u64) -> u64 {
         } else {
             undefined()
         };
+    }
+    if let Some(cursor) = iter_of(obj)
+        && cursor.for_of
+    {
+        return cursor_take(cursor);
     }
     get_property(o, &key_string(k))
 }

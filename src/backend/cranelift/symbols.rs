@@ -83,6 +83,7 @@ pub(super) fn runtime_symbol(name: &str) -> Option<*const u8> {
         ot_get_private,
         ot_set_private,
         ot_to_str,
+        ot_get_iterator,
         ot_in,
         ot_stack_init,
         ot_stack_overflow,

@@ -69,8 +69,12 @@ impl VM {
             }
             (_, Some(HeapData::Array(arr))) if name == "length" => size(arr.len()),
             (_, Some(HeapData::ByteStream(bytes))) if name == "length" => size(bytes.len()),
-            (_, Some(HeapData::Map(map))) if name == "size" => size(map.len()),
-            (_, Some(HeapData::Set(set))) if name == "size" => size(set.len()),
+            (_, Some(HeapData::Map(table) | HeapData::Set(table))) if name == "size" => {
+                size(table.len())
+            }
+            (_, Some(HeapData::Iterator(it))) if it.for_of && name == "length" => {
+                JsValue::Number(self.cursor_length(it))
+            }
             (JsValue::String(s), _) if name == "length" => size(char_count(s, is_ascii(s))),
             _ => match self.builtin_method(target, name) {
                 Some(method) => method,

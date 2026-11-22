@@ -7,34 +7,10 @@ use crate::runtime::builtins::{self, Error, Method, Outcome, Receiver};
 use crate::vm::value::{HeapData, HeapObject, JsValue, Promise, Reaction};
 use crate::vm::{VM, VmHost};
 
-/// Map and Set key equality (SameValueZero): `===`, except that NaN
-/// equals NaN.
-fn same_key(a: &JsValue, b: &JsValue) -> bool {
-    match (a, b) {
-        (JsValue::Number(x), JsValue::Number(y)) => x == y || (x.is_nan() && y.is_nan()),
-        _ => a == b,
-    }
-}
-
 impl VM {
     /// The kind of value `v` is, if it has built-in methods.
-    pub(super) fn receiver_of(&self, v: &JsValue) -> Option<Receiver> {
-        match v {
-            JsValue::String(_) => Some(Receiver::String),
-            JsValue::Number(_) => Some(Receiver::Number),
-            JsValue::Promise(_) => Some(Receiver::Promise),
-            JsValue::Function { .. }
-            | JsValue::NativeFunction(_)
-            | JsValue::BuiltinMethod(_)
-            | JsValue::BoundFunction(_) => Some(Receiver::Function),
-            JsValue::Object(ptr) => match self.heap.get(*ptr).map(|o| &o.data) {
-                Some(HeapData::Array(_)) => Some(Receiver::Array),
-                Some(HeapData::Map(_)) => Some(Receiver::Map),
-                Some(HeapData::Set(_)) => Some(Receiver::Set),
-                _ => None,
-            },
-            _ => None,
-        }
+    pub(crate) fn receiver_of(&self, v: &JsValue) -> Option<Receiver> {
+        builtins::Host::receiver(&VmHost(&self.heap), v)
     }
 
     /// `v.name` when it is a built-in method of `v`.
@@ -91,8 +67,12 @@ impl VM {
                 let p = self.promise_method(p, name, args)?;
                 return Some(Ok(JsValue::Promise(p)));
             }
-            (Receiver::Map, JsValue::Object(ptr)) => self.map_method(*ptr, name, &args),
-            (Receiver::Set, JsValue::Object(ptr)) => self.set_method(*ptr, name, &args),
+            (r @ (Receiver::Map | Receiver::Set), JsValue::Object(ptr)) => {
+                return self.collection_method(*ptr, r, name, args);
+            }
+            (Receiver::MapIterator | Receiver::SetIterator, JsValue::Object(ptr)) => {
+                return (name == "next").then(|| Ok(self.iterator_next(*ptr)));
+            }
             (Receiver::Function, f) => return Some(self.function_method(f, name, args)),
             _ => None,
         }?;
@@ -165,79 +145,6 @@ impl VM {
             _ => return None,
         })
     }
-
-    /// The methods of the `Map` at `ptr`.
-    fn map_method(
-        &mut self,
-        ptr: usize,
-        name: &str,
-        args: &[JsValue],
-    ) -> Option<Result<Outcome<JsValue>, Error>> {
-        let Some(HeapData::Map(map)) = self.heap.get_mut(ptr).map(|o| &mut o.data) else {
-            return None;
-        };
-        let arg = |i: usize| args.get(i).cloned().unwrap_or(JsValue::Undefined);
-        let key = arg(0);
-        let found = map.iter().position(|(k, _)| same_key(k, &key));
-        let value = match name {
-            "get" => found.map_or(JsValue::Undefined, |i| map[i].1.clone()),
-            "set" => {
-                match found {
-                    Some(i) => map[i].1 = arg(1),
-                    None => map.push((key, arg(1))),
-                }
-                return Some(Ok(Outcome::This));
-            }
-            "has" => JsValue::Boolean(found.is_some()),
-            "delete" => {
-                if let Some(i) = found {
-                    map.remove(i);
-                }
-                JsValue::Boolean(found.is_some())
-            }
-            "clear" => {
-                map.clear();
-                JsValue::Undefined
-            }
-            _ => return None,
-        };
-        Some(Ok(Outcome::Value(value)))
-    }
-
-    /// The methods of the `Set` at `ptr`.
-    fn set_method(
-        &mut self,
-        ptr: usize,
-        name: &str,
-        args: &[JsValue],
-    ) -> Option<Result<Outcome<JsValue>, Error>> {
-        let Some(HeapData::Set(set)) = self.heap.get_mut(ptr).map(|o| &mut o.data) else {
-            return None;
-        };
-        let value = args.first().cloned().unwrap_or(JsValue::Undefined);
-        let found = set.iter().position(|v| same_key(v, &value));
-        let result = match name {
-            "add" => {
-                if found.is_none() {
-                    set.push(value);
-                }
-                return Some(Ok(Outcome::This));
-            }
-            "has" => JsValue::Boolean(found.is_some()),
-            "delete" => {
-                if let Some(i) = found {
-                    set.remove(i);
-                }
-                JsValue::Boolean(found.is_some())
-            }
-            "clear" => {
-                set.clear();
-                JsValue::Undefined
-            }
-            _ => return None,
-        };
-        Some(Ok(Outcome::Value(result)))
-    }
 }
 
 #[cfg(test)]
@@ -256,11 +163,21 @@ mod tests {
         });
         let map = vm.heap.len();
         vm.heap.push(HeapObject {
-            data: HeapData::Map(Vec::new()),
+            data: HeapData::Map(Default::default()),
         });
         let set = vm.heap.len();
         vm.heap.push(HeapObject {
-            data: HeapData::Set(Vec::new()),
+            data: HeapData::Set(Default::default()),
+        });
+        let iterators = [map, set].map(|c| {
+            let it = vm.heap.len();
+            vm.heap.push(HeapObject {
+                data: HeapData::Iterator(crate::runtime::collection::Iter::new(
+                    JsValue::Object(c),
+                    crate::runtime::collection::Yields::Keys,
+                )),
+            });
+            JsValue::Object(it)
         });
         let function = vm.register_native(|_, _| JsValue::Undefined);
         let receivers = [
@@ -270,6 +187,8 @@ mod tests {
             JsValue::Promise(Promise::new()),
             JsValue::Object(map),
             JsValue::Object(set),
+            iterators[0].clone(),
+            iterators[1].clone(),
             JsValue::NativeFunction(function),
         ];
         for this in receivers {

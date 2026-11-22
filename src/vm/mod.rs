@@ -2,6 +2,7 @@
 pub const MAX_CALL_STACK_DEPTH: usize = 1000;
 
 pub mod builtin_methods;
+mod collections;
 pub mod element;
 pub mod errors;
 pub mod functions;
@@ -954,9 +955,13 @@ impl VM {
     }
 
     /// Call the object `ptr` as the current instruction, if it is a
-    /// function: a `new Promise`'s `resolve` or `reject`. `None`: it is not
-    /// one.
+    /// function: a `new Promise`'s `resolve` or `reject`, or `Map` or `Set`,
+    /// which throw without `new`. `None`: it is not one.
     fn call_object(&mut self, ptr: usize, args: Vec<JsValue>) -> Option<ExecResult> {
+        if let Some(collection) = self.collection_constructor(&JsValue::Object(ptr)) {
+            let e = crate::runtime::collection::requires_new(collection);
+            return Some(self.throw_error(e.kind, e.message));
+        }
         self.resolver_of(ptr)?;
         let result = self.call_value(&JsValue::Object(ptr), JsValue::Undefined, args);
         Some(self.finish_call(result))
@@ -1798,8 +1803,18 @@ impl VM {
             OpCode::LoadElement => {
                 let index_val = self.stack.pop().expect("Missing index");
                 let target = self.stack.pop().expect("Missing target (array or String)");
-                let value = self.get_element(&target, &index_val);
+                let taken = match target {
+                    JsValue::Object(ptr) => self.cursor_take(ptr),
+                    _ => None,
+                };
+                let value = taken.unwrap_or_else(|| self.get_element(&target, &index_val));
                 self.stack.push(value);
+            }
+
+            OpCode::GetIterator => {
+                let value = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let cursor = self.for_of_cursor(value);
+                self.stack.push(cursor);
             }
 
             OpCode::ArrayPush => {
@@ -1820,31 +1835,14 @@ impl VM {
             }
 
             OpCode::ArraySpread => {
-                // [target, source] -> [target]: append source's elements (an
-                // array's, or a string's characters) to the array target.
+                // [target, source] -> [target]: append what source iterates
+                // (`iterate`) to the array target.
                 let source = self.stack.pop().unwrap_or(JsValue::Undefined);
                 let target = self.stack.pop().unwrap_or(JsValue::Undefined);
-                let items: Vec<JsValue> = match &source {
-                    JsValue::String(s) => {
-                        s.chars().map(|c| JsValue::String(c.to_string())).collect()
-                    }
-                    JsValue::Object(ptr) => match self.heap.get(*ptr) {
-                        Some(HeapObject {
-                            data: HeapData::Array(arr),
-                        }) => arr.clone(),
-                        _ => Vec::new(),
-                    },
-                    _ => Vec::new(),
+                let items = match self.iterate(&source) {
+                    Ok(items) => items,
+                    Err(e) => return self.throw_exception(e),
                 };
-                let iterable = matches!(source, JsValue::String(_))
-                    || matches!(&source, JsValue::Object(p) if matches!(
-                        self.heap.get(*p),
-                        Some(HeapObject { data: HeapData::Array(_) })
-                    ));
-                if !iterable {
-                    let shown = crate::stdlib::inspect(self, &source);
-                    return self.throw_error("TypeError", format!("{shown} is not iterable"));
-                }
                 if let JsValue::Object(ptr) = target
                     && let Some(HeapObject {
                         data: HeapData::Array(arr),
@@ -2076,22 +2074,12 @@ impl VM {
                         String::new()
                     };
 
-                    if constructor_type == "Map" {
-                        // Handle Map construction: new Map() or new Map(iterable)
-                        let map_ptr = self.heap.len();
-                        self.heap.push(HeapObject {
-                            data: HeapData::Map(Vec::new()),
-                        });
-                        // If an iterable is passed, we'd need to iterate it - for now just create empty
-                        self.stack.push(JsValue::Object(map_ptr));
-                    } else if constructor_type == "Set" {
-                        // Handle Set construction: new Set() or new Set(iterable)
-                        let set_ptr = self.heap.len();
-                        self.heap.push(HeapObject {
-                            data: HeapData::Set(Vec::new()),
-                        });
-                        // If an iterable is passed, we'd need to iterate it - for now just create empty
-                        self.stack.push(JsValue::Object(set_ptr));
+                    if let Some(collection) = self.collection_constructor(&new_target_val) {
+                        let items = args.first().cloned().unwrap_or(JsValue::Undefined);
+                        match self.construct_collection(collection, items) {
+                            Ok(v) => self.stack.push(v),
+                            Err(e) => return self.throw_exception(e),
+                        }
                     } else if constructor_type == "Promise" {
                         // `new Promise(executor)`: the executor runs now.
                         let executor = args.first().cloned().unwrap_or(JsValue::Undefined);
@@ -2223,7 +2211,7 @@ impl VM {
 
                         if matches!(
                             self.heap.get(ptr).map(|o| &o.data),
-                            Some(HeapData::Map(_) | HeapData::Set(_))
+                            Some(HeapData::Map(_) | HeapData::Set(_) | HeapData::Iterator(_))
                         ) {
                             let args = self.pop_args(arg_count);
                             let receiver = JsValue::Object(ptr);
@@ -2676,6 +2664,7 @@ impl VM {
 
                 // A bound function: its target.
                 let (constructor, _, _) = self.unbind(constructor, JsValue::Undefined, Vec::new());
+                let collection = self.collection_constructor(&constructor);
                 // `constructor.prototype`; a function's is made when first
                 // read, so one never read is on no object's chain.
                 let proto = match &constructor {
@@ -2693,6 +2682,8 @@ impl VM {
                         }),
                 };
                 let result = match obj {
+                    // `x instanceof Map`: whether `x` is one.
+                    obj if collection.is_some() => self.receiver_of(&obj) == collection,
                     JsValue::Object(obj_ptr) => {
                         // Walk the object's prototype chain looking for constructor.prototype
                         if let Some(JsValue::Object(target_proto)) = proto {
@@ -3172,6 +3163,49 @@ impl crate::runtime::builtins::Host for VmHost<'_> {
                 }
                 _ => Kind::Object,
             },
+        }
+    }
+
+    fn identity(&self, v: &JsValue) -> u64 {
+        // Consistent with `strict_equal`: a function is its address.
+        match v {
+            JsValue::Boolean(b) => *b as u64,
+            JsValue::Null => 2,
+            JsValue::Undefined => 3,
+            // Both index the heap, so no two share one.
+            JsValue::Object(ptr) | JsValue::BoundFunction(ptr) => (*ptr as u64) << 3 | 4,
+            JsValue::Function { address, .. } => (*address as u64) << 3 | 5,
+            JsValue::NativeFunction(idx) => (*idx as u64) << 3 | 6,
+            JsValue::BuiltinMethod(m) => (m.to_bits() as u64) << 3 | 7,
+            JsValue::Promise(p) => std::sync::Arc::as_ptr(&p.state) as u64,
+            JsValue::Number(_) | JsValue::String(_) | JsValue::Accessor(..) => 0,
+        }
+    }
+
+    fn receiver(&self, v: &JsValue) -> Option<crate::runtime::builtins::Receiver> {
+        use crate::runtime::builtins::Receiver;
+        match v {
+            JsValue::String(_) => Some(Receiver::String),
+            JsValue::Number(_) => Some(Receiver::Number),
+            JsValue::Promise(_) => Some(Receiver::Promise),
+            JsValue::Function { .. }
+            | JsValue::NativeFunction(_)
+            | JsValue::BuiltinMethod(_)
+            | JsValue::BoundFunction(_) => Some(Receiver::Function),
+            JsValue::Object(ptr) => match &self.0.get(*ptr)?.data {
+                HeapData::Array(_) => Some(Receiver::Array),
+                HeapData::Map(_) => Some(Receiver::Map),
+                HeapData::Set(_) => Some(Receiver::Set),
+                HeapData::Iterator(it) if !it.for_of => match &it.source {
+                    JsValue::Object(c) => match &self.0.get(*c)?.data {
+                        HeapData::Map(_) => Some(Receiver::MapIterator),
+                        _ => Some(Receiver::SetIterator),
+                    },
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
         }
     }
 
