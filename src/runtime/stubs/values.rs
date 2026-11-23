@@ -146,6 +146,12 @@ pub(super) fn value_to_string(v: OtValue) -> String {
         }
         Some((_, ObjectKind::Function)) => "function".to_string(),
         Some((ptr, ObjectKind::Object)) if is_error(ptr) => error_summary(ptr),
+        Some((_, ObjectKind::Map | ObjectKind::Set | ObjectKind::Iterator)) => {
+            match receiver_of(v.to_bits()) {
+                Some(r) => format!("[object {}]", r.name()),
+                None => "[object Object]".to_string(),
+            }
+        }
         _ => "[object Object]".to_string(),
     }
 }

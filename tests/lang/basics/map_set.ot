@@ -1,0 +1,144 @@
+// backends: vm jit aot
+// Map and Set, held to Node's output: construction from an iterable,
+// SameValueZero keys, insertion order, live iteration (for...of,
+// forEach, keys/values/entries), spread and console.log.
+
+function show(f) {
+  try {
+    console.log(f());
+  } catch (e) {
+    console.log(e.name + ": " + e.message);
+  }
+}
+
+// Construction from arrays, other collections, iterators and strings.
+const m = new Map([["a", 1], ["b", 2], ["a", 3]]);
+console.log(m.size, m.get("a"), m.get("b"), m.get("c"));
+console.log(m);
+console.log(new Map(m), new Map(m.entries()), new Map());
+const s = new Set([3, 1, 3, 2, 1]);
+console.log(s.size, s);
+console.log(new Set("hello"), new Set(s), new Set(m.keys()), new Set());
+console.log(new Map(undefined).size, new Set(null).size);
+
+// get / set / has / delete / clear / size.
+console.log(m.set("c", 4) === m, m.has("c"), m.has("d"), m.size);
+console.log(m.delete("b"), m.delete("b"), m.size, m);
+console.log(s.add(4) === s, s.add(1).size, s.has(4), s.delete(3), s);
+try {
+  m.size();
+} catch (e) {
+  console.log(e.name, typeof m.size);
+}
+m.clear();
+s.clear();
+console.log(m.size, s.size, m, s);
+
+// Keys compare by SameValueZero.
+const k = new Map();
+const obj = {};
+const arr = [1];
+const fn = function () {};
+k.set(NaN, "nan").set(0, "zero").set("0", "string zero");
+k.set(obj, "obj").set(arr, "arr").set(fn, "fn").set(null, "null");
+k.set(undefined, "undef").set(true, "true");
+console.log(k.get(NaN), k.get(0 / 0), k.get(-0), k.get(0), k.get("0"));
+console.log(k.get(obj), k.get({}), k.get(arr), k.get([1]), k.get(fn));
+console.log(k.get(null), k.get(undefined), k.get(true), k.get(false));
+console.log(k.get("ab"), k.set("a" + "b", 1).get("ab"), k.size);
+console.log(new Set([NaN, NaN, 0, -0, "0"]));
+
+// Setting a key again keeps its place; deleting and adding moves it last.
+const order = new Map([["x", 1], ["y", 2], ["z", 3]]);
+order.set("x", 10);
+order.delete("y");
+order.set("y", 20);
+console.log([...order.keys()], [...order.values()]);
+
+// forEach with thisArg; the collection is the third argument.
+const ctx = { tag: "ctx" };
+order.forEach(function (value, key, map) {
+  console.log(this.tag, key, value, map === order);
+}, ctx);
+new Set(["p", "q"]).forEach((value, key, set) => {
+  console.log(value, key, set.size);
+});
+show(() => order.forEach());
+
+// for...of over a Map, a Set and their iterators.
+for (const [key, value] of order) {
+  console.log("entry", key, value);
+}
+for (const v of new Set([7, 8])) {
+  console.log("value", v);
+}
+for (const key of order.keys()) {
+  console.log("key", key);
+}
+for (const pair of order.entries()) {
+  console.log("pair", pair);
+}
+
+// Iteration is live: an entry added during it is visited, one deleted
+// before its turn is not.
+const live = new Map([[1, "a"], [2, "b"], [3, "c"]]);
+for (const [key] of live) {
+  console.log("visit", key);
+  if (key === 1) {
+    live.delete(2);
+    live.set(4, "d");
+  }
+}
+const seen = new Set([1]);
+for (const n of seen) {
+  if (n < 5) {
+    seen.add(n + 1);
+  }
+}
+console.log([...seen]);
+const during = new Set(["a", "b", "c"]);
+during.forEach((v) => {
+  console.log("forEach", v);
+  if (v === "a") {
+    during.delete("b");
+    during.add("d");
+  }
+});
+const cleared = new Map([[1, 1], [2, 2]]);
+for (const [key] of cleared) {
+  console.log("cleared", key);
+  if (key === 1) {
+    cleared.clear();
+    cleared.set(9, 9);
+  }
+}
+
+// Iterators: next(), and a loop that stops early leaves the rest.
+const it = new Map([["a", 1], ["b", 2], ["c", 3]]).entries();
+console.log(it.next(), it);
+for (const pair of it) {
+  console.log("first", pair);
+  break;
+}
+console.log(it.next(), it.next(), it);
+const vit = new Set([1, 2]).values();
+console.log(vit.next().value, vit.next().value, vit.next().done);
+show(() => it.next.call({}));
+
+// Spread.
+const sm = new Map([["a", 1], ["b", 2]]);
+console.log([...sm], [...new Set([1, 2, 2])], [...sm.values()], [0, ...sm.keys()]);
+
+// Printing.
+console.log(sm.keys(), sm.values(), sm.entries());
+console.log(new Set([1]).entries(), new Set([1]).values());
+console.log([new Map([[1, { x: 1 }]])], { set: new Set(["a"]) });
+console.log(new Map([[{ a: 1 }, [1, 2]]]));
+console.log(String(sm), `${new Set()}`, typeof sm);
+console.log(sm instanceof Map, sm instanceof Set, new Set() instanceof Set, {} instanceof Map);
+
+// Errors.
+show(() => Map());
+show(() => new Map([1]));
+show(() => sm.get.call(new Set(), "a"));
+show(() => new Set().add.call(sm, 1));

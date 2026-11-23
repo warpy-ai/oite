@@ -196,8 +196,10 @@ pub enum HeapData {
     Array(Vec<JsValue>),
     /// ByteStream for building binary bytecode buffers
     ByteStream(Vec<u8>),
-    /// Map - ordered key-value pairs with any key type
-    Map(Vec<(JsValue, JsValue)>),
-    /// Set - ordered unique values
-    Set(Vec<JsValue>),
+    /// A `Map`: hashed, in insertion order (`runtime::collection`).
+    Map(crate::runtime::collection::Table<JsValue>),
+    /// A `Set`: each value is its own key.
+    Set(crate::runtime::collection::Table<JsValue>),
+    /// An iterator over a `Map` or a `Set`, or a `for...of` cursor.
+    Iterator(crate::runtime::collection::Iter<JsValue>),
 }

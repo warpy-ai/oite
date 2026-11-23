@@ -63,6 +63,10 @@ pub enum OpCode {
     ArrayPush,
     /// ArraySpread: pops [target_array, source_array] -> appends all source elements to target, pushes target
     ArraySpread,
+    /// `[value] -> [cursor]`: what a `for...of` loop walks `value` with
+    /// (`runtime::collection::Iter`): an array or a string itself, a
+    /// cursor for a `Map`, a `Set` or an iterator.
+    GetIterator,
     /// ObjectSpread: pops [target_obj, source_obj] -> copies all properties from source to target, pushes target
     ObjectSpread,
     JumpIfFalse(usize),

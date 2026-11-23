@@ -290,6 +290,9 @@ impl<'a> TypeChecker<'a> {
             IrOp::ToStr(dst, _) => {
                 self.set_type(*dst, IrType::String);
             }
+            IrOp::GetIterator(dst, _) => {
+                self.set_type(*dst, IrType::Any);
+            }
 
             // Phi: meet of all incoming types
             IrOp::Phi(dst, entries) => {

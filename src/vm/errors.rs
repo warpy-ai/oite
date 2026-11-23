@@ -193,6 +193,12 @@ impl VM {
                     .collect::<Vec<_>>()
                     .join(","),
                 Some(HeapData::Object(_)) if self.is_error(*ptr) => self.error_summary(*ptr),
+                Some(HeapData::Map(_) | HeapData::Set(_) | HeapData::Iterator(_)) => {
+                    match self.receiver_of(v) {
+                        Some(r) => format!("[object {}]", r.name()),
+                        None => "[object Object]".to_string(),
+                    }
+                }
                 _ => "[object Object]".to_string(),
             },
             _ => "[object Object]".to_string(),

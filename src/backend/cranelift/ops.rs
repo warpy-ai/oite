@@ -119,6 +119,7 @@ impl Fx<'_> {
             IrOp::ToBool(d, x) => self.rt_unop(b, *d, "ot_to_boolean", *x)?,
             IrOp::ToNum(d, x) => self.rt_unop(b, *d, "ot_to_number", *x)?,
             IrOp::ToStr(d, x) => self.rt_unop(b, *d, "ot_to_str", *x)?,
+            IrOp::GetIterator(d, x) => self.rt_unop(b, *d, "ot_get_iterator", *x)?,
             IrOp::TypeOf(d, x) => self.rt_unop(b, *d, "ot_typeof", *x)?,
 
             IrOp::LoadLocal(d, slot) => {

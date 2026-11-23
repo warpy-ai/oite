@@ -7,7 +7,8 @@
 //! Full standard library functionality (fs, path, json, math, date, etc.)
 //! will be provided by Rolls packages in the future.
 
-use crate::runtime::builtins::{InspectOptions, format_number, is_hidden_key};
+use crate::runtime::builtins::{InspectOptions, Receiver, format_number, is_hidden_key};
+use crate::runtime::collection::{self, Yields};
 use crate::vm::VM;
 use crate::vm::value::{HeapData, HeapObject, JsValue};
 
@@ -169,8 +170,18 @@ fn inspect_inner(
                         format!("{{ {} }}", parts.join(", "))
                     }
                 }
-                HeapData::Map(entries) => {
-                    let parts: Vec<String> = entries
+                HeapData::Map(_) | HeapData::Set(_) if too_deep => {
+                    format!(
+                        "[{}]",
+                        if matches!(data, HeapData::Map(_)) {
+                            "Map"
+                        } else {
+                            "Set"
+                        }
+                    )
+                }
+                HeapData::Map(table) => {
+                    let parts: Vec<String> = table
                         .iter()
                         .map(|(k, v)| {
                             format!(
@@ -180,23 +191,34 @@ fn inspect_inner(
                             )
                         })
                         .collect();
-                    if parts.is_empty() {
-                        "Map(0) {}".to_string()
-                    } else {
-                        format!("Map({}) {{ {} }}", entries.len(), parts.join(", "))
-                    }
+                    collection::summary(Receiver::Map, &parts)
                 }
-                HeapData::Set(items) => {
-                    let parts: Vec<String> = items
+                HeapData::Set(table) => {
+                    let parts: Vec<String> = table
                         .iter()
-                        .map(|v| inspect_inner(vm, v, depth + 1, opts, seen))
+                        .map(|(v, _)| inspect_inner(vm, v, depth + 1, opts, seen))
                         .collect();
-                    if parts.is_empty() {
-                        "Set(0) {}".to_string()
-                    } else {
-                        format!("Set({}) {{ {} }}", items.len(), parts.join(", "))
-                    }
+                    collection::summary(Receiver::Set, &parts)
                 }
+                HeapData::Iterator(it) => match vm.iterator_source(it) {
+                    // What it has left, without taking it.
+                    Some((table, collection)) => {
+                        let parts: Vec<String> = table
+                            .rest(it.cursor)
+                            .map(|(k, v)| match it.yields {
+                                Yields::Keys => inspect_inner(vm, k, depth + 1, opts, seen),
+                                Yields::Values => inspect_inner(vm, v, depth + 1, opts, seen),
+                                Yields::Entries => format!(
+                                    "[ {}, {} ]",
+                                    inspect_inner(vm, k, depth + 2, opts, seen),
+                                    inspect_inner(vm, v, depth + 2, opts, seen)
+                                ),
+                            })
+                            .collect();
+                        collection::iterator_summary(collection, it.yields, &parts)
+                    }
+                    None => "[Object]".to_string(),
+                },
                 HeapData::ByteStream(bytes) => format!("ByteStream({})", bytes.len()),
             };
             seen.pop();
@@ -570,8 +592,6 @@ pub fn native_string_constructor(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     let result = match value {
         JsValue::Object(ptr) => match vm.heap.get(*ptr).map(|o| &o.data) {
             Some(HeapData::ByteStream(_)) => "[object ByteStream]".to_string(),
-            Some(HeapData::Map(_)) => "[object Map]".to_string(),
-            Some(HeapData::Set(_)) => "[object Set]".to_string(),
             _ => vm.to_js_string(value),
         },
         JsValue::Promise(_) => "[object Promise]".to_string(),

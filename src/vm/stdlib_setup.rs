@@ -8,7 +8,7 @@
 //! - fs (minimal file I/O for bootstrap compiler)
 
 use crate::vm::VM;
-use crate::vm::value::{HeapData, HeapObject, JsValue};
+use crate::vm::value::{HeapData, HeapObject, JsValue, NativeFn};
 
 pub fn setup_stdlib(vm: &mut VM) {
     setup_console(vm);
@@ -298,30 +298,39 @@ fn setup_globals(vm: &mut VM) {
     globals.insert("Infinity".into(), JsValue::Number(f64::INFINITY));
 }
 
+/// `Map` and `Set`: `new Map(items)` makes one (the `Construct`
+/// instruction knows them by `__type__`); calling one without `new` is a
+/// TypeError.
 fn setup_map_set(vm: &mut VM) {
-    // Create Map constructor object
-    let map_ptr = vm.heap.len();
-    let mut map_props = crate::vm::value::PropMap::new();
-    // Mark this as a Map constructor for detection in Construct opcode
-    map_props.insert("__type__".to_string(), JsValue::String("Map".to_string()));
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(map_props),
-    });
-    vm.call_stack[0]
-        .locals
-        .insert("Map".into(), JsValue::Object(map_ptr));
-
-    // Create Set constructor object
-    let set_ptr = vm.heap.len();
-    let mut set_props = crate::vm::value::PropMap::new();
-    // Mark this as a Set constructor for detection in Construct opcode
-    set_props.insert("__type__".to_string(), JsValue::String("Set".to_string()));
-    vm.heap.push(HeapObject {
-        data: HeapData::Object(set_props),
-    });
-    vm.call_stack[0]
-        .locals
-        .insert("Set".into(), JsValue::Object(set_ptr));
+    use crate::runtime::builtins::Receiver;
+    use crate::runtime::collection::requires_new;
+    fn call_map(vm: &mut VM, _: Vec<JsValue>) -> JsValue {
+        let e = requires_new(Receiver::Map);
+        vm.native_throw = Some(vm.make_error(e.kind, e.message));
+        JsValue::Undefined
+    }
+    fn call_set(vm: &mut VM, _: Vec<JsValue>) -> JsValue {
+        let e = requires_new(Receiver::Set);
+        vm.native_throw = Some(vm.make_error(e.kind, e.message));
+        JsValue::Undefined
+    }
+    let calls: [(Receiver, NativeFn); 2] = [(Receiver::Map, call_map), (Receiver::Set, call_set)];
+    for (collection, call) in calls {
+        let call = vm.register_native(call);
+        let mut props = crate::vm::value::PropMap::new();
+        props.insert(
+            "__type__".to_string(),
+            JsValue::String(collection.name().to_string()),
+        );
+        props.insert("__call__".to_string(), JsValue::NativeFunction(call));
+        let ptr = vm.heap.len();
+        vm.heap.push(HeapObject {
+            data: HeapData::Object(props),
+        });
+        vm.call_stack[0]
+            .locals
+            .insert(collection.name().into(), JsValue::Object(ptr));
+    }
 }
 
 /// Set script arguments as __args__ global variable.

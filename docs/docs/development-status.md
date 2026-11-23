@@ -64,7 +64,7 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Rest parameters (`function f(a, ...rest)`) | Covered                              | Covered                           |
 | Compound assignment (`+=`, `*=`, `<<=`, ...) | Covered                            | Covered                           |
 | Objects, arrays, `obj[k]`, `.length`, `push`/`pop` | Covered                      | Covered                           |
-| Spread in array and object literals (`[...a, ..."str"]`, `{...o}`) | Covered     | Covered                           |
+| Spread in array and object literals (`[...a, ..."str"]`, `[...map]`, `{...o}`) | Covered     | Covered                           |
 | Spread in call arguments (`f(...a)`, `o.m(0, ...a)`, `new C(...a)`, `super(...a)`) | Covered | Covered               |
 | Methods on object literals (`this`)        | Covered                              | Covered                           |
 | String methods (`slice`, `split`, `trim`, `indexOf`, `padStart`, ...) | Covered   | Covered (shared implementation)   |
@@ -72,7 +72,7 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Callback methods (`map`, `filter`, `forEach`, `reduce`) | Not built in; `@rolls/array` has them as functions | Same |
 | Array methods added to `Array.prototype`   | Covered                              | Covered                           |
 | Built-in methods as values (`const trim = s.trim`, `trim.call(t)`, `arr.push.apply(arr, xs)`, `Array.prototype.push`) | Covered | Covered (same implementation) |
-| `Map` / `Set` (`get`, `set`, `has`, `delete`, `clear`, `add`, `size`) | Covered | Not supported: `Map is not defined` |
+| `Map` / `Set`: `new Map(iterable)`, `get`, `set`, `has`, `delete`, `clear`, `add`, `size`, `forEach`, `keys` / `values` / `entries`, `for...of` (destructuring `[key, value]`) | Covered (shared, hashed) | Covered (same implementation) |
 | `if`, `while`, `for`, `do..while`, `?:`    | Covered                              | Covered                           |
 | `break` / `continue`, with or without labels | Covered                            | Covered                           |
 | `switch`, labeled blocks                   | Covered                              | Covered                           |

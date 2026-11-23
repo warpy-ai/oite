@@ -111,6 +111,8 @@ pub(super) fn initial_globals() -> HashMap<String, u64> {
     }
     set_property(pr, "__promise_ctor__", boolean(true));
     g.insert("Promise".to_string(), promise);
+    g.insert("Map".to_string(), collection_constructor(0));
+    g.insert("Set".to_string(), collection_constructor(1));
     for (i, name) in ["setTimeout", "clearTimeout"].iter().enumerate() {
         let f = ot_make_closure(ot_builtin_timer as *const u8, number(i as f64));
         g.insert(name.to_string(), f);

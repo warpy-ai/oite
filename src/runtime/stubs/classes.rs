@@ -275,6 +275,9 @@ pub extern "C" fn ot_instanceof(value: u64, ctor: u64) -> u64 {
             matches!(object(OtValue::from_bits(value)), Some((_, kind)) if kind != ObjectKind::String),
         );
     }
+    if let Some(collection) = collection_constructor_of(ctor) {
+        return boolean(receiver_of(value) == Some(collection));
+    }
     let proto = match object(OtValue::from_bits(ctor)) {
         Some((_, ObjectKind::Function)) => return boolean(true),
         Some((ptr, ObjectKind::Object)) => lookup_atom(ptr, atom::PROTOTYPE),
