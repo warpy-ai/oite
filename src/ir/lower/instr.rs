@@ -12,6 +12,16 @@ impl Lowerer {
                 self.push(dst);
             }
 
+            // A function not made once (`made_once`) is a new function
+            // each time its expression runs; this one captures nothing.
+            OpCode::Push(JsValue::Function { address, .. }) if !self.names.made_once(*address) => {
+                let env = self.alloc_value(IrType::Any);
+                self.emit(IrOp::Const(env, Literal::Undefined));
+                let dst = self.alloc_value(IrType::Function);
+                self.emit(IrOp::MakeClosure(dst, *address as u32, env));
+                self.push(dst);
+            }
+
             OpCode::Push(value) => {
                 let (lit, ty) = self.jsvalue_to_literal(value);
                 let dst = self.alloc_value(ty);
@@ -475,6 +485,8 @@ impl Lowerer {
                 self.emit(IrOp::CallSuper(dst, parent, args));
                 self.push(dst);
             }
+            // Never runs: it describes the function body after it.
+            OpCode::FunctionInfo(_) => {}
             OpCode::RestArgs(n) => {
                 // The arguments from the `n`th on, as an array; the first
                 // `Let` binds it.
@@ -716,7 +728,7 @@ impl Lowerer {
             JsValue::Undefined => (Literal::Undefined, IrType::Any),
             JsValue::Object(_) => (Literal::Null, IrType::Object),
             JsValue::Function { address, .. } => (Literal::Function(*address), IrType::Function),
-            JsValue::NativeFunction(_) | JsValue::BuiltinMethod(_) => {
+            JsValue::NativeFunction(_) | JsValue::BuiltinMethod(_) | JsValue::BoundFunction(_) => {
                 (Literal::Null, IrType::Function)
             }
             JsValue::Accessor(_, _) => (Literal::Null, IrType::Any),

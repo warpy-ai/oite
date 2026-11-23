@@ -73,6 +73,7 @@ impl VM {
             (Receiver::MapIterator | Receiver::SetIterator, JsValue::Object(ptr)) => {
                 return (name == "next").then(|| Ok(self.iterator_next(*ptr)));
             }
+            (Receiver::Function, f) => return Some(self.function_method(f, name, args)),
             _ => None,
         }?;
         Some(self.outcome(result, this.clone()))
@@ -178,6 +179,7 @@ mod tests {
             });
             JsValue::Object(it)
         });
+        let function = vm.register_native(|_, _| JsValue::Undefined);
         let receivers = [
             JsValue::String("abc".to_string()),
             JsValue::Object(array),
@@ -187,6 +189,7 @@ mod tests {
             JsValue::Object(set),
             iterators[0].clone(),
             iterators[1].clone(),
+            JsValue::NativeFunction(function),
         ];
         for this in receivers {
             let receiver = vm.receiver_of(&this).unwrap();

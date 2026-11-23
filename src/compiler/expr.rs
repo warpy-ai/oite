@@ -102,7 +102,7 @@ impl Codegen {
                 // `(a, b) => expr` or `(a, b) => { ... }`; an expression body
                 // is `{ return expr; }`.
                 let value_idx = self.emit_function_value(arrow.span, 0);
-                let jump_idx = self.emit_jump();
+                let jump_idx = self.emit_body_jump();
                 let body_start = self.instructions.len();
                 self.patch_function_value(value_idx, body_start);
                 let pats: Vec<&Pat> = arrow.params.iter().collect();
@@ -122,7 +122,7 @@ impl Codegen {
                     &pats,
                     stmts,
                     arrow.is_async,
-                    FnKind::Plain,
+                    FnKind::Plain { prototype: false },
                     &[],
                 );
                 self.patch_jump_here(jump_idx);
@@ -374,6 +374,7 @@ impl Codegen {
                     AssignTarget::Simple(simple) => match simple {
                         SimpleAssignTarget::Ident(binding_ident) => {
                             // Simple variable assignment: x = value
+                            self.name_function(&binding_ident.id.sym, &assign_expr.right);
                             self.gen_expr(&assign_expr.right);
                             // JS assignment expressions evaluate to the assigned value.
                             // The store consumes the value, so `Dup` keeps one copy
@@ -448,6 +449,7 @@ impl Codegen {
                                     };
 
                                     self.instructions.push(OpCode::Dup); // Duplicate Ptr
+                                    self.name_function(&key, &kv.value);
                                     self.gen_expr(&kv.value); // Push Value
                                     self.instructions.push(OpCode::SetProp(key)); // Consumes Value + 1 Ptr
                                 }
@@ -471,7 +473,7 @@ impl Codegen {
                                     };
                                     self.instructions.push(OpCode::Dup);
                                     self.next_fn_name = Some(key.clone());
-                                    self.gen_fn_decl(None, &method.function);
+                                    self.gen_object_method(&method.function);
                                     self.instructions.push(OpCode::SetProp(key));
                                 }
                                 Prop::Getter(_) | Prop::Setter(_) => {

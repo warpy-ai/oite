@@ -11,4 +11,4 @@ n=Infinity
 null undefined
 [ 'it\'s', 'x' ]
 { 'a-b': 1 }
-[Function]
+[Function: f]

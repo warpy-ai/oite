@@ -7,7 +7,9 @@
 //! Full standard library functionality (fs, path, json, math, date, etc.)
 //! will be provided by Rolls packages in the future.
 
-use crate::runtime::builtins::{InspectOptions, Receiver, format_number, is_hidden_key};
+use crate::runtime::builtins::{
+    InspectOptions, Receiver, format_number, is_constructor_link, is_function_key, is_hidden_key,
+};
 use crate::runtime::collection::{self, Yields};
 use crate::vm::VM;
 use crate::vm::value::{HeapData, HeapObject, JsValue};
@@ -70,6 +72,43 @@ fn quote(s: &str) -> String {
     )
 }
 
+/// `key: value, ...`, as `console.log` shows an object's properties.
+fn show_entries(
+    vm: &VM,
+    entries: impl IntoIterator<Item = (String, JsValue)>,
+    depth: usize,
+    opts: InspectOptions,
+    seen: &mut Vec<usize>,
+) -> String {
+    let parts: Vec<String> = entries
+        .into_iter()
+        .map(|(k, v)| {
+            let key = if is_identifier(&k) { k } else { quote(&k) };
+            format!("{}: {}", key, inspect_inner(vm, &v, depth + 1, opts, seen))
+        })
+        .collect();
+    parts.join(", ")
+}
+
+/// A function or a class, `summary`, then its own properties: `[Function:
+/// f] { x: 1 }`.
+fn with_entries(
+    vm: &VM,
+    summary: String,
+    entries: Vec<(String, JsValue)>,
+    depth: usize,
+    opts: InspectOptions,
+    seen: &mut Vec<usize>,
+) -> String {
+    if entries.is_empty() || depth > opts.depth {
+        return summary;
+    }
+    format!(
+        "{summary} {{ {} }}",
+        show_entries(vm, entries, depth, opts, seen)
+    )
+}
+
 fn inspect_inner(
     vm: &VM,
     value: &JsValue,
@@ -83,8 +122,17 @@ fn inspect_inner(
         JsValue::Boolean(b) => b.to_string(),
         JsValue::Null => "null".to_string(),
         JsValue::Undefined => "undefined".to_string(),
-        JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::BuiltinMethod(_) => {
-            "[Function]".to_string()
+        JsValue::Function { .. }
+        | JsValue::NativeFunction(_)
+        | JsValue::BuiltinMethod(_)
+        | JsValue::BoundFunction(_) => {
+            let name = vm.function_name(value);
+            let summary = if name.is_empty() {
+                "[Function (anonymous)]".to_string()
+            } else {
+                format!("[Function: {name}]")
+            };
+            with_entries(vm, summary, vm.function_entries(value), depth, opts, seen)
         }
         JsValue::Promise(p) => match p.get_state() {
             crate::vm::value::PromiseState::Pending => "Promise { <pending> }".to_string(),
@@ -121,7 +169,14 @@ fn inspect_inner(
                     }
                     format!("[ {} ]", parts.join(", "))
                 }
-                HeapData::Object(_) if vm.is_class(*ptr) => vm.class_summary(*ptr),
+                HeapData::Object(props) if vm.is_class(*ptr) => {
+                    let statics = props
+                        .iter()
+                        .filter(|(k, _)| !is_hidden_key(k) && !is_function_key(k))
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    with_entries(vm, vm.class_summary(*ptr), statics, depth, opts, seen)
+                }
                 HeapData::Object(props) if vm.is_error(*ptr) => {
                     // `TypeError: message`, then any other own properties.
                     let summary = vm.error_summary(*ptr);
@@ -146,28 +201,19 @@ fn inspect_inner(
                     }
                 }
                 HeapData::Object(props) => {
-                    let keys: Vec<&String> = props.keys().filter(|k| !is_hidden_key(k)).collect();
+                    let host = crate::vm::VmHost(&vm.heap);
+                    let keys: Vec<&String> = props
+                        .iter()
+                        .filter(|(k, v)| !is_hidden_key(k) && !is_constructor_link(&host, k, v))
+                        .map(|(k, _)| k)
+                        .collect();
                     if keys.is_empty() {
                         "{}".to_string()
                     } else if too_deep {
                         "[Object]".to_string()
                     } else {
-                        let parts: Vec<String> = keys
-                            .into_iter()
-                            .map(|k| {
-                                let key = if is_identifier(k) {
-                                    k.clone()
-                                } else {
-                                    quote(k)
-                                };
-                                format!(
-                                    "{}: {}",
-                                    key,
-                                    inspect_inner(vm, &props[k], depth + 1, opts, seen)
-                                )
-                            })
-                            .collect();
-                        format!("{{ {} }}", parts.join(", "))
+                        let entries = keys.into_iter().map(|k| (k.clone(), props[k].clone()));
+                        format!("{{ {} }}", show_entries(vm, entries, depth, opts, seen))
                     }
                 }
                 HeapData::Map(_) | HeapData::Set(_) if too_deep => {
@@ -220,6 +266,7 @@ fn inspect_inner(
                     None => "[Object]".to_string(),
                 },
                 HeapData::ByteStream(bytes) => format!("ByteStream({})", bytes.len()),
+                HeapData::Bound(_) => "[Function]".to_string(),
             };
             seen.pop();
             out
@@ -689,21 +736,23 @@ fn json_stringify_value(vm: &VM, value: &JsValue, indent: usize, pretty: bool) -
                         }
                     }
                     HeapData::Object(props) => {
-                        if props.is_empty() {
+                        let host = crate::vm::VmHost(&vm.heap);
+                        let items: Vec<String> = props
+                            .iter()
+                            .filter(|(k, v)| !is_constructor_link(&host, k, v))
+                            .map(|(k, v)| {
+                                format!(
+                                    "{}\"{}\":{}{}",
+                                    next_indent,
+                                    k,
+                                    space,
+                                    json_stringify_value(vm, v, indent + 1, pretty)
+                                )
+                            })
+                            .collect();
+                        if items.is_empty() {
                             "{}".to_string()
                         } else {
-                            let items: Vec<String> = props
-                                .iter()
-                                .map(|(k, v)| {
-                                    format!(
-                                        "{}\"{}\":{}{}",
-                                        next_indent,
-                                        k,
-                                        space,
-                                        json_stringify_value(vm, v, indent + 1, pretty)
-                                    )
-                                })
-                                .collect();
                             format!(
                                 "{{{}{}{}{}}}",
                                 newline,
@@ -720,7 +769,9 @@ fn json_stringify_value(vm: &VM, value: &JsValue, indent: usize, pretty: bool) -
             }
         }
         JsValue::Function { .. } => "null".to_string(), // Functions become null in JSON
-        JsValue::NativeFunction(_) | JsValue::BuiltinMethod(_) => "null".to_string(),
+        JsValue::NativeFunction(_) | JsValue::BuiltinMethod(_) | JsValue::BoundFunction(_) => {
+            "null".to_string()
+        }
         JsValue::Accessor(_, _) => "null".to_string(),
         JsValue::Promise(_) => "null".to_string(),
     }
@@ -1080,11 +1131,18 @@ pub fn native_stdout_write(_vm: &mut VM, args: Vec<JsValue>) -> JsValue {
 pub fn native_object_keys(vm: &mut VM, args: Vec<JsValue>) -> JsValue {
     use crate::runtime::builtins::Host;
     let target = args.first().cloned().unwrap_or(JsValue::Undefined);
-    let keys = crate::vm::VmHost(&vm.heap)
-        .own_keys(&target)
-        .into_iter()
-        .map(JsValue::String)
-        .collect();
+    let keys = if crate::vm::functions::FunctionId::of(&target).is_some() {
+        vm.function_entries(&target)
+            .into_iter()
+            .map(|(k, _)| JsValue::String(k))
+            .collect()
+    } else {
+        crate::vm::VmHost(&vm.heap)
+            .own_keys(&target)
+            .into_iter()
+            .map(JsValue::String)
+            .collect()
+    };
     let arr_ptr = vm.heap.len();
     vm.heap.push(HeapObject {
         data: HeapData::Array(keys),

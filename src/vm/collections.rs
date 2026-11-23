@@ -4,16 +4,10 @@
 
 use crate::runtime::builtins::{Outcome, Receiver};
 use crate::runtime::collection::{self, Cursor, Iter, Table, Yields};
-use crate::vm::value::{HeapData, HeapObject, JsValue};
+use crate::vm::value::{HeapData, JsValue};
 use crate::vm::{VM, VmHost};
 
 impl VM {
-    fn alloc(&mut self, data: HeapData) -> JsValue {
-        let ptr = self.heap.len();
-        self.heap.push(HeapObject { data });
-        JsValue::Object(ptr)
-    }
-
     fn table_mut(&mut self, ptr: usize) -> &mut Table<JsValue> {
         match &mut self.heap[ptr].data {
             HeapData::Map(table) | HeapData::Set(table) => table,
@@ -31,7 +25,7 @@ impl VM {
     ) -> Option<Result<JsValue, JsValue>> {
         if let Some(yields) = Yields::of_method(name) {
             let it = Iter::new(JsValue::Object(ptr), yields);
-            return Some(Ok(self.alloc(HeapData::Iterator(it))));
+            return Some(Ok(JsValue::Object(self.alloc(HeapData::Iterator(it)))));
         }
         if name == "forEach" {
             return Some(self.for_each(ptr, args));
@@ -95,7 +89,7 @@ impl VM {
         let mut props = crate::vm::value::PropMap::new();
         props.insert("value".to_string(), value);
         props.insert("done".to_string(), JsValue::Boolean(done));
-        self.alloc(HeapData::Object(props))
+        JsValue::Object(self.alloc(HeapData::Object(props)))
     }
 
     /// The `Map` or `Set` an iterator walks, and whether it is a `Map`.
@@ -142,11 +136,12 @@ impl VM {
         if let Err(e) = collection::fill(&VmHost(&self.heap), &mut table, collection, items) {
             return Err(self.make_error(e.kind, e.message));
         }
-        Ok(self.alloc(if collection == Receiver::Map {
+        let data = if collection == Receiver::Map {
             HeapData::Map(table)
         } else {
             HeapData::Set(table)
-        }))
+        };
+        Ok(JsValue::Object(self.alloc(data)))
     }
 
     /// What `[...v]` gives: an array's elements, a string's characters, a
@@ -171,10 +166,7 @@ impl VM {
             }
         };
         let iterator = match yields {
-            Some(yields) => match self.alloc(HeapData::Iterator(Iter::new(v.clone(), yields))) {
-                JsValue::Object(it) => it,
-                _ => unreachable!("an iterator is an object"),
-            },
+            Some(yields) => self.alloc(HeapData::Iterator(Iter::new(v.clone(), yields))),
             None => ptr,
         };
         Ok(std::iter::from_fn(|| self.step(iterator)).collect())
@@ -194,10 +186,10 @@ impl VM {
             _ => return v,
         };
         let iterator = match yields {
-            Some(yields) => self.alloc(HeapData::Iterator(Iter::new(v, yields))),
+            Some(yields) => JsValue::Object(self.alloc(HeapData::Iterator(Iter::new(v, yields)))),
             None => v,
         };
-        self.alloc(HeapData::Iterator(Iter::for_of(iterator)))
+        JsValue::Object(self.alloc(HeapData::Iterator(Iter::for_of(iterator))))
     }
 
     /// A `for...of` cursor's `length` (`collection::Iter`).

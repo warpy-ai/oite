@@ -1,6 +1,7 @@
 //! Classes.
 
 use super::*;
+use functions::param_length;
 
 impl Codegen {
     /// A class: a wrapper object (`constructor`, `prototype`, `name`, static
@@ -106,6 +107,23 @@ impl Codegen {
             self.instructions
                 .push(OpCode::SetProp("__proto__".to_string()));
         }
+        // `C.length`: its constructor's.
+        let ctor_params: Vec<Pat> = class
+            .body
+            .iter()
+            .find_map(|m| match m {
+                ClassMember::Constructor(k) => Some(k.params.iter().map(scope::ctor_param_pat)),
+                _ => None,
+            })
+            .into_iter()
+            .flatten()
+            .collect();
+        self.instructions.push(OpCode::Load(wrapper.clone()));
+        self.instructions.push(OpCode::Push(JsValue::Number(
+            param_length(ctor_params.iter()) as f64,
+        )));
+        self.instructions
+            .push(OpCode::SetProp("length".to_string()));
 
         // The constructor, with the instance fields.
         let fields: Vec<ClassField> = class
@@ -155,7 +173,6 @@ impl Codegen {
                     derived,
                     implicit: false,
                 };
-                self.next_fn_name = Some(format!("new {}", self.class_display_name()));
                 self.gen_member_function(k.span, &pats, stmts, false, kind, &ctor_fields);
             }
             None => {
@@ -164,7 +181,6 @@ impl Codegen {
                     implicit: true,
                 };
                 let span = scope::implicit_ctor_span(class.span);
-                self.next_fn_name = Some(format!("new {}", self.class_display_name()));
                 self.gen_member_function(span, &[], &[], false, kind, &fields);
             }
         }
@@ -209,7 +225,7 @@ impl Codegen {
                 self.instructions.push(OpCode::Load(target.clone()));
                 let pats: Vec<&Pat> = function.params.iter().map(|p| &p.pat).collect();
                 let stmts: &[Stmt] = function.body.as_ref().map_or(&[], |b| b.stmts.as_slice());
-                self.next_fn_name = Some(format!("{}.{}", self.class_display_name(), shown));
+                self.next_fn_name = Some(shown.clone());
                 self.gen_member_function(
                     function.span,
                     &pats,

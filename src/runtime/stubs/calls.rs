@@ -38,6 +38,8 @@ pub extern "C" fn ot_call_method(
     let key = unsafe { name(key, key_len) };
     let a = unsafe { args(argv, argc) };
 
+    // (A function's own property, `F.create()`, is not built in: it is
+    // looked up below.)
     if let Some(result) = run_builtin(recv, key, a) {
         return result;
     }
@@ -47,27 +49,6 @@ pub extern "C" fn ot_call_method(
         && let Some(method) = array_proto_method(key)
     {
         return ot_call(method, recv, argv, argc);
-    }
-
-    // `f.call(thisArg, ...args)`, `f.apply(thisArg, array)`
-    if let Some((_, ObjectKind::Function)) = object(r)
-        && (key == "call" || key == "apply")
-    {
-        let this = a.first().copied().unwrap_or_else(undefined);
-        if key == "call" {
-            let rest = if a.is_empty() { a } else { &a[1..] };
-            return ot_call(recv, this, rest.as_ptr(), rest.len());
-        }
-        let list: Vec<u64> = match a.get(1).and_then(|v| object(OtValue::from_bits(*v))) {
-            Some((ptr, ObjectKind::Array)) => {
-                let arr = array(ptr);
-                (0..arr.len as usize)
-                    .map(|i| unsafe { *arr.elements.add(i) })
-                    .collect()
-            }
-            _ => Vec::new(),
-        };
-        return ot_call(recv, this, list.as_ptr(), list.len());
     }
 
     let method = get_property_atom(r, key_atom);
@@ -87,6 +68,10 @@ pub extern "C" fn ot_call_method(
 /// code the VM runs (`builtins`); `None` when it is not one.
 fn run_builtin(recv: u64, key: &str, a: &[u64]) -> Option<u64> {
     let r = OtValue::from_bits(recv);
+    // `f.call(thisArg, ...args)`, `f.apply(thisArg, array)`, `f.bind(...)`
+    if let Some((_, ObjectKind::Function)) = object(r) {
+        return function_method(recv, key, a);
+    }
     if let Some((ptr, ObjectKind::Array)) = object(r) {
         let arr = array(ptr);
         match key {
@@ -149,6 +134,7 @@ pub(super) fn receiver_of(v: u64) -> Option<Receiver> {
         (_, ObjectKind::String) => Some(Receiver::String),
         (_, ObjectKind::Array) => Some(Receiver::Array),
         (_, ObjectKind::Object) if promise_id(v).is_some() => Some(Receiver::Promise),
+        (_, ObjectKind::Function) => Some(Receiver::Function),
         (_, ObjectKind::Map) => Some(Receiver::Map),
         (_, ObjectKind::Set) => Some(Receiver::Set),
         (_, ObjectKind::Iterator) => iterator_receiver(v),
@@ -380,11 +366,23 @@ impl builtins::Host for NativeHost {
 
     fn own_keys(&self, v: &u64) -> Vec<String> {
         match object(OtValue::from_bits(*v)) {
-            Some((ptr, ObjectKind::Object)) => object::own(obj(ptr))
+            Some((ptr, ObjectKind::Object)) => {
+                // A class's `name`, `prototype`, ... are not listed.
+                let class = is_class(ptr);
+                object::own(obj(ptr))
+                    .into_iter()
+                    .map(|(a, _, v)| (atom::info(a), v))
+                    .filter(|(info, v)| {
+                        !(info.hidden
+                            || class && builtins::is_function_key(info.name)
+                            || builtins::is_constructor_link(self, info.name, v))
+                    })
+                    .map(|(info, _)| info.name.to_string())
+                    .collect()
+            }
+            Some((ptr, ObjectKind::Function)) => function_entries(ptr)
                 .into_iter()
-                .map(|(a, _, _)| atom::info(a))
-                .filter(|info| !info.hidden)
-                .map(|info| info.name.to_string())
+                .map(|(k, _)| k.to_string())
                 .collect(),
             Some((ptr, ObjectKind::Array)) => (0..array(ptr).len).map(|i| i.to_string()).collect(),
             _ => Vec::new(),

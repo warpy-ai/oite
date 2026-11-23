@@ -56,6 +56,18 @@ pub(super) fn builtin(code: NativeFn) -> u64 {
     ot_make_function(code as *const u8)
 }
 
+/// An object holding the built-in methods of `receiver`, for
+/// `String.prototype`, `Number.prototype` and `Array.prototype`: the same
+/// values `"a".trim`, `(1).toFixed` and `[].push` are.
+fn builtin_prototype(receiver: builtins::Receiver) -> u64 {
+    let proto = ot_alloc_object();
+    for name in receiver.methods() {
+        let method = builtin_method(receiver, name).expect("a listed method");
+        set_property(OtValue::from_bits(proto), name, method);
+    }
+    proto
+}
+
 pub(super) fn initial_globals() -> HashMap<String, u64> {
     let mut g = HashMap::new();
     let console = ot_alloc_object();
@@ -83,12 +95,11 @@ pub(super) fn initial_globals() -> HashMap<String, u64> {
     // and the ones core does not implement, which the prelude
     // (`@rolls/std`) or a program adds.
     let array_class = ot_alloc_object();
-    let proto = ot_alloc_object();
-    for name in builtins::Receiver::Array.methods() {
-        let method = builtin_method(builtins::Receiver::Array, name).expect("a listed method");
-        set_property(OtValue::from_bits(proto), name, method);
-    }
-    set_property(OtValue::from_bits(array_class), "prototype", proto);
+    set_property(
+        OtValue::from_bits(array_class),
+        "prototype",
+        builtin_prototype(builtins::Receiver::Array),
+    );
     g.insert("Array".to_string(), array_class);
     // `Math`: one built-in serves every function member; its environment
     // is the member's index in `MATH_FUNCTIONS`.
@@ -102,7 +113,24 @@ pub(super) fn initial_globals() -> HashMap<String, u64> {
         set_property(m, name, number(*value));
     }
     g.insert("Math".to_string(), math);
-    g.insert("String".to_string(), builtin(ot_builtin_string));
+    // `String(v)` and `Number(v)`, with the built-in methods on their
+    // `prototype`.
+    for (name, code, receiver) in [
+        (
+            "String",
+            ot_builtin_string as NativeFn,
+            builtins::Receiver::String,
+        ),
+        ("Number", ot_builtin_number, builtins::Receiver::Number),
+    ] {
+        let f = builtin(code);
+        set_property(
+            OtValue::from_bits(f),
+            "prototype",
+            builtin_prototype(receiver),
+        );
+        g.insert(name.to_string(), f);
+    }
     let promise = ot_alloc_object();
     let pr = OtValue::from_bits(promise);
     for (i, name) in ["resolve", "reject", "all", "race"].iter().enumerate() {

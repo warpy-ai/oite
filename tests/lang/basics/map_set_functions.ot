@@ -1,0 +1,56 @@
+// backends: vm jit aot
+// Functions as objects inside a Map and a Set: a function with its own
+// properties as a key and as a value, a bound function kept in a Set,
+// a bound callback for forEach, and console.log of them. Held to Node's
+// output.
+
+function area(w, h) {
+  return w * h;
+}
+area.unit = "m2";
+
+// A function with properties as a Map key and as a Map value.
+const byFn = new Map([[area, "area"]]);
+const byName = new Map([["area", area]]);
+console.log(byFn);
+console.log(byName);
+console.log(byFn.get(area), byName.get("area") === area, byName.get("area").unit);
+
+// Writing a property keeps the key: it is the same function.
+area.unit = "cm2";
+console.log(byFn.get(area), byFn.has(area), Object.keys(byName.get("area")));
+console.log(byFn);
+
+// bind on a function read out of a Set, while iterating it.
+const fns = new Set([area]);
+for (const f of fns) {
+  if (f === area) {
+    fns.add(f.bind(null, 2));
+  }
+}
+const list = [...fns];
+const double = list[1];
+console.log(fns.size, double(5), double.name, double.length, fns.has(double));
+console.log(fns);
+
+// Each bind makes a new function, so a new key.
+const keys = new Map([[double, "double"]]);
+console.log(keys.get(double), keys.get(area.bind(null, 2)), keys.size);
+console.log(keys);
+
+// A bound callback and a bound Map method.
+const seen = [];
+function record(prefix, value, key) {
+  seen.push(prefix + ":" + value + ":" + typeof key);
+}
+byFn.forEach(record.bind(null, "map"));
+fns.forEach(record.bind(null, "set"));
+console.log(seen.length, seen[0]);
+const get = byName.get.bind(byName);
+console.log(get("area") === area, get.name, typeof get);
+console.log(byFn instanceof Map, fns instanceof Set, double instanceof Map);
+
+// A property added last shows on every collection holding the function.
+area.calls = 1;
+console.log(Object.keys(area), byFn.get(area), [...byName.values()][0].calls);
+console.log(byName);

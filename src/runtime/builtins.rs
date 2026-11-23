@@ -145,6 +145,8 @@ pub enum Receiver {
     /// `m.keys()`, `m.entries()`, ...
     MapIterator,
     SetIterator,
+    /// Functions, bound functions and built-in methods.
+    Function,
 }
 
 impl Receiver {
@@ -208,6 +210,7 @@ impl Receiver {
                 "add", "clear", "delete", "entries", "forEach", "has", "keys", "values",
             ],
             Receiver::MapIterator | Receiver::SetIterator => &["next"],
+            Receiver::Function => &["apply", "bind", "call"],
         }
     }
 
@@ -223,10 +226,11 @@ impl Receiver {
             Receiver::Set => "Set",
             Receiver::MapIterator => "Map Iterator",
             Receiver::SetIterator => "Set Iterator",
+            Receiver::Function => "Function",
         }
     }
 
-    const ALL: [Receiver; 8] = [
+    const ALL: [Receiver; 9] = [
         Receiver::String,
         Receiver::Array,
         Receiver::Number,
@@ -235,6 +239,7 @@ impl Receiver {
         Receiver::Set,
         Receiver::MapIterator,
         Receiver::SetIterator,
+        Receiver::Function,
     ];
 }
 
@@ -993,6 +998,26 @@ pub fn own_key_name(key: &str) -> Option<&str> {
         .or_else(|| key.strip_prefix("setter:"))
         .unwrap_or(key);
     (!is_hidden_key(name)).then_some(name)
+}
+
+/// A property of every function and class that `Object.keys` and
+/// `console.log` leave out of theirs (it is not enumerable): `name`,
+/// `length`, `prototype`, and a class's `constructor` (its code).
+pub fn is_function_key(key: &str) -> bool {
+    matches!(key, "name" | "length" | "prototype" | "constructor")
+}
+
+/// A prototype's `constructor`, the function or class it belongs to: not
+/// enumerable, so whatever lists an object's properties leaves it out. A
+/// `constructor` that holds anything but a function is listed.
+pub fn is_constructor_link<H: Host>(h: &H, key: &str, value: &H::Value) -> bool {
+    key == "constructor" && h.kind(value) == Kind::Function
+}
+
+/// The `length` of a bound function: its target's, less the arguments
+/// `bind` gave it.
+pub fn bound_length(target_length: f64, bound_args: usize) -> f64 {
+    (target_length - bound_args as f64).max(0.0)
 }
 
 pub fn is_hidden_key(key: &str) -> bool {

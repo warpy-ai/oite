@@ -6,7 +6,7 @@ use super::*;
 impl LlvmCodegen {
     /// `int main(int, char**)`: create the function objects, run top-level
     /// code, flush output.
-    pub(super) unsafe fn build_c_main(&mut self) -> Result<(), BackendError> {
+    pub(super) unsafe fn build_c_main(&mut self, ir_module: &IrModule) -> Result<(), BackendError> {
         unsafe {
             let ctx = self.context;
             let i32_ty = LLVMInt32TypeInContext(ctx);
@@ -19,32 +19,48 @@ impl LlvmCodegen {
             let b = LLVMCreateBuilderInContext(ctx);
             LLVMPositionBuilderAtEnd(b, entry);
 
+            // A constant holding `text`'s bytes.
+            let bytes = |text: &str, label: &[u8]| {
+                let init = LLVMConstStringInContext(
+                    ctx,
+                    text.as_ptr() as *const c_char,
+                    text.len() as u32,
+                    1,
+                );
+                let g = LLVMAddGlobal(self.module, LLVMTypeOf(init), label.as_ptr() as _);
+                LLVMSetInitializer(g, init);
+                LLVMSetGlobalConstant(g, 1);
+                LLVMSetLinkage(g, LLVMLinkage::LLVMPrivateLinkage);
+                g
+            };
+
+            // The function objects, and what each function is (`name`,
+            // `length`).
+            let (register_fn, register_fn_ty) = self.runtime["ot_register_function"];
             for (addr, global) in &self.fn_objects {
                 let f = self.functions[&format!("func_{}", addr)];
                 let (mk, mk_ty) = self.runtime["ot_make_function"];
                 let mut args = [f];
                 let obj = LLVMBuildCall2(b, mk_ty, mk, args.as_mut_ptr(), 1, NONAME);
                 LLVMBuildStore(b, obj, *global);
+                if let Some(info) = ir_module.function_info.get(addr) {
+                    let len = |n: usize| LLVMConstInt(i64_ty, n as u64, 0);
+                    let mut args = [
+                        f,
+                        bytes(&info.name, b"function_name\0"),
+                        len(info.name.len()),
+                        len(info.length),
+                        len(info.prototype as usize),
+                    ];
+                    LLVMBuildCall2(b, register_fn_ty, register_fn, args.as_mut_ptr(), 5, NONAME);
+                }
             }
 
             // Tell the runtime where each global lives, so a lookup by name
             // sees what compiled code stored.
             let (register, register_ty) = self.runtime["ot_register_global"];
             for (name, slot) in &self.global_slots {
-                let init = LLVMConstStringInContext(
-                    ctx,
-                    name.as_ptr() as *const c_char,
-                    name.len() as u32,
-                    1,
-                );
-                let text = LLVMAddGlobal(
-                    self.module,
-                    LLVMTypeOf(init),
-                    b"global_name\0".as_ptr() as _,
-                );
-                LLVMSetInitializer(text, init);
-                LLVMSetGlobalConstant(text, 1);
-                LLVMSetLinkage(text, LLVMLinkage::LLVMPrivateLinkage);
+                let text = bytes(name, b"global_name\0");
                 let mut args = [text, LLVMConstInt(i64_ty, name.len() as u64, 0), *slot];
                 LLVMBuildCall2(b, register_ty, register, args.as_mut_ptr(), 3, NONAME);
             }

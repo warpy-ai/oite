@@ -1,0 +1,112 @@
+// backends: vm jit aot
+// Functions are objects: every kind of function holds properties that a
+// program sets, reads, overwrites, deletes and lists. Held to Node's
+// output.
+
+// A declaration, which reads and writes its own property.
+function counter() {
+  counter.calls = (counter.calls || 0) + 1;
+  return counter.calls;
+}
+console.log(counter.calls);
+counter();
+counter();
+console.log(counter.calls);
+counter.label = "c";
+counter.label = "count";
+console.log(counter.label, Object.keys(counter));
+console.log("label" in counter, "nope" in counter, "name" in counter, "call" in counter);
+console.log(delete counter.label, counter.label, "label" in counter, Object.keys(counter));
+console.log(counter);
+
+// A function expression and an arrow; computed keys.
+const square = function (x) {
+  return x * x;
+};
+square.cache = {};
+square.cache[3] = square(3);
+console.log(square.cache[3], Object.keys(square.cache));
+
+const add = (a, b) => a + b;
+add.description = "adds";
+add["computed"] = 1;
+const key = "dyn";
+add[key] = 2;
+console.log(add.description, add["description"], add[key], add(2, 3));
+console.log(Object.keys(add));
+for (const k in add) {
+  console.log("key", k);
+}
+console.log({ ...add });
+console.log(add);
+
+// Closures: each one made has its own properties, and keeps its captured
+// state after properties are added to it.
+function makeCounter(start) {
+  let n = start;
+  const next = () => ++n;
+  next.start = start;
+  return next;
+}
+const a = makeCounter(10);
+const b = makeCounter(20);
+a.tag = "a";
+b.tag = "b";
+for (let i = 0; i < 100; i++) {
+  a["p" + i] = i;
+}
+console.log(a(), a(), b(), a());
+console.log(a.start, b.start, a.tag, b.tag, a.p0, a.p99, Object.keys(a).length);
+console.log(Object.keys(b));
+
+// A function stored on a function is called with it as `this`.
+function Registry() {}
+Registry.items = [];
+Registry.add = function (x) {
+  this.items.push(x);
+  return this.items.length;
+};
+console.log(Registry.add("x"), Registry.add("y"), Registry.items.join(","));
+
+// A cache kept on the function it memoizes.
+function memoize(fn) {
+  const memoized = (n) => {
+    if (n in memoized.cache) {
+      return memoized.cache[n];
+    }
+    memoized.misses++;
+    const v = fn(n);
+    memoized.cache[n] = v;
+    return v;
+  };
+  memoized.cache = {};
+  memoized.misses = 0;
+  return memoized;
+}
+const sq = memoize((n) => n * n);
+console.log(sq(4), sq(4), sq(5), sq(4), sq.misses);
+
+// Property values are kept as they are.
+counter.list = [1, 2];
+counter.list.push(3);
+counter.self = counter;
+console.log(counter.list.length, counter.self === counter, counter.self.calls);
+
+// Classes: static members and properties added later.
+class Point {
+  static origin = "0,0";
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+}
+Point.dims = 2;
+Point.dims = 3;
+console.log(Point.origin, Point.dims, Object.keys(Point), "dims" in Point);
+console.log(Point);
+console.log(delete Point.dims, Point.dims, Object.keys(Point));
+console.log(new Point(1, 2).y);
+
+// Anonymous functions print without a name.
+console.log(function () {}, () => 1, [counter.list, square]);
+console.log(typeof counter, typeof a, typeof Point);

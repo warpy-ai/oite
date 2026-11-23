@@ -230,7 +230,7 @@ impl LlvmCodegen {
                 }
             }
 
-            self.build_c_main()?;
+            self.build_c_main(ir_module)?;
             if let Some(di) = self.di.take() {
                 di.finalize();
             }
