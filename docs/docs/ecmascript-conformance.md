@@ -16,14 +16,14 @@ keywords:
 
 # ECMAScript Conformance
 
-Oite uses **JavaScript syntax** but implements **ownership semantics** rather than standard ECMAScript reference semantics. This document clarifies what this means for compatibility.
+Oite uses **JavaScript syntax**. At run time, objects are shared by reference, as in JavaScript. A compile-time move check rejects some programs that JavaScript accepts. At the top level of a file, a program cannot use a variable after it assigned the variable's value to another variable. This page lists how Oite differs from ECMAScript.
 
 ## Oite is Not a JavaScript Runtime
 
 Oite is a new language that:
 
 - Uses JavaScript/TypeScript **syntax** (familiar to JS developers)
-- Implements **ownership-based memory management** (no garbage collector)
+- Has **no garbage collector**, and does not free memory yet ([#123](https://github.com/warpy-ai/oite/issues/123))
 - Compiles to **native code** (not interpreted)
 
 ```
@@ -33,8 +33,8 @@ Oite is a new language that:
 │                                                                  │
 │   JavaScript          Oite                                       │
 │   ───────────         ────                                       │
-│   Reference semantics → Ownership semantics                      │
-│   Garbage collected   → Deterministic memory                     │
+│   Reference semantics → Reference semantics + move check         │
+│   Garbage collected   → Nothing freed yet (#123)                 │
 │   Interpreted/JIT     → Native compiled                          │
 │   Dynamic types       → Optional static types                    │
 │   Single-threaded*    → Memory-safe concurrency (planned)        │
@@ -58,10 +58,10 @@ Test262 tests assume:
 
 Oite intentionally differs:
 
-- **Ownership semantics** — objects have a single owner
-- **No GC** — deterministic memory via ownership
+- **Move check** — at the top level of a file, `let b = a` moves the value out of `a`
+- **No GC** — memory is not freed yet
 - **Explicit behavior** — minimal implicit conversions
-- **Class-based** — ES6 classes with ownership
+- **Class-based** — ES6 classes
 
 ### Test Categories
 
@@ -73,100 +73,61 @@ Oite intentionally differs:
 | **Control flow**       | High                   | if, for, while, switch          |
 | **Functions**          | High                   | Declarations, arrows, closures  |
 | **Classes**            | High                   | ES6 class syntax                |
-| **Object identity**    | Low                    | Copy semantics differ           |
-| **Reference mutation** | Low                    | No shared references            |
+| **Object identity**    | High                   | Objects are shared by reference |
+| **Reference mutation** | Medium                 | Shared; see the move check      |
 | **Built-in objects**   | Medium                 | Implemented incrementally       |
 | **Prototype chain**    | Medium                 | Supported but less central      |
 
-## Semantic Differences
+## Semantic differences
 
-### 1. Object Assignment (Copy vs Reference)
+### 1. Assignment moves at the top level
 
 ```javascript
-// ECMAScript behavior:
+// ECMAScript:
 let a = { value: 1 };
 let b = a;
 b.value = 2;
 console.log(a.value); // 2 (same object)
-console.log(a === b); // true
 
-// Oite .js behavior:
+// Oite, at the top level of a file:
 let a = { value: 1 };
-let b = a; // COPY
+let b = a; // the value moves from 'a' to 'b'
 b.value = 2;
-console.log(a.value); // 1 (different objects)
-console.log(a === b); // false
+console.log(a.value);
+// borrow error: Cannot borrow moved variable 'a'
 ```
 
-**Rationale:** Ownership semantics require clear ownership. Copy-by-default in `.js` mode ensures predictable behavior without GC.
+The program does not compile, on any backend and for `.ot`, `.ts` and `.js` files alike. Read the object through `b` instead.
 
-### 2. Function Parameter Passing
+The move check does not read function bodies. Inside a function, the same code prints `2`, as in ECMAScript, and `a === b` is `true`.
+
+A variable that was initialized with a number or boolean literal is copied, not moved. [Memory model](/rolls/memory-model) lists the full rules.
+
+### 2. Function parameters
+
+Passing a value to a function borrows it for the statement and does not move it. The function receives the same object:
 
 ```javascript
-// ECMAScript behavior:
 function modify(obj) {
   obj.value = 99;
 }
 let x = { value: 1 };
 modify(x);
-console.log(x.value); // 99 (modified)
-
-// Oite .js behavior:
-function modify(obj) {
-  obj.value = 99;
-}
-let x = { value: 1 };
-modify(x); // COPY passed
-console.log(x.value); // 1 (unchanged)
+console.log(x.value); // 99, as in ECMAScript
 ```
 
-**Rationale:** Functions receive copies in `.js` mode. Use `.ot` with explicit borrows for in-place modification.
+### 3. Closures
 
-### 3. Array Methods
+A closure that is not `async` behaves as in ECMAScript. At the top level, an `async` arrow function or `async` function expression that names a variable moves its value into the closure, and a later use of the variable is a compile error:
 
 ```javascript
-// Both behave similarly for most methods:
-let arr = [1, 2, 3];
-let doubled = arr.map((x) => x * 2); // [2, 4, 6]
-
-// But mutation methods differ:
-// ECMAScript:
-let items = [3, 1, 2];
-items.sort();
-console.log(items); // [1, 2, 3] (mutated in place)
-
-// Oite .js: same behavior (mutation is on owned copy)
-let items = [3, 1, 2];
-items.sort(); // Mutates the copy we own
-console.log(items); // [1, 2, 3]
+let a = { v: 1 };
+let f = async () => { console.log(a.v); };
+console.log(a.v);
+// borrow error: Cannot borrow 'a' - it was captured by an async closure!
 ```
 
-### 4. Closures and Captured Variables
-
-```javascript
-// ECMAScript behavior:
-function counter() {
-  let count = 0;
-  return () => ++count;
-}
-let c = counter();
-console.log(c()); // 1
-console.log(c()); // 2
-
-// Oite behavior: SAME
-// Closures capture ownership of their environment
-function counter() {
-  let count = 0;
-  return () => ++count; // count is MOVED into closure
-}
-let c = counter();
-console.log(c()); // 1
-console.log(c()); // 2
-```
-
-Closures work as expected — captured variables are owned by the closure.
-
-### 5. Strings Count Characters, Not UTF-16 Code Units
+### 4. Strings Count Characters, Not UTF-16 Code Units
 
 An Oite string is a sequence of Unicode scalar values (code points other
 than surrogates), stored as UTF-8. `length`, `s[i]`, and every index a
@@ -233,56 +194,13 @@ Oite implements JavaScript built-in objects incrementally:
 | `with`               | Deprecated, scope confusion              |
 | `WeakMap`, `WeakSet` | Requires GC semantics                    |
 
-## Oite262: Our Test Suite
+## Tests
 
-Instead of Test262 compliance, Oite maintains **Oite262** — a test suite that:
-
-1. **Validates syntax compatibility** — Can parse standard JS/TS
-2. **Tests ownership semantics** — Correct move/copy/borrow behavior
-3. **Documents differences** — Clear expectations for each test
-4. **Covers built-ins** — Tests implemented standard library
-
-### Running Tests
-
-```bash
-# Run Oite test suite
-cargo test
-
-# Run Oite262 JavaScript compatibility tests
-./target/release/oitec test tests/oite262/
-```
-
-### Test Structure
-
-```
-tests/oite262/
-├── syntax/           # Parsing tests (high compat)
-├── operators/        # Arithmetic, logical (high compat)
-├── control-flow/     # if, for, while (high compat)
-├── functions/        # Declarations, closures (high compat)
-├── classes/          # ES6 classes (high compat)
-├── ownership/        # Oite-specific semantics
-├── builtins/         # Built-in object tests
-└── differences/      # Documented semantic differences
-```
-
-## Compatibility Checker
-
-Check if your JavaScript code is compatible with Oite:
-
-```bash
-# Analyze a file for potential issues
-oite check --compat myfile.js
-
-# Output:
-# myfile.js:15: warning: Object identity check (===) may behave differently
-# myfile.js:28: warning: Shared reference pattern detected
-# myfile.js:42: info: Consider using .ts for better performance
-```
+Oite does not run Test262. Its language tests are golden tests in `tests/lang/`: each program has the output it must print, and `cargo test --test golden` runs it on the backends it lists.
 
 ## Migration Recommendations
 
-### Patterns That Work Unchanged
+### Patterns that work unchanged
 
 ```javascript
 // Pure functions ✓
@@ -308,34 +226,19 @@ async function fetchData() {
 }
 ```
 
-### Patterns That Need Adjustment
+### Patterns that need adjustment
 
 ```javascript
-// Shared mutable state ✗
-let shared = {};
-function a() { shared.x = 1; }
-function b() { shared.y = 2; }
+// Two names for one object at the top level ✗
+let config = { debug: false };
+let current = config;
+current.debug = true;
+console.log(config.debug); // borrow error: Cannot borrow moved variable 'config'
 
-// Fix: Use .ot with explicit borrows
-// file.ot
-let shared = {};
-function a(s: &mut Object) { s.x = 1; }
-function b(s: &mut Object) { s.y = 2; }
-a(&mut shared);
-b(&mut shared);
-
-// Object identity checks ✗
-if (objA === objB) { ... }
-
-// Fix: Use deep equality or unique IDs
-if (deepEqual(objA, objB)) { ... }
-if (objA.id === objB.id) { ... }
-
-// Prototype manipulation ✗
-obj.__proto__ = newProto;
-
-// Fix: Use class inheritance
-class NewClass extends OldClass { ... }
+// Fix: use one name, or do the work inside a function
+let config = { debug: false };
+config.debug = true;
+console.log(config.debug);
 ```
 
 ## Summary
@@ -343,15 +246,15 @@ class NewClass extends OldClass { ... }
 | Aspect            | Standard JavaScript   | Oite                     |
 | ----------------- | --------------------- | ------------------------ |
 | **Goal**          | ECMAScript compliance | Performance + Safety     |
-| **Memory**        | Garbage collected     | Ownership-based          |
-| **Assignment**    | Reference copy        | Value copy or move       |
-| **Test suite**    | Test262               | Oite262                  |
+| **Memory**        | Garbage collected     | Not freed yet (#123)     |
+| **Assignment**    | Reference copy        | Reference copy; a top-level `let b = a` also moves |
+| **Test suite**    | Test262               | Golden tests in `tests/lang/` |
 | **Compatibility** | 100% spec             | Syntax + common patterns |
 
-Oite prioritizes **predictable performance** and **memory safety** over strict ECMAScript compatibility. Most JavaScript code works unchanged; patterns relying on shared mutable references need adjustment.
+Most JavaScript code that Oite supports runs with the same results. Code that uses a variable at the top level after it assigned the variable's value to another variable does not compile.
 
 ## See Also
 
 - [JavaScript Interoperability](/javascript-interop) — How .js files run in Oite
 - [Language Features](/compiler/language-features) — Full feature reference
-- [Migration Guide](#migration-recommendations) — Adapting JS patterns for Oite
+- [Memory model](/rolls/memory-model) — The move check rules

@@ -7,9 +7,12 @@ keywords: [performance, types, type checker, inference, unboxed, specialization]
 
 # Types (performance phase 3)
 
-> **Status:** design agreed; step 2 (the checker, as warnings) is
-> implemented. It is
-> phase 3 of [Performance](performance.md) and closes #124. Agreed:
+> **Status:** design agreed. Steps 2, 4, 5 and 6 are done: the checker
+> reports warnings, `oitec check` reports errors, and `--strict-types`
+> adds run-time checks and typed entries. Step 3, which makes the
+> warnings errors by default, is not. Generic calls are not checked yet
+> ([#190](https://github.com/warpy-ai/oite/issues/190)).
+> It is phase 3 of [Performance](performance.md). Agreed:
 > annotations are contracts and unannotated code stays dynamic; `null`
 > and `undefined` are not part of other types; `as` is checked; the
 > checker reports warnings first.
@@ -39,22 +42,26 @@ Bun's time; `fib` and `calls` ahead of Bun.
 
 ## How types work today
 
-- **Annotations are parsed and dropped.** `let s: string = 42` compiles
-  and runs (#124). Interfaces, type aliases, `as` and generics are erased
-  in `src/compiler/mod.rs`.
+- **Annotations are checked.** The checker (`src/types/check/`) runs on
+  the syntax tree of every file before code generation. `let s: string =
+  42` is a warning on `oitec build`, `oitec jit` and a plain run, and an
+  error on `oitec check`. Section 4 lists what it checks.
+- **Generic calls are not checked.** A type parameter is `any`, so `let
+  n: number = id("s")` and `let a: number = g<string>("s")` pass `oitec
+  check` with no output
+  ([#190](https://github.com/warpy-ai/oite/issues/190)).
+- **Run-time checks are opt-in.** `--strict-types` makes the checker's
+  findings errors and checks values where dynamic code meets typed code
+  (section 3). Without it, a wrong value runs.
 - **The compiler's intermediate form (IR) is built from bytecode**, not
-  from the syntax tree, and bytecode has no types. Every parameter, local
-  and return value is `any` in the IR.
+  from the syntax tree, and bytecode has no types. With `--strict-types`,
+  what the checker proved reaches the IR as `assume_type` (section 5).
+  Without it, every parameter, local and return value is `any` in the IR.
 - **One pass infers types inside a function** (`src/ir/typecheck.rs`),
-  from constants and operators only. It never rejects a program. It does
-  not see parameters, calls, return values or properties, so a loop
-  counter is a number but `fib(n)` is not.
-- **A known type only removes a check.** The value stays a boxed word.
-- **`src/types/` (about 1,900 lines of checker and inference) is never
-  called.** Only its `Type` enum is used, by the borrow checker.
+  from constants and operators. It never rejects a program.
 - **The self-hosted compiler (`compiler/`) has its own structural
-  checker** in Oite (`compiler/passes/types.ot`). `oitec build` does not
-  use it.
+  checker** in Oite (`compiler/passes/types.ot`). `oitec` does not use
+  it.
 
 ## The design
 
@@ -91,7 +98,7 @@ First version:
 | Unions | `A \| B`, narrowed by `typeof`, `=== null`, `instanceof`, truthiness. |
 | Optional | `x?: T` is `T \| undefined`. |
 | Type aliases, enums | Enums already exist at run time. |
-| Generics | Checked; erased to `any` in compiled code in the first version. |
+| Generics | Not checked yet: a type parameter is `any` to the checker ([#190](https://github.com/warpy-ai/oite/issues/190)). Erased to `any` in compiled code in the first version. |
 
 Not in the first version: intersections, conditional and mapped types,
 overloads, tuples. They are reported as "not supported yet", not silently
@@ -223,7 +230,10 @@ interfaces and aliases imported with `import type`.
 
 Not yet, each a follow-up:
 
-- **Generics are not checked.** A type parameter is `any`.
+- **Generics are not checked.** A type parameter is `any`, in a
+  function, a class and an interface. A type argument, written or
+  inferred, is ignored: `let n: number = id("s")` passes
+  ([#190](https://github.com/warpy-ai/oite/issues/190)).
 - **A property that a type does not declare is `any`**, not an error.
 - **An array literal is accepted as a tuple** when each element could be
   one of the tuple's elements, whatever its position: `[1, 2]` passes as
@@ -450,7 +460,7 @@ Each step is one pull request, with tests on vm, jit and aot.
    (`tests/type_check.rs`). What it leaves for later is listed in
    section 4.
 3. **Make the rolls and the self-hosted compiler pass**, then turn
-   warnings into errors. Closes #124. Done so far: the checker finds
+   warnings into errors. Done so far: the checker finds
    nothing in the repository's Oite code or in the core rolls, and a test
    keeps it so (`existing_code_has_no_findings`). Still to do: turn the
    warnings into errors, after a release has shipped them as warnings.

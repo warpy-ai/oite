@@ -169,7 +169,7 @@ separate pull request that adds or updates benchmarks.
 | ------ | ------ | --------------- |
 | **Done (#156): inline number fast paths** for arithmetic and comparisons on untyped values, in both native backends. | Cause 1 | Measured: `fib` and `calls` 2.2 times faster, `closures` 1.8, `array` and `nbody` 1.3. |
 | **Done (#156): constant-time string indexing:** `charCodeAt`, `charAt` and `at` read an ASCII string's byte directly. | Cause 8 | Measured: `bytes` from 73 s to 172 ms. |
-| **Integer fast path for `%`** (done, #156) and for `|`, `&`, `<<`, `>>` (to do) when both operands are integers. | Cause 6 | Measured for `%`: `loop_local` 4.6 times faster, ahead of Bun. |
+| **Integer fast path for `%`** (done, #156) and for `\|`, `&`, `<<`, `>>` (to do) when both operands are integers. | Cause 6 | Measured for `%`: `loop_local` 4.6 times faster, ahead of Bun. |
 | **Math as intrinsics in the generated code:** `Math.sqrt` becomes `llvm.sqrt`, `floor` becomes `llvm.floor`, and so on, when `Math` is not redefined. | Cause 7 | Part of `nbody`. |
 | **Top-level variables as fixed slots** in a module's data, not hash entries. | Cause 4 | `loop_global` close to `loop_local`. |
 | **Runtime helpers that can be inlined:** compile the hot runtime helpers (tag tests, array element access, string length) to LLVM bitcode linked before optimisation, or emit them inline. | Cause 1 | Every remaining runtime call on a hot path gets cheaper. |
@@ -211,11 +211,11 @@ separate pull request that adds or updates benchmarks.
 
 These need a decision before the phase that depends on them:
 
-1. **Types become meaningful (phase 3).** Today type annotations are
-   parsed and ignored. Checking them means a program that passes the
-   wrong type no longer compiles. That is the point, but it is a language
-   change: existing Oite code may need fixes, and `any` remains the escape
-   hatch.
+1. **Types become meaningful (phase 3).** Type annotations are now
+   checked, as warnings ([Types](types.md)). Making them errors means a
+   program that passes the wrong type no longer compiles. That is the
+   point, but it is a language change: existing Oite code may need fixes,
+   and `any` remains the escape hatch.
 2. **Integers (phases 1 and 3).** Oite numbers keep JavaScript's semantics
    (a double), and integers are an internal representation used when the
    compiler can prove the value is an integer in range. No new number

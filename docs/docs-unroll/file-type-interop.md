@@ -17,6 +17,15 @@ keywords:
 
 # File Type Interoperability
 
+:::caution Not implemented
+Unroll is planned, and the per-extension memory modes on this page do
+not exist. Today `.ot`, `.ts` and `.js` files follow the same rules:
+objects are shared by reference, nothing is copied, and at the top level
+of a file `let b = a` moves the value out of `a`. npm packages cannot be
+imported. See [JavaScript & TypeScript interoperability](/javascript-interop)
+and [Memory model](/rolls/memory-model).
+:::
+
 Unroll manages imports across different file types, each with specific ownership semantics. All modes use **ownership-based memory management** — there is no garbage collector.
 
 ## Architecture Overview

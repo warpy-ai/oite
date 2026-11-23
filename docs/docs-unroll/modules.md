@@ -62,7 +62,14 @@ import { foo } from "bar"
 
 ## File Extensions
 
-Unroll supports multiple file extensions with different ownership behaviors:
+:::caution Not implemented
+The per-extension memory models below are a design. Today every
+extension follows the same rules
+([Memory model](/rolls/memory-model)), and `.nroll` packages do not
+exist.
+:::
+
+Unroll is designed to support multiple file extensions with different ownership behaviors:
 
 | Extension | Memory Model | Description |
 |-----------|--------------|-------------|
