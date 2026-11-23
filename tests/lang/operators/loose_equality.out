@@ -1,0 +1,57 @@
+"0x10" == 16 true true false false
+"0o17" == 15 true true false false
+"0b11" == 3 true true false false
+"" == 0 true true false false
+" \t\n" == 0 true true false false
+" 1 " == 1 true true false false
+"1e3" == 1000 true true false false
+"-0" == 0 true true false false
+"Infinity" == Infinity true true false false
+"inf" == Infinity false false true true
+"0x" == 0 false false true true
+"1 2" == 12 false false true true
+"abc" == NaN false false true true
+"NaN" == NaN false false true true
+NaN == NaN false false true true
+0 == -0 true true false false
+"1" == "1.0" false false true true
+null == undefined true true false false
+null == null true true false false
+null == 0 false false true true
+null == "" false false true true
+null == false false false true true
+undefined == 0 false false true true
+undefined == false false false true true
+true == "1" true true false false
+false == "0" true true false false
+false == "false" false false true true
+true == 1 true true false false
+true == 2 false false true true
+false == 0 true true false false
+false == "" true true false false
+[1] == 1 true true false false
+[1, 2] == "1,2" true true false false
+[] == "" true true false false
+[] == 0 true true false false
+[] == false true true false false
+[0] == false true true false false
+[[]] == 0 true true false false
+[null] == "" true true false false
+({}) == "[object Object]" true true false false
+({}) == null false false true true
+[] == undefined false false true true
+o == o true true false false
+o == {} false false true true
+arr == arr true true false false
+arr == [1] false false true true
+false false true 0
+true true true true 4
+{toString: "7"} == 7 true true false false
+{toString: "7"} == "7" true true false false
+new Money(250) == 2.5 true true false false
+new Money(250) == "2.5" true true false false
+true no primitive
+true no primitive
+f1 == f2 false false true true
+f1 == f1 true true false false
+-1 false 0

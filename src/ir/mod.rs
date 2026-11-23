@@ -696,6 +696,8 @@ impl IrOp {
                 | IrOp::Shl(_, _, _)
                 | IrOp::Shr(_, _, _)
                 | IrOp::ShrU(_, _, _)
+                | IrOp::EqLoose(_, _, _)
+                | IrOp::NeLoose(_, _, _)
                 | IrOp::Lt(_, _, _)
                 | IrOp::LtEq(_, _, _)
                 | IrOp::Gt(_, _, _)

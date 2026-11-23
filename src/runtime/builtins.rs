@@ -1157,6 +1157,37 @@ fn to_number<H: Host>(h: &H, v: &H::Value) -> f64 {
     }
 }
 
+/// What `a == b` comes to before any user code runs.
+pub enum LooseEqual {
+    Is(bool),
+    /// `a` is an object and `b` a primitive: compare `ToPrimitive(a)`
+    /// with `b` instead.
+    ToPrimitiveA,
+    /// `b` is an object and `a` a primitive.
+    ToPrimitiveB,
+}
+
+/// ECMA-262 `IsLooselyEqual(a, b)`, up to the `ToPrimitive` it may need,
+/// which can call a user's `valueOf` and so belongs to the backend.
+pub fn loose_equal<H: Host>(h: &H, a: &H::Value, b: &H::Value) -> LooseEqual {
+    let (ka, kb) = (h.kind(a), h.kind(b));
+    let object = |k| matches!(k, Kind::Array | Kind::Function | Kind::Object);
+    let nullish = |k| matches!(k, Kind::Null | Kind::Undefined);
+    LooseEqual::Is(if ka == kb || (object(ka) && object(kb)) {
+        h.strict_equal(a, b)
+    } else if nullish(ka) || nullish(kb) {
+        nullish(ka) && nullish(kb)
+    } else if object(ka) {
+        return LooseEqual::ToPrimitiveA;
+    } else if object(kb) {
+        return LooseEqual::ToPrimitiveB;
+    } else {
+        // Two of number, string and boolean: a boolean and a string both
+        // become numbers.
+        to_number(h, a) == to_number(h, b)
+    })
+}
+
 /// JavaScript `StringToNumber`: `"  42 "` is 42, `""` is 0, `"0x1F"` is
 /// 31, and `"4x"` is NaN.
 pub fn string_to_number(s: &str) -> f64 {
