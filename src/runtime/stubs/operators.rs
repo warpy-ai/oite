@@ -150,20 +150,24 @@ pub(super) fn strict_equal(va: OtValue, vb: OtValue) -> bool {
     va.to_bits() == vb.to_bits()
 }
 
-/// Loose equality (`==`) as a raw `bool`.
-pub(super) fn loose_equal(va: OtValue, vb: OtValue) -> bool {
-    let nullish = |v: OtValue| v.is_null() || v.is_undefined();
-    if nullish(va) || nullish(vb) {
-        return nullish(va) && nullish(vb);
+/// `a == b`, through `ToPrimitive` when an object meets a primitive;
+/// `Err` is the exception a `valueOf` threw.
+fn loose_equal(a: u64, b: u64) -> Result<bool, u64> {
+    match builtins::loose_equal(&NativeHost, &a, &b) {
+        builtins::LooseEqual::Is(eq) => Ok(eq),
+        builtins::LooseEqual::ToPrimitiveA => loose_equal(default_primitive(a)?, b),
+        builtins::LooseEqual::ToPrimitiveB => loose_equal(a, default_primitive(b)?),
     }
-    let primitive = |v: OtValue| v.is_number() || v.is_boolean() || as_str(v).is_some();
-    if primitive(va) && primitive(vb) {
-        if let (Some(x), Some(y)) = (as_str(va), as_str(vb)) {
-            return x == y;
-        }
-        return to_number(va) == to_number(vb);
-    }
-    strict_equal(va, vb)
+}
+
+/// `ToPrimitive(v)` with no hint: a compiled `valueOf` or `toString`, else
+/// `String(v)`.
+fn default_primitive(v: u64) -> Result<u64, u64> {
+    let v = OtValue::from_bits(v);
+    Ok(match to_primitive(v, false)? {
+        Some(p) => p.to_bits(),
+        None => new_string(&value_to_string(v)),
+    })
 }
 
 /// `a === b`
@@ -175,7 +179,7 @@ pub extern "C" fn ot_eq_strict(a: u64, b: u64) -> u64 {
 /// `a == b`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_eq_loose(a: u64, b: u64) -> u64 {
-    boolean(loose_equal(OtValue::from_bits(a), OtValue::from_bits(b)))
+    loose_equal(a, b).map_or_else(|e| e, boolean)
 }
 
 /// `a < b` and the others: strings compare as strings, anything else as

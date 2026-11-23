@@ -1,6 +1,14 @@
 # Lifetime Parameters
 
-Lifetimes are Oite's way of tracking how long references are valid. They enable you to write functions that return borrowed references safely, without copying data.
+:::caution Not implemented
+This page is a design. None of it is implemented: `&a`, `&mut a` and
+lifetime parameters such as `<'a>` are syntax errors, and the compiler
+does not track references or free memory. The error codes below do not
+exist. [Memory model](/rolls/memory-model) describes what the compiler
+does today.
+:::
+
+Lifetimes would be Oite's way of tracking how long references are valid. They enable you to write functions that return borrowed references safely, without copying data.
 
 ## Why Lifetimes Matter
 
