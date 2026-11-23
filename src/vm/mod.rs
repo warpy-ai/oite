@@ -14,6 +14,7 @@ pub mod value;
 pub use crate::compiler::Compiler;
 pub use crate::vm::module_cache::CachedModule;
 pub use crate::vm::module_cache::ModuleCache;
+use crate::vm::opcodes::CallKind;
 pub use crate::vm::opcodes::OpCode;
 pub use crate::vm::value::HeapData;
 pub use crate::vm::value::HeapObject;
@@ -1118,6 +1119,33 @@ impl VM {
             return ExecResult::Stop;
         }
         let op = self.program[self.ip].clone();
+        self.exec(op)
+    }
+
+    /// `SpreadCall(kind)`: the call it stands for, once its array of
+    /// arguments is unpacked. [args array, operands...] ->
+    /// [args..., operands...]
+    #[cold]
+    #[inline(never)]
+    fn spread_call(&mut self, kind: CallKind) -> ExecResult {
+        use crate::runtime::builtins::Host;
+        let operands = self.stack.split_off(self.stack.len() - kind.operands());
+        let args = self
+            .stack
+            .pop()
+            .and_then(|array| VmHost(&self.heap).array_elements(&array))
+            .expect("a spread call's arguments are an array");
+        let argc = args.len();
+        self.stack.extend(args);
+        self.stack.extend(operands);
+        self.exec(kind.with_argc(argc))
+    }
+
+    /// Run `op` as the instruction at `ip`. Inlined into `exec_one`: as a
+    /// call of its own it made every instruction slower (3% on
+    /// `benches/perf/fib.ot`).
+    #[inline(always)]
+    fn exec(&mut self, op: OpCode) -> ExecResult {
         match op {
             OpCode::NewObject => {
                 let ptr = self.heap.len();
@@ -2813,6 +2841,8 @@ impl VM {
                 let value = self.get_prop_with_proto_chain(ptr, &name);
                 self.stack.push(value);
             }
+
+            OpCode::SpreadCall(kind) => return self.spread_call(kind),
 
             OpCode::CallWithThis(arg_count) => {
                 // Stack: [args..., f, this]

@@ -142,6 +142,10 @@ pub enum OpCode {
     /// `f.call(this, args)`: call with an explicit `this` (`super.m(args)`).
     /// [args..., f, this] -> [result]
     CallWithThis(usize),
+    /// A call with a spread argument (`f(a, ...xs)`): the call of this
+    /// kind, its arguments the elements of one array below the call's
+    /// other operands. [args array, operands...] -> [result]
+    SpreadCall(CallKind),
     /// `obj.#x`: like `GetProp`, but an object without the private member
     /// throws a TypeError. [obj] -> [value]
     GetPrivate(String),
@@ -187,4 +191,40 @@ pub enum OpCode {
         importer: String,
         dependency_chain: Vec<String>,
     },
+}
+
+/// The kind of a call: which opcode it is, given its argument count.
+#[derive(Debug, Clone)]
+pub enum CallKind {
+    /// `Call`: [args, f]
+    Plain,
+    /// `CallMethod`: [args, obj]
+    Method(String),
+    /// `CallWithThis`: [args, f, this]
+    WithThis,
+    /// `Construct`: [args, ctor]
+    Construct,
+    /// `CallSuper`: [args, parent]
+    Super,
+}
+
+impl CallKind {
+    /// How many of the call's operands are above its arguments.
+    pub fn operands(&self) -> usize {
+        match self {
+            CallKind::WithThis => 2,
+            CallKind::Plain | CallKind::Method(_) | CallKind::Construct | CallKind::Super => 1,
+        }
+    }
+
+    /// The call with `argc` arguments, each on the stack.
+    pub fn with_argc(self, argc: usize) -> OpCode {
+        match self {
+            CallKind::Plain => OpCode::Call(argc),
+            CallKind::Method(name) => OpCode::CallMethod(name, argc),
+            CallKind::WithThis => OpCode::CallWithThis(argc),
+            CallKind::Construct => OpCode::Construct(argc),
+            CallKind::Super => OpCode::CallSuper(argc),
+        }
+    }
 }
