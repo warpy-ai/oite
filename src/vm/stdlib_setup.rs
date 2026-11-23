@@ -536,12 +536,20 @@ fn setup_math_date(vm: &mut VM) {
     globals.insert("Date".into(), JsValue::Object(date_ptr));
 }
 
-/// `Array`: its `prototype` holds the array methods core does not
-/// implement, which the prelude (`@rolls/std`) or a program adds.
+/// `Array`: its `prototype` holds the methods built into the runtime, and
+/// the ones core does not implement, which the prelude (`@rolls/std`) or a
+/// program adds.
 fn setup_array(vm: &mut VM) {
+    // The methods built into the runtime, so `Array.prototype.push` is
+    // `[].push`.
+    use crate::runtime::builtins::{Method, Receiver};
+    let builtins = Receiver::Array.methods().iter().map(|name| {
+        let m = Method::find(Receiver::Array, name).expect("a listed method");
+        (name.to_string(), JsValue::BuiltinMethod(m))
+    });
     let proto = vm.heap.len();
     vm.heap.push(HeapObject {
-        data: HeapData::Object(crate::vm::value::PropMap::new()),
+        data: HeapData::Object(builtins.collect()),
     });
     let mut props = crate::vm::value::PropMap::new();
     props.insert("prototype".to_string(), JsValue::Object(proto));

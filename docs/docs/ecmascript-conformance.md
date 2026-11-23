@@ -158,6 +158,30 @@ halves that are not characters. Native code reads an ASCII string's length
 and characters directly. Indexing a non-ASCII string walks it from the
 start.
 
+### 6. Built-in Methods Are Values
+
+Reading a built-in method off a value gives a function, as in JavaScript.
+It runs the method on whatever `this` it is called with.
+
+```javascript
+const trim = "".trim;
+trim.call("  a  ");               // "a"
+"a".trim === "b".trim;            // true
+arr.push.apply(arr, [1, 2]);      // appends 1 and 2
+Array.prototype.push === [].push; // true
+trim();                           // TypeError, as in JavaScript
+```
+
+Three differences remain:
+
+- An array method needs an array as `this`.
+  `Array.prototype.join.call("abc", "-")` is a TypeError; JavaScript gives
+  `"a-b-c"`.
+- Only `Array.prototype` holds its built-in methods. Read a string,
+  number, promise, `Map` or `Set` method off a value of that kind, not off
+  `String.prototype` and the like.
+- Functions have no `bind`.
+
 ## Built-in Object Support
 
 Oite implements JavaScript built-in objects incrementally:

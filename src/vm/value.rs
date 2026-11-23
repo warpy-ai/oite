@@ -26,6 +26,9 @@ pub enum JsValue {
         env: Option<usize>, // Points to HeapObject with captured variables
     },
     NativeFunction(usize),
+    /// A built-in method read off a value (`"a".trim`): a function that
+    /// calls it with the `this` it is given.
+    BuiltinMethod(crate::runtime::builtins::Method),
     Null,
     Undefined,
     /// Accessor descriptor for getters/setters
@@ -67,6 +70,7 @@ impl PartialEq for JsValue {
                 },
             ) => a == b && ae == be,
             (JsValue::NativeFunction(a), JsValue::NativeFunction(b)) => a == b,
+            (JsValue::BuiltinMethod(a), JsValue::BuiltinMethod(b)) => a == b,
             (JsValue::Null, JsValue::Null) => true,
             (JsValue::Undefined, JsValue::Undefined) => true,
             (JsValue::Accessor(a_get, a_set), JsValue::Accessor(b_get, b_set)) => {

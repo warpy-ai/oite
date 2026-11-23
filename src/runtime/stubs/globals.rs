@@ -79,14 +79,16 @@ pub(super) fn initial_globals() -> HashMap<String, u64> {
         builtin(ot_builtin_object_keys),
     );
     g.insert("Object".to_string(), object);
-    // `Array`: its `prototype` holds the array methods core does not
-    // implement, which the prelude (`@rolls/std`) or a program adds.
+    // `Array`: on `Array.prototype`, the methods built into the runtime,
+    // and the ones core does not implement, which the prelude
+    // (`@rolls/std`) or a program adds.
     let array_class = ot_alloc_object();
-    set_property(
-        OtValue::from_bits(array_class),
-        "prototype",
-        ot_alloc_object(),
-    );
+    let proto = ot_alloc_object();
+    for name in builtins::Receiver::Array.methods() {
+        let method = builtin_method(builtins::Receiver::Array, name).expect("a listed method");
+        set_property(OtValue::from_bits(proto), name, method);
+    }
+    set_property(OtValue::from_bits(array_class), "prototype", proto);
     g.insert("Array".to_string(), array_class);
     // `Math`: one built-in serves every function member; its environment
     // is the member's index in `MATH_FUNCTIONS`.

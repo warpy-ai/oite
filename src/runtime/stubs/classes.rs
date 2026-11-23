@@ -38,7 +38,7 @@ pub(super) fn run_constructor(ctor: u64, this: u64, argv: *const u64, argc: usiz
     let c = OtValue::from_bits(ctor);
     let code = match object(c)? {
         (ptr, ObjectKind::Object) if is_class(ptr) => lookup_atom(ptr, atom::CONSTRUCTOR)?,
-        (_, ObjectKind::Function) => ctor,
+        (ptr, ObjectKind::Function) if !is_builtin_method(ptr) => ctor,
         _ => return None,
     };
     Some(construct_result(ot_call(code, this, argv, argc), this))

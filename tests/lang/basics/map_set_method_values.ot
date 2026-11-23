@@ -1,0 +1,34 @@
+// backends: vm
+// Map and Set methods are values, as the other built-in methods are
+// (builtin_method_values.ot). The VM only: native code has no Map or Set
+// yet. Held to Node's output.
+
+function show(f) {
+  try {
+    console.log(f());
+  } catch (e) {
+    console.log(e.name + ": " + e.message);
+  }
+}
+
+const m = new Map();
+const set = m.set;
+const get = m.get;
+console.log(typeof set, typeof m.has, get === new Map().get, set === get);
+console.log(set.call(m, "a", 1) === m, get.call(m, "a"), m.size);
+set.call(m, "a", 2);
+set.call(m, NaN, "nan");
+console.log(get.call(m, "a"), get.call(m, NaN), m.size);
+console.log(m.has.call(m, "a"), m.delete.call(m, "a"), m.has("a"), m.size);
+m.clear.call(m);
+console.log(m.size);
+
+const st = new Set();
+const add = st.add;
+console.log(add.call(st, 1) === st, add.call(st, 1).size, st.has.call(st, 1));
+console.log(st.delete.call(st, 1), st.size, typeof st.nope);
+
+show(() => get.call({}, "a"));
+show(() => get.call(undefined, "a"));
+show(() => add.call(5, 1));
+show(() => get());

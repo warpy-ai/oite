@@ -71,6 +71,8 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Array methods (`splice`, `join`, `indexOf`, `concat`, `shift`, ...)   | Covered   | Covered (shared implementation)   |
 | Callback methods (`map`, `filter`, `forEach`, `reduce`) | Not built in; `@rolls/array` has them as functions | Same |
 | Array methods added to `Array.prototype`   | Covered                              | Covered                           |
+| Built-in methods as values (`const trim = s.trim`, `trim.call(t)`, `arr.push.apply(arr, xs)`, `Array.prototype.push`) | Covered | Covered (same implementation) |
+| `Map` / `Set` (`get`, `set`, `has`, `delete`, `clear`, `add`, `size`) | Covered | Not supported: `Map is not defined` |
 | `if`, `while`, `for`, `do..while`, `?:`    | Covered                              | Covered                           |
 | `break` / `continue`, with or without labels | Covered                            | Covered                           |
 | `switch`, labeled blocks                   | Covered                              | Covered                           |

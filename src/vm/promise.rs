@@ -253,7 +253,9 @@ impl VM {
     /// Functions, native functions and promise resolvers.
     pub fn is_callable(&self, v: &JsValue) -> bool {
         match v {
-            JsValue::Function { .. } | JsValue::NativeFunction(_) => true,
+            JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::BuiltinMethod(_) => {
+                true
+            }
             JsValue::Object(ptr) => self.resolver_of(*ptr).is_some(),
             _ => false,
         }

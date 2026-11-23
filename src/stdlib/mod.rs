@@ -82,7 +82,9 @@ fn inspect_inner(
         JsValue::Boolean(b) => b.to_string(),
         JsValue::Null => "null".to_string(),
         JsValue::Undefined => "undefined".to_string(),
-        JsValue::Function { .. } | JsValue::NativeFunction(_) => "[Function]".to_string(),
+        JsValue::Function { .. } | JsValue::NativeFunction(_) | JsValue::BuiltinMethod(_) => {
+            "[Function]".to_string()
+        }
         JsValue::Promise(p) => match p.get_state() {
             crate::vm::value::PromiseState::Pending => "Promise { <pending> }".to_string(),
             state => {
@@ -698,7 +700,7 @@ fn json_stringify_value(vm: &VM, value: &JsValue, indent: usize, pretty: bool) -
             }
         }
         JsValue::Function { .. } => "null".to_string(), // Functions become null in JSON
-        JsValue::NativeFunction(_) => "null".to_string(),
+        JsValue::NativeFunction(_) | JsValue::BuiltinMethod(_) => "null".to_string(),
         JsValue::Accessor(_, _) => "null".to_string(),
         JsValue::Promise(_) => "null".to_string(),
     }
