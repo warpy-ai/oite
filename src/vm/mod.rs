@@ -754,6 +754,32 @@ impl VM {
         Ok(num(self, &a).partial_cmp(&num(self, &b)))
     }
 
+    /// `a == b`, through `ToPrimitive` (whose `valueOf` may throw) when an
+    /// object meets a primitive.
+    fn loose_equal(&mut self, a: JsValue, b: JsValue) -> Result<bool, JsValue> {
+        use crate::runtime::builtins::{self, LooseEqual};
+        match builtins::loose_equal(&VmHost(&self.heap), &a, &b) {
+            LooseEqual::Is(eq) => Ok(eq),
+            LooseEqual::ToPrimitiveA => {
+                let a = self.default_primitive(a)?;
+                self.loose_equal(a, b)
+            }
+            LooseEqual::ToPrimitiveB => {
+                let b = self.default_primitive(b)?;
+                self.loose_equal(a, b)
+            }
+        }
+    }
+
+    /// `ToPrimitive(v)` with no hint: a user's `valueOf` or `toString`,
+    /// else `String(v)`.
+    fn default_primitive(&mut self, v: JsValue) -> Result<JsValue, JsValue> {
+        Ok(match self.to_primitive(&v, false)? {
+            Some(p) => p,
+            None => JsValue::String(self.to_js_string(&v)),
+        })
+    }
+
     /// JavaScript `ToPrimitive` for an object with a user-defined
     /// `valueOf` or `toString` (string hint: `toString` first). `None`: no
     /// such method, so the value converts as before.
@@ -1696,45 +1722,14 @@ impl VM {
                 self.stack.push(JsValue::Boolean(a == b));
             }
 
-            OpCode::EqEq => {
-                // Loose equality (==): performs type coercion
-                let b = self.stack.pop().unwrap();
-                let a = self.stack.pop().unwrap();
-
-                // If strictly equal, push true
-                if a == b {
-                    self.stack.push(JsValue::Boolean(true));
-                } else {
-                    // Otherwise, try type coercion
-                    let result = match (&a, &b) {
-                        // Number and String: convert string to number
-                        (JsValue::Number(n), JsValue::String(s))
-                        | (JsValue::String(s), JsValue::Number(n)) => {
-                            // JavaScript ToNumber: trimmed, "" is 0, exact.
-                            let t = s.trim();
-                            let parsed = if t.is_empty() {
-                                0.0
-                            } else {
-                                t.parse::<f64>().unwrap_or(f64::NAN)
-                            };
-                            *n == parsed
-                        }
-                        // Boolean and Number coercion
-                        (JsValue::Boolean(true), JsValue::Number(n))
-                        | (JsValue::Number(n), JsValue::Boolean(true)) => {
-                            (*n - 1.0).abs() < f64::EPSILON
-                        }
-                        (JsValue::Boolean(false), JsValue::Number(n))
-                        | (JsValue::Number(n), JsValue::Boolean(false)) => {
-                            (*n - 0.0).abs() < f64::EPSILON
-                        }
-                        // Null and Undefined are equal to each other
-                        (JsValue::Null, JsValue::Undefined)
-                        | (JsValue::Undefined, JsValue::Null) => true,
-                        // Everything else: not equal
-                        _ => false,
-                    };
-                    self.stack.push(JsValue::Boolean(result));
+            OpCode::EqEq | OpCode::NeEq => {
+                let b = self.stack.pop().unwrap_or(JsValue::Undefined);
+                let a = self.stack.pop().unwrap_or(JsValue::Undefined);
+                match self.loose_equal(a, b) {
+                    Ok(eq) => self
+                        .stack
+                        .push(JsValue::Boolean(eq == matches!(op, OpCode::EqEq))),
+                    Err(e) => return self.throw_exception(e),
                 }
             }
 
@@ -1742,42 +1737,6 @@ impl VM {
                 let b = self.stack.pop().unwrap();
                 let a = self.stack.pop().unwrap();
                 self.stack.push(JsValue::Boolean(a != b));
-            }
-
-            OpCode::NeEq => {
-                // Loose inequality (!=): opposite of loose equality
-                let b = self.stack.pop().unwrap();
-                let a = self.stack.pop().unwrap();
-
-                // If strictly equal, return false
-                if a == b {
-                    self.stack.push(JsValue::Boolean(false));
-                } else {
-                    // Otherwise, try type coercion
-                    let result = match (&a, &b) {
-                        // Number and String: convert string to number
-                        (JsValue::Number(n), JsValue::String(s))
-                        | (JsValue::String(s), JsValue::Number(n)) => s
-                            .parse::<f64>()
-                            .map(|parsed| (*n - parsed).abs() >= f64::EPSILON)
-                            .unwrap_or(true),
-                        // Boolean and Number coercion
-                        (JsValue::Boolean(true), JsValue::Number(n))
-                        | (JsValue::Number(n), JsValue::Boolean(true)) => {
-                            (*n - 1.0).abs() >= f64::EPSILON
-                        }
-                        (JsValue::Boolean(false), JsValue::Number(n))
-                        | (JsValue::Number(n), JsValue::Boolean(false)) => {
-                            (*n - 0.0).abs() >= f64::EPSILON
-                        }
-                        // Null and Undefined are equal to each other
-                        (JsValue::Null, JsValue::Undefined)
-                        | (JsValue::Undefined, JsValue::Null) => false,
-                        // Everything else: not equal
-                        _ => true,
-                    };
-                    self.stack.push(JsValue::Boolean(result));
-                }
             }
 
             OpCode::Lt | OpCode::LtEq | OpCode::Gt | OpCode::GtEq => {
@@ -3358,10 +3317,7 @@ impl crate::runtime::builtins::Host for VmHost<'_> {
     }
 
     fn strict_equal(&self, a: &JsValue, b: &JsValue) -> bool {
-        match (a, b) {
-            (JsValue::Function { address: x, .. }, JsValue::Function { address: y, .. }) => x == y,
-            _ => a == b,
-        }
+        a == b
     }
 
     fn array_elements(&self, v: &JsValue) -> Option<Vec<JsValue>> {
