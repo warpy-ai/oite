@@ -1,0 +1,116 @@
+// backends: vm jit aot
+// `==` and `!=` follow IsLooselyEqual: a string meets a number as
+// StringToNumber, a boolean as a number, null and undefined only each
+// other, and an object meets a primitive through ToPrimitive.
+function eq(label, a, b) {
+  console.log(label, a == b, b == a, a != b, b != a);
+}
+
+eq('"0x10" == 16', "0x10", 16);
+eq('"0o17" == 15', "0o17", 15);
+eq('"0b11" == 3', "0b11", 3);
+eq('"" == 0', "", 0);
+eq('" \\t\\n" == 0', " \t\n", 0);
+eq('" 1 " == 1', " 1 ", 1);
+eq('"1e3" == 1000', "1e3", 1000);
+eq('"-0" == 0', "-0", 0);
+eq('"Infinity" == Infinity', "Infinity", 1 / 0);
+eq('"inf" == Infinity', "inf", 1 / 0);
+eq('"0x" == 0', "0x", 0);
+eq('"1 2" == 12', "1 2", 12);
+eq('"abc" == NaN', "abc", NaN);
+eq('"NaN" == NaN', "NaN", NaN);
+eq("NaN == NaN", NaN, NaN);
+eq("0 == -0", 0, -0);
+eq('"1" == "1.0"', "1", "1.0");
+
+eq("null == undefined", null, undefined);
+eq("null == null", null, null);
+eq("null == 0", null, 0);
+eq('null == ""', null, "");
+eq("null == false", null, false);
+eq("undefined == 0", undefined, 0);
+eq("undefined == false", undefined, false);
+
+eq('true == "1"', true, "1");
+eq('false == "0"', false, "0");
+eq('false == "false"', false, "false");
+eq("true == 1", true, 1);
+eq("true == 2", true, 2);
+eq("false == 0", false, 0);
+eq('false == ""', false, "");
+
+eq("[1] == 1", [1], 1);
+eq('[1, 2] == "1,2"', [1, 2], "1,2");
+eq('[] == ""', [], "");
+eq("[] == 0", [], 0);
+eq("[] == false", [], false);
+eq("[0] == false", [0], false);
+eq("[[]] == 0", [[]], 0);
+eq('[null] == ""', [null], "");
+eq('({}) == "[object Object]"', {}, "[object Object]");
+eq("({}) == null", {}, null);
+eq("[] == undefined", [], undefined);
+
+let o = {};
+let arr = [1];
+eq("o == o", o, o);
+eq("o == {}", o, {});
+eq("arr == arr", arr, arr);
+eq("arr == [1]", arr, [1]);
+
+// valueOf first, then toString, and only when the other side is a
+// primitive other than null or undefined.
+let calls = 0;
+let counted = {
+  valueOf() {
+    calls = calls + 1;
+    return 1;
+  },
+};
+console.log(counted == null, counted == undefined, counted == counted, calls);
+console.log(counted == 1, counted == "1", counted == true, counted != 2, calls);
+let named = {
+  toString() {
+    return "7";
+  },
+};
+eq('{toString: "7"} == 7', named, 7);
+eq('{toString: "7"} == "7"', named, "7");
+
+class Money {
+  constructor(cents) {
+    this.cents = cents;
+  }
+  valueOf() {
+    return this.cents / 100;
+  }
+}
+eq("new Money(250) == 2.5", new Money(250), 2.5);
+eq('new Money(250) == "2.5"', new Money(250), "2.5");
+
+// An exception from valueOf reaches the catch.
+let bad = {
+  valueOf() {
+    throw new RangeError("no primitive");
+  },
+};
+for (let k = 0; k < 2; k++) {
+  try {
+    console.log(k === 0 ? bad == 1 : bad != "x");
+  } catch (e) {
+    console.log(e instanceof RangeError, e.message);
+  }
+}
+
+// Closures over different values are different functions.
+function mk(x) {
+  return function () {
+    return x;
+  };
+}
+let f1 = mk(1);
+let f2 = mk(2);
+eq("f1 == f2", f1, f2);
+eq("f1 == f1", f1, f1);
+console.log([f1].indexOf(f2), [f1].includes(f2), [f1].indexOf(f1));

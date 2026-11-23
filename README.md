@@ -360,26 +360,28 @@ exits with status 1.
 
 ## Memory Model
 
-Oite uses a Rust-inspired ownership system:
+At run time, assigning an object shares it, as in JavaScript. Nothing is
+copied, and memory is not freed yet
+([#123](https://github.com/warpy-ai/oite/issues/123)).
+
+A compile-time move check rejects a use of a variable after its value was
+assigned to another variable:
 
 ```javascript
 let a = { value: 42 };
-let b = a; // 'a' is MOVED to 'b'
-// console.log(a.value);  // ERROR: use after move!
-console.log(b.value); // OK: 42
+let b = a; // the value moves from 'a' to 'b'
+// console.log(a.value);  // borrow error: Cannot borrow moved variable 'a'
+console.log(b.value); // 42
 
-// Primitives are copied
 let x = 10;
-let y = x; // 'x' is COPIED
-console.log(x); // OK: 10
+let y = x; // 'x' was initialized with a number literal, so it is copied
+console.log(x); // 10
 ```
 
-### Ownership Rules
-
-1. Each value has exactly one owner
-2. Assigning objects **moves** ownership
-3. Primitives (numbers, booleans) are **copied**
-4. Variables are freed when their scope ends
+The check covers top-level code only, not function bodies. A string, the
+result of a call and an arithmetic result all move. `.js` files follow
+the same rules as `.ot` files. See
+[Memory model](docs/docs-rolls/memory-model.md) for the full rules.
 
 ## SSA IR
 

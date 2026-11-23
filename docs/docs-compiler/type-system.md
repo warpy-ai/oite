@@ -7,7 +7,7 @@ keywords: [type system, structural typing, type inference, type annotations, int
 
 # Type System
 
-Oite features a **structural type system** inspired by TypeScript. Types are checked at compile time and erased at runtime, providing safety without performance overhead.
+Oite has a **structural type system** modelled on TypeScript. The checker in `src/types/check/` runs before code generation. A type error is a warning on `oitec build`, `oitec jit` and a plain run, and an error on `oitec check`. With `--strict-types`, type errors stop the build, and the compiled program checks values where dynamic code meets typed code. [Types](/types) describes the design and what is not checked yet.
 
 ## Structural Typing
 
@@ -50,9 +50,10 @@ let missing: undefined = undefined;
 let flexible: any = 42;
 flexible = "now a string";  // OK
 
-// 'unknown' is safer - requires type checking before use
+// 'unknown' must be narrowed before it is stored in a typed place
 let data: unknown = fetchData();
-// data.property;  // Error: must narrow type first
+// let n: number = data;  // Error: Type 'unknown' is not assignable to type 'number'.
+// data.property is not reported yet.
 ```
 
 ### Arrays
@@ -144,48 +145,39 @@ function format(input: string | number): string {
 }
 ```
 
-## Type Inference
+## Type inference
 
-Oite infers types when annotations are omitted:
+The checker infers the type of an expression from the types of its parts, in one direction. It does not infer the type of a declaration that has no annotation:
 
 ```javascript
-let x = 42;           // Inferred as number
-let s = "hello";      // Inferred as string
-let arr = [1, 2, 3];  // Inferred as number[]
+let y: number = 1;
+let z: string = y * 2;  // Error: 'y * 2' is a number
+
+let x = 42;             // x is 'any': no annotation
+x = "a";                // OK
 
 function double(n: number) {
-    return n * 2;     // Return type inferred as number
+    return n * 2;
 }
+let d: string = double(2);  // OK: no return annotation, so the result is 'any'
 ```
 
-## Generic Types
+## Generic types
 
-Write reusable code that works with multiple types:
+Generic functions, classes and interfaces parse and run, but the checker treats every type parameter as `any`. It ignores type arguments, written or inferred ([#190](https://github.com/warpy-ai/oite/issues/190)):
 
 ```javascript
 function identity<T>(value: T): T {
     return value;
 }
 
-let num = identity<number>(42);
-let str = identity<string>("hello");
+let n: number = identity("hello");          // not reported
+let m: number = identity<string>("hello");  // not reported
 
-// Type argument often inferred
-let inferred = identity(42);  // T inferred as number
-```
-
-### Generic Interfaces
-
-```javascript
 interface Container<T> {
     value: T;
-    getValue(): T;
 }
-
-let numberContainer: Container<number> = {
-    value: 42,
-    getValue: function() { return this.value; }
-};
+let c: Container<number> = { value: "no" }; // not reported
 ```
 
 ## Type Checking Errors
@@ -205,27 +197,21 @@ let user: { name: string } = { age: 25 };
 // Error: Property 'name' is missing
 ```
 
-## Self-Hosted Type Checker
+## The self-hosted type checker
 
-The Oite compiler is self-hosted, meaning the type checker itself is written in Oite (`compiler/passes/types.ot`). This provides several benefits:
-
-- **Dogfooding**: The type system is validated by being used to build the compiler itself
-- **Single language**: No context switching between Rust and Oite
-- **Fast iteration**: Changes to type checking don't require Rust recompilation
-
-The Rust VM is used during development for running the self-hosted compiler, while production builds target native code via the LLVM backend.
+`oitec` uses the checker written in Rust, in `src/types/check/`. The self-hosted compiler (`compiler/`) has a separate checker written in Oite, `compiler/passes/types.ot`. `oitec` does not run it, and the two can disagree.
 
 ## Comparison with TypeScript
 
 | Feature | Oite | TypeScript |
 |---------|--------|------------|
 | Structural typing | Yes | Yes |
-| Type inference | Yes | Yes |
-| Generics | Yes | Yes |
+| Type inference | Expressions only; an unannotated declaration is `any` | Yes |
+| Generics | Parsed, not checked ([#190](https://github.com/warpy-ai/oite/issues/190)) | Yes |
 | Union types | Yes | Yes |
 | Intersection types | Planned | Yes |
 | Conditional types | No | Yes |
-| Runtime type info | No (erased) | No (erased) |
+| Runtime type checks | With `--strict-types` | No (erased) |
 | Compilation target | Native (LLVM) | JavaScript |
 
 Oite's type system is intentionally simpler than TypeScript's, focusing on the most commonly used features while enabling native code compilation.

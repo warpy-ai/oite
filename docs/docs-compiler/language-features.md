@@ -180,7 +180,7 @@ class MyClass {
 
 ## Type Annotations
 
-Oite supports TypeScript-style type annotations with Hindley-Milner inference:
+Oite checks TypeScript-style type annotations. A variable or parameter with no annotation is `any`. Generic calls are not checked yet ([#190](https://github.com/warpy-ai/oite/issues/190)). See [Types](/types).
 
 ```javascript
 let x: number = 42;
@@ -232,19 +232,14 @@ import { greet, VERSION } from "./greeting";
 import * as utils from "./utils";
 ```
 
-## Ownership & Borrow Checking
+## Ownership checks
 
-Oite includes Rust-inspired ownership semantics for memory safety:
+At the top level of a file, `let b = a` moves the value out of `a`, and a later use of `a` is a compile error:
 
 ```javascript
-// Ownership types
-let owned: Ref<Object> = createObject();
-let borrowed: MutRef<Object> = borrow(owned);
-
-// Move semantics
 let a = { value: 42 };
-let b = a;  // 'a' is moved to 'b'
-// console.log(a);  // Error: use after move
+let b = a;  // the value moves from 'a' to 'b'
+// console.log(a.value);  // borrow error: Cannot borrow moved variable 'a'
 ```
 
-The borrow checker prevents data races and use-after-move errors at compile time.
+Function bodies are not checked, there is no borrow syntax, and nothing is copied or freed. See [Memory model](/rolls/memory-model) for the full rules.
