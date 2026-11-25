@@ -132,7 +132,7 @@ echo 'export PATH="$PATH:/path/to/oite/target/release"' >> ~/.zshrc
 source ~/.zshrc
 
 # Now you can run from anywhere
-oite --help
+oitec --version
 ```
 
 ## Your First Oite Program
@@ -183,12 +183,12 @@ Run with different backends:
 
 Oite provides multiple ways to run your code:
 
-| Mode            | Command                              | Use Case                        | Performance |
-| --------------- | ------------------------------------ | ------------------------------- | ----------- |
-| **VM**          | `oite app.ot`                        | Debugging, REPL                 | Slowest     |
-| **JIT**         | `oite jit app.ot`                    | Development, testing            | Fast        |
-| **AOT Release** | `oite build app.ot --release -o app` | Production (ThinLTO)            | Faster      |
-| **AOT Dist**    | `oite build app.ot --dist -o app`    | Maximum optimization (Full LTO) | Fastest     |
+| Mode            | Command                               | Use Case                        | Performance |
+| --------------- | ------------------------------------- | ------------------------------- | ----------- |
+| **VM**          | `oitec app.ot`                        | Debugging                       | Slowest     |
+| **JIT**         | `oitec jit app.ot`                    | Development, testing            | Fast        |
+| **AOT Release** | `oitec build app.ot --release -o app` | Production (ThinLTO)            | Faster      |
+| **AOT Dist**    | `oitec build app.ot --dist -o app`    | Maximum optimization (Full LTO) | Fastest     |
 
 ### JIT Compilation (Development)
 
@@ -225,22 +225,22 @@ Interpreted execution for debugging and testing.
 
 ```bash
 # Run with VM
-oite <file.ot>
+oitec <file.ot>
 
 # Run with JIT
-oite jit <file.ot>
+oitec jit <file.ot>
 
 # Build native binary
-oite build <file.ot> [--release|--dist] -o <output>
+oitec build <file.ot> [--release|--dist] -o <output>
 
 # Show SSA IR (debugging)
-oite ir <file.ot>
-
-# Show AST (debugging)
-oite ast <file.ot>
+oitec ir <file.ot>
 
 # Type check only
-oite check <file.ot>
+oitec check <file.ot>
+
+# Print the version
+oitec --version
 ```
 
 ## Project Structure

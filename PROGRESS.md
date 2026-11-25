@@ -8,8 +8,9 @@ High-performance systems language with **TypeScript syntax** compiling to **nati
 
 ## Quick Status
 
-**Oite compiles to native code, and the native backends are not finished yet:
-most features currently run only in the VM (the debugging interpreter).** The per-feature matrix is in
+**Oite compiles to native code. The JIT and AOT backends run the same language
+features as the VM (the debugging interpreter); the `require`, `fs`, `JSON`,
+`fetch`, `process` and `ByteStream` globals exist only in the VM.** The per-feature matrix is in
 [docs/docs/development-status.md](docs/docs/development-status.md), and the
 gap analysis is tracked in [#136](https://github.com/warpy-ai/oite/issues/136). Sections below describe design and intent;
 where they say ✅ without a golden test behind them, trust the status page.
@@ -17,9 +18,9 @@ where they say ✅ without a golden test behind them, trust the status page.
 | Component                                 | Status                                              |
 | ----------------------------------------- | --------------------------------------------------- |
 | Runtime kernel (NaN-boxing, allocator)    | 🟡 Works; no memory is ever freed ([#123](https://github.com/warpy-ai/oite/issues/123))            |
-| SSA IR + optimizations                    | 🟡 Works; refuses modules |
-| Native backends (Cranelift JIT, LLVM AOT) | 🟡 Functions, objects, arrays, strings, globals; see the status page |
-| Language features                         | 🟡 Most run in the VM only so far; see the status page |
+| SSA IR + optimizations                    | 🟡 Works; refuses what the native backends cannot run (`require`) |
+| Native backends (Cranelift JIT, LLVM AOT) | 🟡 Same language features as the VM; see the status page |
+| Language features                         | 🟡 On every backend; no generators, regular expressions or tagged templates yet |
 | Static type checking                      | 🟡 Annotations checked as warnings; `oitec check` errors; generic calls unchecked ([#190](https://github.com/warpy-ai/oite/issues/190)) |
 | Self-hosting compiler                     | 🟡 Cannot compile its own source yet ([#131](https://github.com/warpy-ai/oite/issues/131))         |
 
@@ -46,7 +47,7 @@ where they say ✅ without a golden test behind them, trust the status page.
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-See `docs/ARCHITECTURE.md` for detailed diagrams and philosophy.
+See `docs/docs/platform-architecture.md` for detailed diagrams and philosophy.
 
 ### Compilation Pipeline
 
@@ -60,12 +61,12 @@ tscl source → Compiler → SSA IR → Native Backend → CPU
 
 ### Execution Modes
 
-| Mode        | Command                              | Use Case                        |
-| ----------- | ------------------------------------ | ------------------------------- |
-| JIT         | `oite jit app.ot`                    | Fast development, benchmarking  |
-| AOT Release | `oite build app.ot --release -o app` | Production (ThinLTO)            |
-| AOT Dist    | `oite build app.ot --dist -o app`    | Maximum optimization (Full LTO) |
-| VM          | `oite run app.ot`                    | Debugging, REPL, compatibility  |
+| Mode        | Command                               | Use Case                        |
+| ----------- | ------------------------------------- | ------------------------------- |
+| JIT         | `oitec jit app.ot`                    | Fast development, benchmarking  |
+| AOT Release | `oitec build app.ot --release -o app` | Production (ThinLTO)            |
+| AOT Dist    | `oitec build app.ot --dist -o app`    | Maximum optimization (Full LTO) |
+| VM          | `oitec app.ot`                        | Debugging                       |
 
 ---
 
@@ -98,7 +99,7 @@ Register-based SSA IR with type tracking and optimizations.
 
 **Optimization Passes:** Dead code elimination, constant folding, common subexpression elimination, copy propagation, branch simplification.
 
-**CLI:** `oite ir app.ot` - Inspect IR before/after optimization
+**CLI:** `oitec ir app.ot` - Inspect IR before/after optimization
 
 ---
 
@@ -109,7 +110,7 @@ Register-based SSA IR with type tracking and optimizations.
 Fast compilation for development. Each `IrOp` becomes Cranelift instructions or runtime stub calls.
 
 ```bash
-oite jit app.ot
+oitec jit app.ot
 ```
 
 #### 2B: Multi-Function JIT + Tiered Compilation
@@ -129,8 +130,8 @@ brew install llvm@18 zstd
 export LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)
 
 # Build
-oite build app.ot --release -o app  # ThinLTO
-oite build app.ot --dist -o app     # Full LTO
+oitec build app.ot --release -o app  # ThinLTO
+oitec build app.ot --dist -o app     # Full LTO
 ```
 
 **Key Files:** `src/backend/llvm/codegen.rs`, `src/backend/llvm/optimizer.rs`, `src/backend/llvm/linker.rs`
@@ -193,27 +194,32 @@ Oite core includes only essential primitives:
 | `fs`         | `readFileSync`, `writeFileSync`, `writeBinaryFile` (minimal) |
 | `require`    | Module loading                                               |
 
-> **Note:** The rest of the standard library (full `Date`, comprehensive fs/path, HTTP, TLS, etc.) will be provided by the **Rolls** ecosystem. See `docs/future/rolls-design.md`.
+> **Note:** The rest of the standard library (full `Date`, comprehensive fs/path, HTTP, TLS, etc.) will be provided by the **Rolls** ecosystem. See `docs/docs/platform-architecture.md`.
 
 Runtime errors are exceptions: reading a property of `null`/`undefined` or calling a non-function throws a `TypeError`, an unbound name a `ReferenceError`, and so on. An uncaught exception prints `Uncaught TypeError: ...` and exits with status 1, on the VM and in native code alike.
 
 ---
 
-### Self-Hosting Compiler ✅
+### Self-Hosting Compiler 🟡
 
-Fully self-hosted compiler (`oitec`) written in Oite with TypeScript support.
+Two compilers written in Oite, with TypeScript support, run on the VM.
+Self-hosting is partial: neither has compiled its full source into a working
+compiler yet ([#131](https://github.com/warpy-ai/oite/issues/131)). `oitec`
+itself is the Rust compiler.
 
 #### Current State
 
-| Compiler          | Location         | Status            | Output                   |
-| ----------------- | ---------------- | ----------------- | ------------------------ |
-| **Rust Compiler** | `src/compiler/`  | ✅ Production     | Native binaries          |
-| **Bootstrap**     | `bootstrap/*.ot` | ✅ Self-Compiling | Bytecode                 |
-| **Modular**       | `compiler/*.ot`  | ✅ Working        | Bytecode (VM executable) |
+| Compiler          | Location         | Status                                   | Output            |
+| ----------------- | ---------------- | ---------------------------------------- | ----------------- |
+| **Rust Compiler** | `src/compiler/`  | ✅ Production                            | Native binaries   |
+| **Bootstrap**     | `bootstrap/*.ot` | 🟡 Runs on the VM                        | Bytecode          |
+| **Modular**       | `compiler/*.ot`  | 🟡 Runs on the VM; cannot compile itself | Bytecode, LLVM IR |
 
-#### Self-Compilation Verified ✅
+#### Per-Module Compilation
 
-The bootstrap compiler can now compile itself! All 8 modules successfully self-compile:
+Bytecode sizes recorded for each bootstrap module compiled on its own.
+Compiling one module at a time is not a self-compilation fixpoint
+([#131](https://github.com/warpy-ai/oite/issues/131)):
 
 | Module        | Compiled Size | Purpose                   |
 | ------------- | ------------- | ------------------------- |
@@ -250,7 +256,7 @@ The bootstrap compiler now supports TypeScript syntax:
 
 #### Self-Hosting Roadmap
 
-See `docs/SELF_HOSTING.md` for detailed plan.
+See `docs/docs-compiler/self-hosting.md` for detailed plan.
 
 **Foundation** ✅
 
@@ -259,22 +265,26 @@ Source → bootstrap/*.ot → Bytecode → Rust VM
 Source → src/compiler/ (Rust) → Native Binary ← Production builds
 ```
 
-**Feature Parity** ✅
+**Feature Parity** 🟡
 
 ```
 Source → compiler/*.ot → Bytecode → Rust VM
          + Type inference, optimizations, borrow checking
-         + All CLI commands working: ast, ir, check, build, run
+         + CLI commands: ast, ir, check, build, run
 ```
 
-**Native Code Generation** ✅
+Not at parity yet: it skips `require`, `interface` and `typeof` with an
+"Unknown node type" warning and still reports success
+([#131](https://github.com/warpy-ai/oite/issues/131)).
+
+**Native Code Generation** 🟡
 
 ```
 Source → compiler/*.ot → LLVM IR (.ll) → clang → Native Binary
-         No Rust compiler needed for builds!
+         The compiler itself still runs on the Rust VM
 ```
 
-The self-hosted compiler now generates LLVM IR that compiles to native binaries:
+The self-hosted compiler generates LLVM IR for simple programs:
 
 | Test          | Native Output | VM Output | Performance |
 | ------------- | ------------- | --------- | ----------- |
@@ -287,9 +297,9 @@ The self-hosted compiler now generates LLVM IR that compiles to native binaries:
 **Build Pipeline:**
 
 ```bash
-./target/release/oitec compiler/main.ot llvm input.ot  # → input.ot.ll
-clang input.ot.ll -c -o input.o                          # → input.o
-clang input.o -o output                                     # → native binary
+./target/release/oitec compiler/main.ot llvm input.ot  # → input.ll (run from the repo root)
+clang input.ll -c -o input.o                           # → input.o
+clang input.o -lm -o output                            # → native binary (-lm for fmod)
 ```
 
 **Key Features:**
@@ -301,22 +311,18 @@ clang input.o -o output                                     # → native binary
 - Control flow (if/else, while, for)
 - No external runtime library needed
 
-**Bootstrap Verification** ✅
+**Bootstrap Verification** 🟡
 
-```
-tscl₀ (Rust) ──► tscl₁ (native oitec)
-                      │
-                      └──► tscl₂ (self-compiled)
-                                 │
-                                 └──► verify: hash(tscl₁) == hash(tscl₂) ✅
-```
+The goal is a three-generation fixpoint: compiler₁ compiles the compiler's
+full source into compiler₂, and `hash(compiler₁) == hash(compiler₂)`. That
+does not hold yet ([#131](https://github.com/warpy-ai/oite/issues/131)).
 
-**Verification Completed:**
+**What is verified today:**
 
-- Bytecode generation is deterministic (same source → same bytecode)
-- All 8 bootstrap modules compile successfully via self-hosted compiler
-- Self-compilation produces identical output across generations
-- hash(gen₀) == hash(gen₁) == hash(gen₂) verified
+- Bytecode generation is deterministic: `bootstrap/lexer.ot` compiled twice
+  gives the same hash
+- LLVM IR generation is deterministic for a small program
+- The full compiler source is not compiled, so this is not a fixpoint
 
 **Verification Tools:**
 
@@ -466,7 +472,7 @@ Official libraries built on Oite core:
 | `@rolls/array`     | Array methods                    |
 | `@rolls/promise`   | Promise implementation           |
 
-See `docs/future/rolls-design.md` for detailed architecture.
+See `docs/docs/platform-architecture.md` for detailed architecture.
 
 ### Unroll (Tooling)
 
@@ -482,7 +488,7 @@ Package manager and developer tools:
 | `unroll lint`  | Linter                    |
 | LSP            | Language server           |
 
-See `docs/future/unroll-design.md` for detailed architecture.
+See `docs/docs-unroll/design.md` for detailed architecture.
 
 ---
 
@@ -490,9 +496,9 @@ See `docs/future/unroll-design.md` for detailed architecture.
 
 ### Test Suite
 
-```
-60+ tests passed
-```
+`cargo test --release` runs the unit tests and the golden tests: each program
+in `tests/lang/` runs through `oitec` on the backends it lists (VM, JIT, AOT)
+and its output is compared with a hand-written expectation.
 
 Coverage includes: IR lowering, type inference, optimizations, borrow checker, JIT compilation, LLVM backend, language features.
 
