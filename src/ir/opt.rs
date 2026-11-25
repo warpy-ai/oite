@@ -6,7 +6,7 @@
 //! - Common Subexpression Elimination (CSE)
 //! - Copy Propagation
 
-use crate::ir::{IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId};
+use crate::ir::{IrFunction, IrModule, IrOp, IrType, Literal, SpreadCallee, Terminator, ValueId};
 use std::collections::{HashMap, HashSet};
 
 // ============================================================================
@@ -522,6 +522,7 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
         | IrOp::ToBool(_, a)
         | IrOp::ToNum(_, a)
         | IrOp::ToStr(_, a)
+        | IrOp::GetIterator(_, a)
         | IrOp::Copy(_, a)
         | IrOp::ArrayLen(_, a)
         | IrOp::TypeCheck(_, a, _)
@@ -586,6 +587,18 @@ fn replace_uses_in_op(op: &mut IrOp, copies: &HashMap<ValueId, ValueId>) {
             for arg in args {
                 resolve(arg);
             }
+        }
+        IrOp::SpreadCall(_, callee, args) => {
+            match callee {
+                SpreadCallee::Function(func, this) => {
+                    resolve(func);
+                    resolve(this);
+                }
+                SpreadCallee::Method(func, _)
+                | SpreadCallee::Construct(func)
+                | SpreadCallee::Super(func) => resolve(func),
+            }
+            resolve(args);
         }
         IrOp::SuperForward(_, parent) => resolve(parent),
         IrOp::AsyncResolve(_, p, v) | IrOp::AsyncReject(_, p, v) => {

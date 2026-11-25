@@ -378,19 +378,19 @@ mod vm_interop {
                 JsValue::Boolean(b) => Self::boolean(*b),
                 JsValue::Null => Self::null(),
                 JsValue::Undefined => Self::undefined(),
-                JsValue::Object(idx)
-                | JsValue::Function {
-                    address: _,
-                    env: Some(idx),
-                } => Self::pointer(HeapPtr::from_usize(*idx)),
-                JsValue::Function { address, env: None } => {
-                    Self::pointer(HeapPtr::from_usize(*address))
+                JsValue::Object(idx) | JsValue::Function { env: Some(idx), .. } => {
+                    Self::pointer(HeapPtr::from_usize(*idx))
                 }
+                JsValue::Function {
+                    address, env: None, ..
+                } => Self::pointer(HeapPtr::from_usize(*address)),
                 JsValue::String(_s) => Self::undefined(),
                 JsValue::NativeFunction(idx) => {
                     Self::pointer(HeapPtr::from_usize(*idx | 0x8000_0000_0000))
                 }
-                JsValue::Accessor(_, _) => Self::undefined(),
+                JsValue::Accessor(_, _) | JsValue::BuiltinMethod(_) | JsValue::BoundFunction(_) => {
+                    Self::undefined()
+                }
                 JsValue::Promise(_) => Self::undefined(),
             }
         }

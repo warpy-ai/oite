@@ -6,6 +6,7 @@
 //! the key's string form. So `a[-1]` and `a[1.5]` are not elements, and on
 //! a plain object `o[7]` and `o["7"]` are the same property.
 
+use crate::runtime::builtins::{char_at, char_count, is_ascii};
 use crate::vm::VM;
 use crate::vm::value::{HeapData, JsValue};
 
@@ -28,56 +29,61 @@ pub(super) fn array_index(key: &JsValue) -> Option<usize> {
     }
 }
 
-/// Whether `name` is an array method implemented in Rust, by `CallMethod`.
-/// Others are looked up on `Array.prototype`.
-pub(super) fn is_array_method(name: &str) -> bool {
-    matches!(
-        name,
-        "push"
-            | "pop"
-            | "shift"
-            | "unshift"
-            | "splice"
-            | "slice"
-            | "concat"
-            | "join"
-            | "indexOf"
-            | "lastIndexOf"
-            | "includes"
-            | "reverse"
-            | "fill"
-            | "at"
-    )
-}
-
 impl VM {
     /// `target[key]`. `undefined` for a missing element or property, and
     /// for a target that has none (the caller rejects null and undefined).
     pub(super) fn get_element(&self, target: &JsValue, key: &JsValue) -> JsValue {
-        match target {
-            JsValue::Object(ptr) => match self.heap.get(*ptr).map(|o| &o.data) {
-                Some(HeapData::Array(arr)) => {
-                    if let Some(i) = array_index(key) {
+        if let Some(i) = array_index(key) {
+            match target {
+                JsValue::Object(ptr) => {
+                    if let Some(HeapData::Array(arr)) = self.heap.get(*ptr).map(|o| &o.data) {
                         return arr.get(i).cloned().unwrap_or(JsValue::Undefined);
                     }
-                    let name = self.to_js_string(key);
-                    if name == "length" {
-                        JsValue::Number(arr.len() as f64)
-                    } else if is_array_method(&name) {
-                        // A function-typed value, so `typeof` says "function".
-                        JsValue::NativeFunction(0)
-                    } else {
-                        self.array_proto_method(&name).unwrap_or(JsValue::Undefined)
-                    }
                 }
-                Some(_) => self.get_prop_with_proto_chain(*ptr, &self.to_js_string(key)),
+                JsValue::String(s) => {
+                    return char_at(s, is_ascii(s), i)
+                        .map_or(JsValue::Undefined, |c| JsValue::String(c.to_string()));
+                }
+                _ => {}
+            }
+        }
+        self.get_named(target, &self.to_js_string(key))
+    }
+
+    /// `target[name]` for a name that is not an element index: a plain
+    /// object's property, found along its prototype chain (`GetProp` calls
+    /// getters first), `length` and `size`, and built-in methods (as
+    /// values: `"a".trim`).
+    pub(super) fn get_named(&self, target: &JsValue, name: &str) -> JsValue {
+        let data = match target {
+            JsValue::Object(ptr) => match self.heap.get(*ptr) {
+                Some(o) => Some(&o.data),
+                None => return JsValue::Undefined,
+            },
+            _ => None,
+        };
+        let size = |n: usize| JsValue::Number(n as f64);
+        match (target, data) {
+            (JsValue::Object(ptr), Some(HeapData::Object(_))) => {
+                self.get_prop_with_proto_chain(*ptr, name)
+            }
+            (_, Some(HeapData::Array(arr))) if name == "length" => size(arr.len()),
+            (_, Some(HeapData::ByteStream(bytes))) if name == "length" => size(bytes.len()),
+            (_, Some(HeapData::Map(table) | HeapData::Set(table))) if name == "size" => {
+                size(table.len())
+            }
+            (_, Some(HeapData::Iterator(it))) if it.for_of && name == "length" => {
+                JsValue::Number(self.cursor_length(it))
+            }
+            (JsValue::String(s), _) if name == "length" => size(char_count(s, is_ascii(s))),
+            _ => match self.builtin_method(target, name) {
+                Some(method) => method,
+                // The methods added to `Array.prototype`.
+                None if matches!(data, Some(HeapData::Array(_))) => {
+                    self.array_proto_method(name).unwrap_or(JsValue::Undefined)
+                }
                 None => JsValue::Undefined,
             },
-            JsValue::String(s) => match array_index(key) {
-                Some(i) => string_char(s, i),
-                None => JsValue::Undefined,
-            },
-            _ => JsValue::Undefined,
         }
     }
 
@@ -135,18 +141,5 @@ impl VM {
             arr.resize(n as usize, JsValue::Undefined);
         }
         Ok(())
-    }
-}
-
-/// The character of `s` at `i`, as a string.
-fn string_char(s: &str, i: usize) -> JsValue {
-    match s.as_bytes().get(i) {
-        // ASCII: the common case, no need to walk the string.
-        Some(b) if *b < 128 => JsValue::String((*b as char).to_string()),
-        Some(_) => s
-            .chars()
-            .nth(i)
-            .map_or(JsValue::Undefined, |c| JsValue::String(c.to_string())),
-        None => JsValue::Undefined,
     }
 }

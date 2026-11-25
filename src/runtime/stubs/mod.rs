@@ -15,9 +15,10 @@
 
 use super::abi::{EXCEPTION_BITS, OtValue, UNBOUND_BITS};
 use super::builtins;
+use super::collection;
 use super::heap::{
-    HeapPtr, INLINE_SLOTS, MAX_INLINE_SLOTS, NativeArray, NativeFn, NativeFunction, NativeObject,
-    NativeString, ObjectHeader, ObjectKind, heap,
+    HeapPtr, INLINE_SLOTS, MAX_INLINE_SLOTS, NativeArray, NativeCollection, NativeFn,
+    NativeFunction, NativeIterator, NativeObject, NativeString, ObjectHeader, ObjectKind, heap,
 };
 use super::object::atom::{self, Atom, Role};
 use super::object::ic::{self, PropCache};
@@ -31,8 +32,10 @@ mod async_fns;
 mod builtin_fns;
 mod calls;
 mod classes;
+mod collections;
 mod exceptions;
 mod fs;
+mod functions;
 mod globals;
 mod inspect;
 mod objects;
@@ -45,10 +48,12 @@ pub use async_fns::*;
 pub use builtin_fns::*;
 pub use calls::*;
 pub use classes::*;
+pub use collections::*;
 pub use exceptions::*;
 // Not in the runtime ABI table: nothing in `oitec` itself calls these.
 #[allow(unused_imports)]
 pub use fs::*;
+pub use functions::*;
 pub use globals::*;
 pub use inspect::*;
 pub use objects::*;

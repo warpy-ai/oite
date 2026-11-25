@@ -19,7 +19,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char};
 
 use crate::backend::BackendError;
-use crate::ir::{BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId};
+use crate::ir::{
+    BlockId, IrFunction, IrModule, IrOp, IrType, Literal, SpreadCallee, Terminator, ValueId,
+};
 
 use super::abi;
 
@@ -228,7 +230,7 @@ impl LlvmCodegen {
                 }
             }
 
-            self.build_c_main()?;
+            self.build_c_main(ir_module)?;
             if let Some(di) = self.di.take() {
                 di.finalize();
             }

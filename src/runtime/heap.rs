@@ -130,6 +130,13 @@ pub enum ObjectKind {
     Function = 3,
     /// A ByteStream buffer (for bytecode generation).
     ByteStream = 4,
+    /// A `Map` (`NativeCollection`).
+    Map = 5,
+    /// A `Set` (`NativeCollection`).
+    Set = 6,
+    /// An iterator over a `Map` or a `Set`, or a `for...of` cursor
+    /// (`NativeIterator`).
+    Iterator = 7,
 }
 
 /// Header for all heap-allocated objects.
@@ -228,11 +235,28 @@ pub struct NativeFunction {
     pub code: *const u8,
     /// The closure's environment (an object value), or `undefined`.
     pub env: u64,
+    /// The function's own properties (an object), made when the first
+    /// one is set; `undefined` until then.
+    pub props: u64,
 }
 
 /// Signature of every function callable through a `NativeFunction`:
 /// `this`, the arguments, and the function's own environment.
 pub type NativeFn = extern "C" fn(this: u64, argv: *const u64, argc: usize, env: u64) -> u64;
+
+/// A `Map` or a `Set`: its entries live in a table the runtime owns.
+#[repr(C)]
+pub struct NativeCollection {
+    pub header: ObjectHeader,
+    pub table: *mut super::collection::Table<u64>,
+}
+
+/// An iterator over a `Map` or a `Set`, or a `for...of` cursor.
+#[repr(C)]
+pub struct NativeIterator {
+    pub header: ObjectHeader,
+    pub iter: super::collection::Iter<u64>,
+}
 
 /// A native object (docs/docs/object-model.md). Its shape says which
 /// property is in which slot; `object::object` reads and writes them.
@@ -457,6 +481,32 @@ impl NativeHeap {
             let f = ptr.as_mut::<NativeFunction>();
             f.code = code;
             f.env = env;
+            f.props = super::abi::OtValue::undefined().to_bits();
+        }
+        Some(ptr)
+    }
+
+    /// Allocate an empty `Map` or `Set` (`kind`).
+    pub fn alloc_collection(&self, kind: ObjectKind) -> Option<HeapPtr> {
+        let data_size = std::mem::size_of::<NativeCollection>() - ObjectHeader::SIZE;
+        let ptr = self.alloc(data_size)?;
+        unsafe {
+            let header = ptr.as_mut::<ObjectHeader>();
+            *header = ObjectHeader::new(kind, data_size as u32);
+            // Never freed: nothing on the heap is yet (#123).
+            ptr.as_mut::<NativeCollection>().table = Box::into_raw(Box::default());
+        }
+        Some(ptr)
+    }
+
+    /// Allocate an iterator.
+    pub fn alloc_iterator(&self, iter: super::collection::Iter<u64>) -> Option<HeapPtr> {
+        let data_size = std::mem::size_of::<NativeIterator>() - ObjectHeader::SIZE;
+        let ptr = self.alloc(data_size)?;
+        unsafe {
+            let header = ptr.as_mut::<ObjectHeader>();
+            *header = ObjectHeader::new(ObjectKind::Iterator, data_size as u32);
+            std::ptr::write(&mut ptr.as_mut::<NativeIterator>().iter, iter);
         }
         Some(ptr)
     }
@@ -535,9 +585,10 @@ mod tests {
         assert_eq!(offset_of!(NativeArray, capacity), 16);
         assert_eq!(offset_of!(NativeArray, elements), 24);
 
-        assert_eq!(size_of::<NativeFunction>(), 32);
+        assert_eq!(size_of::<NativeFunction>(), 40);
         assert_eq!(offset_of!(NativeFunction, code), 16);
         assert_eq!(offset_of!(NativeFunction, env), 24);
+        assert_eq!(offset_of!(NativeFunction, props), 32);
 
         assert_eq!(offset_of!(ObjectHeader, inline_slots), 3);
         assert_eq!(size_of::<NativeObject>(), 40);

@@ -71,6 +71,7 @@ fn test_lower_function_call() {
         OpCode::Push(JsValue::Function {
             address: 100,
             env: None,
+            id: 0,
         }),
         OpCode::Push(JsValue::Number(1.0)),
         OpCode::Push(JsValue::Number(2.0)),

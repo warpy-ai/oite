@@ -18,8 +18,12 @@ pub struct NameResolver {
     /// environments yet, so a reference to one is refused.
     enclosing: HashSet<String>,
     /// Names assigned exactly once in the whole program, by a function
-    /// declaration. They resolve to that function directly.
+    /// declaration that runs once. They resolve to that function directly.
     constant_functions: HashMap<String, usize>,
+    /// The functions, by address, that are one function object made when
+    /// the program starts rather than a new one each time their expression
+    /// runs (see `Scopes::analyze`).
+    made_once: HashSet<usize>,
 }
 
 pub(super) enum NameRef {
@@ -44,6 +48,12 @@ impl NameResolver {
         }
         Ok(NameRef::Global)
     }
+
+    /// Whether the function at `addr` is made once, when the program
+    /// starts, rather than each time its expression runs.
+    pub(super) fn made_once(&self, addr: usize) -> bool {
+        self.made_once.contains(&addr)
+    }
 }
 
 /// Which names are local to which function, for `NameResolver`.
@@ -51,6 +61,7 @@ pub(super) struct Scopes {
     /// Function start address -> (end address, locals).
     functions: Vec<(usize, usize, HashSet<String>)>,
     constant_functions: HashMap<String, usize>,
+    made_once: HashSet<usize>,
 }
 
 impl Scopes {
@@ -81,28 +92,57 @@ impl Scopes {
         }
 
         // A name assigned exactly once in the program, by
-        // `Push(Function) ; Let(name)`, always holds that function.
+        // `Push(Function) ; Let(name)` in code that runs once (top-level
+        // code outside any loop), always holds that one function. An
+        // expression that runs more than once makes a new function each
+        // time. A declaration in a function that the function only ever
+        // calls (`Load(name) ; Call`) is never seen as a value, though, so
+        // one function made at start stands for all of them.
         let mut assignments: HashMap<&str, usize> = HashMap::new();
-        for op in instructions {
-            if let OpCode::Let(name) | OpCode::Store(name) = op {
-                *assignments.entry(name.as_str()).or_default() += 1;
+        let mut read_as_value: HashSet<&str> = HashSet::new();
+        for (i, op) in instructions.iter().enumerate() {
+            match op {
+                OpCode::Let(name) | OpCode::Store(name) => {
+                    *assignments.entry(name.as_str()).or_default() += 1;
+                }
+                OpCode::Load(name) if !matches!(instructions.get(i + 1), Some(OpCode::Call(_))) => {
+                    read_as_value.insert(name.as_str());
+                }
+                _ => {}
             }
         }
+        let loops: Vec<(usize, usize)> = instructions
+            .iter()
+            .enumerate()
+            .filter_map(|(i, op)| match op {
+                OpCode::Jump(t) | OpCode::JumpIfFalse(t) if *t <= i => Some((*t, i)),
+                _ => None,
+            })
+            .collect();
+        let runs_once =
+            |i: usize| owner(i).is_none() && !loops.iter().any(|&(t, j)| t <= i && i < j);
         let mut constant_functions = HashMap::new();
-        for w in instructions.windows(2) {
+        let mut made_once = HashSet::new();
+        for (i, w) in instructions.windows(2).enumerate() {
             if let [
                 OpCode::Push(JsValue::Function { address, .. }),
                 OpCode::Let(name),
             ] = w
                 && assignments.get(name.as_str()) == Some(&1)
             {
-                constant_functions.insert(name.clone(), *address);
+                if runs_once(i) {
+                    constant_functions.insert(name.clone(), *address);
+                    made_once.insert(*address);
+                } else if owner(i).is_some() && !read_as_value.contains(name.as_str()) {
+                    made_once.insert(*address);
+                }
             }
         }
 
         Self {
             functions,
             constant_functions,
+            made_once,
         }
     }
 
@@ -112,6 +152,7 @@ impl Scopes {
         let mut names = NameResolver {
             program: true,
             constant_functions: self.constant_functions.clone(),
+            made_once: self.made_once.clone(),
             ..Default::default()
         };
         let Some(addr) = addr else {

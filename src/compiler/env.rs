@@ -244,8 +244,11 @@ impl Codegen {
                 .push(OpCode::Load(SCOPE_LOCAL.to_string()));
             self.instructions.push(OpCode::MakeClosure(address));
         } else {
-            self.instructions
-                .push(OpCode::Push(JsValue::Function { address, env: None }));
+            self.instructions.push(OpCode::Push(JsValue::Function {
+                address,
+                env: None,
+                id: 0,
+            }));
         }
         self.instructions.len() - 1
     }

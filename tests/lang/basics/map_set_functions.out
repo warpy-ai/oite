@@ -1,0 +1,14 @@
+Map(1) { [Function: area] { unit: 'm2' } => 'area' }
+Map(1) { 'area' => [Function: area] { unit: 'm2' } }
+area true m2
+area true [ 'unit' ]
+Map(1) { [Function: area] { unit: 'cm2' } => 'area' }
+2 10 bound area 1 true
+Set(2) { [Function: area] { unit: 'cm2' }, [Function: bound area] }
+double undefined 1
+Map(1) { [Function: bound area] => 'double' }
+3 map:area:function
+true bound get function
+true true false
+[ 'unit', 'calls' ] area 1
+Map(1) { 'area' => [Function: area] { unit: 'cm2', calls: 1 } }

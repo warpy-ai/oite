@@ -14,6 +14,7 @@ pub mod abi_tests;
 pub mod abi_version;
 pub mod r#async;
 pub mod builtins;
+pub mod collection;
 pub mod heap;
 pub mod intrinsics;
 pub mod object;

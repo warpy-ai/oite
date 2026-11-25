@@ -2,6 +2,7 @@
 //! the shared built-in methods use (`NativeHost`).
 
 use super::*;
+use builtins::{Method, Receiver};
 
 // =========================================================================
 // Calls
@@ -35,95 +36,19 @@ pub extern "C" fn ot_call_method(
     let r = OtValue::from_bits(recv);
     let key_atom = unsafe { atom::static_atom(key, key_len) };
     let key = unsafe { name(key, key_len) };
+    let a = unsafe { args(argv, argc) };
 
-    // Built-in array methods.
-    if let Some((ptr, ObjectKind::Array)) = object(r) {
-        let arr = array(ptr);
-        let a = unsafe { args(argv, argc) };
-        match key {
-            "push" => {
-                let mut len = arr.len as usize;
-                for &v in a {
-                    len = array_push(arr, v);
-                }
-                return number(len as f64);
-            }
-            "pop" => {
-                if arr.len == 0 {
-                    return undefined();
-                }
-                arr.len -= 1;
-                return unsafe { *arr.elements.add(arr.len as usize) };
-            }
-            _ => {}
-        }
-        // Every other array method is shared with the VM. It works on a
-        // copy of the elements, which is written back afterwards.
-        let mut elems: Vec<u64> = (0..arr.len as usize)
-            .map(|i| unsafe { *arr.elements.add(i) })
-            .collect();
-        if let Some(result) = builtins::array_method(&NativeHost, &mut elems, key, a) {
-            array_reserve(arr, elems.len());
-            for (i, v) in elems.iter().enumerate() {
-                unsafe { *arr.elements.add(i) = *v };
-            }
-            arr.len = elems.len() as u32;
-            return outcome(result, recv);
-        }
-        // The methods added to `Array.prototype`.
-        if let Some(method) = array_proto_method(key) {
-            return ot_call(method, recv, argv, argc);
-        }
-    }
-
-    // Promise methods.
-    if let Some(id) = promise_id(recv)
-        && let Some(result) = promise_method(id, key, unsafe { args(argv, argc) })
-    {
+    // (A function's own property, `F.create()`, is not built in: it is
+    // looked up below.)
+    if let Some(result) = run_builtin(recv, key, a) {
         return result;
     }
 
-    // `f.call(thisArg, ...args)`, `f.apply(thisArg, array)`
-    if let Some((_, ObjectKind::Function)) = object(r)
-        && (key == "call" || key == "apply")
+    // The array methods added to `Array.prototype`.
+    if let Some((_, ObjectKind::Array)) = object(r)
+        && let Some(method) = array_proto_method(key)
     {
-        let a = unsafe { args(argv, argc) };
-        let this = a.first().copied().unwrap_or_else(undefined);
-        if key == "call" {
-            let rest = if a.is_empty() { a } else { &a[1..] };
-            return ot_call(recv, this, rest.as_ptr(), rest.len());
-        }
-        let list: Vec<u64> = match a.get(1).and_then(|v| object(OtValue::from_bits(*v))) {
-            Some((ptr, ObjectKind::Array)) => {
-                let arr = array(ptr);
-                (0..arr.len as usize)
-                    .map(|i| unsafe { *arr.elements.add(i) })
-                    .collect()
-            }
-            _ => Vec::new(),
-        };
-        return ot_call(recv, this, list.as_ptr(), list.len());
-    }
-
-    // Number methods, shared with the VM.
-    if r.is_number() {
-        let a = unsafe { args(argv, argc) };
-        if let Some(result) = builtins::number_method(&NativeHost, r.as_number_unchecked(), key, a)
-        {
-            return outcome(result, recv);
-        }
-    }
-
-    // String methods, shared with the VM.
-    if let Some(s) = as_str(r) {
-        let a = unsafe { args(argv, argc) };
-        // Indexing: an ASCII string's flag saves scanning it.
-        if let Some(result) = builtins::string_index(&NativeHost, s, is_ascii(r), key, a) {
-            return outcome(result, recv);
-        }
-        if let Some(result) = builtins::string_method(&NativeHost, s, key, a) {
-            return outcome(result, recv);
-        }
+        return ot_call(method, recv, argv, argc);
     }
 
     let method = get_property_atom(r, key_atom);
@@ -137,6 +62,174 @@ pub extern "C" fn ot_call_method(
         "TypeError",
         &format!("{}.{} is not a function", inspect(r), key),
     )
+}
+
+/// `recv.key(...a)` when `key` is a built-in method of `recv`, the same
+/// code the VM runs (`builtins`); `None` when it is not one.
+fn run_builtin(recv: u64, key: &str, a: &[u64]) -> Option<u64> {
+    let r = OtValue::from_bits(recv);
+    // `f.call(thisArg, ...args)`, `f.apply(thisArg, array)`, `f.bind(...)`
+    if let Some((_, ObjectKind::Function)) = object(r) {
+        return function_method(recv, key, a);
+    }
+    if let Some((ptr, ObjectKind::Array)) = object(r) {
+        let arr = array(ptr);
+        match key {
+            "push" => {
+                let mut len = arr.len as usize;
+                for &v in a {
+                    len = array_push(arr, v);
+                }
+                return Some(number(len as f64));
+            }
+            "pop" => {
+                if arr.len == 0 {
+                    return Some(undefined());
+                }
+                arr.len -= 1;
+                return Some(unsafe { *arr.elements.add(arr.len as usize) });
+            }
+            _ => {}
+        }
+        // The others work on a copy of the elements, written back after.
+        let mut elems: Vec<u64> = (0..arr.len as usize)
+            .map(|i| unsafe { *arr.elements.add(i) })
+            .collect();
+        let result = builtins::array_method(&NativeHost, &mut elems, key, a)?;
+        array_reserve(arr, elems.len());
+        for (i, v) in elems.iter().enumerate() {
+            unsafe { *arr.elements.add(i) = *v };
+        }
+        arr.len = elems.len() as u32;
+        return Some(outcome(result, recv));
+    }
+    if let Some(id) = promise_id(recv) {
+        return promise_method(id, key, a);
+    }
+    match receiver_of(recv) {
+        Some(Receiver::Map | Receiver::Set) => return collection_method(recv, key, a),
+        Some(Receiver::MapIterator | Receiver::SetIterator) => {
+            return (key == "next").then(|| iterator_next(recv));
+        }
+        _ => {}
+    }
+    if r.is_number() {
+        let result = builtins::number_method(&NativeHost, r.as_number_unchecked(), key, a)?;
+        return Some(outcome(result, recv));
+    }
+    let s = as_str(r)?;
+    // Indexing: an ASCII string's flag saves scanning it.
+    let result = builtins::string_index(&NativeHost, s, is_ascii(r), key, a)
+        .or_else(|| builtins::string_method(&NativeHost, s, key, a))?;
+    Some(outcome(result, recv))
+}
+
+/// The kind of value `v` is, if it has built-in methods.
+pub(super) fn receiver_of(v: u64) -> Option<Receiver> {
+    let r = OtValue::from_bits(v);
+    if r.is_number() {
+        return Some(Receiver::Number);
+    }
+    match object(r)? {
+        (_, ObjectKind::String) => Some(Receiver::String),
+        (_, ObjectKind::Array) => Some(Receiver::Array),
+        (_, ObjectKind::Object) if promise_id(v).is_some() => Some(Receiver::Promise),
+        (_, ObjectKind::Function) => Some(Receiver::Function),
+        (_, ObjectKind::Map) => Some(Receiver::Map),
+        (_, ObjectKind::Set) => Some(Receiver::Set),
+        (_, ObjectKind::Iterator) => iterator_receiver(v),
+        _ => None,
+    }
+}
+
+thread_local! {
+    /// The function value of each built-in method, made when first read,
+    /// so that `s.trim === t.trim`.
+    static METHOD_VALUES: RefCell<HashMap<Method, u64>> = RefCell::new(HashMap::new());
+}
+
+/// The built-in method `name` of `receiver` as a function value, if it
+/// has one.
+pub(super) fn builtin_method(receiver: Receiver, name: &str) -> Option<u64> {
+    let m = Method::find(receiver, name)?;
+    Some(METHOD_VALUES.with(|values| {
+        *values.borrow_mut().entry(m).or_insert_with(|| {
+            ot_make_closure(ot_builtin_method as *const u8, number(m.to_bits() as f64))
+        })
+    }))
+}
+
+/// Whether the function at `ptr` is a built-in method (`builtin_method`),
+/// which is not a constructor.
+pub(super) fn is_builtin_method(ptr: HeapPtr) -> bool {
+    unsafe { ptr.as_ref::<NativeFunction>() }.code == ot_builtin_method as *const u8
+}
+
+/// A built-in method called as a function value (`const trim = s.trim;
+/// trim.call(t)`); `env` is the method (`Method::to_bits`). A `this` of
+/// another kind is a TypeError, except that a string method converts it to
+/// a string, as JavaScript does.
+pub extern "C" fn ot_builtin_method(this: u64, argv: *const u64, argc: usize, env: u64) -> u64 {
+    let bits = OtValue::from_bits(env).as_number_unchecked() as u32;
+    let m = Method::from_bits(bits).expect("a built-in method's environment");
+    let v = OtValue::from_bits(this);
+    let nullish = v.is_null() || v.is_undefined();
+    let mut this = this;
+    if receiver_of(this) != Some(m.receiver()) {
+        if m.receiver() != Receiver::String || nullish {
+            let shown = builtins::receiver_shown(&NativeHost, &this);
+            let e = m.receiver_error(nullish, &shown);
+            return throw_error(e.kind, &e.message);
+        }
+        this = ot_to_str(this);
+        if this == EXCEPTION_BITS {
+            return this;
+        }
+    }
+    let a = unsafe { args(argv, argc) };
+    run_builtin(this, m.name(), a).expect("a listed method is implemented")
+}
+
+/// The arguments of a call with a spread (`f(a, ...xs)`): the elements of
+/// the array the caller collected them in.
+fn spread_args(args: u64) -> Vec<u64> {
+    use builtins::Host;
+    NativeHost
+        .array_elements(&args)
+        .expect("a spread call's arguments are an array")
+}
+
+/// `f(...args)` with the given `this`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_call_spread(func: u64, this: u64, args: u64) -> u64 {
+    let a = spread_args(args);
+    ot_call(func, this, a.as_ptr(), a.len())
+}
+
+/// `recv.name(...args)`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_call_method_spread(
+    recv: u64,
+    key: *const u8,
+    key_len: usize,
+    args: u64,
+) -> u64 {
+    let a = spread_args(args);
+    ot_call_method(recv, key, key_len, a.as_ptr(), a.len())
+}
+
+/// `new ctor(...args)`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_construct_spread(ctor: u64, args: u64) -> u64 {
+    let a = spread_args(args);
+    ot_construct(ctor, a.as_ptr(), a.len())
+}
+
+/// `super(...args)` on `this`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ot_call_super_spread(parent: u64, this: u64, args: u64) -> u64 {
+    let a = spread_args(args);
+    ot_call_super(parent, this, a.as_ptr(), a.len())
 }
 
 /// `__intrinsic_<name>(args)`: intrinsic `id`, as on every backend
@@ -157,21 +250,15 @@ pub extern "C" fn ot_check_type(value: u64, kinds: usize) -> u64 {
     outcome(super::super::intrinsics::call(&NativeHost, id, &args), 0)
 }
 
-/// `[..., ...source]`: append `source`'s elements (an array's, or a
-/// string's characters) to the array `target`; `target`.
+/// `[..., ...source]`: append what `source` iterates (`iterate`) to the
+/// array `target`; `target`.
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_array_spread(target: u64, source: u64) -> u64 {
-    use builtins::Host;
     let Some((tptr, ObjectKind::Array)) = object(OtValue::from_bits(target)) else {
         return target;
     };
-    let src = OtValue::from_bits(source);
-    let items: Vec<u64> = if let Some(s) = as_str(src) {
-        s.chars().map(|c| new_string(&c.to_string())).collect()
-    } else if let Some(elems) = NativeHost.array_elements(&source) {
-        elems
-    } else {
-        return throw_error("TypeError", &format!("{} is not iterable", inspect(src)));
+    let Some(items) = iterate(source) else {
+        return not_iterable(source);
     };
     for v in items {
         array_push(array(tptr), v);
@@ -279,13 +366,43 @@ impl builtins::Host for NativeHost {
 
     fn own_keys(&self, v: &u64) -> Vec<String> {
         match object(OtValue::from_bits(*v)) {
-            Some((ptr, ObjectKind::Object)) => object::own(obj(ptr))
+            Some((ptr, ObjectKind::Object)) => {
+                // A class's `name`, `prototype`, ... are not listed.
+                let class = is_class(ptr);
+                object::own(obj(ptr))
+                    .into_iter()
+                    .map(|(a, _, v)| (atom::info(a), v))
+                    .filter(|(info, v)| {
+                        !(info.hidden
+                            || class && builtins::is_function_key(info.name)
+                            || builtins::is_constructor_link(self, info.name, v))
+                    })
+                    .map(|(info, _)| info.name.to_string())
+                    .collect()
+            }
+            Some((ptr, ObjectKind::Function)) => function_entries(ptr)
                 .into_iter()
-                .map(|(a, _, _)| atom::info(a))
-                .filter(|info| !info.hidden)
-                .map(|info| info.name.to_string())
+                .map(|(k, _)| k.to_string())
                 .collect(),
             Some((ptr, ObjectKind::Array)) => (0..array(ptr).len).map(|i| i.to_string()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn identity(&self, v: &u64) -> u64 {
+        *v
+    }
+
+    fn receiver(&self, v: &u64) -> Option<Receiver> {
+        receiver_of(*v)
+    }
+
+    fn own_entries(&self, v: &u64) -> Vec<(String, u64)> {
+        match object(OtValue::from_bits(*v)) {
+            Some((ptr, ObjectKind::Object)) => visible_data(ptr)
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
             _ => Vec::new(),
         }
     }

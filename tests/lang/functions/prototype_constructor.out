@@ -1,0 +1,12 @@
+[ 'm', 'n' ]
+{ m: [Function (anonymous)], n: 1 }
+{ m: [Function (anonymous)], n: 1 }
+key m
+key n
+true true true
+true 1
+[] {} true
+[] true
+[] {} true
+true 1
+[ 'constructor', 'a' ] { constructor: 1, a: 2 }
