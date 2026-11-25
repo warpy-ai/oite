@@ -1,0 +1,5 @@
+// backends: vm jit aot
+// flags: --no-std
+// Without the prelude there are no prelude functions and no array methods
+// from it.
+console.log(typeof map, typeof trim, typeof [1].map);

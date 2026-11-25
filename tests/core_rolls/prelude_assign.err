@@ -1,0 +1,1 @@
+prelude_assign.ot:4:1: error: cannot assign to 'map': it is an import from @rolls/std (the prelude); declare it to shadow it

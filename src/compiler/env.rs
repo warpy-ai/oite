@@ -32,8 +32,9 @@ impl Codegen {
 
     /// `[] -> [value of ident]`
     /// The name a variable has in the program: a top-level binding of a
-    /// linked module has the module's prefix, and an import names the
-    /// binding it imports.
+    /// linked module has the module's prefix, an import names the binding
+    /// it imports, and so does a name of the prelude the module does not
+    /// declare.
     pub(super) fn var_name(&self, ident: &Ident) -> String {
         let name = ident.sym.to_string();
         match &self.link {
@@ -42,6 +43,9 @@ impl Codegen {
                     Some(global) => global.clone(),
                     None => format!("{}{}", link.prefix, name),
                 }
+            }
+            Some(link) if self.scopes.is_free(ident.span) => {
+                link.prelude.get(&name).cloned().unwrap_or(name)
             }
             _ => name,
         }
@@ -69,6 +73,16 @@ impl Codegen {
             && (link.imports.contains_key(&*ident.sym) || link.namespaces.contains_key(&*ident.sym))
         {
             let message = format!("cannot assign to '{}': it is an import", ident.sym);
+            self.errors.push((ident.span, message));
+        }
+        if let Some(link) = &self.link
+            && self.scopes.is_free(ident.span)
+            && link.prelude.contains_key(&*ident.sym)
+        {
+            let message = format!(
+                "cannot assign to '{}': it is an import from @rolls/std (the prelude); declare it to shadow it",
+                ident.sym
+            );
             self.errors.push((ident.span, message));
         }
         let name = self.var_name(ident);

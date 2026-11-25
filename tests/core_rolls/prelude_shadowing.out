@@ -1,0 +1,5 @@
+own map 3 [ 1, 2 ]
+10 6
+block filter
+[ 2, 3 ]
+3 9

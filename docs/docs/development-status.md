@@ -71,7 +71,7 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Methods on object literals (`this`)        | Covered                              | Covered                           |
 | String methods (`slice`, `split`, `trim`, `indexOf`, `padStart`, ...) | Covered   | Covered (shared implementation)   |
 | Array methods (`splice`, `join`, `indexOf`, `concat`, `shift`, ...)   | Covered   | Covered (shared implementation)   |
-| Callback methods (`map`, `filter`, `forEach`, `reduce`) | Not built in; `@rolls/array` has them as functions | Same |
+| Callback methods (`map`, `filter`, `forEach`, `reduce`) | Not built in: the prelude attaches `@rolls/array`'s functions to `Array.prototype` (`tests/core_rolls/`); none with `--no-std` | Same |
 | Array methods added to `Array.prototype`   | Covered                              | Covered                           |
 | Built-in methods as values (`const trim = s.trim`, `trim.call(t)`, `arr.push.apply(arr, xs)`, `Array.prototype.push`, `String.prototype.trim`) | Covered | Covered (same implementation) |
 | Functions as objects (`f.x = 1`, `Object.keys(f)`, `f.name`, `f.length`, `F.prototype`, `f.bind(this, ...args)`) | Covered | Covered |
@@ -97,6 +97,7 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Microtask ordering, `setTimeout` / `clearTimeout`, unhandled rejections (exit 1) | Covered | Covered               |
 | Top-level `await`                          | Not supported: evaluates to its operand without waiting | Same          |
 | ES modules (`import` / `export`, re-exports, `import * as`, `@rolls/*`), linked at compile time | Covered | Covered                 |
+| The prelude: `@rolls/std`'s exports in scope with no import, shadowed by the program's own names; `--no-std` ([Platform Architecture](platform-architecture.md#the-prelude)) | Covered with the core rolls (`tests/core_rolls/`) | Same; slow to compile (see Performance) |
 | Circular imports                           | Compile error                        | Compile error                     |
 | Intrinsics (`__intrinsic_*`, the 29 the rolls build on) | Covered (shared implementation) | Covered (same implementation) |
 | An unknown `__intrinsic_` name             | Compile error                        | Compile error                     |
@@ -145,6 +146,25 @@ cargo test --release --test golden    # language behaviour only
 | Arithmetic      | 2.34 µs/iter | 0.39 µs/iter    | ~6x     |
 | JIT compilation | -            | 980 µs          | -       |
 | Break-even      | -            | ~500 iterations | -       |
+
+### The prelude's cost
+
+`console.log("hello")` with the prelude and with `--no-std`, median of 5
+runs on an Apple M2 Pro:
+
+| Command                          | `--no-std` | Prelude  |
+| -------------------------------- | ---------- | -------- |
+| `oitec hello.ot` (VM)            | 8 ms       | 16 ms    |
+| `oitec check hello.ot`           | 8 ms       | 15 ms    |
+| `oitec jit hello.ot`             | 22 ms      | 363 ms   |
+| `oitec build hello.ot --release` | 0.22 s     | 2.1 s    |
+| The native binary, run           | 3.0 ms     | 3.6 ms   |
+| The native binary, size          | 675 KiB    | 1546 KiB |
+
+The native backends compile every function of the prelude, 709 LLVM
+functions against 10 for the program alone, because each one is stored in
+a global when its module runs. Compiling only the functions a program can
+reach would remove most of it.
 
 ### Performance Targets
 
