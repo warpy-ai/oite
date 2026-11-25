@@ -3,7 +3,7 @@
 //! (docs/docs/object-model.md, section 4).
 
 use super::*;
-use crate::runtime::heap::{NativeArray, ObjectKind};
+use crate::runtime::heap::{NativeArray, ObjectHeader, ObjectKind};
 use std::mem::offset_of;
 
 impl Fx<'_> {
@@ -112,8 +112,9 @@ impl Fx<'_> {
         }
     }
 
-    /// `o.length`: the length field of an array or a string, read here;
-    /// for anything else, the property `length` through its cache.
+    /// `o.length`: the length field of an array or an ASCII string, read
+    /// here; for anything else, the property `length` through its cache
+    /// (the runtime counts a non-ASCII string's characters).
     pub(super) unsafe fn length(&mut self, o: LLVMValueRef) -> LLVMValueRef {
         unsafe {
             let b = self.builder;
@@ -129,13 +130,22 @@ impl Fx<'_> {
             LLVMBuildCondBr(b, is_ptr, ptr_bb, miss_bb);
 
             // Arrays and strings both keep their length at the same offset.
+            // A string's counts bytes, which are its characters only if it
+            // is ASCII.
             LLVMPositionBuilderAtEnd(b, ptr_bb);
             let kind = LLVMBuildLoad2(b, i8t, ptr, NONAME);
             let is = |k: ObjectKind| {
                 let k = LLVMConstInt(i8t, k as u64, 0);
                 LLVMBuildICmp(b, LLVMIntPredicate::LLVMIntEQ, kind, k, NONAME)
             };
-            let has_len = LLVMBuildOr(b, is(ObjectKind::Array), is(ObjectKind::String), NONAME);
+            let flags_ptr = self.field(ptr, offset_of!(ObjectHeader, flags));
+            let flags = LLVMBuildLoad2(b, i8t, flags_ptr, NONAME);
+            let ascii = LLVMConstInt(i8t, ObjectHeader::ASCII as u64, 0);
+            let ascii = LLVMBuildAnd(b, flags, ascii, NONAME);
+            let zero = LLVMConstInt(i8t, 0, 0);
+            let ascii = LLVMBuildICmp(b, LLVMIntPredicate::LLVMIntNE, ascii, zero, NONAME);
+            let ascii_string = LLVMBuildAnd(b, is(ObjectKind::String), ascii, NONAME);
+            let has_len = LLVMBuildOr(b, is(ObjectKind::Array), ascii_string, NONAME);
             LLVMBuildCondBr(b, has_len, hit_bb, miss_bb);
 
             LLVMPositionBuilderAtEnd(b, hit_bb);

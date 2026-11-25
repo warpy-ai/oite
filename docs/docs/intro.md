@@ -31,9 +31,9 @@ console.log(fib(35)); // Compiled to native code!
 - **Native Execution** — SSA-based IR compiled to native code via Cranelift/LLVM
 - **Link-Time Optimization** — ThinLTO and Full LTO for maximum performance
 - **Standalone Binaries** — Self-contained executables with runtime stubs in LLVM IR
-- **Memory Safety** — Ownership model with compile-time borrow checking
-- **Self-Hosting Complete** — Compiler written in Oite, generates LLVM IR → native binaries
-- **Type Inference** — Hindley-Milner type analysis with generics
+- **Ownership checks** — Using a variable after its value was moved is a compile error ([Memory model](/rolls/memory-model)). Memory is not freed yet ([#123](https://github.com/warpy-ai/oite/issues/123)).
+- **Self-Hosting, in progress** — A compiler written in Oite (`compiler/`). It cannot compile its own source yet ([#131](https://github.com/warpy-ai/oite/issues/131)).
+- **Type Checking** — TypeScript-style annotations, checked by the compiler ([Types](types.md)). Generic calls are not checked yet.
 - **TypeScript Syntax** — Familiar syntax with full ES6+ and TypeScript features
 - **Classes & Inheritance** — ES6 classes with extends, super(), and private fields
 - **Error Handling** — try/catch/finally with exception propagation

@@ -47,6 +47,7 @@ const WELL_KNOWN: &[&str] = &[
     "prototype",
     "constructor",
     "__promise_ctor__",
+    "name",
 ];
 pub const PROTO: Atom = 0;
 pub const LENGTH: Atom = 1;
@@ -58,6 +59,7 @@ pub const CLASS: Atom = 6;
 pub const PROTOTYPE: Atom = 7;
 pub const CONSTRUCTOR: Atom = 8;
 pub const PROMISE_CTOR: Atom = 9;
+pub const NAME: Atom = 10;
 
 /// Entries in the cache of names compiled code passes (a power of two).
 const STATIC_CACHE: usize = 1024;
@@ -158,6 +160,7 @@ mod tests {
         assert_eq!(atom("prototype"), PROTOTYPE);
         assert_eq!(atom("constructor"), CONSTRUCTOR);
         assert_eq!(atom("__promise_ctor__"), PROMISE_CTOR);
+        assert_eq!(atom("name"), NAME);
         let x = atom("x");
         assert_eq!(atom("x"), x);
         assert_ne!(atom("y"), x);

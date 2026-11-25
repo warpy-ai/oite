@@ -12,6 +12,16 @@ impl Lowerer {
                 self.push(dst);
             }
 
+            // A function not made once (`made_once`) is a new function
+            // each time its expression runs; this one captures nothing.
+            OpCode::Push(JsValue::Function { address, .. }) if !self.names.made_once(*address) => {
+                let env = self.alloc_value(IrType::Any);
+                self.emit(IrOp::Const(env, Literal::Undefined));
+                let dst = self.alloc_value(IrType::Function);
+                self.emit(IrOp::MakeClosure(dst, *address as u32, env));
+                self.push(dst);
+            }
+
             OpCode::Push(value) => {
                 let (lit, ty) = self.jsvalue_to_literal(value);
                 let dst = self.alloc_value(ty);
@@ -111,6 +121,13 @@ impl Lowerer {
                 let a = self.pop()?;
                 let dst = self.alloc_value(IrType::String);
                 self.emit(IrOp::ToStr(dst, a));
+                self.push(dst);
+            }
+
+            OpCode::GetIterator => {
+                let a = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::GetIterator(dst, a));
                 self.push(dst);
             }
 
@@ -468,6 +485,8 @@ impl Lowerer {
                 self.emit(IrOp::CallSuper(dst, parent, args));
                 self.push(dst);
             }
+            // Never runs: it describes the function body after it.
+            OpCode::FunctionInfo(_) => {}
             OpCode::RestArgs(n) => {
                 // The arguments from the `n`th on, as an array; the first
                 // `Let` binds it.
@@ -497,6 +516,28 @@ impl Lowerer {
                 let args = self.pop_n(*argc)?;
                 let dst = self.alloc_value(IrType::Any);
                 self.emit(IrOp::CallWithThis(dst, func, this, args));
+                self.push(dst);
+            }
+            OpCode::SpreadCall(kind) => {
+                // [args array, operands...]
+                let callee = match kind {
+                    CallKind::Plain => {
+                        let func = self.pop()?;
+                        let this = self.alloc_value(IrType::Any);
+                        self.emit(IrOp::Const(this, Literal::Undefined));
+                        SpreadCallee::Function(func, this)
+                    }
+                    CallKind::WithThis => {
+                        let this = self.pop()?;
+                        SpreadCallee::Function(self.pop()?, this)
+                    }
+                    CallKind::Method(name) => SpreadCallee::Method(self.pop()?, name.clone()),
+                    CallKind::Construct => SpreadCallee::Construct(self.pop()?),
+                    CallKind::Super => SpreadCallee::Super(self.pop()?),
+                };
+                let args = self.pop()?;
+                let dst = self.alloc_value(IrType::Any);
+                self.emit(IrOp::SpreadCall(dst, callee, args));
                 self.push(dst);
             }
             OpCode::GetPrivate(key) => {
@@ -687,7 +728,9 @@ impl Lowerer {
             JsValue::Undefined => (Literal::Undefined, IrType::Any),
             JsValue::Object(_) => (Literal::Null, IrType::Object),
             JsValue::Function { address, .. } => (Literal::Function(*address), IrType::Function),
-            JsValue::NativeFunction(_) => (Literal::Null, IrType::Function),
+            JsValue::NativeFunction(_) | JsValue::BuiltinMethod(_) | JsValue::BoundFunction(_) => {
+                (Literal::Null, IrType::Function)
+            }
             JsValue::Accessor(_, _) => (Literal::Null, IrType::Any),
             JsValue::Promise(_) => (Literal::Null, IrType::Any),
         }

@@ -6,7 +6,7 @@ Goal: a long-running Oite program must not grow memory forever ([#123](https://g
 
 ## Where memory goes today
 
-- **VM heap.** `VM::heap` is a `Vec<HeapObject>`. A reference is a slot index: `JsValue::Object(usize)`, or the `env` of a `JsValue::Function`. `HeapData` is an object, array, byte stream, `Map` or `Set`. Strings are Rust `String`s and promises are `Arc`s, so Rust frees both. Before phase 1, nothing removed a slot, and the #123 loop peaked at 1,052 MB for 3 million objects (about 350 bytes each).
+- **VM heap.** `VM::heap` is a `Vec<HeapObject>`. A reference is a slot index: `JsValue::Object(usize)`, `JsValue::BoundFunction(usize)`, or the `env` of a `JsValue::Function`. `HeapData` is an object, array, byte stream, `Map`, `Set`, iterator or bound function. A function's own properties are an object in `VM::fn_props`, keyed by the function. Strings are Rust `String`s and promises are `Arc`s, so Rust frees both. Before phase 1, nothing removed a slot, and the #123 loop peaked at 1,052 MB for 3 million objects (about 350 bytes each).
 - **Native heap.** `NativeHeap` (`src/runtime/heap.rs`) bump-allocates in chunks and never frees. Values are NaN-boxed `u64`s. `ObjectHeader.marked` exists, but nothing reads it. Array elements, overflow slots and dictionaries are separate `malloc` buffers. Async frames are leaked with `Box::leak` (`stubs/async_fns.rs`), and the `PROMISES` table never shrinks (`stubs/promises.rs`). Compiled code allocates only through runtime stubs, never inline. Exceptions are return codes, so there is no unwinding.
 - **Per object in the #123 loop.** About 350 bytes on the VM and 56 bytes on AOT (a `NativeObject` with two inline slots).
 
@@ -57,7 +57,7 @@ The collector runs only between instructions, and only while no Rust frame has r
 
 With the depth check removed, both fail under `OITE_GC_STRESS`. The first prints `string 1[object Object]` instead of `number 3`, and the second throws a `TypeError`. The check has a cost. Code inside a timer callback, a promise reaction, a resumed async function or a module body does not collect until control is back at the top level.
 
-The module comment in `gc.rs` lists the roots. `mark_roots` destructures every `VM` field by name, so a new field does not compile until someone classifies it as a root or not.
+The module comment in `gc.rs` lists the roots. `mark_roots` destructures every `VM` field by name, so a new field does not compile until someone classifies it as a root or not. `fn_props` is weak: a function's properties are marked only once the function itself is reached, and a collection drops the entries of functions it did not reach. A bound function's key is its slot, so a stale entry would hand its properties to the next `bind` that reuses the slot (`tests/lang/gc/function_props.ot`).
 
 A collection runs once the allocations since the last one reach max(live objects, 100,000). `OITE_GC_STRESS=1` lowers that to one allocation. The `golden_gc_stress` test in `tests/golden.rs` runs every VM golden program that way. In `tests/lang/gc/roots.ot` and `unhandled_reason.ot`, each case keeps a value alive through one root only. `tests/memory.rs` checks the peak RSS of the #123 loop.
 

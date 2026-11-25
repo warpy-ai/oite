@@ -320,7 +320,8 @@ impl Codegen {
                 // unique, and use a character no identifier can contain.
                 let tmp = format!("%optcall{}", self.instructions.len());
 
-                // A method callee (`o.m?.()` or `o?.m()`) keeps `o` as `this`.
+                // A method callee (`o.m?.()`, `o?.m()`, `o?.[k]()`) keeps `o`
+                // as `this`.
                 let method = match call.callee.as_ref() {
                     Expr::Member(m) => Some((m, false)),
                     Expr::OptChain(c) => match c.base.as_ref() {
@@ -331,28 +332,43 @@ impl Codegen {
                 };
 
                 match method {
-                    Some((member, obj_optional)) if matches!(member.prop, MemberProp::Ident(_)) => {
-                        let MemberProp::Ident(name) = &member.prop else {
-                            unreachable!()
-                        };
-                        let name = name.sym.to_string();
+                    Some((member, obj_optional))
+                        if !matches!(member.prop, MemberProp::PrivateName(_)) =>
+                    {
                         self.gen_opt_chain_object(&member.obj, to_undefined);
                         if obj_optional {
                             to_undefined.extend(self.emit_jumps_if_nullish());
                         }
                         self.instructions.push(OpCode::Let(tmp.clone()));
-                        if chain.optional {
-                            self.instructions.push(OpCode::Load(tmp.clone()));
-                            self.instructions.push(OpCode::GetProp(name.clone()));
-                            to_undefined.extend(self.emit_jumps_if_nullish());
-                            self.instructions.push(OpCode::Pop);
+                        match (self.member_key(&member.prop), &member.prop) {
+                            (Some(name), _) => {
+                                if chain.optional {
+                                    self.instructions.push(OpCode::Load(tmp.clone()));
+                                    self.instructions.push(OpCode::GetProp(name.clone()));
+                                    to_undefined.extend(self.emit_jumps_if_nullish());
+                                    self.instructions.push(OpCode::Pop);
+                                }
+                                let argc = self.gen_args(&call.args);
+                                self.instructions.push(OpCode::Load(tmp));
+                                self.emit_call(CallKind::Method(name), argc);
+                            }
+                            (None, MemberProp::Computed(computed)) => {
+                                // `o[k]`, read once, is called with `this = o`.
+                                self.instructions.push(OpCode::Load(tmp.clone()));
+                                self.gen_expr(&computed.expr);
+                                self.instructions.push(OpCode::GetPropComputed);
+                                if chain.optional {
+                                    to_undefined.extend(self.emit_jumps_if_nullish());
+                                }
+                                let func = format!("%optfn{}", self.instructions.len());
+                                self.instructions.push(OpCode::Let(func.clone()));
+                                let argc = self.gen_args(&call.args);
+                                self.instructions.push(OpCode::Load(func));
+                                self.instructions.push(OpCode::Load(tmp));
+                                self.emit_call(CallKind::WithThis, argc);
+                            }
+                            (None, _) => unreachable!("only a computed member has no key"),
                         }
-                        for arg in &call.args {
-                            self.gen_expr(&arg.expr);
-                        }
-                        self.instructions.push(OpCode::Load(tmp));
-                        self.instructions
-                            .push(OpCode::CallMethod(name, call.args.len()));
                     }
                     _ => {
                         self.gen_opt_chain_object(&call.callee, to_undefined);
@@ -360,11 +376,9 @@ impl Codegen {
                             to_undefined.extend(self.emit_jumps_if_nullish());
                         }
                         self.instructions.push(OpCode::Let(tmp.clone()));
-                        for arg in &call.args {
-                            self.gen_expr(&arg.expr);
-                        }
+                        let argc = self.gen_args(&call.args);
                         self.instructions.push(OpCode::Load(tmp));
-                        self.instructions.push(OpCode::Call(call.args.len()));
+                        self.emit_call(CallKind::Plain, argc);
                     }
                 }
             }

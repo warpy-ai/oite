@@ -1,0 +1,11 @@
+// backends: vm
+// JSON.stringify leaves a prototype's `constructor` out, as Node does: it
+// is not enumerable. (The native backends have no `JSON` yet.)
+function F() {}
+F.prototype.n = 1;
+console.log(JSON.stringify(F.prototype));
+function G() {}
+console.log(JSON.stringify(G.prototype), JSON.stringify(G.prototype, null, 2));
+class P {}
+console.log(JSON.stringify(P.prototype));
+console.log(JSON.stringify({ constructor: 1 }));

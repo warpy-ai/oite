@@ -1,0 +1,16 @@
+false falsy falsy 0 true false or false
+0 falsy falsy 0 true false or 0
+NaN falsy falsy 0 true false or NaN
+ falsy falsy 0 true false or 
+null falsy falsy 0 true false or null
+undefined falsy falsy 0 true false or undefined
+true truthy truthy 1 false true true and
+1 truthy truthy 1 false true 1 and
+-1 truthy truthy 1 false true -1 and
+0 truthy truthy 1 false true 0 and
+false truthy truthy 1 false true false and
+  truthy truthy 1 false true   and
+ truthy truthy 1 false true [] and
+[object Object] truthy truthy 1 false true {} and
+Infinity truthy truthy 1 false true Infinity and
+3

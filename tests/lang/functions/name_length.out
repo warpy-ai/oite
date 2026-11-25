@@ -1,0 +1,14 @@
+decl 3
+expr 1
+inner 2
+arrow 2
+later 0
+method 1 prop 2 arrowProp
+K 2 m 1 s #p
+1 1 2
+true true true
+string number
+decl 3 [] true
+decl true
+trim push toFixed
+decl/3 arrow/2 anonymous/0 method/1

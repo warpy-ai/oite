@@ -24,8 +24,17 @@ pub enum JsValue {
     Function {
         address: usize,
         env: Option<usize>, // Points to HeapObject with captured variables
+        /// Which function this is, what `===` compares: each time a
+        /// function expression runs it makes a new one
+        /// (`VM::make_function`). 0 in bytecode, before anything has run.
+        id: usize,
     },
     NativeFunction(usize),
+    /// A built-in method read off a value (`"a".trim`): a function that
+    /// calls it with the `this` it is given.
+    BuiltinMethod(crate::runtime::builtins::Method),
+    /// `f.bind(...)`: the `HeapData::Bound` at this index.
+    BoundFunction(usize),
     Null,
     Undefined,
     /// Accessor descriptor for getters/setters
@@ -33,6 +42,20 @@ pub enum JsValue {
     Accessor(Option<Box<JsValue>>, Option<Box<JsValue>>),
     /// Promise for ES modules and async operations
     Promise(Promise),
+}
+
+impl JsValue {
+    /// ToBoolean is false: `false`, `0`, `-0`, `NaN`, `""`, `null`,
+    /// `undefined`. Every other value, objects included, is truthy.
+    pub fn is_falsy(&self) -> bool {
+        match self {
+            JsValue::Boolean(b) => !b,
+            JsValue::Number(n) => *n == 0.0 || n.is_nan(),
+            JsValue::String(s) => s.is_empty(),
+            JsValue::Null | JsValue::Undefined => true,
+            _ => false,
+        }
+    }
 }
 
 impl PartialEq for JsValue {
@@ -46,13 +69,17 @@ impl PartialEq for JsValue {
                 JsValue::Function {
                     address: a,
                     env: ae,
+                    id: ai,
                 },
                 JsValue::Function {
                     address: b,
                     env: be,
+                    id: bi,
                 },
-            ) => a == b && ae == be,
+            ) => ai == bi && a == b && ae == be,
             (JsValue::NativeFunction(a), JsValue::NativeFunction(b)) => a == b,
+            (JsValue::BuiltinMethod(a), JsValue::BuiltinMethod(b)) => a == b,
+            (JsValue::BoundFunction(a), JsValue::BoundFunction(b)) => a == b,
             (JsValue::Null, JsValue::Null) => true,
             (JsValue::Undefined, JsValue::Undefined) => true,
             (JsValue::Accessor(a_get, a_set), JsValue::Accessor(b_get, b_set)) => {
@@ -178,8 +205,21 @@ pub enum HeapData {
     Array(Vec<JsValue>),
     /// ByteStream for building binary bytecode buffers
     ByteStream(Vec<u8>),
-    /// Map - ordered key-value pairs with any key type
-    Map(Vec<(JsValue, JsValue)>),
-    /// Set - ordered unique values
-    Set(Vec<JsValue>),
+    /// A `Map`: hashed, in insertion order (`runtime::collection`).
+    Map(crate::runtime::collection::Table<JsValue>),
+    /// A `Set`: each value is its own key.
+    Set(crate::runtime::collection::Table<JsValue>),
+    /// An iterator over a `Map` or a `Set`, or a `for...of` cursor.
+    Iterator(crate::runtime::collection::Iter<JsValue>),
+    /// A bound function (`JsValue::BoundFunction`).
+    Bound(Box<BoundFunction>),
+}
+
+/// `target.bind(this, ...args)`: calling it calls `target` with `this`
+/// and `args` before the arguments it is given.
+#[derive(Debug, Clone)]
+pub struct BoundFunction {
+    pub target: JsValue,
+    pub this: JsValue,
+    pub args: Vec<JsValue>,
 }

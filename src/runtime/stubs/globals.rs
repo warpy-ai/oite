@@ -56,12 +56,33 @@ pub(super) fn builtin(code: NativeFn) -> u64 {
     ot_make_function(code as *const u8)
 }
 
+/// An object holding the built-in methods of `receiver`, for
+/// `String.prototype`, `Number.prototype` and `Array.prototype`: the same
+/// values `"a".trim`, `(1).toFixed` and `[].push` are.
+fn builtin_prototype(receiver: builtins::Receiver) -> u64 {
+    let proto = ot_alloc_object();
+    for name in receiver.methods() {
+        let method = builtin_method(receiver, name).expect("a listed method");
+        set_property(OtValue::from_bits(proto), name, method);
+    }
+    proto
+}
+
 pub(super) fn initial_globals() -> HashMap<String, u64> {
     let mut g = HashMap::new();
     let console = ot_alloc_object();
     let c = OtValue::from_bits(console);
-    set_property(c, "log", builtin(ot_builtin_console_log));
-    set_property(c, "error", builtin(ot_builtin_console_error));
+    // `info` and `debug` print like `log`, `warn` like `error`, as in Node.
+    let (log, error) = (
+        builtin(ot_builtin_console_log),
+        builtin(ot_builtin_console_error),
+    );
+    for name in ["log", "info", "debug"] {
+        set_property(c, name, log);
+    }
+    for name in ["error", "warn"] {
+        set_property(c, name, error);
+    }
     g.insert("console".to_string(), console);
     let object = ot_alloc_object();
     set_property(
@@ -70,12 +91,15 @@ pub(super) fn initial_globals() -> HashMap<String, u64> {
         builtin(ot_builtin_object_keys),
     );
     g.insert("Object".to_string(), object);
-    // `Array`: `isArray` here, the methods that take callbacks in
-    // `std/core/array.ot`, on `Array.prototype`.
+    // `Array`: on `Array.prototype`, the methods built into the runtime,
+    // and the ones core does not implement, which the prelude
+    // (`@rolls/std`) or a program adds.
     let array_class = ot_alloc_object();
-    let ac = OtValue::from_bits(array_class);
-    set_property(ac, "isArray", builtin(ot_builtin_array_is_array));
-    set_property(ac, "prototype", ot_alloc_object());
+    set_property(
+        OtValue::from_bits(array_class),
+        "prototype",
+        builtin_prototype(builtins::Receiver::Array),
+    );
     g.insert("Array".to_string(), array_class);
     // `Math`: one built-in serves every function member; its environment
     // is the member's index in `MATH_FUNCTIONS`.
@@ -89,7 +113,24 @@ pub(super) fn initial_globals() -> HashMap<String, u64> {
         set_property(m, name, number(*value));
     }
     g.insert("Math".to_string(), math);
-    g.insert("String".to_string(), builtin(ot_builtin_string));
+    // `String(v)` and `Number(v)`, with the built-in methods on their
+    // `prototype`.
+    for (name, code, receiver) in [
+        (
+            "String",
+            ot_builtin_string as NativeFn,
+            builtins::Receiver::String,
+        ),
+        ("Number", ot_builtin_number, builtins::Receiver::Number),
+    ] {
+        let f = builtin(code);
+        set_property(
+            OtValue::from_bits(f),
+            "prototype",
+            builtin_prototype(receiver),
+        );
+        g.insert(name.to_string(), f);
+    }
     let promise = ot_alloc_object();
     let pr = OtValue::from_bits(promise);
     for (i, name) in ["resolve", "reject", "all", "race"].iter().enumerate() {
@@ -98,6 +139,8 @@ pub(super) fn initial_globals() -> HashMap<String, u64> {
     }
     set_property(pr, "__promise_ctor__", boolean(true));
     g.insert("Promise".to_string(), promise);
+    g.insert("Map".to_string(), collection_constructor(0));
+    g.insert("Set".to_string(), collection_constructor(1));
     for (i, name) in ["setTimeout", "clearTimeout"].iter().enumerate() {
         let f = ot_make_closure(ot_builtin_timer as *const u8, number(i as f64));
         g.insert(name.to_string(), f);

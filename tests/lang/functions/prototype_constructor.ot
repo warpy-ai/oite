@@ -1,0 +1,38 @@
+// backends: vm jit aot
+// The `prototype` a function is made with points back at it through
+// `constructor`, which is not enumerable: listing the prototype shows only
+// what the program put there. Held to Node's output.
+
+function F() {}
+F.prototype.m = function () {};
+F.prototype.n = 1;
+console.log(Object.keys(F.prototype));
+console.log(F.prototype);
+console.log({ ...F.prototype });
+for (const k in F.prototype) {
+  console.log("key", k);
+}
+
+// The link is still there.
+const f = new F();
+console.log(F.prototype.constructor === F, f.constructor === F, f instanceof F);
+console.log("constructor" in F.prototype, f.n);
+
+// A prototype nothing was added to, read once and listed.
+function G() {}
+console.log(Object.keys(G.prototype), G.prototype, G.prototype.constructor === G);
+
+// A function expression and a class.
+const H = function () {};
+console.log(Object.keys(H.prototype), H.prototype.constructor === H);
+class P {
+  constructor() {
+    this.x = 1;
+  }
+}
+console.log(Object.keys(P.prototype), P.prototype, P.prototype.constructor === P);
+console.log(new P() instanceof P, new P().x);
+
+// A program's own `constructor` property is listed.
+const o = { constructor: 1, a: 2 };
+console.log(Object.keys(o), o);

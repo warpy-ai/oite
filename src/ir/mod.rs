@@ -514,6 +514,9 @@ pub enum IrOp {
     SuperForward(ValueId, ValueId),
     /// `f(args)` with an explicit `this`: (dst, f, this, args).
     CallWithThis(ValueId, ValueId, ValueId, Vec<ValueId>),
+    /// A call with a spread argument: (dst, callee, args), the callee
+    /// called with the elements of the array `args`.
+    SpreadCall(ValueId, SpreadCallee, ValueId),
     /// `value instanceof ctor`
     InstanceOf(ValueId, ValueId, ValueId),
     /// `key in obj`: (dst, key, obj).
@@ -606,6 +609,8 @@ pub enum IrOp {
     ToNum(ValueId, ValueId),
     /// `String(v)`: an object's own `toString` converts it (may throw).
     ToStr(ValueId, ValueId),
+    /// What a `for...of` loop walks `val` with (`OpCode::GetIterator`).
+    GetIterator(ValueId, ValueId),
     /// TypeOf operator: dst = typeof(val) as string
     TypeOf(ValueId, ValueId),
     /// Delete property: dst = delete obj.prop (returns bool)
@@ -658,6 +663,19 @@ pub enum IrOp {
     Clone(ValueId, ValueId),
 }
 
+/// What an `IrOp::SpreadCall` calls.
+#[derive(Debug, Clone)]
+pub enum SpreadCallee {
+    /// A function, with `this`: (f, this).
+    Function(ValueId, ValueId),
+    /// `obj.name(...)`: (obj, name).
+    Method(ValueId, String),
+    /// `new ctor(...)`.
+    Construct(ValueId),
+    /// `super(...)`: the parent class's constructor on this `this`.
+    Super(ValueId),
+}
+
 impl IrOp {
     /// Whether the op can throw, so native code checks its result for an
     /// exception in flight.
@@ -678,11 +696,14 @@ impl IrOp {
                 | IrOp::Shl(_, _, _)
                 | IrOp::Shr(_, _, _)
                 | IrOp::ShrU(_, _, _)
+                | IrOp::EqLoose(_, _, _)
+                | IrOp::NeLoose(_, _, _)
                 | IrOp::Lt(_, _, _)
                 | IrOp::LtEq(_, _, _)
                 | IrOp::Gt(_, _, _)
                 | IrOp::GtEq(_, _, _)
                 | IrOp::ToStr(_, _)
+                | IrOp::GetIterator(_, _)
                 | IrOp::GetProp(_, _, _)
                 | IrOp::SetProp(_, _, _)
                 | IrOp::GetElement(_, _, _)
@@ -702,6 +723,7 @@ impl IrOp {
                 | IrOp::CallSuper(_, _, _)
                 | IrOp::SuperForward(_, _)
                 | IrOp::CallWithThis(_, _, _, _)
+                | IrOp::SpreadCall(_, _, _)
                 | IrOp::InstanceOf(_, _, _)
                 | IrOp::In(_, _, _)
                 | IrOp::AwaitResult(_)
@@ -759,6 +781,7 @@ impl IrOp {
             | IrOp::CallSuper(d, _, _)
             | IrOp::SuperForward(d, _)
             | IrOp::CallWithThis(d, _, _, _)
+            | IrOp::SpreadCall(d, _, _)
             | IrOp::InstanceOf(d, _, _)
             | IrOp::In(d, _, _)
             | IrOp::AsyncStart(d)
@@ -781,6 +804,7 @@ impl IrOp {
             | IrOp::ToBool(d, _)
             | IrOp::ToNum(d, _)
             | IrOp::ToStr(d, _)
+            | IrOp::GetIterator(d, _)
             | IrOp::Phi(d, _)
             | IrOp::Copy(d, _)
             | IrOp::LoadThis(d)
@@ -862,6 +886,7 @@ impl IrOp {
             | IrOp::ToBool(_, a)
             | IrOp::ToNum(_, a)
             | IrOp::ToStr(_, a)
+            | IrOp::GetIterator(_, a)
             | IrOp::Copy(_, a)
             | IrOp::ArrayLen(_, a)
             | IrOp::TypeCheck(_, a, _)
@@ -914,6 +939,12 @@ impl IrOp {
                 uses.extend(args.iter().copied());
                 uses
             }
+            IrOp::SpreadCall(_, callee, args) => match callee {
+                SpreadCallee::Function(func, this) => vec![*func, *this, *args],
+                SpreadCallee::Method(func, _)
+                | SpreadCallee::Construct(func)
+                | SpreadCallee::Super(func) => vec![*func, *args],
+            },
             IrOp::SuperForward(_, parent) => vec![*parent],
             IrOp::InstanceOf(_, v, c) | IrOp::In(_, v, c) => vec![*v, *c],
             IrOp::AsyncResolve(_, p, v)
@@ -1310,6 +1341,9 @@ pub struct IrModule {
     next_mono_id: u32,
     /// Mapping from bytecode address to function index (for extracted functions).
     pub function_addrs: HashMap<usize, usize>,
+    /// What each function is (`name`, `length`, `prototype`), by bytecode
+    /// address; native code registers it at program start.
+    pub function_info: HashMap<usize, crate::vm::opcodes::FunctionInfo>,
     /// Bytecode address of user-defined main() function, if any.
     pub user_main_addr: Option<usize>,
 }
@@ -1337,6 +1371,7 @@ impl IrModule {
             mono_cache: HashMap::new(),
             next_mono_id: 0,
             function_addrs: HashMap::new(),
+            function_info: HashMap::new(),
             user_main_addr: None,
         }
     }
@@ -1476,6 +1511,18 @@ impl fmt::Display for IrOp {
                     args_str.join(", ")
                 )
             }
+            IrOp::SpreadCall(d, callee, args) => match callee {
+                SpreadCallee::Function(func, this) => {
+                    write!(f, "{} = call {}[this={}](...{})", d, func, this, args)
+                }
+                SpreadCallee::Method(obj, name) => {
+                    write!(f, "{} = call.method {}.{}(...{})", d, obj, name, args)
+                }
+                SpreadCallee::Construct(func) => write!(f, "{} = new {}(...{})", d, func, args),
+                SpreadCallee::Super(parent) => {
+                    write!(f, "{} = call.super {}(...{})", d, parent, args)
+                }
+            },
             IrOp::InstanceOf(d, v, c) => write!(f, "{} = instanceof {}, {}", d, v, c),
             IrOp::In(d, k, o) => write!(f, "{} = in {}, {}", d, k, o),
             IrOp::AsyncStart(d) => write!(f, "{} = async.start", d),
@@ -1531,6 +1578,7 @@ impl fmt::Display for IrOp {
             IrOp::ToBool(d, v) => write!(f, "{} = to.bool {}", d, v),
             IrOp::ToNum(d, v) => write!(f, "{} = to.num {}", d, v),
             IrOp::ToStr(d, v) => write!(f, "{} = to.str {}", d, v),
+            IrOp::GetIterator(d, v) => write!(f, "{} = get.iterator {}", d, v),
             IrOp::Phi(d, entries) => {
                 let entries_str: Vec<_> = entries
                     .iter()

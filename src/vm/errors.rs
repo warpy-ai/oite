@@ -18,18 +18,6 @@ pub const CORE_ERRORS: &str = include_str!("../../std/core/error.ot");
 /// Where `CORE_ERRORS` comes from, for stack traces.
 pub const CORE_ERRORS_PATH: &str = "std/core/error.ot";
 
-/// The core library written in Oite, run in this order before the
-/// prelude and the program on every backend: (path, source).
-pub const CORE_LIBRARY: &[(&str, &str)] = &[
-    (CORE_ERRORS_PATH, CORE_ERRORS),
-    ("std/core/array.ot", include_str!("../../std/core/array.ot")),
-];
-
-/// Whether `path` is a file of the core library.
-pub fn is_core_path(path: &str) -> bool {
-    CORE_LIBRARY.iter().any(|(p, _)| *p == path)
-}
-
 impl VM {
     pub(super) fn global(&self, name: &str) -> Option<&JsValue> {
         self.call_stack.first()?.locals.get(name)
@@ -189,7 +177,10 @@ impl VM {
             JsValue::Boolean(b) => b.to_string(),
             JsValue::Null => "null".to_string(),
             JsValue::Undefined => "undefined".to_string(),
-            JsValue::Function { .. } | JsValue::NativeFunction(_) => "function".to_string(),
+            JsValue::Function { .. }
+            | JsValue::NativeFunction(_)
+            | JsValue::BuiltinMethod(_)
+            | JsValue::BoundFunction(_) => "function".to_string(),
             JsValue::Object(ptr) => match self.heap.get(*ptr).map(|o| &o.data) {
                 Some(HeapData::Array(items)) if depth < 100 => items
                     .iter()
@@ -200,6 +191,12 @@ impl VM {
                     .collect::<Vec<_>>()
                     .join(","),
                 Some(HeapData::Object(_)) if self.is_error(*ptr) => self.error_summary(*ptr),
+                Some(HeapData::Map(_) | HeapData::Set(_) | HeapData::Iterator(_)) => {
+                    match self.receiver_of(v) {
+                        Some(r) => format!("[object {}]", r.name()),
+                        None => "[object Object]".to_string(),
+                    }
+                }
                 _ => "[object Object]".to_string(),
             },
             _ => "[object Object]".to_string(),
@@ -250,14 +247,7 @@ pub fn to_number(v: &JsValue) -> f64 {
             }
         }
         JsValue::Null => 0.0,
-        JsValue::String(s) => {
-            let t = s.trim();
-            if t.is_empty() {
-                0.0
-            } else {
-                t.parse::<f64>().unwrap_or(f64::NAN)
-            }
-        }
+        JsValue::String(s) => crate::runtime::builtins::string_to_number(s),
         _ => f64::NAN,
     }
 }

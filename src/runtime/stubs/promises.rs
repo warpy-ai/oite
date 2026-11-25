@@ -461,12 +461,17 @@ pub(super) fn promise_method(id: usize, key: &str, a: &[u64]) -> Option<u64> {
 }
 
 /// `Promise { 1 }`, `Promise { <pending> }`, `Promise { <rejected> e }`.
-pub(super) fn promise_summary(id: usize, depth: usize, seen: &mut Vec<usize>) -> String {
+pub(super) fn promise_summary(
+    id: usize,
+    depth: usize,
+    opts: builtins::InspectOptions,
+    seen: &mut Vec<usize>,
+) -> String {
     let (state, value) = PROMISES.with(|p| {
         let p = p.borrow();
         (p[id].state, p[id].value)
     });
-    let mut shown = || inspect_inner(OtValue::from_bits(value), depth + 1, seen);
+    let mut shown = || inspect_inner(OtValue::from_bits(value), depth + 1, opts, seen);
     match state {
         0 => "Promise { <pending> }".to_string(),
         1 => format!("Promise {{ {} }}", shown()),

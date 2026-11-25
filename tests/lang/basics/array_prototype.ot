@@ -1,0 +1,39 @@
+// backends: vm jit aot
+// Methods a program adds to Array.prototype, which core looks up when an
+// array has no built-in method by that name. Checked against Node.
+Array.prototype.double = function () {
+  const out = [];
+  for (let i = 0; i < this.length; i++) {
+    out.push(this[i] * 2);
+  }
+  return out;
+};
+Array.prototype.total = function (start) {
+  let sum = start;
+  for (let i = 0; i < this.length; i++) {
+    sum += this[i];
+  }
+  return sum;
+};
+Array.prototype.apply2 = function (f, g) {
+  return this.double().total(0) + f(this.length) + g(this[0]);
+};
+Array.prototype.failIfEmpty = function () {
+  if (this.length === 0) {
+    throw new RangeError("empty");
+  }
+  return this.length;
+};
+
+const xs = [1, 2, 3];
+console.log(xs.double(), xs.total(10));
+console.log(xs.double().double().total(0));
+console.log(xs.apply2((n) => n * 100, (x) => x + 1000));
+console.log(typeof xs.double, typeof xs["total"], typeof xs.missing);
+console.log([].total(7), [4].failIfEmpty());
+try {
+  [].failIfEmpty();
+} catch (e) {
+  console.log(e instanceof RangeError, e.message);
+}
+console.log(xs.indexOf(2), xs.join("-"));

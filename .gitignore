@@ -5,7 +5,6 @@
 *.bc
 *.ll
 .vercel
-.docusaurus
 build
 node_modules
 

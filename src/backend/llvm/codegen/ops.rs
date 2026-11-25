@@ -125,6 +125,10 @@ impl Fx<'_> {
                     let r = self.rt("ot_to_str", &[self.get(*a)?]);
                     self.set(*d, r);
                 }
+                IrOp::GetIterator(d, a) => {
+                    let r = self.rt("ot_get_iterator", &[self.get(*a)?]);
+                    self.set(*d, r);
+                }
                 IrOp::TypeOf(d, a) => {
                     let r = self.rt("ot_typeof", &[self.get(*a)?]);
                     self.set(*d, r);
@@ -413,6 +417,29 @@ impl Fx<'_> {
                         .collect::<Result<_, _>>()?;
                     let (argv, argc) = self.arg_array(&vals);
                     let r = self.rt("ot_call", &[f, t, argv, argc]);
+                    self.set(*d, r);
+                }
+                IrOp::SpreadCall(d, callee, args) => {
+                    let a = self.get(*args)?;
+                    let r = match callee {
+                        SpreadCallee::Function(func, this) => {
+                            let (f, t) = (self.get(*func)?, self.get(*this)?);
+                            self.rt("ot_call_spread", &[f, t, a])
+                        }
+                        SpreadCallee::Method(recv, name) => {
+                            let r = self.get(*recv)?;
+                            let (p, n) = self.string(name);
+                            self.rt("ot_call_method_spread", &[r, p, n, a])
+                        }
+                        SpreadCallee::Construct(ctor) => {
+                            let c = self.get(*ctor)?;
+                            self.rt("ot_construct_spread", &[c, a])
+                        }
+                        SpreadCallee::Super(parent) => {
+                            let p = self.get(*parent)?;
+                            self.rt("ot_call_super_spread", &[p, self.this, a])
+                        }
+                    };
                     self.set(*d, r);
                 }
                 IrOp::In(d, k, o) => {

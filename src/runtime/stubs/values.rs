@@ -91,11 +91,7 @@ pub(super) fn to_number(v: OtValue) -> f64 {
         return 0.0;
     }
     if let Some(s) = as_str(v) {
-        let t = s.trim();
-        if t.is_empty() {
-            return 0.0;
-        }
-        return t.parse::<f64>().unwrap_or(f64::NAN);
+        return builtins::string_to_number(s);
     }
     f64::NAN
 }
@@ -150,6 +146,12 @@ pub(super) fn value_to_string(v: OtValue) -> String {
         }
         Some((_, ObjectKind::Function)) => "function".to_string(),
         Some((ptr, ObjectKind::Object)) if is_error(ptr) => error_summary(ptr),
+        Some((_, ObjectKind::Map | ObjectKind::Set | ObjectKind::Iterator)) => {
+            match receiver_of(v.to_bits()) {
+                Some(r) => format!("[object {}]", r.name()),
+                None => "[object Object]".to_string(),
+            }
+        }
         _ => "[object Object]".to_string(),
     }
 }

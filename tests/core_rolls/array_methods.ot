@@ -1,0 +1,15 @@
+// backends: vm jit aot
+// @rolls/array's functions attached as array methods, as the prelude will
+// attach them: one implementation for `map(xs, f)` and `xs.map(f)`.
+import { map, filter, reduce, find, some } from "@rolls/array";
+Array.prototype.map = function (f) { return map(this, f); };
+Array.prototype.filter = function (f) { return filter(this, f); };
+Array.prototype.reduce = function (f, init) { return reduce(this, f, init); };
+Array.prototype.find = function (f) { return find(this, f); };
+Array.prototype.some = function (f) { return some(this, f); };
+
+const xs = [3, 1, 4, 1, 5];
+console.log(xs.map((x) => x * 2), xs.filter((x) => x > 2));
+console.log(xs.map((x, i) => x + i).filter((x) => x % 2 === 0).reduce((a, x) => a + x, 0));
+console.log(xs.find((x) => x > 3), xs.some((x) => x > 4), xs.some((x) => x > 5));
+console.log(map(xs, (x) => -x));

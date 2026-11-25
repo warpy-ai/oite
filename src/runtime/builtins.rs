@@ -1,13 +1,15 @@
-//! Built-in string and array methods, shared by the VM and native code.
+//! Built-in string and array methods, and `console.log`'s formatting,
+//! shared by the VM and native code. `Map` and `Set` are in `collection`.
 //!
 //! Each method is implemented once, generically over the value
 //! representation: the VM plugs in `JsValue`, the native runtime plugs in
 //! NaN-boxed `u64` values (see `Host`). This keeps `"abc".slice(-2)` or
 //! `[1, 2, 3].splice(1, 1)` identical on every backend.
 //!
-//! String model: method indices count Unicode scalar values (`char`s). The
-//! `length` property still counts UTF-8 bytes; settling one model for both
-//! is #133. For ASCII text, which is all the tests use today, the two agree.
+//! String model: a string is a sequence of Unicode scalar values (`char`s),
+//! stored as UTF-8. `length`, `s[i]` and every method index count them on
+//! every backend (#133); `char_count` and `char_at` are where that is
+//! decided.
 
 /// What a built-in method needs from a value representation.
 pub trait Host {
@@ -28,6 +30,14 @@ pub trait Host {
     /// `Object.keys(v)`: an object's own property names, an array's indices,
     /// nothing for any other value.
     fn own_keys(&self, v: &Self::Value) -> Vec<String>;
+    /// A number that two `===` values share, for a value that is neither a
+    /// number nor a string: what a `Map` hashes such a key by.
+    fn identity(&self, v: &Self::Value) -> u64;
+    /// The kind of value `v` is, if it has built-in methods.
+    fn receiver(&self, v: &Self::Value) -> Option<Receiver>;
+    /// An object's own visible data properties, in order (what
+    /// `JSON.stringify` writes); nothing for any other value.
+    fn own_entries(&self, v: &Self::Value) -> Vec<(String, Self::Value)>;
 
     fn make_number(&self, n: f64) -> Self::Value;
     fn make_string(&self, s: String) -> Self::Value;
@@ -123,6 +133,187 @@ impl Kind {
     }
 }
 
+/// A kind of value whose methods are built into the runtime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Receiver {
+    String,
+    Array,
+    Number,
+    Promise,
+    Map,
+    Set,
+    /// `m.keys()`, `m.entries()`, ...
+    MapIterator,
+    SetIterator,
+    /// Functions, bound functions and built-in methods.
+    Function,
+}
+
+impl Receiver {
+    /// The names of its built-in methods: the ones `string_method`,
+    /// `array_method` and `number_method` answer, and the promise, `Map` and
+    /// `Set` methods of each backend. A name listed here must be one of
+    /// them: reading it off a value gives a function that calls it.
+    pub fn methods(self) -> &'static [&'static str] {
+        match self {
+            Receiver::String => &[
+                "at",
+                "charAt",
+                "charCodeAt",
+                "concat",
+                "endsWith",
+                "includes",
+                "indexOf",
+                "lastIndexOf",
+                "padEnd",
+                "padStart",
+                "repeat",
+                "replace",
+                "replaceAll",
+                "slice",
+                "split",
+                "startsWith",
+                "substring",
+                "toLowerCase",
+                "toString",
+                "toUpperCase",
+                "trim",
+                "trimEnd",
+                "trimLeft",
+                "trimRight",
+                "trimStart",
+                "valueOf",
+            ],
+            Receiver::Array => &[
+                "at",
+                "concat",
+                "fill",
+                "includes",
+                "indexOf",
+                "join",
+                "lastIndexOf",
+                "pop",
+                "push",
+                "reverse",
+                "shift",
+                "slice",
+                "splice",
+                "toString",
+                "unshift",
+            ],
+            Receiver::Number => &["toFixed", "toString", "valueOf"],
+            Receiver::Promise => &["catch", "finally", "then"],
+            Receiver::Map => &[
+                "clear", "delete", "entries", "forEach", "get", "has", "keys", "set", "values",
+            ],
+            Receiver::Set => &[
+                "add", "clear", "delete", "entries", "forEach", "has", "keys", "values",
+            ],
+            Receiver::MapIterator | Receiver::SetIterator => &["next"],
+            Receiver::Function => &["apply", "bind", "call"],
+        }
+    }
+
+    /// The name its methods go by: `String` for `String.prototype.trim`,
+    /// `Map Iterator` for `Map Iterator.prototype.next`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Receiver::String => "String",
+            Receiver::Array => "Array",
+            Receiver::Number => "Number",
+            Receiver::Promise => "Promise",
+            Receiver::Map => "Map",
+            Receiver::Set => "Set",
+            Receiver::MapIterator => "Map Iterator",
+            Receiver::SetIterator => "Set Iterator",
+            Receiver::Function => "Function",
+        }
+    }
+
+    const ALL: [Receiver; 9] = [
+        Receiver::String,
+        Receiver::Array,
+        Receiver::Number,
+        Receiver::Promise,
+        Receiver::Map,
+        Receiver::Set,
+        Receiver::MapIterator,
+        Receiver::SetIterator,
+        Receiver::Function,
+    ];
+}
+
+/// A built-in method as a value: `"a".trim`, `[].push`. The same method
+/// (`String.prototype.trim`) is always the same value, whichever value it
+/// was read from. Calling it with a `this` of its receiver kind does what
+/// calling the method on that value does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Method {
+    receiver: Receiver,
+    /// Its position in `receiver.methods()`.
+    index: u8,
+}
+
+impl Method {
+    /// The built-in method `name` of `receiver`, if it has one.
+    pub fn find(receiver: Receiver, name: &str) -> Option<Method> {
+        let index = receiver.methods().iter().position(|m| *m == name)?;
+        Some(Method {
+            receiver,
+            index: index as u8,
+        })
+    }
+
+    pub fn receiver(self) -> Receiver {
+        self.receiver
+    }
+
+    pub fn name(self) -> &'static str {
+        self.receiver.methods()[self.index as usize]
+    }
+
+    /// The method as a number, for native code to keep in a function's
+    /// environment; `from_bits` reverses it.
+    pub fn to_bits(self) -> u32 {
+        ((self.receiver as u32) << 8) | self.index as u32
+    }
+
+    pub fn from_bits(bits: u32) -> Option<Method> {
+        let receiver = *Receiver::ALL.get((bits >> 8) as usize)?;
+        let index = (bits & 0xff) as u8;
+        ((index as usize) < receiver.methods().len()).then_some(Method { receiver, index })
+    }
+
+    /// The TypeError for calling the method with a `this` it cannot work
+    /// on, as Node words it. `nullish`: `this` is null or undefined;
+    /// `shown`: `this` as the message shows it (`receiver_shown`).
+    pub fn receiver_error(self, nullish: bool, shown: &str) -> Error {
+        let name = format!("{}.prototype.{}", self.receiver.name(), self.name());
+        Error::type_error(match self.receiver {
+            Receiver::String if nullish => format!("{name} called on null or undefined"),
+            Receiver::Array if nullish => "Cannot convert undefined or null to object".to_string(),
+            Receiver::Number => format!("{name} requires that 'this' be a Number"),
+            _ => format!("Method {name} called on incompatible receiver {shown}"),
+        })
+    }
+}
+
+/// `v` as an incompatible-receiver error shows it: a primitive as its
+/// string, an object by its kind.
+pub fn receiver_shown<H: Host>(h: &H, v: &H::Value) -> String {
+    if let Some(
+        r @ (Receiver::Map | Receiver::Set | Receiver::MapIterator | Receiver::SetIterator),
+    ) = h.receiver(v)
+    {
+        return format!("#<{}>", r.name());
+    }
+    match h.kind(v) {
+        Kind::Array => "[object Array]".to_string(),
+        Kind::Object | Kind::Function => "#<Object>".to_string(),
+        _ => h.to_string(v),
+    }
+}
+
 /// The result of a built-in method call.
 pub enum Outcome<V> {
     Value(V),
@@ -160,9 +351,35 @@ impl std::fmt::Display for Error {
     }
 }
 
-/// `s.charAt(i)`, `s.charCodeAt(i)` and `s.at(i)`, without copying `s`.
-/// `ascii` says every byte of `s` is ASCII, so character `i` is byte `i`;
-/// otherwise the characters are counted. `None` for any other method.
+/// `s.length`: how many characters (Unicode scalar values) `s` has.
+/// `ascii` says every byte of `s` is ASCII, so each byte is a character
+/// and nothing needs counting.
+pub fn char_count(s: &str, ascii: bool) -> usize {
+    if ascii { s.len() } else { s.chars().count() }
+}
+
+/// `s[i]`: character `i` of `s`, counted as `char_count` counts.
+pub fn char_at(s: &str, ascii: bool, i: usize) -> Option<char> {
+    if ascii {
+        s.as_bytes().get(i).map(|&b| b as char)
+    } else {
+        s.chars().nth(i)
+    }
+}
+
+/// `s.is_ascii()`, in 64-byte chunks that the compiler vectorizes: three
+/// times faster on long text. The VM keeps no ASCII flag, so it checks a
+/// string on every `length`, `s[i]` and `charAt`.
+pub fn is_ascii(s: &str) -> bool {
+    let (chunks, rest) = s.as_bytes().as_chunks::<64>();
+    chunks
+        .iter()
+        .all(|chunk| chunk.iter().fold(0, |acc, b| acc | b) < 0x80)
+        && rest.is_ascii()
+}
+
+/// `s.charAt(i)`, `s.charCodeAt(i)` and `s.at(i)`, without copying `s`
+/// (`ascii` as for `char_count`). `None` for any other method.
 pub fn string_index<H: Host>(
     h: &H,
     s: &str,
@@ -173,7 +390,7 @@ pub fn string_index<H: Host>(
     if !matches!(name, "charAt" | "charCodeAt" | "at") {
         return None;
     }
-    let len = if ascii { s.len() } else { s.chars().count() };
+    let len = char_count(s, ascii);
     let i = args
         .first()
         .map_or(0.0, |v| integer(h.number(v).unwrap_or(f64::NAN)));
@@ -183,12 +400,7 @@ pub fn string_index<H: Host>(
         i
     };
     let c = if i >= 0.0 && i < len as f64 {
-        let i = i as usize;
-        if ascii {
-            Some(s.as_bytes()[i] as char)
-        } else {
-            s.chars().nth(i)
-        }
+        char_at(s, ascii, i as usize)
     } else {
         None
     };
@@ -208,7 +420,7 @@ pub fn string_method<H: Host>(
     name: &str,
     args: &[H::Value],
 ) -> Option<Result<Outcome<H::Value>, Error>> {
-    if let Some(result) = string_index(h, s, s.is_ascii(), name, args) {
+    if let Some(result) = string_index(h, s, is_ascii(s), name, args) {
         return Some(result);
     }
     let chars: Vec<char> = s.chars().collect();
@@ -233,31 +445,6 @@ pub fn string_method<H: Host>(
     let boolean = |x: bool| Ok(Outcome::Value(h.make_bool(x)));
 
     Some(match name {
-        "charAt" => {
-            let i = arg_num(0).unwrap_or(0.0);
-            if i >= 0.0 && (i as usize) < len {
-                string(chars[i as usize].to_string())
-            } else {
-                string(String::new())
-            }
-        }
-        "charCodeAt" => {
-            let i = arg_num(0).unwrap_or(0.0);
-            if i >= 0.0 && (i as usize) < len {
-                number(chars[i as usize] as u32 as f64)
-            } else {
-                number(f64::NAN)
-            }
-        }
-        "at" => {
-            let i = arg_num(0).unwrap_or(0.0);
-            let i = if i < 0.0 { i + len as f64 } else { i };
-            if i >= 0.0 && (i as usize) < len {
-                string(chars[i as usize].to_string())
-            } else {
-                Ok(Outcome::Value(h.undefined()))
-            }
-        }
         "slice" => {
             let start = relative(arg_num(0), len, 0);
             let end = relative(arg_num(1), len, len);
@@ -813,10 +1000,296 @@ pub fn own_key_name(key: &str) -> Option<&str> {
     (!is_hidden_key(name)).then_some(name)
 }
 
+/// A property of every function and class that `Object.keys` and
+/// `console.log` leave out of theirs (it is not enumerable): `name`,
+/// `length`, `prototype`, and a class's `constructor` (its code).
+pub fn is_function_key(key: &str) -> bool {
+    matches!(key, "name" | "length" | "prototype" | "constructor")
+}
+
+/// A prototype's `constructor`, the function or class it belongs to: not
+/// enumerable, so whatever lists an object's properties leaves it out. A
+/// `constructor` that holds anything but a function is listed.
+pub fn is_constructor_link<H: Host>(h: &H, key: &str, value: &H::Value) -> bool {
+    key == "constructor" && h.kind(value) == Kind::Function
+}
+
+/// The `length` of a bound function: its target's, less the arguments
+/// `bind` gave it.
+pub fn bound_length(target_length: f64, bound_args: usize) -> f64 {
+    (target_length - bound_args as f64).max(0.0)
+}
+
 pub fn is_hidden_key(key: &str) -> bool {
     key.starts_with("__")
         || key.starts_with('%')
         || key.starts_with('#')
         || key.starts_with("getter:")
         || key.starts_with("setter:")
+}
+
+/// How `console.log` renders a value that is not printed as text: the
+/// `util.inspect` options it uses.
+#[derive(Clone, Copy)]
+pub struct InspectOptions {
+    /// Nesting depth beyond which objects print as `[Object]` / `[Array]`.
+    pub depth: usize,
+    /// `%o`: also show an array's `[length]`.
+    pub show_hidden: bool,
+}
+
+impl InspectOptions {
+    pub const DEFAULT: Self = InspectOptions {
+        depth: 2,
+        show_hidden: false,
+    };
+}
+
+/// The line `console.log(...args)` prints, as Node's `util.format` builds
+/// it. In a leading string with more arguments after it, `%s %d %i %f %j %o
+/// %O %c` each take the next argument and `%%` is `%`; a specifier with no
+/// argument left stays as written. The remaining arguments follow, joined
+/// by a space: strings as they are, anything else through `inspect`.
+pub fn format_log<H: Host>(
+    h: &H,
+    args: &[H::Value],
+    inspect: impl Fn(&H::Value, InspectOptions) -> String,
+) -> String {
+    let mut out = String::new();
+    let mut rest = args;
+    let mut sep = "";
+    if let [first, tail @ ..] = args
+        && !tail.is_empty()
+        && let Some(text) = h.string(first)
+    {
+        rest = tail;
+        let b = text.as_bytes();
+        let (mut last, mut i) = (0, 0);
+        while i + 1 < b.len() {
+            if b[i] != b'%' {
+                i += 1;
+                continue;
+            }
+            let spec = b[i + 1];
+            let piece = match rest.first() {
+                _ if spec == b'%' => Some("%".to_string()),
+                Some(v) => substitute(h, spec, v, &inspect),
+                None => None,
+            };
+            if let Some(piece) = piece {
+                out.push_str(&text[last..i]);
+                out.push_str(&piece);
+                last = i + 2;
+                if spec != b'%' {
+                    rest = &rest[1..];
+                }
+            }
+            i += 2;
+        }
+        out.push_str(&text[last..]);
+        sep = " ";
+    }
+    for v in rest {
+        out.push_str(sep);
+        match h.string(v) {
+            Some(s) => out.push_str(s),
+            None => out.push_str(&inspect(v, InspectOptions::DEFAULT)),
+        }
+        sep = " ";
+    }
+    out
+}
+
+/// What `%<spec>` turns `v` into; `None` if `spec` is not a specifier.
+fn substitute<H: Host>(
+    h: &H,
+    spec: u8,
+    v: &H::Value,
+    inspect: &impl Fn(&H::Value, InspectOptions) -> String,
+) -> Option<String> {
+    let shallow = InspectOptions {
+        depth: 0,
+        ..InspectOptions::DEFAULT
+    };
+    let hidden = InspectOptions {
+        depth: 4,
+        show_hidden: true,
+    };
+    Some(match spec {
+        b's' => match h.kind(v) {
+            Kind::Number => format_number(to_number(h, v)),
+            Kind::Array | Kind::Object => inspect(v, shallow),
+            _ => h.to_string(v),
+        },
+        b'd' => format_number(to_number(h, v)),
+        b'i' => format_number(super::intrinsics::parse_int(&h.to_string(v), 0.0)),
+        b'f' => format_number(super::intrinsics::parse_float(&h.to_string(v))),
+        b'j' => match json(h, v, &mut Vec::new()) {
+            Ok(Some(s)) => s,
+            Ok(None) => "undefined".to_string(),
+            Err(Circular) => "[Circular]".to_string(),
+        },
+        b'o' => inspect(v, hidden),
+        b'O' => inspect(v, InspectOptions::DEFAULT),
+        b'c' => String::new(),
+        _ => return None,
+    })
+}
+
+/// A number as `console.log` shows it: like `String(n)`, but `-0` keeps
+/// its sign.
+pub fn format_number(n: f64) -> String {
+    if n == 0.0 && n.is_sign_negative() {
+        "-0".to_string()
+    } else {
+        number_to_string(n)
+    }
+}
+
+/// `Number(v)`, for a value with no `valueOf` of its own.
+fn to_number<H: Host>(h: &H, v: &H::Value) -> f64 {
+    match h.kind(v) {
+        Kind::Number => h.number(v).unwrap_or(f64::NAN),
+        Kind::Boolean => (h.to_string(v) == "true") as u8 as f64,
+        Kind::Null => 0.0,
+        Kind::Undefined | Kind::Function => f64::NAN,
+        Kind::String | Kind::Array | Kind::Object => string_to_number(&h.to_string(v)),
+    }
+}
+
+/// What `a == b` comes to before any user code runs.
+pub enum LooseEqual {
+    Is(bool),
+    /// `a` is an object and `b` a primitive: compare `ToPrimitive(a)`
+    /// with `b` instead.
+    ToPrimitiveA,
+    /// `b` is an object and `a` a primitive.
+    ToPrimitiveB,
+}
+
+/// ECMA-262 `IsLooselyEqual(a, b)`, up to the `ToPrimitive` it may need,
+/// which can call a user's `valueOf` and so belongs to the backend.
+pub fn loose_equal<H: Host>(h: &H, a: &H::Value, b: &H::Value) -> LooseEqual {
+    let (ka, kb) = (h.kind(a), h.kind(b));
+    let object = |k| matches!(k, Kind::Array | Kind::Function | Kind::Object);
+    let nullish = |k| matches!(k, Kind::Null | Kind::Undefined);
+    LooseEqual::Is(if ka == kb || (object(ka) && object(kb)) {
+        h.strict_equal(a, b)
+    } else if nullish(ka) || nullish(kb) {
+        nullish(ka) && nullish(kb)
+    } else if object(ka) {
+        return LooseEqual::ToPrimitiveA;
+    } else if object(kb) {
+        return LooseEqual::ToPrimitiveB;
+    } else {
+        // Two of number, string and boolean: a boolean and a string both
+        // become numbers.
+        to_number(h, a) == to_number(h, b)
+    })
+}
+
+/// JavaScript `StringToNumber`: `"  42 "` is 42, `""` is 0, `"0x1F"` is
+/// 31, and `"4x"` is NaN.
+pub fn string_to_number(s: &str) -> f64 {
+    let t = s.trim_matches(super::intrinsics::is_js_space);
+    if t.is_empty() {
+        return 0.0;
+    }
+    for (prefix, radix) in [
+        ("0x", 16),
+        ("0X", 16),
+        ("0o", 8),
+        ("0O", 8),
+        ("0b", 2),
+        ("0B", 2),
+    ] {
+        if let Some(digits) = t.strip_prefix(prefix) {
+            return digits
+                .chars()
+                .try_fold(0.0, |n, c| {
+                    Some(n * radix as f64 + c.to_digit(radix)? as f64)
+                })
+                .filter(|_| !digits.is_empty())
+                .unwrap_or(f64::NAN);
+        }
+    }
+    let unsigned = t.strip_prefix(['+', '-']).unwrap_or(t);
+    if unsigned == "Infinity" {
+        return if t.starts_with('-') {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        };
+    }
+    // Rust's parser also takes `inf` and `nan`, which JavaScript does not.
+    let decimal = |c: u8| c.is_ascii_digit() || matches!(c, b'.' | b'e' | b'E' | b'+' | b'-');
+    if unsigned.bytes().all(decimal) {
+        t.parse().unwrap_or(f64::NAN)
+    } else {
+        f64::NAN
+    }
+}
+
+/// `JSON.stringify` met a value that contains itself.
+struct Circular;
+
+/// `JSON.stringify(v)`, for `%j`; `None` where it gives `undefined`.
+fn json<H: Host>(
+    h: &H,
+    v: &H::Value,
+    seen: &mut Vec<H::Value>,
+) -> Result<Option<String>, Circular> {
+    Ok(Some(match h.kind(v) {
+        Kind::Undefined | Kind::Function => return Ok(None),
+        Kind::Null => "null".to_string(),
+        Kind::Boolean => h.to_string(v),
+        Kind::Number => match h.number(v) {
+            Some(n) if n.is_finite() => number_to_string(n),
+            _ => "null".to_string(),
+        },
+        Kind::String => json_quote(h.string(v).unwrap_or_default()),
+        Kind::Array | Kind::Object => {
+            if seen.iter().any(|s| h.strict_equal(s, v)) {
+                return Err(Circular);
+            }
+            seen.push(v.clone());
+            let out = if let Some(items) = h.array_elements(v) {
+                let mut parts = Vec::with_capacity(items.len());
+                for item in &items {
+                    parts.push(json(h, item, seen)?.unwrap_or_else(|| "null".to_string()));
+                }
+                format!("[{}]", parts.join(","))
+            } else {
+                let mut parts = Vec::new();
+                for (key, item) in h.own_entries(v) {
+                    if let Some(s) = json(h, &item, seen)? {
+                        parts.push(format!("{}:{}", json_quote(&key), s));
+                    }
+                }
+                format!("{{{}}}", parts.join(","))
+            };
+            seen.pop();
+            out
+        }
+    }))
+}
+
+fn json_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }

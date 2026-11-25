@@ -19,7 +19,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char};
 
 use crate::backend::BackendError;
-use crate::ir::{BlockId, IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId};
+use crate::ir::{
+    BlockId, IrFunction, IrModule, IrOp, IrType, Literal, SpreadCallee, Terminator, ValueId,
+};
 
 use super::abi;
 
@@ -186,7 +188,7 @@ impl LlvmCodegen {
                     .sites
                     .iter()
                     .map(|s| s.file.as_str())
-                    .find(|f| !crate::vm::errors::is_core_path(f))
+                    .find(|f| *f != crate::vm::errors::CORE_ERRORS_PATH)
                     .unwrap_or("main.ot");
                 self.di = Some(super::debug::DebugBuilder::new(
                     self.module,
@@ -228,7 +230,7 @@ impl LlvmCodegen {
                 }
             }
 
-            self.build_c_main()?;
+            self.build_c_main(ir_module)?;
             if let Some(di) = self.di.take() {
                 di.finalize();
             }

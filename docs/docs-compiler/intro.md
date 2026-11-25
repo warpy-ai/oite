@@ -25,7 +25,7 @@ The **Oite Compiler** is responsible for transforming Oite source code into nati
 The Oite compiler features:
 
 - **TypeScript-like Syntax** - Familiar JavaScript/TypeScript syntax with type annotations
-- **Hindley-Milner Type Inference** - Automatic type deduction with optional annotations
+- **Type Checking** - Annotations are checked by `src/types/check/`; unannotated code stays dynamic. See [Types](/types).
 - **SSA-based IR** - Static Single Assignment form for powerful optimizations
 - **Multiple Backends** - Cranelift JIT and LLVM AOT compilation
 - **Self-Hosting** - The compiler is written in Oite itself

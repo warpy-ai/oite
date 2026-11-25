@@ -1,0 +1,11 @@
+function function true false
+true 1 1
+2 nan 2
+true true false 1
+0
+true 1 true
+true 0 undefined
+TypeError: Method Map.prototype.get called on incompatible receiver #<Object>
+TypeError: Method Map.prototype.get called on incompatible receiver undefined
+TypeError: Method Set.prototype.add called on incompatible receiver 5
+TypeError: Method Map.prototype.get called on incompatible receiver undefined

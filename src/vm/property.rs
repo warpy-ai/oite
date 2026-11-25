@@ -34,11 +34,7 @@ pub fn get_prop_with_proto_chain(vm: &VM, obj_ptr: usize, name: &str) -> JsValue
     JsValue::Undefined
 }
 
-pub fn find_setter_with_proto_chain(
-    vm: &VM,
-    obj_ptr: usize,
-    name: &str,
-) -> Option<(usize, Option<usize>)> {
+pub fn find_setter_with_proto_chain(vm: &VM, obj_ptr: usize, name: &str) -> Option<JsValue> {
     let setter_name = format!("setter:{}", name);
     let mut current_ptr = Some(obj_ptr);
     let mut depth = 0;
@@ -54,9 +50,9 @@ pub fn find_setter_with_proto_chain(
         }) = vm.heap.get(ptr)
         {
             if let Some(setter_val) = props.get(&setter_name)
-                && let JsValue::Function { address, env } = setter_val
+                && let JsValue::Function { .. } = setter_val
             {
-                return Some((*address, *env));
+                return Some(setter_val.clone());
             }
 
             if let Some(JsValue::Object(proto_ptr)) = props.get("__proto__") {

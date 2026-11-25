@@ -1,0 +1,70 @@
+// A function's own properties live as long as the function and go with
+// it. Values reachable only through Map, Set, an iterator or a bound
+// function survive collections too. `churn` makes more garbage than the
+// 100,000 objects between collections.
+function churn() {
+  for (let i = 0; i < 150000; i++) {
+    let o = { i: i };
+  }
+}
+
+// Properties of functions reachable only through a variable, and of a
+// function reachable only through another function's properties.
+function make(i) {
+  const f = function () {};
+  f.tag = { i: i };
+  return f;
+}
+const kept = make(1);
+for (let i = 0; i < 100; i++) {
+  make(i);
+}
+const outer = function () {};
+outer.inner = function () {};
+outer.inner.data = [1, 2, 3];
+
+// Map entries, Set values, an iterator part way through, and what a bound
+// function holds.
+const m = new Map([[{ k: 1 }, { v: 2 }]]);
+const s = new Set([[1], [2]]);
+const it = new Map([["a", { n: 1 }], ["b", { n: 2 }]]).values();
+it.next();
+const add = function (a, b) {
+  return this.base + a + b;
+}.bind({ base: 10 }, 1);
+
+churn();
+console.log(kept.tag.i, outer.inner.data.length);
+for (const [k, v] of m) {
+  console.log(k.k, v.v);
+}
+console.log(s.size, it.next().value.n, add(2));
+
+// A new bound function starts with no properties of its own, even in the
+// slot of a freed one that had some, and setting one writes to its own
+// object. Under OITE_GC_STRESS the new binds and objects below take every
+// freed slot, those included.
+function g() {}
+let bound = [];
+for (let i = 0; i < 10; i++) {
+  const b = g.bind(null);
+  b.x = i;
+  bound.push(b);
+}
+bound = null;
+const fresh = [];
+const plain = [];
+for (let i = 0; i < 2000; i++) {
+  const f = g.bind(null);
+  f.y = i;
+  fresh.push(f);
+  plain.push({ n: i });
+}
+let wrong = 0;
+for (let i = 0; i < 2000; i++) {
+  const f = fresh[i];
+  if (f.x !== undefined || f.y !== i || plain[i].n !== i || plain[i].y !== undefined) {
+    wrong++;
+  }
+}
+console.log("wrong", wrong);

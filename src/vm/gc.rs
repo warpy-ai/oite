@@ -41,6 +41,11 @@
 //! - `suspended`: each async function's frame and operand stack.
 //! - `promise_alls`: each result promise and the values so far.
 //! - `unhandled_rejections`.
+//! - `fn_props`, weakly: a function's own properties are kept while the
+//!   function is reachable (a function value with its `id`, a bound
+//!   function's slot, or any native or built-in function). The entries of
+//!   the others are dropped, so a freed bound function's slot cannot pass
+//!   its properties to the next `bind` that reuses it.
 //! - Every promise reachable from these: its value, and each reaction's
 //!   handlers and result promise. A promise is a Rust `Arc`, freed by
 //!   Rust; it is traced only for the heap objects it holds.
@@ -54,10 +59,14 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use super::functions::{FunctionId, FunctionProps};
 use super::module_cache::CachedModule;
 use super::promise::{AllState, Microtask, Suspended};
-use super::value::{HeapData, HeapObject, JsValue, Promise, PromiseInternal, Reaction};
+use super::value::{
+    BoundFunction, HeapData, HeapObject, JsValue, Promise, PromiseInternal, Reaction,
+};
 use super::{Frame, Task, TimerTask, VM};
+use crate::runtime::collection::Iter;
 
 /// The fewest allocations between two collections.
 const MIN_THRESHOLD: usize = 100_000;
@@ -122,9 +131,11 @@ impl VM {
             objects: Vec::new(),
             promises: Vec::new(),
             seen_promises: HashSet::new(),
+            functions: HashSet::new(),
         };
         self.mark_roots(&mut marker);
-        marker.trace(&self.heap);
+        marker.trace(&self.heap, &self.fn_props);
+        self.fn_props.retain(|id, _| marker.function_live(id));
 
         self.gc.free.clear();
         for (i, object) in self.heap.iter_mut().enumerate() {
@@ -172,6 +183,9 @@ impl VM {
             next_async_id: _,
             unhandled_rejections,
             gc: _,
+            // Weak: traced in `Marker::trace`.
+            fn_props: _,
+            last_function_id: _,
         } = self;
 
         m.values(stack);
@@ -251,13 +265,20 @@ struct Marker {
     /// Promises whose contents are not traced yet.
     promises: Vec<Promise>,
     seen_promises: HashSet<usize>,
+    /// The `id` of each function value reached: its own properties live.
+    functions: HashSet<usize>,
 }
 
 impl Marker {
     fn value(&mut self, v: &JsValue) {
         match v {
             JsValue::Object(i) => self.object(*i),
-            JsValue::Function { address: _, env } => {
+            JsValue::Function {
+                address: _,
+                env,
+                id,
+            } => {
+                self.functions.insert(*id);
                 if let Some(env) = env {
                     self.object(*env);
                 }
@@ -268,10 +289,12 @@ impl Marker {
                 }
             }
             JsValue::Promise(p) => self.promise(p),
+            JsValue::BoundFunction(i) => self.object(*i),
             JsValue::Number(_)
             | JsValue::String(_)
             | JsValue::Boolean(_)
             | JsValue::NativeFunction(_)
+            | JsValue::BuiltinMethod(_)
             | JsValue::Null
             | JsValue::Undefined => {}
         }
@@ -290,6 +313,16 @@ impl Marker {
         {
             *mark = true;
             self.objects.push(i);
+        }
+    }
+
+    /// Whether the function `id` is reachable, so its own properties are.
+    fn function_live(&self, id: &FunctionId) -> bool {
+        match id {
+            FunctionId::Code(id) => self.functions.contains(id),
+            FunctionId::Bound(i) => self.marks.get(*i).copied().unwrap_or(false),
+            // Registered once and never freed.
+            FunctionId::Native(_) | FunctionId::Builtin(_) => true,
         }
     }
 
@@ -351,17 +384,29 @@ impl Marker {
     }
 
     /// Mark everything reachable from what is marked so far.
-    fn trace(&mut self, heap: &[HeapObject]) {
+    fn trace(&mut self, heap: &[HeapObject], fn_props: &FunctionProps) {
         loop {
             if let Some(i) = self.objects.pop() {
                 match &heap[i].data {
                     HeapData::Object(props) => self.values(props.values()),
-                    HeapData::Array(items) | HeapData::Set(items) => self.values(items),
-                    HeapData::Map(pairs) => {
-                        for (k, v) in pairs {
+                    HeapData::Array(items) => self.values(items),
+                    HeapData::Map(table) | HeapData::Set(table) => {
+                        for (k, v) in table.iter() {
                             self.value(k);
                             self.value(v);
                         }
+                    }
+                    HeapData::Iterator(Iter {
+                        source,
+                        cursor: _,
+                        yields: _,
+                        for_of: _,
+                    }) => self.value(source),
+                    HeapData::Bound(bound) => {
+                        let BoundFunction { target, this, args } = &**bound;
+                        self.value(target);
+                        self.value(this);
+                        self.values(args);
                     }
                     HeapData::ByteStream(_) => {}
                 }
@@ -378,7 +423,16 @@ impl Marker {
                     self.reaction(r);
                 }
             } else {
-                return;
+                // A live function's properties are reachable. Marking them
+                // can reach more functions, so repeat until nothing is new.
+                for (id, &props) in fn_props {
+                    if self.function_live(id) {
+                        self.object(props);
+                    }
+                }
+                if self.objects.is_empty() {
+                    return;
+                }
             }
         }
     }
