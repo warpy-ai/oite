@@ -215,16 +215,9 @@ jobs:
           fi
           echo "OK: only system libraries"
 
-          # And it must actually start (x86_64 runs through Rosetta). oitec has no
-          # --version flag, so only the loader's verdict counts: a dyld failure aborts
-          # with a signal (status >= 126), an ordinary usage error exits with 1 or 2.
-          status=0
-          "$BIN" --version || status=$?
-          if [ "$status" -ge 126 ]; then
-            echo "ERROR: oitec failed to start (exit status $status)" >&2
-            exit 1
-          fi
-          echo "OK: oitec starts (exit status $status)"
+          # And it must actually start (x86_64 runs through Rosetta).
+          "$BIN" --version
+          echo "OK: oitec starts"
 
       - name: Strip binary (macOS)
         if: runner.os == 'macOS'
@@ -289,6 +282,15 @@ jobs:
         run: |
           tar -xzf ${{ matrix.asset_name }}.tar.gz
           if [ "$(uname)" = Darwin ]; then sw_vers; otool -L oitec; else cat /etc/os-release; ldd oitec; fi
+
+          # A release must report its own version: oitec --version prints the version
+          # in Cargo.toml, so bump it before tagging (tag v0.10.0-preview is 0.10.0-preview).
+          echo "--- version"
+          ./oitec --version | tee version.out
+          if [ "$GITHUB_REF_TYPE" = tag ] && ! grep -qx "oitec ${GITHUB_REF_NAME#v}" version.out; then
+            echo "ERROR: tag $GITHUB_REF_NAME, but oitec reports $(cat version.out); set the version in Cargo.toml" >&2
+            exit 1
+          fi
 
           printf 'function add(a: number, b: number): number { return a + b; }\nconsole.log("sum", add(2, 3));\n' > hello.ot
 

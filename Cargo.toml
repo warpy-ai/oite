@@ -1,6 +1,6 @@
 [package]
 name = "oite"
-version = "0.7.0"
+version = "0.10.0-preview"
 edition = "2024"
 build = "build.rs"
 
