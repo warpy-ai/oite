@@ -6,6 +6,9 @@
 //! - `name.out`  — exact expected stdout; the program must exit 0.
 //! - `name.err`  — the program must exit non-zero, and stderr must contain
 //!   every non-empty line of this file (substring match, in order).
+//! - `name.stderr` — beside a `.out`: stderr must contain every non-empty
+//!   line of this file, in order, as `.err` does (`oitec jit` also writes
+//!   its own diagnostics there).
 //!
 //! Programs run in a subprocess through the real `oitec` binary, so a VM panic
 //! or abort is reported as a test failure instead of taking the harness down.
@@ -178,6 +181,7 @@ fn check(file: &Path, scratch: &Path, rolls: &Path) -> Result<(), String> {
     let source = fs::read_to_string(file).map_err(|e| e.to_string())?;
     let out_path = file.with_extension("out");
     let err_path = file.with_extension("err");
+    let stderr_path = file.with_extension("stderr");
     let bless = std::env::var_os("OITE_BLESS").is_some();
 
     let flags = flags(&source);
@@ -194,16 +198,10 @@ fn check(file: &Path, scratch: &Path, rolls: &Path) -> Result<(), String> {
                     "[{backend:?}] expected a non-zero exit, got success\nstdout:\n{stdout}"
                 ));
             }
-            let mut rest = stderr.as_str();
-            for want in expected.lines().map(str::trim).filter(|l| !l.is_empty()) {
-                match rest.find(want) {
-                    Some(i) => rest = &rest[i + want.len()..],
-                    None => {
-                        return Err(format!(
-                            "[{backend:?}] stderr is missing {want:?}\nstderr:\n{stderr}"
-                        ));
-                    }
-                }
+            if let Some(want) = missing_line(&stderr, &expected) {
+                return Err(format!(
+                    "[{backend:?}] stderr is missing {want:?}\nstderr:\n{stderr}"
+                ));
             }
             continue;
         }
@@ -225,8 +223,28 @@ fn check(file: &Path, scratch: &Path, rolls: &Path) -> Result<(), String> {
                 "[{backend:?}] stdout mismatch\n--- expected\n{expected}--- actual\n{stdout}--- stderr\n{stderr}"
             ));
         }
+        if let Ok(expected) = fs::read_to_string(&stderr_path)
+            && let Some(want) = missing_line(&stderr, &expected)
+        {
+            return Err(format!(
+                "[{backend:?}] stderr is missing {want:?}\nstderr:\n{stderr}"
+            ));
+        }
     }
     Ok(())
+}
+
+/// The first non-empty line of `expected` that `stderr` does not contain
+/// after the lines before it.
+fn missing_line<'a>(stderr: &str, expected: &'a str) -> Option<&'a str> {
+    let mut rest = stderr;
+    for want in expected.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let Some(i) = rest.find(want) else {
+            return Some(want);
+        };
+        rest = &rest[i + want.len()..];
+    }
+    None
 }
 
 /// Run every program under `root`, with `@rolls/*` found in `rolls`.

@@ -1,0 +1,26 @@
+undefined
+2
+count [ 'calls', 'label' ]
+true false true true
+true undefined false [ 'calls' ]
+[Function: counter] { calls: 2 }
+9 [ '3' ]
+adds adds 2 5
+[ 'description', 'computed', 'dyn' ]
+key description
+key computed
+key dyn
+{ description: 'adds', computed: 1, dyn: 2 }
+[Function: add] { description: 'adds', computed: 1, dyn: 2 }
+11 12 21 13
+10 20 a b 0 99 102
+[ 'start', 'tag' ]
+1 2 x,y
+16 16 25 16 2
+3 true 2
+0,0 3 [ 'origin', 'dims' ] true
+[class Point] { origin: '0,0', dims: 3 }
+true undefined [ 'origin' ]
+2
+[Function (anonymous)] [Function (anonymous)] [ [ 1, 2, 3 ], [Function: square] { cache: { '3': 9 } } ]
+function function function

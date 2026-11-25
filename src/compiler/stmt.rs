@@ -261,6 +261,8 @@ impl Codegen {
                 let iter_env = loop_env.clone();
                 let per_iteration = self.scopes.env_scope(for_of_stmt.span).is_some();
                 self.gen_expr(&for_of_stmt.right);
+                // The loop walks what it iterates as an array (`GetIterator`).
+                self.instructions.push(OpCode::GetIterator);
                 // Unique names, so nested loops do not share them.
                 let iter_name = format!("%forof_iter{}", self.instructions.len());
                 self.instructions.push(OpCode::Let(iter_name.clone()));
@@ -292,13 +294,21 @@ impl Codegen {
                     self.instructions
                         .push(OpCode::Store(SCOPE_LOCAL.to_string()));
                 }
+                // `const x`, or a pattern: `const [key, value]`.
+                let declared: Vec<Ident> = match for_of_stmt.left.as_var_decl() {
+                    Some(var_decl) => var_decl
+                        .decls
+                        .first()
+                        .map(|decl| scope::pattern_idents(&decl.name))
+                        .unwrap_or_default(),
+                    None => Vec::new(),
+                };
                 if let Some(var_decl) = &for_of_stmt.left.as_var_decl()
                     && let Some(decl) = var_decl.decls.first()
-                    && let Pat::Ident(id) = &decl.name
                 {
-                    self.store_var(&id.id, true);
+                    self.gen_pattern_binding(&decl.name);
                     if let Some(scope) = self.scope_stack.last_mut() {
-                        scope.push(id.id.sym.to_string());
+                        scope.extend(declared.iter().map(|id| id.sym.to_string()));
                     }
                 } else if let ForHead::Pat(pat) = &for_of_stmt.left
                     && let Pat::Ident(id) = pat.as_ref()
@@ -309,14 +319,11 @@ impl Codegen {
                 }
                 self.gen_stmt(&for_of_stmt.body);
                 let continue_target = self.instructions.len();
-                if let Some(var_decl) = &for_of_stmt.left.as_var_decl()
-                    && let Some(decl) = var_decl.decls.first()
-                    && let Pat::Ident(id) = &decl.name
-                {
-                    let var_name = id.id.sym.to_string();
-                    self.instructions.push(OpCode::Drop(var_name));
+                for id in &declared {
+                    let var_name = id.sym.to_string();
+                    self.instructions.push(OpCode::Drop(var_name.clone()));
                     if let Some(scope) = self.scope_stack.last_mut() {
-                        scope.retain(|n| n != &id.id.sym.to_string());
+                        scope.retain(|n| *n != var_name);
                     }
                 }
                 self.instructions.push(OpCode::Load(idx_name.clone()));

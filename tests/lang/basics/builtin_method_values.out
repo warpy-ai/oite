@@ -1,0 +1,34 @@
+function function function function
+true true false
+undefined undefined undefined
+methods are truthy
+XYZ Q
+007 ---7
+toUpperCase [ OK ]
+trim [ok]
+charAt [o]
+a b
+OBJ
+1,2,3,4,5
+2+3
+1-2-3
+5 4
+true function
+1,2,3,4,6
+true 6,4,3,2,1
+1,0
+3.14 ff
+42 TRUE OBJ
+TypeError: String.prototype.toUpperCase called on null or undefined
+TypeError: String.prototype.toUpperCase called on null or undefined
+TypeError: String.prototype.trim called on null or undefined
+TypeError: Cannot convert undefined or null to object
+TypeError: Number.prototype.toFixed requires that 'this' be a Number
+TypeError: Number.prototype.toFixed requires that 'this' be a Number
+not a constructor: TypeError
+function true
+TypeError: Method Promise.prototype.then called on incompatible receiver 5
+sync done
+then 7
+caught boom
+finally

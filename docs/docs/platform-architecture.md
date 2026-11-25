@@ -339,7 +339,7 @@ oitec build src/main.ot -o target/release/myapp --release \
 | `declare function` | Ambient: no code and no binding. A call to an `__intrinsic_*` compiles to the intrinsic; an `__ffi_*` nothing provides is "not defined" when called | Bind `__ffi_*` (FFI) |
 | `import` / `export` | Linked at compile time on every backend (`modules.rs`), with `@rolls/*` found through `--roll`, the importing roll's siblings, `OITE_ROLLS_PATH` and `$OITE_HOME/rolls`; circular imports are refused. `@rolls/std` is linked into every program as the prelude, unless `--no-std` or it is not installed ("The prelude"); of a roll, only the declarations the program uses make code | Leave out the `Array.prototype` methods a program never calls |
 | Intrinsics | All 29, on every backend (`runtime/intrinsics.rs`) | Machine instructions for the math ones |
-| Spread (`[...a]`, `{...o}`) | On every backend | — |
+| Spread (`[...a]`, `{...o}`, `f(...a)`) | On every backend | — |
 | FFI | Only `__ffi_fetch` (and `__ffi_getenv`, which no roll uses), as VM globals | Calling convention, `oite-runtime` crate, symbol binding on every backend |
 | `Math`, `Date.now` | Globals in both runtimes | Removed; `@rolls/math`, `@rolls/date` |
 | `setTimeout` / `clearTimeout` | Globals in both runtimes, with their own timer loop | Removed; `@rolls/async` (`__ffi_set_timeout`) |

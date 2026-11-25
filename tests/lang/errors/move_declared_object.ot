@@ -1,0 +1,11 @@
+// A variable declared with an object type holds an object, wherever the
+// value came from: assigning it moves it.
+interface Box {
+  v: number;
+}
+function make(): Box {
+  return { v: 1 };
+}
+let a: Box = make();
+let b = a;
+console.log(a.v);

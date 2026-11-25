@@ -2,11 +2,29 @@
 //! member keys and `super`.
 
 use super::*;
+use crate::vm::opcodes::FunctionInfo;
+
+/// A function's `length`: its parameters before the first default or
+/// rest one.
+pub(super) fn param_length<'a>(pats: impl Iterator<Item = &'a Pat>) -> usize {
+    pats.take_while(|p| !matches!(p, Pat::Assign(_) | Pat::Rest(_)))
+        .count()
+}
 
 impl Codegen {
     /// A function declaration (`name` given) or an anonymous function value
     /// (left on the stack).
     pub(super) fn gen_fn_decl(&mut self, name: Option<&Ident>, fn_decl: &Function) {
+        self.gen_function(name, fn_decl, true);
+    }
+
+    /// An object literal's method `{ m() {} }`: a function without a
+    /// `prototype`. [] -> [function]
+    pub(super) fn gen_object_method(&mut self, fn_decl: &Function) {
+        self.gen_function(None, fn_decl, false);
+    }
+
+    fn gen_function(&mut self, name: Option<&Ident>, fn_decl: &Function, prototype: bool) {
         if let Some(ident) = name {
             self.next_fn_name = Some(ident.sym.to_string());
         }
@@ -20,14 +38,24 @@ impl Codegen {
         if let Some(ident) = name {
             self.store_var(ident, true);
         }
-        let jump_idx = self.emit_jump();
+        let jump_idx = self.emit_body_jump();
         let body_start = self.instructions.len();
         self.patch_function_value(value_idx, body_start);
 
         let pats: Vec<&Pat> = fn_decl.params.iter().map(|p| &p.pat).collect();
         let stmts: &[Stmt] = fn_decl.body.as_ref().map_or(&[], |b| b.stmts.as_slice());
-        self.gen_function_body(fn_decl.span, &pats, stmts, is_async, FnKind::Plain, &[]);
+        let kind = FnKind::Plain { prototype };
+        self.gen_function_body(fn_decl.span, &pats, stmts, is_async, kind, &[]);
         self.patch_jump_here(jump_idx);
+    }
+
+    /// The `Jump` over a function body, then the body's `FunctionInfo`,
+    /// which `gen_function_body` fills in. Returns the jump, for patching.
+    pub(super) fn emit_body_jump(&mut self) -> usize {
+        let jump = self.emit_jump();
+        self.instructions
+            .push(OpCode::FunctionInfo(FunctionInfo::default()));
+        jump
     }
 
     /// The body of a function whose value was just emitted: parameters,
@@ -44,7 +72,30 @@ impl Codegen {
         fields: &[ClassField],
     ) {
         let fn_start = self.instructions.len();
-        let fn_name = self.next_fn_name.take();
+        let js_name = match kind {
+            FnKind::Ctor { .. } => self.class_name.clone(),
+            _ => self.next_fn_name.take(),
+        };
+        // As stack traces show it.
+        let fn_name = match kind {
+            FnKind::Ctor { .. } => Some(format!("new {}", self.class_display_name())),
+            FnKind::Method { .. } => Some(format!(
+                "{}.{}",
+                self.class_display_name(),
+                js_name.as_deref().unwrap_or_default()
+            )),
+            FnKind::Plain { .. } => js_name.clone(),
+        };
+        match fn_start.checked_sub(1).map(|i| &mut self.instructions[i]) {
+            Some(OpCode::FunctionInfo(info)) => {
+                *info = FunctionInfo {
+                    name: js_name.unwrap_or_default(),
+                    length: param_length(pats.iter().copied()),
+                    prototype: matches!(kind, FnKind::Plain { prototype: true }) && !is_async,
+                }
+            }
+            other => unreachable!("a function body follows `emit_body_jump`, not {other:?}"),
+        }
         let prev_in_function = self.in_function;
         let prev_async = self.in_async_function;
         let prev_fields = self.class_fields.take();
@@ -285,12 +336,20 @@ impl Codegen {
             .unwrap_or_else(|| format!("#{}", name))
     }
 
-    /// The property name of `obj.name` or `obj.#name`.
+    /// The property name of `obj.name`, `obj.#name` or `obj["name"]`. A
+    /// numeric string such as `obj["0"]` has none: it may be an array index.
     pub(super) fn member_key(&self, prop: &MemberProp) -> Option<String> {
         match prop {
             MemberProp::Ident(id) => Some(id.sym.to_string()),
             MemberProp::PrivateName(p) => Some(self.private_key(&p.name)),
-            MemberProp::Computed(_) => None,
+            MemberProp::Computed(c) => match c.expr.as_ref() {
+                Expr::Lit(Lit::Str(s)) => s
+                    .value
+                    .as_str()
+                    .filter(|name| name.parse::<f64>().is_err())
+                    .map(str::to_string),
+                _ => None,
+            },
         }
     }
 
@@ -362,7 +421,7 @@ impl Codegen {
         fields: &[ClassField],
     ) {
         let value_idx = self.emit_function_value(span, 0);
-        let jump_idx = self.emit_jump();
+        let jump_idx = self.emit_body_jump();
         let body_start = self.instructions.len();
         self.patch_function_value(value_idx, body_start);
         self.gen_function_body(span, pats, stmts, is_async, kind, fields);

@@ -1,0 +1,25 @@
+3 3
+0|1|2 1|2|9 0|1|2
+1|2|3
+a|b| x|y|z
+|| NaN
+1|2|3
+1:2:2,3 0:2:1,2 undefined:0:
+4 0
+a|b|c abc
+13
+3 1|2|3
+3 13 13
+undefined undefined undefined
+3 4 9
+1 2 3 9
+boom
+9 0 -Infinity
+3 3 [ 1, 2, 3 ]
+abc 42
+log spread 1 2
+
+4 3
+10
+true
+async 42

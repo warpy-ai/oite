@@ -1,5 +1,26 @@
 use crate::vm::value::JsValue;
 
+/// What a compiled function is, as a program sees it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FunctionInfo {
+    /// `f.name`: from its declaration, or the variable, property or method
+    /// it is defined as; "" if none.
+    pub name: String,
+    /// `f.length`: its parameters before the first default or rest one.
+    pub length: usize,
+    /// Whether it has a `prototype`: a `function`, not an arrow, a method
+    /// or an async function.
+    pub prototype: bool,
+}
+
+/// The `FunctionInfo` of the function whose body starts at `address`.
+pub fn function_info(program: &[OpCode], address: usize) -> Option<&FunctionInfo> {
+    match program.get(address.checked_sub(1)?)? {
+        OpCode::FunctionInfo(info) => Some(info),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum OpCode {
     LoadThis,
@@ -63,6 +84,10 @@ pub enum OpCode {
     ArrayPush,
     /// ArraySpread: pops [target_array, source_array] -> appends all source elements to target, pushes target
     ArraySpread,
+    /// `[value] -> [cursor]`: what a `for...of` loop walks `value` with
+    /// (`runtime::collection::Iter`): an array or a string itself, a
+    /// cursor for a `Map`, a `Set` or an iterator.
+    GetIterator,
     /// ObjectSpread: pops [target_obj, source_obj] -> copies all properties from source to target, pushes target
     ObjectSpread,
     JumpIfFalse(usize),
@@ -71,6 +96,11 @@ pub enum OpCode {
     Mul,
     Div,
     Require,
+    /// What the function whose body starts at the next instruction is. It
+    /// sits between the `Jump` over the body and the body, so it never
+    /// runs: the function at `address` is described by
+    /// `program[address - 1]`.
+    FunctionInfo(FunctionInfo),
     /// Create a closure: pops environment object pointer from stack,
     /// combines it with the function address to create a Function value.
     /// This is the key to "lifting" captured variables from stack to heap.
@@ -142,6 +172,10 @@ pub enum OpCode {
     /// `f.call(this, args)`: call with an explicit `this` (`super.m(args)`).
     /// [args..., f, this] -> [result]
     CallWithThis(usize),
+    /// A call with a spread argument (`f(a, ...xs)`): the call of this
+    /// kind, its arguments the elements of one array below the call's
+    /// other operands. [args array, operands...] -> [result]
+    SpreadCall(CallKind),
     /// `obj.#x`: like `GetProp`, but an object without the private member
     /// throws a TypeError. [obj] -> [value]
     GetPrivate(String),
@@ -187,4 +221,40 @@ pub enum OpCode {
         importer: String,
         dependency_chain: Vec<String>,
     },
+}
+
+/// The kind of a call: which opcode it is, given its argument count.
+#[derive(Debug, Clone)]
+pub enum CallKind {
+    /// `Call`: [args, f]
+    Plain,
+    /// `CallMethod`: [args, obj]
+    Method(String),
+    /// `CallWithThis`: [args, f, this]
+    WithThis,
+    /// `Construct`: [args, ctor]
+    Construct,
+    /// `CallSuper`: [args, parent]
+    Super,
+}
+
+impl CallKind {
+    /// How many of the call's operands are above its arguments.
+    pub fn operands(&self) -> usize {
+        match self {
+            CallKind::WithThis => 2,
+            CallKind::Plain | CallKind::Method(_) | CallKind::Construct | CallKind::Super => 1,
+        }
+    }
+
+    /// The call with `argc` arguments, each on the stack.
+    pub fn with_argc(self, argc: usize) -> OpCode {
+        match self {
+            CallKind::Plain => OpCode::Call(argc),
+            CallKind::Method(name) => OpCode::CallMethod(name, argc),
+            CallKind::WithThis => OpCode::CallWithThis(argc),
+            CallKind::Construct => OpCode::Construct(argc),
+            CallKind::Super => OpCode::CallSuper(argc),
+        }
+    }
 }

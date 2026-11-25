@@ -1,4 +1,4 @@
-use crate::vm::opcodes::OpCode;
+use crate::vm::opcodes::{CallKind, OpCode};
 use std::collections::{HashMap, HashSet};
 use swc_ecma_ast::*;
 mod bindings;
@@ -109,8 +109,13 @@ impl Compiler {
         let (cm, fm, program) = (&parsed.cm, &parsed.fm, &parsed.program);
         let position = |span: Span| position(cm, span);
 
+        // The move check reads the annotations the type checker resolved.
+        let checked =
+            crate::types::check::check_program(program, &mut self.type_world, link.as_ref());
+
         self.borrow_checker.error_span = None;
         self.borrow_checker.error_note = None;
+        self.borrow_checker.declared_objects = checked.objects;
         self.borrow_checker.enter_scope(); // Script vars at depth 1, globals at 0
 
         let result = match program {
@@ -154,8 +159,6 @@ impl Compiler {
             return Err(CompileError::single(d));
         }
 
-        let checked =
-            crate::types::check::check_program(program, &mut self.type_world, link.as_ref());
         self.type_diagnostics = checked
             .diags
             .into_iter()
@@ -396,7 +399,10 @@ struct ClassField {
 /// what runs before the body.
 #[derive(Clone, Copy, PartialEq)]
 enum FnKind {
-    Plain,
+    /// A function or an arrow; `prototype`: a `function`, which has one.
+    Plain {
+        prototype: bool,
+    },
     Method {
         is_static: bool,
     },
@@ -450,8 +456,8 @@ pub struct Codegen {
     mark_span: Span,
     /// Function bodies and their names, for stack traces.
     pub functions: Vec<FunctionRange>,
-    /// The name of the next function body (`function f`, `let f = () =>`,
-    /// `C.method`).
+    /// The `name` of the next function body (`function f`, `let f = () =>`,
+    /// `{ f() {} }`, the method `f` of a class).
     next_fn_name: Option<String>,
     /// The class whose members are being compiled.
     class_name: Option<String>,

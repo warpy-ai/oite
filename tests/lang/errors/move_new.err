@@ -1,0 +1,2 @@
+move_new.ot:10:13: borrow error: Cannot borrow moved variable 'p'
+move_new.ot:9:9: note: value moved here

@@ -24,7 +24,7 @@ Tracking issue for the full gap list: [#136](https://github.com/warpy-ai/oite/is
 | Cranelift JIT (development)               | Same coverage as LLVM AOT, same runtime                                                  |
 | SSA IR + optimizations                    | Working; refuses what the native backends cannot run                                     |
 | VM interpreter (debugging)                | Runs most features; ahead of the native backends for now                                 |
-| Static type checking                      | Not implemented: annotations are parsed and erased ([#124](https://github.com/warpy-ai/oite/issues/124))                                |
+| Static type checking                      | Annotations are checked: warnings on a run or build, errors from `oitec check`, run-time checks with `--strict-types` ([Types](types.md)). Generic calls are not checked ([#190](https://github.com/warpy-ai/oite/issues/190)) |
 | Memory reclamation                        | Not implemented: nothing is ever freed ([#123](https://github.com/warpy-ai/oite/issues/123))                                            |
 | Self-hosting compiler                     | Partial: cannot compile its own source yet ([#131](https://github.com/warpy-ai/oite/issues/131))                                        |
 | Source positions in diagnostics           | Syntax, compile and borrow errors: `file:line:col`, the source line and a caret; a use after a move also shows where the value was moved |
@@ -64,12 +64,16 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Rest parameters (`function f(a, ...rest)`) | Covered                              | Covered                           |
 | Compound assignment (`+=`, `*=`, `<<=`, ...) | Covered                            | Covered                           |
 | Objects, arrays, `obj[k]`, `.length`, `push`/`pop` | Covered                      | Covered                           |
-| Spread in array and object literals (`[...a, ..."str"]`, `{...o}`) | Covered     | Covered                           |
+| Spread in array and object literals (`[...a, ..."str"]`, `[...map]`, `{...o}`) | Covered     | Covered                           |
+| Spread in call arguments (`f(...a)`, `o.m(0, ...a)`, `new C(...a)`, `super(...a)`) | Covered | Covered               |
 | Methods on object literals (`this`)        | Covered                              | Covered                           |
 | String methods (`slice`, `split`, `trim`, `indexOf`, `padStart`, ...) | Covered   | Covered (shared implementation)   |
 | Array methods (`splice`, `join`, `indexOf`, `concat`, `shift`, ...)   | Covered   | Covered (shared implementation)   |
 | Callback methods (`map`, `filter`, `forEach`, `reduce`) | Not built in: the prelude attaches `@rolls/array`'s functions to `Array.prototype` (`tests/core_rolls/`); none with `--no-std` | Same |
 | Array methods added to `Array.prototype`   | Covered                              | Covered                           |
+| Built-in methods as values (`const trim = s.trim`, `trim.call(t)`, `arr.push.apply(arr, xs)`, `Array.prototype.push`, `String.prototype.trim`) | Covered | Covered (same implementation) |
+| Functions as objects (`f.x = 1`, `Object.keys(f)`, `f.name`, `f.length`, `F.prototype`, `f.bind(this, ...args)`) | Covered | Covered |
+| `Map` / `Set`: `new Map(iterable)`, `get`, `set`, `has`, `delete`, `clear`, `add`, `size`, `forEach`, `keys` / `values` / `entries`, `for...of` (destructuring `[key, value]`) | Covered (shared, hashed) | Covered (same implementation) |
 | `if`, `while`, `for`, `do..while`, `?:`    | Covered                              | Covered                           |
 | `break` / `continue`, with or without labels | Covered                            | Covered                           |
 | `switch`, labeled blocks                   | Covered                              | Covered                           |
@@ -99,14 +103,14 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | Implicit conversion through a user `valueOf` / `toString` (`"" + obj`, `${obj}`, `String(obj)`) | Covered | Covered       |
 | Template literals                          | Covered                              | Covered                           |
 | `Math`, `Date.now()`, number `toString` / `toFixed` | Covered                      | Covered (shared implementation)   |
-| `console.log` formatting                   | Covered                              | Covered (same formatter)          |
+| `console.log` / `info` / `debug` (stdout), `error` / `warn` (stderr), Node's `%s %d %i %f %j %o %O %c %%` substitution | Covered | Covered (same formatter) |
 | Generators, regex, tagged templates        | Compile error                        | Compile error                     |
 | Runtime errors (`null.x`, unbound names, calling a non-function, ...) | Thrown as `TypeError` / `ReferenceError` / `RangeError`, catchable | Same                       |
 | Stack overflow                             | `RangeError`                         | `RangeError` (stack-pointer check) |
 | Uncaught exceptions                        | `Uncaught TypeError: ...` and its stack trace on stderr, exit 1 | Same   |
-| String `length` / indexing                 | Counts UTF-8 bytes ([#133](https://github.com/warpy-ai/oite/issues/133))            | -                                 |
-| Type annotations                           | Checked, as warnings; `oitec check` reports errors; `--strict-types` makes them errors and checks values at run time ([Types](types.md), [#124](https://github.com/warpy-ai/oite/issues/124)) | -                                 |
-| Ownership / borrow checking                | Compile-time checks run; moves are enforced | -                          |
+| String `length`, indexing, `for...of`      | Counts Unicode scalar values: `"😀".length` is 1, JavaScript's is 2 ([Strings](ecmascript-conformance.md#4-strings-count-characters-not-utf-16-code-units)) | Same                              |
+| Type annotations                           | Checked, as warnings; `oitec check` reports errors; `--strict-types` makes them errors and checks values at run time ([Types](types.md)); generic calls are not checked ([#190](https://github.com/warpy-ai/oite/issues/190)) | -                                 |
+| Ownership / borrow checking                | A use after a move is a compile error, in top-level code only; nothing is copied or freed ([Memory model](/rolls/memory-model)) | -                          |
 
 ### Compilers
 
@@ -188,9 +192,9 @@ Oite Core is like "C without libc" — minimal and self-contained. These feature
 
 Correctness comes before new surface area (see [#136](https://github.com/warpy-ai/oite/issues/136)):
 
-1. **Language correctness**: the string model ([#133](https://github.com/warpy-ai/oite/issues/133)), callback methods (`map`, `filter`, ...), top-level `await`
+1. **Language correctness**: callback methods (`map`, `filter`, ...), top-level `await`
 2. **Native backends**: modules
-3. **Compiler infrastructure**: type checking ([#124](https://github.com/warpy-ai/oite/issues/124))
+3. **Compiler infrastructure**: type errors by default, generic calls ([#190](https://github.com/warpy-ai/oite/issues/190))
 4. **Foundations**: language specification ([#135](https://github.com/warpy-ai/oite/issues/135)), memory reclamation ([#123](https://github.com/warpy-ai/oite/issues/123)), FFI ([#132](https://github.com/warpy-ai/oite/issues/132))
 5. **Rolls, Unroll, tooling**: after the above
 

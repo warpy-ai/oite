@@ -2,6 +2,7 @@
 //! chain, accessors, elements.
 
 use super::*;
+use builtins::Receiver;
 
 /// The object at `ptr`, which must be an `ObjectKind::Object`.
 pub(super) fn obj(ptr: HeapPtr) -> &'static mut NativeObject {
@@ -123,7 +124,9 @@ pub(super) fn visible_data(ptr: HeapPtr) -> Vec<(&'static str, u64)> {
         .into_iter()
         .filter(|(_, flags, _)| flags & ACCESSOR == 0)
         .map(|(a, _, v)| (atom::info(a), v))
-        .filter(|(info, _)| !info.hidden)
+        .filter(|(info, v)| {
+            !info.hidden && !builtins::is_constructor_link(&calls::NativeHost, info.name, v)
+        })
         .map(|(info, v)| (info.name, v))
         .collect()
 }
@@ -145,6 +148,9 @@ pub(super) fn get_property_atom(v: OtValue, key: Atom) -> u64 {
                 ),
             );
         }
+        if v.is_number() {
+            return builtin_method(Receiver::Number, atom::name(key)).unwrap_or_else(undefined);
+        }
         return undefined();
     };
     match kind {
@@ -152,9 +158,8 @@ pub(super) fn get_property_atom(v: OtValue, key: Atom) -> u64 {
             if matches!(key, atom::THEN | atom::CATCH | atom::FINALLY)
                 && promise_id(v.to_bits()).is_some()
             {
-                // Promise methods run through `ot_call_method`; a function
-                // so that `typeof p.then` is "function".
-                return builtin(ot_builtin_promise_static);
+                return builtin_method(Receiver::Promise, atom::name(key))
+                    .unwrap_or_else(undefined);
             }
             if key == atom::PROTO || !atom::is_plain(key) {
                 return lookup_atom(ptr, key).unwrap_or_else(undefined);
@@ -181,20 +186,26 @@ pub(super) fn get_property_atom(v: OtValue, key: Atom) -> u64 {
             match name.parse::<usize>() {
                 Ok(i) if i < arr.len as usize => unsafe { *arr.elements.add(i) },
                 Ok(_) => undefined(),
-                Err(_) => array_proto_method(name).unwrap_or_else(undefined),
+                Err(_) => builtin_method(Receiver::Array, name)
+                    .or_else(|| array_proto_method(name))
+                    .unwrap_or_else(undefined),
             }
         }
+        ObjectKind::Function => get_function_property(ptr, key),
         ObjectKind::String => {
             let s = unsafe { ptr.as_ref::<NativeString>().as_str() };
+            let ascii = is_ascii(v);
             if key == atom::LENGTH {
-                // Byte length, matching the VM until the string model is
-                // decided (#133).
-                return number(s.len() as f64);
+                return number(builtins::char_count(s, ascii) as f64);
             }
-            match atom::name(key).parse::<usize>() {
-                Ok(i) if i < s.len() => new_string(&s[i..i + 1]),
-                _ => undefined(),
+            let i = atom::name(key).parse::<usize>().ok();
+            match i.and_then(|i| builtins::char_at(s, ascii, i)) {
+                Some(c) => new_string(c.encode_utf8(&mut [0; 4])),
+                None => builtin_method(Receiver::String, atom::name(key)).unwrap_or_else(undefined),
             }
+        }
+        ObjectKind::Map | ObjectKind::Set | ObjectKind::Iterator => {
+            collection_property(v.to_bits(), key)
         }
         _ => undefined(),
     }
@@ -277,6 +288,7 @@ pub(super) fn set_property_atom(v: OtValue, key: Atom, value: u64) -> u64 {
                 array_set(arr, i, value);
             }
         }
+        Some((ptr, ObjectKind::Function)) => set_function_property(ptr, key, value),
         Some(_) => {}
         None => {
             if v.is_null() || v.is_undefined() {
@@ -427,6 +439,11 @@ pub extern "C" fn ot_get_index(obj: u64, key: u64) -> u64 {
             undefined()
         };
     }
+    if let Some(cursor) = iter_of(obj)
+        && cursor.for_of
+    {
+        return cursor_take(cursor);
+    }
     get_property(o, &key_string(k))
 }
 
@@ -445,12 +462,16 @@ pub extern "C" fn ot_set_index(obj: u64, key: u64, value: u64) -> u64 {
 /// `delete obj.key`
 #[unsafe(no_mangle)]
 pub extern "C" fn ot_delete_prop(obj: u64, key: *const u8, key_len: usize) -> u64 {
-    if let Some((ptr, ObjectKind::Object)) = object(OtValue::from_bits(obj)) {
-        let key = unsafe { atom::static_atom(key, key_len) };
-        let o = self::obj(ptr);
-        if object::remove_own(o, key) {
-            layout_changed(o);
+    let key = unsafe { atom::static_atom(key, key_len) };
+    match object(OtValue::from_bits(obj)) {
+        Some((ptr, ObjectKind::Object)) => {
+            let o = self::obj(ptr);
+            if object::remove_own(o, key) {
+                layout_changed(o);
+            }
         }
+        Some((ptr, ObjectKind::Function)) => delete_function_property(ptr, key),
+        _ => {}
     }
     boolean(true)
 }

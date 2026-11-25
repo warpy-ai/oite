@@ -180,7 +180,10 @@ impl VM {
             JsValue::Boolean(b) => b.to_string(),
             JsValue::Null => "null".to_string(),
             JsValue::Undefined => "undefined".to_string(),
-            JsValue::Function { .. } | JsValue::NativeFunction(_) => "function".to_string(),
+            JsValue::Function { .. }
+            | JsValue::NativeFunction(_)
+            | JsValue::BuiltinMethod(_)
+            | JsValue::BoundFunction(_) => "function".to_string(),
             JsValue::Object(ptr) => match self.heap.get(*ptr).map(|o| &o.data) {
                 Some(HeapData::Array(items)) if depth < 100 => items
                     .iter()
@@ -191,6 +194,12 @@ impl VM {
                     .collect::<Vec<_>>()
                     .join(","),
                 Some(HeapData::Object(_)) if self.is_error(*ptr) => self.error_summary(*ptr),
+                Some(HeapData::Map(_) | HeapData::Set(_) | HeapData::Iterator(_)) => {
+                    match self.receiver_of(v) {
+                        Some(r) => format!("[object {}]", r.name()),
+                        None => "[object Object]".to_string(),
+                    }
+                }
                 _ => "[object Object]".to_string(),
             },
             _ => "[object Object]".to_string(),
@@ -241,14 +250,7 @@ pub fn to_number(v: &JsValue) -> f64 {
             }
         }
         JsValue::Null => 0.0,
-        JsValue::String(s) => {
-            let t = s.trim();
-            if t.is_empty() {
-                0.0
-            } else {
-                t.parse::<f64>().unwrap_or(f64::NAN)
-            }
-        }
+        JsValue::String(s) => crate::runtime::builtins::string_to_number(s),
         _ => f64::NAN,
     }
 }

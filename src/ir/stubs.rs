@@ -239,6 +239,7 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         | IrOp::CallSuper(_, _, _)
         | IrOp::SuperForward(_, _)
         | IrOp::CallWithThis(_, _, _, _)
+        | IrOp::SpreadCall(_, _, _)
         | IrOp::InstanceOf(_, _, _)
         | IrOp::In(_, _, _)
         | IrOp::AsyncStart(_)
@@ -265,6 +266,7 @@ pub fn compile_strategy(op: &IrOp) -> CompileStrategy {
         IrOp::ToBool(_, _) => CompileStrategy::StubCall(stubs::TO_BOOLEAN),
         IrOp::ToNum(_, _) => CompileStrategy::StubCall(stubs::TO_NUMBER),
         IrOp::ToStr(_, _) => CompileStrategy::StubCall(stubs::TO_NUMBER),
+        IrOp::GetIterator(_, _) => CompileStrategy::StubCall(stubs::CALL),
 
         // SSA operations
         IrOp::Phi(_, _) => CompileStrategy::NoOp, // Handled by register allocation

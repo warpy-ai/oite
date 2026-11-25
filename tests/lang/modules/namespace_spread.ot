@@ -1,0 +1,8 @@
+// backends: vm jit aot
+// A call through a namespace import passes spread arguments as arguments.
+import * as math from "./_lib/sum.ot";
+
+const xs = [1, 2, 3];
+console.log(math.sum(...xs));
+console.log(math.sum(10, ...[20, 30]));
+console.log(math.sum(1, 2, 3));

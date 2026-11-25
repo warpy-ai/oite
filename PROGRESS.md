@@ -20,7 +20,7 @@ where they say ✅ without a golden test behind them, trust the status page.
 | SSA IR + optimizations                    | 🟡 Works; refuses modules |
 | Native backends (Cranelift JIT, LLVM AOT) | 🟡 Functions, objects, arrays, strings, globals; see the status page |
 | Language features                         | 🟡 Most run in the VM only so far; see the status page |
-| Static type checking                      | ❌ Annotations parsed, not checked ([#124](https://github.com/warpy-ai/oite/issues/124))           |
+| Static type checking                      | 🟡 Annotations checked as warnings; `oitec check` errors; generic calls unchecked ([#190](https://github.com/warpy-ai/oite/issues/190)) |
 | Self-hosting compiler                     | 🟡 Cannot compile its own source yet ([#131](https://github.com/warpy-ai/oite/issues/131))         |
 
 ---
