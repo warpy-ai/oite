@@ -103,6 +103,23 @@ mod tests {
     use super::*;
     use crate::ir::{IrFunction, IrModule, IrOp, IrType, Literal, Terminator, ValueId};
 
+    /// `runtime.call_func(name, args)`, with no other test's compiled code
+    /// running. `call_func` sets `OT_STACK_LIMIT`, which is one per process,
+    /// from this thread's stack, and compiled code compares its stack
+    /// pointer with it. Tests run on threads of their own, so a test that
+    /// called while another was between its `ot_stack_init` and its call
+    /// could run against the other's limit: a RangeError that `call_func`
+    /// reports by exiting the whole test process.
+    fn call_alone(
+        runtime: &JitRuntime,
+        name: &str,
+        args: &[OtValue],
+    ) -> Result<OtValue, BackendError> {
+        static NATIVE_CALLS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _alone = NATIVE_CALLS.lock().unwrap_or_else(|e| e.into_inner());
+        runtime.call_func(name, args)
+    }
+
     #[test]
     fn test_jit_runtime_creation() {
         let config = BackendConfig::default();
@@ -133,7 +150,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Call the function
-        let result = runtime.call_func("test_const", &[]);
+        let result = call_alone(&runtime, "test_const", &[]);
         assert!(result.is_ok());
 
         let val = result.unwrap();
@@ -175,7 +192,7 @@ mod tests {
         // Call the function with 3.0 + 4.0
         let a = OtValue::number(3.0);
         let b = OtValue::number(4.0);
-        let result = runtime.call_func("add_nums", &[a, b]);
+        let result = call_alone(&runtime, "add_nums", &[a, b]);
         assert!(result.is_ok());
 
         let val = result.unwrap();
