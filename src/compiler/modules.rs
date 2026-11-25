@@ -27,8 +27,11 @@
 //! them), nor does an entry file inside a roll (a directory with a
 //! `roll.toml`). `--no-std` turns it off, and a program compiles without
 //! it, as before, when `@rolls/std` is not installed.
+//!
+//! Of a roll, only the top-level declarations the program uses make code
+//! (`reach.rs`), so the prelude costs what a program uses of it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use swc_common::{DUMMY_SP, Span, Spanned};
@@ -36,6 +39,8 @@ use swc_ecma_ast::*;
 use swc_ecma_parser::{Syntax, TsSyntax};
 
 use super::diagnostic::{CompileError, DebugInfo, Diagnostic};
+use super::reach;
+use super::scope::SpanKey;
 use super::{Compiler, Parsed, parse, position};
 use crate::vm::opcodes::OpCode;
 
@@ -57,6 +62,9 @@ pub struct ModuleLink {
     /// for the names the module uses without declaring them. Empty in a
     /// roll and with `--no-std`.
     pub prelude: HashMap<String, String>,
+    /// The top-level items (by span) of a roll that the program does not
+    /// use, which make no code (see `reach.rs`).
+    pub unused: HashSet<SpanKey>,
 }
 
 /// Where `@rolls/*` modules are found.
@@ -215,16 +223,39 @@ impl Compiler {
         linker.visit(0, &mut Vec::new())?;
         let exports = linker.export_tables()?;
         let prelude = std_module.map(|m| exports[m].clone()).unwrap_or_default();
+        let mut links = Vec::new();
+        for m in 0..linker.modules.len() {
+            let mut link = linker.link_for(m, &exports)?;
+            if !linker.modules[m].roll {
+                link.prelude = prelude.clone();
+            }
+            links.push(link);
+        }
+        // The entry is the program even inside a roll (a roll's own
+        // `oitec check`): all of it is compiled.
+        let linked: Vec<reach::Linked> = linker
+            .modules
+            .iter()
+            .zip(&links)
+            .enumerate()
+            .map(|(m, (module, link))| reach::Linked {
+                program: &module.parsed.program,
+                link,
+                roll: module.roll && m != 0,
+            })
+            .collect();
+        let unused = reach::unused_declarations(&linked);
+        for (link, unused) in links.iter_mut().zip(unused) {
+            link.unused = unused;
+        }
+
         let mut compiled = Vec::new();
         self.warnings.clear();
         self.type_world = Default::default();
         let program_dir = linker.modules[0].path.parent().map(Path::to_path_buf);
         for &m in &linker.order {
-            let mut link = linker.link_for(m, &exports)?;
+            let link = std::mem::take(&mut links[m]);
             let module = &linker.modules[m];
-            if !module.roll {
-                link.prelude = prelude.clone();
-            }
             let code = self
                 .compile_parsed(&module.parsed, Some(link))
                 .map_err(|e| e.in_file(&module.file, &module.source))?;
@@ -620,6 +651,7 @@ impl Linker<'_> {
             namespaces: HashMap::new(),
             type_imports: HashMap::new(),
             prelude: HashMap::new(),
+            unused: HashSet::new(),
         };
         if let Program::Module(ast) = &module.parsed.program {
             for item in &ast.body {
@@ -658,7 +690,7 @@ impl Linker<'_> {
 }
 
 /// The names a declaration binds (`export function f`, `export const a = 1`).
-fn declared_names(decl: &Decl) -> Vec<String> {
+pub(super) fn declared_names(decl: &Decl) -> Vec<String> {
     match decl {
         Decl::Fn(f) if !f.declare => vec![f.ident.sym.to_string()],
         Decl::Class(c) if !c.declare => vec![c.ident.sym.to_string()],

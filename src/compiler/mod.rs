@@ -1,5 +1,5 @@
 use crate::vm::opcodes::{CallKind, OpCode};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use swc_ecma_ast::*;
 mod bindings;
 pub mod borrow_ck;
@@ -11,6 +11,7 @@ mod env;
 mod expr;
 mod functions;
 pub mod modules;
+mod reach;
 pub mod scope;
 mod stmt;
 use crate::compiler::borrow_ck::BorrowChecker;
@@ -164,22 +165,36 @@ impl Compiler {
             .map(|d| Diagnostic::new("warning", d.message, position(d.span)))
             .collect();
 
-        let mut codegen = Codegen::new();
-        if self.strict_types {
-            codegen.guards = checked.guards;
-            codegen.facts = checked.facts;
-        }
-        codegen.link = link;
-        match program {
-            Program::Module(module) => {
-                codegen.scopes = ScopeInfo::analyze_module(module);
-                codegen.generate(module);
+        // A module makes the object of an `import * as ns` only if its code
+        // uses `ns` as a value. Generating the code finds those uses; a
+        // module with one is generated again, with the object.
+        let mut namespace_objects = HashSet::new();
+        let mut codegen = loop {
+            let mut codegen = Codegen::new();
+            if self.strict_types {
+                codegen.guards = checked.guards.clone();
+                codegen.facts = checked.facts.clone();
             }
-            Program::Script(script) => {
-                codegen.scopes = ScopeInfo::analyze_script(script);
-                codegen.generate_script(script);
+            codegen.link = link.clone();
+            codegen.namespace_objects = namespace_objects;
+            match program {
+                Program::Module(module) => {
+                    codegen.scopes = ScopeInfo::analyze_module(module);
+                    codegen.generate(module);
+                }
+                Program::Script(script) => {
+                    codegen.scopes = ScopeInfo::analyze_script(script);
+                    codegen.generate_script(script);
+                }
             }
-        }
+            if codegen
+                .namespace_values
+                .is_subset(&codegen.namespace_objects)
+            {
+                break codegen;
+            }
+            namespace_objects = codegen.namespace_values;
+        };
 
         if !codegen.errors.is_empty() {
             let diagnostics = codegen
@@ -461,6 +476,12 @@ pub struct Codegen {
     /// This program is a module of a linked program (`modules.rs`): how
     /// its top-level names and imports are named.
     pub(crate) link: Option<ModuleLink>,
+    /// The `import * as ns` whose namespace object the module makes: the
+    /// ones its code uses as a value. `ns.x` is the export `x` itself and
+    /// needs no object.
+    namespace_objects: HashSet<String>,
+    /// The `import * as ns` the generated code used as a value.
+    namespace_values: HashSet<String>,
 }
 
 impl Default for Codegen {
@@ -496,6 +517,8 @@ impl Codegen {
             scopes: ScopeInfo::default(),
             env_active: false,
             link: None,
+            namespace_objects: HashSet::new(),
+            namespace_values: HashSet::new(),
         }
     }
 }

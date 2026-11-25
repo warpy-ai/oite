@@ -1,0 +1,42 @@
+// A roll of which modules/unused.ot uses some parts. `unused` and `Unused`
+// use `require`, which the native backends refuse: they compile only if
+// the program leaves them out.
+function helper(x) {
+  return x * 2;
+}
+
+export function used(x) {
+  return helper(x) + 1;
+}
+
+export function unused() {
+  return require("fs");
+}
+
+export class Unused {
+  load() {
+    return require("fs");
+  }
+}
+
+export function viaNamespace() {
+  return "through the namespace";
+}
+
+export default function () {
+  return "the default export";
+}
+
+// Running these does something, so they run whether or not the program
+// names them.
+function announce(message) {
+  console.log(message);
+  return message.length;
+}
+export const loaded = announce("parts loaded");
+
+export const registry = [];
+function registered() {
+  return "registered when the roll runs";
+}
+registry.push(registered);

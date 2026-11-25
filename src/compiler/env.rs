@@ -35,8 +35,14 @@ impl Codegen {
     /// linked module has the module's prefix, an import names the binding
     /// it imports, and so does a name of the prelude the module does not
     /// declare.
-    pub(super) fn var_name(&self, ident: &Ident) -> String {
+    pub(super) fn var_name(&mut self, ident: &Ident) -> String {
         let name = ident.sym.to_string();
+        if let Some(link) = &self.link
+            && link.namespaces.contains_key(&name)
+            && self.scopes.is_module_level(ident.span)
+        {
+            self.namespace_values.insert(name.clone());
+        }
         match &self.link {
             Some(link) if self.scopes.is_module_level(ident.span) => {
                 match link.imports.get(&name) {

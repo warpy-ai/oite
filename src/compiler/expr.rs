@@ -283,6 +283,17 @@ impl Codegen {
                 }
             }
             Expr::Call(call_expr) => {
+                // `ns.f(args)`, `ns` a namespace import: a call of the
+                // export `f`.
+                if let Callee::Expr(callee_expr) = &call_expr.callee
+                    && let Expr::Member(member) = callee_expr.as_ref()
+                    && let Some(global) = self.namespace_member(member)
+                {
+                    let argc = self.gen_args(&call_expr.args);
+                    self.instructions.push(OpCode::Load(global));
+                    self.emit_call(CallKind::Plain, argc);
+                    return;
+                }
                 // `obj.name(args)`, `obj["name"](args)`, `obj[k](args)`: a
                 // method call with `this = obj`.
                 if let Callee::Expr(callee_expr) = &call_expr.callee
@@ -489,6 +500,10 @@ impl Codegen {
             }
             Expr::SuperProp(super_prop) => self.gen_super_prop(super_prop),
             Expr::Member(member) => {
+                if let Some(global) = self.namespace_member(member) {
+                    self.instructions.push(OpCode::Load(global));
+                    return;
+                }
                 // Regular obj.prop access
                 // 1. Load the Object/Array
                 self.gen_expr(&member.obj);

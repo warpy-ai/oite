@@ -578,7 +578,9 @@ fn check_file(filename: &str) {
     }
 }
 
-/// Run a file using JIT compilation
+/// Run a file with the JIT. With `OITE_DEBUG_JIT` set, also print the
+/// program's bytecode, its optimized IR and the compiled functions to
+/// stderr.
 fn run_jit(filename: &str) {
     use crate::backend::{BackendConfig, jit::JitRuntime};
 
@@ -589,81 +591,57 @@ fn run_jit(filename: &str) {
             std::process::exit(1);
         }
     };
+    let debug = std::env::var_os("OITE_DEBUG_JIT").is_some();
 
-    // Compile to bytecode
     let mut compiler = Compiler::new();
     let modules = compile_program_or_exit(&mut compiler, filename, &source);
     let (bytecode, sites) = with_core(&mut compiler, modules);
-
-    eprintln!("=== Bytecode ({} instructions) ===", bytecode.len());
-    for (i, op) in bytecode.iter().enumerate() {
-        eprintln!("[{:3}] {:?}", i, op);
+    if debug {
+        eprintln!("=== Bytecode ({} instructions) ===", bytecode.len());
+        for (i, op) in bytecode.iter().enumerate() {
+            eprintln!("[{:3}] {:?}", i, op);
+        }
     }
 
-    // Lower to SSA IR (using lower_module to extract all functions)
-    match ir::lower::lower_module_with_sites(&bytecode, Some(sites)) {
-        Ok(mut module) => {
-            // Show extracted functions
-            if module.functions.len() > 1 {
-                eprintln!("\n=== Extracted Functions ===");
-                for (i, func) in module.functions.iter().enumerate() {
-                    if func.name != "main" {
-                        eprintln!("  [{}] {} ({} blocks)", i, func.name, func.blocks.len());
-                    }
-                }
-            }
-
-            // Run type inference
-            ir::typecheck::typecheck_module(&mut module);
-
-            // Run optimizations
-            ir::opt::optimize_module(&mut module);
-
-            eprintln!("\n=== SSA IR (optimized) ===");
-            eprintln!("{}", module);
-
-            // JIT compile
-            eprintln!("\n=== JIT Compilation ===");
-            let config = BackendConfig::default();
-            let mut runtime = match JitRuntime::new(&config) {
-                Ok(rt) => rt,
-                Err(e) => {
-                    eprintln!("Failed to create JIT runtime: {}", e);
-                    std::process::exit(1);
-                }
-            };
-
-            match runtime.compile(&module) {
-                Ok(()) => {
-                    eprintln!("JIT compilation successful!");
-
-                    // Show compiled functions
-                    let funcs = runtime.get_all_funcs();
-                    eprintln!("Compiled {} functions:", funcs.len());
-                    for name in funcs.keys() {
-                        eprintln!("  - {}", name);
-                    }
-
-                    // Try to call main
-                    eprintln!("\n=== Execution ===");
-                    match runtime.call_main() {
-                        Ok(result) => {
-                            eprintln!("Result: {:?}", result);
-                        }
-                        Err(e) => {
-                            eprintln!("Execution failed: {}", e);
-                            std::process::exit(1);
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("JIT compilation failed: {}", e);
-                    std::process::exit(1);
-                }
-            }
-        }
+    let mut module = match ir::lower::lower_module_with_sites(&bytecode, Some(sites)) {
+        Ok(module) => module,
         Err(e) => {
             eprintln!("IR lowering failed: {}", e);
+            std::process::exit(1);
+        }
+    };
+    ir::typecheck::typecheck_module(&mut module);
+    ir::opt::optimize_module(&mut module);
+    if debug {
+        eprintln!("\n=== SSA IR (optimized) ===\n{}", module);
+    }
+
+    let mut runtime = match JitRuntime::new(&BackendConfig::default()) {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("Failed to create JIT runtime: {}", e);
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = runtime.compile(&module) {
+        eprintln!("JIT compilation failed: {}", e);
+        std::process::exit(1);
+    }
+    if debug {
+        let funcs = runtime.get_all_funcs();
+        eprintln!(
+            "\n=== JIT Compilation ===\nCompiled {} functions:",
+            funcs.len()
+        );
+        for name in funcs.keys() {
+            eprintln!("  - {}", name);
+        }
+    }
+    match runtime.call_main() {
+        Ok(result) if debug => eprintln!("Result: {:?}", result),
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("Execution failed: {}", e);
             std::process::exit(1);
         }
     }

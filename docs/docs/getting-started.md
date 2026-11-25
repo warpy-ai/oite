@@ -197,6 +197,8 @@ Oite provides multiple ways to run your code:
 ```
 
 Uses Cranelift for fast compilation. Perfect for rapid iteration.
+`OITE_DEBUG_JIT=1` also prints the program's bytecode, its optimized IR
+and the compiled functions to stderr.
 
 ### AOT Compilation (Production)
 

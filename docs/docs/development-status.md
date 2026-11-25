@@ -152,19 +152,23 @@ cargo test --release --test golden    # language behaviour only
 `console.log("hello")` with the prelude and with `--no-std`, median of 5
 runs on an Apple M2 Pro:
 
-| Command                          | `--no-std` | Prelude  |
-| -------------------------------- | ---------- | -------- |
-| `oitec hello.ot` (VM)            | 8 ms       | 16 ms    |
-| `oitec check hello.ot`           | 8 ms       | 15 ms    |
-| `oitec jit hello.ot`             | 22 ms      | 363 ms   |
-| `oitec build hello.ot --release` | 0.22 s     | 2.1 s    |
-| The native binary, run           | 3.0 ms     | 3.6 ms   |
-| The native binary, size          | 675 KiB    | 1546 KiB |
+| Command                          | `--no-std` | Prelude |
+| -------------------------------- | ---------- | ------- |
+| `oitec hello.ot` (VM)            | 8 ms       | 14 ms   |
+| `oitec jit hello.ot`             | 17 ms      | 51 ms   |
+| `oitec build hello.ot --release` | 0.22 s     | 0.46 s  |
+| The native binary, run           | 3.0 ms     | 3.2 ms  |
+| The native binary, size          | 675 KiB    | 792 KiB |
+| LLVM functions                   | 10         | 101     |
 
-The native backends compile every function of the prelude, 709 LLVM
-functions against 10 for the program alone, because each one is stored in
-a global when its module runs. Compiling only the functions a program can
-reach would remove most of it.
+Of the rolls, only the declarations a program uses make code
+(`src/compiler/reach.rs`). What every program still compiles is std's
+`Array.prototype` methods and the `@rolls/array` functions they call: std's
+top-level code attaches them, and the runtime looks a method up there by
+name. Without that block in std, hello world compiles the same 10 LLVM
+functions as with `--no-std`, `jit` takes 23 ms and `build` 0.22 s. The
+rest of the VM's and the JIT's cost, about 6 ms, is the front end: all
+4,000 lines are parsed and checked before anything is left out.
 
 ### Performance Targets
 
