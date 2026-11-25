@@ -36,11 +36,12 @@ console.log(fib(35)); // Compiled to native code!
 ### Key Features
 
 > **Status:** pre-alpha. The list below is the design. Native code is the
-> target: the JIT and AOT backends run functions and closures, objects, arrays,
-> strings, globals, classes, exceptions and async/await, and refuse what they
-> cannot run yet (modules), which for now runs only in the VM (the debugging
-> interpreter). Type annotations are checked as warnings for now, and memory is
-> never freed. See
+> target: the JIT and AOT backends run the same language features as the VM
+> (the debugging interpreter), modules included. Generators, regular
+> expressions and tagged templates are compile errors on every backend, and the
+> `require`, `fs`, `JSON`, `fetch`, `process` and `ByteStream` globals exist
+> only in the VM. Type annotations are checked as warnings for now, and memory
+> is never freed. See
 > [Development Status](docs/docs/development-status.md) for what runs on which
 > backend, and [#136](https://github.com/warpy-ai/oite/issues/136) for the roadmap.
 
@@ -98,7 +99,7 @@ console.log(fib(35)); // Compiled to native code!
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-See [docs/ARCHITECTURE.md](docs/docs/architecture.md) for detailed diagrams and philosophy.
+See [Platform architecture](docs/docs/platform-architecture.md) for how core, Rolls and Unroll fit together.
 
 ### Compilation Pipeline
 
@@ -431,7 +432,7 @@ console.error("Error message");
 
 ### ByteStream (Binary Data)
 
-Used by the bootstrap compiler for bytecode emission:
+Used by the bootstrap compiler for bytecode emission. VM only:
 
 ```javascript
 let stream = ByteStream.create();
@@ -444,7 +445,8 @@ let bytes = ByteStream.toArray(stream);
 
 ### File I/O (Minimal)
 
-Basic file operations for the bootstrap compiler:
+Basic file operations for the bootstrap compiler. VM only: `oitec jit` and
+`oitec build` refuse `require`.
 
 ```javascript
 let fs = require("fs");
@@ -452,7 +454,7 @@ let content = fs.readFileSync("file.txt");
 fs.writeFileSync("out.txt", "Hello!");
 ```
 
-> **Note:** Full standard library functionality (Math, Date, JSON, comprehensive fs/path, etc.) will be provided by the **Rolls** ecosystem in a separate repository. See `docs/future/rolls-design.md` for the planned architecture.
+> **Note:** Full standard library functionality (Math, Date, JSON, comprehensive fs/path, etc.) will be provided by the **Rolls** ecosystem in a separate repository. See [Platform architecture](docs/docs/platform-architecture.md) for the plan.
 
 ## Project Structure
 
@@ -490,6 +492,7 @@ Oite/
 │   │   ├── jit.rs                # JIT runtime
 │   │   ├── layout.rs             # Memory layout
 │   │   └── llvm/                 # AOT backend
+│   ├── types/                    # Type checker
 │   ├── runtime/
 │   │   ├── mod.rs                # Runtime module
 │   │   ├── abi.rs                # NaN-boxed values
@@ -507,11 +510,11 @@ Oite/
 │   │   └── stdlib_setup.rs       # Minimal setup
 │   └── stdlib/
 │       └── mod.rs                # console, ByteStream only
-├── docs/
-│   ├── docs/self-hosting.md      # Self-hosting roadmap
-│   └── docs/future/               # Future architecture docs
-│       ├── rolls-design.md       # Rolls (system libraries)
-│       └── unroll-design.md      # Unroll (tooling)
+├── docs/                         # Documentation site
+│   ├── docs/                     # Language, status, platform architecture
+│   ├── docs-compiler/            # Compiler internals, self-hosting
+│   ├── docs-rolls/               # Rolls (system libraries)
+│   └── docs-unroll/              # Unroll (tooling)
 └── tests/
 ```
 
@@ -522,19 +525,24 @@ Oite has three compiler implementations working toward full self-hosting:
 | Compiler      | Location         | Status        | Purpose                            |
 | ------------- | ---------------- | ------------- | ---------------------------------- |
 | **Rust**      | `src/compiler/`  | ✅ Production | Native binaries via LLVM/Cranelift |
-| **Bootstrap** | `bootstrap/*.ot` | ✅ Reference  | Self-compiling bytecode compiler   |
-| **Modular**   | `compiler/*.ot`  | ✅ Complete   | Full compiler with LLVM IR output  |
+| **Bootstrap** | `bootstrap/*.ot` | 🟡 Reference, runs on the VM | Bytecode compiler written in Oite; seed for self-hosting |
+| **Modular**   | `compiler/*.ot`  | 🟡 Partial, runs on the VM   | LLVM IR for simple programs; cannot compile its own source yet |
 
 ### Self-Hosting Status
 
-The self-hosted compiler is **complete** and can generate native binaries:
+Self-hosting is partial. The modular compiler runs on the VM and turns simple
+programs into LLVM IR, but it cannot compile its own source yet
+([#131](https://github.com/warpy-ai/oite/issues/131)), and
+`scripts/bootstrap_verify.sh` checks that one module compiles
+deterministically, not a full self-compilation fixpoint.
 
 ```bash
-# Generate LLVM IR using self-hosted compiler (runs on Rust VM)
+# Generate LLVM IR with the self-hosted compiler (runs on the VM).
+# Run it from the repository root; it writes myapp.ll next to myapp.ot.
 ./target/release/oitec compiler/main.ot llvm myapp.ot
 
-# Compile to native binary
-clang myapp.ot.ll -o myapp
+# Compile to native binary (-lm: the generated code calls fmod)
+clang myapp.ll -lm -o myapp
 ./myapp
 ```
 
@@ -550,22 +558,25 @@ Current:    Rust VM runs compiler/*.ot → LLVM IR → clang → Native
 Future:     Prebuilt oitec binary → LLVM IR → clang → Native (no Rust!)
 ```
 
-See [docs/docs/self-hosting.md](docs/docs/self-hosting.md) for detailed roadmap.
+See [Self-hosting](docs/docs-compiler/self-hosting.md) for the detailed roadmap.
 
 ## Development Status
 
-**Core language complete.** 113 tests passing. Self-hosted compiler generates native binaries ~30x faster than VM.
+Pre-alpha. [Development Status](docs/docs/development-status.md) has the
+per-feature matrix for each backend; a feature counts as done there only when
+golden tests in `tests/lang/` cover it.
 
-| Component                                   | Status      |
-| ------------------------------------------- | ----------- |
-| Runtime kernel (NaN-boxing, allocator)      | ✅ Complete |
-| SSA IR + optimizations                      | ✅ Complete |
-| Native backends (Cranelift JIT, LLVM AOT)   | ✅ Complete |
-| Language features (classes, async, modules) | ✅ Complete |
-| Self-hosting compiler                       | ✅ Complete |
-| Rolls ecosystem (HTTP, TLS, fs)             | 📋 Planned  |
+| Component                                   | Status |
+| ------------------------------------------- | ------ |
+| Runtime kernel (NaN-boxing, allocator)      | 🟡 Works; memory is never freed ([#123](https://github.com/warpy-ai/oite/issues/123)) |
+| SSA IR + optimizations                      | ✅ Works |
+| Native backends (Cranelift JIT, LLVM AOT)   | ✅ Same language features as the VM; some globals are VM-only (see above) |
+| Language features (classes, async, modules) | 🟡 On every backend; no generators, regular expressions or tagged templates yet |
+| Static type checking                        | 🟡 Warnings; `oitec check` reports errors; generic calls are not checked ([#190](https://github.com/warpy-ai/oite/issues/190)) |
+| Self-hosting compiler                       | 🟡 Cannot compile its own source yet ([#131](https://github.com/warpy-ai/oite/issues/131)) |
+| Rolls ecosystem (HTTP, TLS, fs)             | 📋 Planned; needs an FFI first ([#132](https://github.com/warpy-ai/oite/issues/132)) |
 
-See [PROGRESS.md](PROGRESS.md) for detailed implementation notes.
+See [PROGRESS.md](PROGRESS.md) for design notes.
 
 ## Testing
 
@@ -584,11 +595,13 @@ The Oite ecosystem will eventually include:
 - **Rolls**: Official system libraries (`@rolls/http`, `@rolls/tls`, `@rolls/fs`, etc.)
 - **Unroll**: Package manager, build system, and developer tooling
 
-See `docs/future/` for detailed architecture designs.
+See [Platform architecture](docs/docs/platform-architecture.md) and the
+[Unroll design](docs/docs-unroll/design.md).
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! [CONTRIBUTING.md](CONTRIBUTING.md) has the rules a
+change must follow.
 
 ## License
 

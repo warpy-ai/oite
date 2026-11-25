@@ -8,10 +8,12 @@ keywords: [development status, roadmap, features, progress, releases, changelog]
 # Development Status
 
 Oite is a compiled language: programs are meant to run as native code, built
-with LLVM AOT, with the Cranelift JIT for development. The native backends are
-not finished yet. Today most features run only in the VM, which is the
-debugging interpreter, so the VM column below is often ahead. This page records
-what runs on each backend today. "Covered"
+with LLVM AOT, with the Cranelift JIT for development. The VM is the debugging
+interpreter. The native backends now run every feature in the matrix below that
+the VM runs; the VM is ahead only in a few globals of its own (`require`, `fs`,
+`JSON`, `fetch`, `process`, `ByteStream`), which are to move into rolls
+([Platform architecture](platform-architecture.md)). This page records what runs
+on each backend today. "Covered"
 means a golden test in `tests/lang/` checks it; see the
 [contributing rules](https://github.com/warpy-ai/oite/blob/master/CONTRIBUTING.md).
 Tracking issue for the full gap list: [#136](https://github.com/warpy-ai/oite/issues/136).
@@ -23,7 +25,7 @@ Tracking issue for the full gap list: [#136](https://github.com/warpy-ai/oite/is
 | LLVM AOT (production target)              | Runs the "native" rows below; links the runtime into a standalone binary                 |
 | Cranelift JIT (development)               | Same coverage as LLVM AOT, same runtime                                                  |
 | SSA IR + optimizations                    | Working; refuses what the native backends cannot run                                     |
-| VM interpreter (debugging)                | Runs most features; ahead of the native backends for now                                 |
+| VM interpreter (debugging)                | Same features as the native backends, plus its own `require`, `fs`, `JSON`, `fetch`, `process` and `ByteStream` globals |
 | Static type checking                      | Annotations are checked: warnings on a run or build, errors from `oitec check`, run-time checks with `--strict-types` ([Types](types.md)). Generic calls are not checked ([#190](https://github.com/warpy-ai/oite/issues/190)) |
 | Memory reclamation                        | Not implemented: nothing is ever freed ([#123](https://github.com/warpy-ai/oite/issues/123))                                            |
 | Self-hosting compiler                     | Partial: cannot compile its own source yet ([#131](https://github.com/warpy-ai/oite/issues/131))                                        |
@@ -169,10 +171,9 @@ Oite Core is like "C without libc" — minimal and self-contained. These feature
 Correctness comes before new surface area (see [#136](https://github.com/warpy-ai/oite/issues/136)):
 
 1. **Language correctness**: callback methods (`map`, `filter`, ...), top-level `await`
-2. **Native backends**: modules
-3. **Compiler infrastructure**: type errors by default, generic calls ([#190](https://github.com/warpy-ai/oite/issues/190))
-4. **Foundations**: language specification ([#135](https://github.com/warpy-ai/oite/issues/135)), memory reclamation ([#123](https://github.com/warpy-ai/oite/issues/123)), FFI ([#132](https://github.com/warpy-ai/oite/issues/132))
-5. **Rolls, Unroll, tooling**: after the above
+2. **Compiler infrastructure**: type errors by default, generic calls ([#190](https://github.com/warpy-ai/oite/issues/190))
+3. **Foundations**: language specification ([#135](https://github.com/warpy-ai/oite/issues/135)), memory reclamation ([#123](https://github.com/warpy-ai/oite/issues/123)), FFI ([#132](https://github.com/warpy-ai/oite/issues/132))
+4. **Rolls, Unroll, tooling**: after the above
 
 ## Contributing
 

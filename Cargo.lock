@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "oite"
-version = "0.7.0"
+version = "0.10.0-preview"
 dependencies = [
  "cranelift",
  "cranelift-codegen",

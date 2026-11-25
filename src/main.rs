@@ -313,6 +313,11 @@ fn main() {
     let mut args: Vec<String> = env::args().collect();
     let options = take_roll_flags(&mut args);
     let _ = MODULE_OPTIONS.set(options);
+    if matches!(args.get(1).map(String::as_str), Some("--version" | "-V")) {
+        // The release workflow checks this against the tag being released.
+        println!("oitec {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     if args.len() < 2 {
         eprintln!("Usage: {} <command> [args...]", args[0]);
         eprintln!("Commands:");
@@ -323,6 +328,7 @@ fn main() {
         eprintln!("  build [options] <filename>  Build a .ot file to native binary");
         eprintln!("  <filename>           Run a .ot file (VM interpreter)");
         eprintln!("  --run-binary <file>  Run a bytecode file (.bc)");
+        eprintln!("  --version, -V        Print the oitec version");
         eprintln!();
         eprintln!("Build options:");
         eprintln!("  --backend <llvm|cranelift>  Choose code generator (default: llvm)");
