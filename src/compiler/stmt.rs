@@ -256,6 +256,9 @@ impl Codegen {
                 }
             }
             Stmt::ForOf(for_of_stmt) => {
+                if for_of_stmt.is_await {
+                    self.check_await_allowed("`for await`");
+                }
                 self.scope_stack.push(Vec::new());
                 let loop_env = self.save_env();
                 let iter_env = loop_env.clone();

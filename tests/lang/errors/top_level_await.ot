@@ -1,0 +1,4 @@
+// backends: vm jit aot
+// Top-level `await` must not silently bind the promise.
+const v = await Promise.resolve(42);
+console.log(v);
