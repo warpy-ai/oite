@@ -15,6 +15,20 @@ impl Codegen {
         self.errors.push((self.current_span, what.to_string()));
     }
 
+    /// `await` (or `for await`) needs an async function around it. At the
+    /// top level it is unsupported (modules do not suspend yet); inside a
+    /// sync function it is a syntax error, as in JS.
+    pub(super) fn check_await_allowed(&mut self, what: &str) {
+        if self.in_async_function {
+            return;
+        }
+        if self.in_function {
+            self.syntax_error(format!("{what} is only valid in async functions"));
+        } else {
+            self.unsupported(format!("top-level {what}"));
+        }
+    }
+
     /// Enter a function body: loops, labels and `try` statements outside it
     /// are not reachable from inside.
     pub(super) fn enter_function_control(&mut self) -> ControlState {

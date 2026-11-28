@@ -95,7 +95,7 @@ yet. Closing the gap between the two right-hand columns is the main work.
 | `async` / `await` (suspends; resumes as a microtask) | Covered                    | Covered (resumable functions, heap frames) |
 | Promises (`new Promise`, `then` / `catch` / `finally`, `Promise.resolve` / `reject` / `all` / `race`) | Covered | Covered |
 | Microtask ordering, `setTimeout` / `clearTimeout`, unhandled rejections (exit 1) | Covered | Covered               |
-| Top-level `await`                          | Not supported: evaluates to its operand without waiting | Same          |
+| Top-level `await` / `for await`            | Not supported: a compile error (`unsupported: top-level \`await\``) | Same          |
 | ES modules (`import` / `export`, re-exports, `import * as`, `@rolls/*`), linked at compile time | Covered | Covered                 |
 | The prelude: `@rolls/std`'s exports in scope with no import, shadowed by the program's own names; `--no-std` ([Platform Architecture](platform-architecture.md#the-prelude)) | Covered with the core rolls (`tests/core_rolls/`) | Same; slow to compile (see Performance) |
 | Circular imports                           | Compile error                        | Compile error                     |

@@ -633,12 +633,11 @@ impl Codegen {
                 }
             }
             Expr::Await(await_expr) => {
-                if !self.in_async_function {
-                    self.gen_expr(&await_expr.arg);
-                } else {
-                    self.gen_expr(&await_expr.arg);
-                    self.instructions.push(OpCode::Await);
-                }
+                // Outside an async function there is nothing to suspend:
+                // refuse rather than bind the promise itself.
+                self.check_await_allowed("`await`");
+                self.gen_expr(&await_expr.arg);
+                self.instructions.push(OpCode::Await);
             }
             Expr::Update(update_expr) => {
                 if let Expr::Ident(id) = update_expr.arg.as_ref() {

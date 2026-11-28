@@ -1,0 +1,5 @@
+// backends: vm jit aot
+// Top-level `for await` must not run as a plain `for of`.
+for await (const x of [Promise.resolve(1)]) {
+  console.log(x);
+}

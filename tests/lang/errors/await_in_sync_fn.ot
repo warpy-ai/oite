@@ -1,0 +1,9 @@
+// backends: vm jit aot
+// A sync function nested in an async one cannot `await`.
+async function outer() {
+  function inner() {
+    return await Promise.resolve(1);
+  }
+  return inner();
+}
+outer();
